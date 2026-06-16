@@ -18,6 +18,7 @@ import {
   getToken,
   loginWithFace,
   prepareAttendanceLocation,
+  recordAttendanceFace,
   recordAttendanceKioskFace,
   setAttendanceDeviceType,
 } from '@/api'
@@ -25,6 +26,7 @@ import { playSuccess, playError } from '@/lib/attendanceSounds'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { CheckCircle2, Home, LogOut } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 const SOUND_FEEDBACK_ENABLED = true
 const FACE_MATCH_TIMEOUT_MS = 12000
@@ -70,6 +72,8 @@ export function FaceRekognitionLiveness({
   hideInstruction,
   kioskMode = false,
   kioskType = null,
+  authenticatedAttendance = false,
+  surface = 'dark',
   onKioskSuccess,
   /** Duplicate kiosk clock-in after successful face match → parent opens correction modal */
   onKioskAttendanceCorrection,
@@ -274,8 +278,9 @@ export function FaceRekognitionLiveness({
         return
       }
       if (kioskMode && kioskType && onKioskSuccess) {
+        const recordFaceAttendance = authenticatedAttendance ? recordAttendanceFace : recordAttendanceKioskFace
         const data = await withTimeout(
-          recordAttendanceKioskFace(kioskType, {
+          recordFaceAttendance(kioskType, {
             liveness_session_id: session.sessionId,
             device_type: attendanceDeviceProfile,
             ...(attemptMetaRef.current || createAttendanceAttemptMeta('face')),
@@ -400,7 +405,7 @@ export function FaceRekognitionLiveness({
     } finally {
       setSubmitting(false)
     }
-  }, [session, submitting, kioskMode, kioskType, attendanceDeviceProfile, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess])
+  }, [session, submitting, kioskMode, kioskType, attendanceDeviceProfile, authenticatedAttendance, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess])
 
   const handleError = useCallback(async (err) => {
     console.error('Liveness error:', err)
@@ -428,18 +433,35 @@ export function FaceRekognitionLiveness({
     setFlowState(ATTENDANCE_FLOW_STATE.LOCATION_REQUESTING)
   }, [])
 
+  const lightSurface = surface === 'light'
+  const panelClass = lightSurface
+    ? 'rounded-lg border border-slate-200 bg-white p-5 text-slate-900 shadow-sm'
+    : 'rounded-lg border border-white/10 bg-black/20 p-5'
+  const softPanelClass = lightSurface
+    ? 'rounded-lg border border-slate-200 bg-slate-50 p-4 text-center'
+    : 'rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center'
+  const instructionClass = lightSurface ? 'text-slate-500' : 'text-white/60'
+  const mutedTextClass = lightSurface ? 'text-slate-600' : 'text-white/60'
+  const strongTextClass = lightSurface ? 'text-slate-900' : 'text-white/80'
+  const selectClass = lightSurface
+    ? 'mt-4 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-orange-400'
+    : 'mt-4 h-10 w-full rounded-md border border-white/15 bg-slate-950 px-3 text-sm text-white outline-none focus:border-emerald-400'
+  const smallSelectClass = lightSurface
+    ? 'h-8 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900 outline-none focus:border-orange-400 disabled:opacity-60'
+    : 'h-8 rounded-md border border-white/15 bg-slate-950 px-2 text-xs text-white outline-none focus:border-emerald-400 disabled:opacity-60'
+
   if (!onVerified && !kioskMode && !attendanceDeviceProfile) {
     return (
       <div className={className}>
-        <div className="rounded-lg border border-white/10 bg-black/20 p-5">
-          <p className="text-sm font-semibold text-white">Select this device</p>
-          <p className="mt-1 text-xs text-white/60">
+        <div className={panelClass}>
+          <p className={cn('text-sm font-semibold', strongTextClass)}>Select this device</p>
+          <p className={cn('mt-1 text-xs', mutedTextClass)}>
             Browsers cannot reliably distinguish a desktop from a laptop. Choose the physical device so the correct geofence is enforced.
           </p>
           <select
             value={attendanceDeviceProfile}
             onChange={(event) => selectAttendanceDeviceProfile(event.target.value)}
-            className="mt-4 h-10 w-full rounded-md border border-white/15 bg-slate-950 px-3 text-sm text-white outline-none focus:border-emerald-400"
+            className={selectClass}
           >
             <option value="">Select desktop or laptop</option>
             <option value="desktop">Desktop computer</option>
@@ -455,9 +477,9 @@ export function FaceRekognitionLiveness({
   if (loading) {
     return (
       <div className={className}>
-        <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-white/10 bg-black/20 p-8">
-          <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
-          <span className="text-sm text-white/80">
+        <div className={cn(panelClass, 'flex flex-col items-center justify-center gap-4 p-8')}>
+          <Loader2 className={cn('size-10 animate-spin', lightSurface ? 'text-orange-500' : 'text-emerald-400')} aria-hidden />
+          <span className={cn('text-sm', strongTextClass)}>
             {ATTENDANCE_FLOW_LABEL[flowState] || 'Preparing attendance...'}
           </span>
         </div>
@@ -472,12 +494,12 @@ export function FaceRekognitionLiveness({
     const permissionDenied = locationDiagnostic?.permission === 'denied' || (!permissionGranted && /blocked|denied/i.test(error))
     return (
       <div className={className}>
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center">
-          <p className="text-sm text-amber-200">{error}</p>
+        <div className={cn(softPanelClass, lightSurface ? 'border-amber-200 bg-amber-50' : '')}>
+          <p className={cn('text-sm font-semibold', lightSurface ? 'text-amber-800' : 'text-amber-200')}>{error}</p>
           {locationBrowserMessage ? (
-            <p className="mt-1 text-xs text-white/55">Browser message: {locationBrowserMessage}</p>
+            <p className={cn('mt-1 text-xs', lightSurface ? 'text-slate-500' : 'text-white/55')}>Browser message: {locationBrowserMessage}</p>
           ) : null}
-          <p className="mt-2 text-xs text-white/60">
+          <p className={cn('mt-2 text-xs', mutedTextClass)}>
             {locationError
               ? permissionDenied
                 ? 'Location is blocked in this browser for this HRIS site. Change the site permission to Allow, then retry.'
@@ -489,17 +511,17 @@ export function FaceRekognitionLiveness({
               : 'Ensure AWS Rekognition is configured and the backend can create liveness sessions.'}
           </p>
           {locationError && locationDiagnostic ? (
-            <div className="mx-auto mt-3 grid max-w-md grid-cols-2 gap-2 rounded-md border border-white/10 bg-black/20 p-3 text-left text-[11px] text-white/60">
+            <div className={cn('mx-auto mt-3 grid max-w-md grid-cols-2 gap-2 rounded-md p-3 text-left text-[11px]', lightSurface ? 'border border-slate-200 bg-white text-slate-500' : 'border border-white/10 bg-black/20 text-white/60')}>
               <span>Permission</span>
-              <b className="text-right text-white/80">{locationDiagnostic.permission || 'unknown'}</b>
+              <b className={cn('text-right', strongTextClass)}>{locationDiagnostic.permission || 'unknown'}</b>
               <span>Geolocation</span>
-              <b className="text-right text-white/80">{locationDiagnostic.geolocationAvailable ? 'available' : 'unavailable'}</b>
+              <b className={cn('text-right', strongTextClass)}>{locationDiagnostic.geolocationAvailable ? 'available' : 'unavailable'}</b>
               <span>HTTPS/local</span>
-              <b className="text-right text-white/80">{locationDiagnostic.https ? 'yes' : 'no'}</b>
+              <b className={cn('text-right', strongTextClass)}>{locationDiagnostic.https ? 'yes' : 'no'}</b>
               <span>Browser</span>
-              <b className="text-right text-white/80">{locationDiagnostic.browser || 'unknown'}</b>
+              <b className={cn('text-right', strongTextClass)}>{locationDiagnostic.browser || 'unknown'}</b>
               <span>OS</span>
-              <b className="text-right text-white/80">{locationDiagnostic.operatingSystem || 'unknown'}</b>
+              <b className={cn('text-right', strongTextClass)}>{locationDiagnostic.operatingSystem || 'unknown'}</b>
             </div>
           ) : null}
           <Button variant="outline" size="sm" className="mt-3" onClick={fetchSession}>
@@ -519,15 +541,15 @@ export function FaceRekognitionLiveness({
   if (!hasCognitoId) {
     return (
       <div className={className}>
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-center">
-          <p className="text-sm font-medium text-amber-200">Face Liveness requires Cognito Identity Pool</p>
-          <p className="mt-2 text-xs text-white/60">
-            Set <code className="rounded bg-white/10 px-1">VITE_COGNITO_IDENTITY_POOL_ID</code> and{' '}
-            <code className="rounded bg-white/10 px-1">VITE_AWS_REGION</code> in the frontend <code className="rounded bg-white/10 px-1">.env</code>.
+        <div className={cn(softPanelClass, lightSurface ? 'border-amber-200 bg-amber-50' : '')}>
+          <p className={cn('text-sm font-medium', lightSurface ? 'text-amber-800' : 'text-amber-200')}>Face Liveness requires Cognito Identity Pool</p>
+          <p className={cn('mt-2 text-xs', mutedTextClass)}>
+            Set <code className={cn('rounded px-1', lightSurface ? 'bg-slate-200 text-slate-800' : 'bg-white/10')}>VITE_COGNITO_IDENTITY_POOL_ID</code> and{' '}
+            <code className={cn('rounded px-1', lightSurface ? 'bg-slate-200 text-slate-800' : 'bg-white/10')}>VITE_AWS_REGION</code> in the frontend <code className={cn('rounded px-1', lightSurface ? 'bg-slate-200 text-slate-800' : 'bg-white/10')}>.env</code>.
             The Identity Pool must allow unauthenticated access and its IAM role must have{' '}
-            <code className="rounded bg-white/10 px-1">rekognition:StartFaceLivenessSession</code>.
+            <code className={cn('rounded px-1', lightSurface ? 'bg-slate-200 text-slate-800' : 'bg-white/10')}>rekognition:StartFaceLivenessSession</code>.
           </p>
-          <p className="mt-2 text-xs text-white/50">
+          <p className={cn('mt-2 text-xs', lightSurface ? 'text-slate-500' : 'text-white/50')}>
             See backend <code>.env.example</code> or AWS Rekognition Face Liveness docs.
           </p>
           <Button variant="outline" size="sm" className="mt-3" onClick={fetchSession}>
@@ -541,13 +563,13 @@ export function FaceRekognitionLiveness({
   return (
     <div className={className || ''}>
       {!onVerified && !kioskMode && (
-        <div className="mb-3 flex items-center justify-between gap-3 rounded-md border border-white/10 bg-black/20 px-3 py-2">
-          <span className="text-xs text-white/60">This device</span>
+        <div className={cn('mb-3 flex items-center justify-between gap-3 rounded-md border px-3 py-2', lightSurface ? 'border-slate-200 bg-slate-50' : 'border-white/10 bg-black/20')}>
+          <span className={cn('text-xs', mutedTextClass)}>This device</span>
           <select
             value={attendanceDeviceProfile}
             onChange={(event) => selectAttendanceDeviceProfile(event.target.value)}
             disabled={submitting || silentSessionRefresh}
-            className="h-8 rounded-md border border-white/15 bg-slate-950 px-2 text-xs text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+            className={smallSelectClass}
           >
             <option value="desktop">Desktop</option>
             <option value="laptop">Laptop</option>
@@ -557,7 +579,7 @@ export function FaceRekognitionLiveness({
         </div>
       )}
       {!hideInstruction && (
-        <p className="text-center text-[11px] text-white/60">
+        <p className={cn('text-center text-[11px]', instructionClass)}>
           {instructionText ??
             (onVerified
               ? 'Complete the face liveness check to verify your identity.'
@@ -567,32 +589,32 @@ export function FaceRekognitionLiveness({
         </p>
       )}
       {!onVerified && geofenceDebug && (
-        <div className="mb-3 mt-2 grid grid-cols-2 gap-2 rounded-md border border-white/10 bg-black/25 p-3 text-[11px] text-white/60">
+        <div className={cn('mb-3 mt-2 grid grid-cols-2 gap-2 rounded-md border p-3 text-[11px]', lightSurface ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-white/10 bg-black/25 text-white/60')}>
           <span>Current GPS</span>
-          <b className="text-right text-white/80">
+          <b className={cn('text-right', strongTextClass)}>
             {geofenceDebug.latitude != null && geofenceDebug.longitude != null
               ? `${Number(geofenceDebug.latitude).toFixed(6)}, ${Number(geofenceDebug.longitude).toFixed(6)}`
               : '-'}
           </b>
           <span>Accuracy</span>
-          <b className="text-right text-white/80">{geofenceDebug.accuracy != null ? `${Math.round(Number(geofenceDebug.accuracy))}m` : '-'}</b>
+          <b className={cn('text-right', strongTextClass)}>{geofenceDebug.accuracy != null ? `${Math.round(Number(geofenceDebug.accuracy))}m` : '-'}</b>
           <span>Branch</span>
-          <b className="text-right text-white/80">{geofenceDebug.branch || '-'}</b>
+          <b className={cn('text-right', strongTextClass)}>{geofenceDebug.branch || '-'}</b>
           <span>Geofence</span>
-          <b className="text-right text-white/80">{geofenceDebug.geofence || '-'}</b>
+          <b className={cn('text-right', strongTextClass)}>{geofenceDebug.geofence || '-'}</b>
           <span>Distance</span>
-          <b className="text-right text-white/80">{geofenceDebug.distance != null ? `${Math.round(Number(geofenceDebug.distance))}m` : '-'}</b>
+          <b className={cn('text-right', strongTextClass)}>{geofenceDebug.distance != null ? `${Math.round(Number(geofenceDebug.distance))}m` : '-'}</b>
           <span>Radius</span>
-          <b className="text-right text-white/80">{geofenceDebug.radius != null ? `${Math.round(Number(geofenceDebug.radius))}m` : '-'}</b>
+          <b className={cn('text-right', strongTextClass)}>{geofenceDebug.radius != null ? `${Math.round(Number(geofenceDebug.radius))}m` : '-'}</b>
           <span>Result</span>
-          <b className={geofenceDebug.status === 'inside' ? 'text-right text-emerald-300' : 'text-right text-amber-300'}>
+          <b className={geofenceDebug.status === 'inside' ? 'text-right text-emerald-600 dark:text-emerald-300' : 'text-right text-amber-600 dark:text-amber-300'}>
             {(geofenceDebug.status || 'unknown').toUpperCase()}
           </b>
         </div>
       )}
       {!apiError && (
-        <div className="relative w-full overflow-hidden rounded-lg border border-white/10 bg-black/20">
-          <ThemeProvider colorMode="dark">
+        <div className={cn('relative w-full overflow-hidden rounded-lg border', lightSurface ? 'border-slate-200 bg-white' : 'border-white/10 bg-black/20')}>
+          <ThemeProvider colorMode={lightSurface ? 'light' : 'dark'}>
             <FaceLivenessDetector
               key={session.sessionId}
               sessionId={session.sessionId}
@@ -602,34 +624,34 @@ export function FaceRekognitionLiveness({
             />
           </ThemeProvider>
           {(submitting || kioskSuccess || silentSessionRefresh) && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80">
+            <div className={cn('absolute inset-0 flex flex-col items-center justify-center gap-3', lightSurface ? 'bg-white/85 text-slate-900' : 'bg-black/80')}>
               {kioskSuccess ? (
                 <>
-                  <CheckCircle2 className="size-10 text-emerald-400" aria-hidden />
-                  <span className="text-sm font-medium text-white">
+                  <CheckCircle2 className="size-10 text-emerald-500" aria-hidden />
+                  <span className={cn('text-sm font-medium', strongTextClass)}>
                     {kioskSuccessPhase === 'closing' ? 'Closing…' : 'Verified successfully'}
                   </span>
                 </>
               ) : silentSessionRefresh ? (
                 <>
-                  <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
-                  <span className="text-sm font-medium text-white">Preparing another try…</span>
+                  <Loader2 className={cn('size-10 animate-spin', lightSurface ? 'text-orange-500' : 'text-emerald-400')} aria-hidden />
+                  <span className={cn('text-sm font-medium', strongTextClass)}>Preparing another try…</span>
                 </>
               ) : onVerified ? (
                 <>
-                  <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
-                  <span className="text-sm font-medium text-white">Registering face…</span>
-                  <span className="max-w-[18rem] text-center text-[11px] text-white/65">
+                  <Loader2 className={cn('size-10 animate-spin', lightSurface ? 'text-orange-500' : 'text-emerald-400')} aria-hidden />
+                  <span className={cn('text-sm font-medium', strongTextClass)}>Registering face…</span>
+                  <span className={cn('max-w-[18rem] text-center text-[11px]', mutedTextClass)}>
                     Generating your face template and checking for duplicates. This may take up to 30 seconds.
                   </span>
                 </>
               ) : (
                 <>
-                  <Loader2 className="size-10 animate-spin text-emerald-400" aria-hidden />
-                  <span className="text-sm font-medium text-white">
+                  <Loader2 className={cn('size-10 animate-spin', lightSurface ? 'text-orange-500' : 'text-emerald-400')} aria-hidden />
+                  <span className={cn('text-sm font-medium', strongTextClass)}>
                     {verifyPhase === 'verify' ? 'Verifying liveness…' : 'Matching your face…'}
                   </span>
-                  <span className="max-w-[18rem] text-center text-[11px] text-white/65">
+                  <span className={cn('max-w-[18rem] text-center text-[11px]', mutedTextClass)}>
                     {verifyPhase === 'verify'
                       ? "Hold still — confirming it's a live face."
                       : 'Comparing your face against enrolled profiles…'}

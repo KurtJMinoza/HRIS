@@ -150,6 +150,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/skills/suggestions', [SkillSuggestionController::class, 'index']);
 
     Route::post('/attendance', [AttendanceController::class, 'record']);
+    Route::post('/attendance/face', [AttendanceController::class, 'scanAuthenticatedFace']);
     Route::post('/attendance/geofence/validate', [GeofenceController::class, 'validateAttendance']);
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/attendance/summary', [AttendanceController::class, 'summary']);

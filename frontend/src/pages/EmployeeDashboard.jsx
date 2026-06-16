@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, QrCode, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info } from 'lucide-react'
+import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
 import {
   Dialog,
   DialogContent,
@@ -196,7 +197,7 @@ function getCalendarDayVisual(record, dateKey, ctx) {
 
   /** Neutral frame + soft tint; status is plain text (no pill chrome). */
   const baseGridCell =
-    'touch-manipulation group relative flex h-full min-h-[4rem] w-full min-w-0 max-w-full flex-col rounded-lg border border-border bg-card p-2 text-left shadow-[0_8px_18px_-18px_rgba(15,23,42,0.7)] @sm:min-h-[4.75rem] @sm:p-2.5 transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-1 ring-offset-background hover:border-border/80 hover:bg-muted/35 active:scale-[0.995] dark:bg-card/80'
+    'touch-manipulation group relative flex h-full min-h-[3.65rem] w-full min-w-0 max-w-full flex-col rounded-lg border border-border bg-card p-1.5 text-left shadow-[0_8px_18px_-18px_rgba(15,23,42,0.7)] @sm:min-h-[4.75rem] @sm:p-2.5 transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-1 ring-offset-background hover:border-border/80 hover:bg-muted/35 active:scale-[0.995] dark:bg-card/80'
 
   /** Plain label: color only, no borders or badge backgrounds. */
   const L = {
@@ -418,15 +419,15 @@ function LiveClock() {
   const time = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
   const date = now.toLocaleDateString('en-PH', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
   return (
-    <div className="shrink-0 rounded-xl border border-border bg-card px-5 py-4 shadow-sm dark:bg-card/85">
-      <p className="flex items-baseline gap-2.5 text-3xl font-extrabold tabular-nums tracking-tight text-foreground @md:text-4xl @lg:text-5xl">
+    <div className="w-full shrink-0 rounded-xl border border-border bg-card px-4 py-3 shadow-sm @sm:px-5 @sm:py-4 @lg:w-auto dark:bg-card/85">
+      <p className="flex min-w-0 flex-wrap items-baseline gap-2 text-2xl font-extrabold tabular-nums tracking-tight text-foreground @sm:flex-nowrap @sm:text-3xl @md:text-4xl @lg:text-5xl">
         {time}
         <span
           className="inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.25)] animate-pulse @md:h-2.5 @md:w-2.5"
           aria-hidden
         />
       </p>
-      <p className="mt-1 text-sm font-medium text-muted-foreground @md:text-base">{date}</p>
+      <p className="mt-1 text-xs font-medium text-muted-foreground @sm:text-sm @md:text-base">{date}</p>
     </div>
   )
 }
@@ -451,6 +452,8 @@ export default function EmployeeDashboard() {
   const [monthOtRequests, setMonthOtRequests] = useState([])
   const [otDetailsOpen, setOtDetailsOpen] = useState(false)
   const [otNoticeDismissed, setOtNoticeDismissed] = useState(false)
+  const [faceAttendanceOpen, setFaceAttendanceOpen] = useState(false)
+  const [faceAttendanceType, setFaceAttendanceType] = useState('clock_in')
   const [selectedDay, setSelectedDay] = useState(DEFAULT_CALENDAR_VALUE)
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear())
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth())
@@ -1084,6 +1087,14 @@ export default function EmployeeDashboard() {
   }, [summary, prevSummary])
 
   const scheduleAssigned = summary?.schedule_assigned !== false
+  const todayTimeIn = summary?.today?.time_in
+  const todayTimeOut = summary?.today?.time_out
+  const todayStatus = summary?.today?.status
+  const canClockWithFace =
+    scheduleAssigned &&
+    !['leave', 'rest', 'rest_day', 'no_schedule_rest'].includes(String(todayStatus || '')) &&
+    !(todayTimeIn && todayTimeOut)
+  const faceClockType = todayTimeIn && !todayTimeOut ? 'clock_out' : 'clock_in'
 
   const currentStatus = useMemo(() => {
     const t = summary?.today
@@ -1263,16 +1274,37 @@ export default function EmployeeDashboard() {
     return typeof hours === 'number' && Number.isFinite(hours) ? hours : null
   }
 
+  function openFaceAttendance(type = faceClockType) {
+    setFaceAttendanceType(type)
+    setFaceAttendanceOpen(true)
+  }
+
+  async function handleFaceAttendanceSuccess(data) {
+    setFaceAttendanceOpen(false)
+    calendarCacheRef.current.clear()
+    await Promise.all([
+      loadDashboardSummary({ soft: true }),
+      loadAttendanceCalendar(calendarYear, calendarMonth, { force: true }),
+      refreshUser?.(),
+    ])
+    window.dispatchEvent(new CustomEvent('hr:attendance-recorded', {
+      detail: {
+        source: 'employee_dashboard_face',
+        type: data?.attendance?.type || faceAttendanceType,
+      },
+    }))
+  }
+
   return (
     <Motion.div
-      className="space-y-4 text-[15px] text-foreground"
+      className="min-w-0 max-w-full space-y-3 text-sm text-foreground @sm:space-y-4 @md:text-[15px]"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
     >
       {/* Welcome + live clock */}
       <Motion.div
-        className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between"
+        className="flex min-w-0 flex-col gap-3 @sm:gap-4 @lg:flex-row @lg:items-start @lg:justify-between"
         variants={itemVariants}
         initial="hidden"
         whileInView="visible"
@@ -1281,7 +1313,7 @@ export default function EmployeeDashboard() {
       >
         <div className="min-w-0 space-y-2">
           <div>
-            <h2 className="text-2xl font-extrabold tracking-tight text-foreground @md:text-[1.7rem]">
+            <h2 className="text-xl font-extrabold tracking-tight text-foreground wrap-break-word @sm:text-2xl @md:text-[1.7rem]">
               Welcome back, {employeeDisplayName} <span className="align-middle text-xl">{'\u{1F44B}'}</span>
             </h2>
             {user?.position && (
@@ -1289,34 +1321,46 @@ export default function EmployeeDashboard() {
                 {user.position}
               </p>
             )}
-            <p className="mt-2 text-[15px] text-muted-foreground">
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground @sm:text-[15px]">
               Track your time, review your logs, and stay on top of your schedule.
             </p>
           </div>
           {currentStatus && (
-            <div className="inline-flex w-full flex-wrap items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm transition-opacity duration-200 @sm:w-auto dark:bg-card/85">
+            <div className="inline-flex w-full flex-wrap items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm transition-opacity duration-200 @md:w-auto dark:bg-card/85">
               <div className="flex w-full flex-wrap items-center gap-2 @sm:w-auto">
                 <span className={`inline-flex h-2 w-2 shrink-0 rounded-full ${currentStatus.dotClass}`} />
                 <span className="font-semibold text-foreground">{currentStatus.label}</span>
                 {currentStatus.detail && (
-                  <span className="w-full text-muted-foreground @sm:w-auto @sm:pl-1">- {currentStatus.detail}</span>
+                  <span className="w-full text-muted-foreground @md:w-auto @md:pl-1">- {currentStatus.detail}</span>
                 )}
               </div>
-              {(currentStatus.label === 'Not started' || currentStatus.label === 'No activity yet today') && scheduleAssigned && (
+              {canClockWithFace && (
                 <div className="flex w-full flex-wrap items-center gap-2">
-                  <Button
-                    size="sm"
-                    className="h-8 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:w-auto"
-                    onClick={() => navigate('/employee/attendance?action=clock_in')}
-                  >
-                    <QrCode className="size-3.5" />
-                    Clock In
-                  </Button>
-                  {!user?.has_face && (
+                  {user?.has_face ? (
+                    <>
+                      <Button
+                        size="sm"
+                        className="h-9 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:h-8 @sm:w-auto"
+                        onClick={() => openFaceAttendance('clock_in')}
+                      >
+                        <ScanFace className="size-3.5" />
+                        Face Clock In
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-9 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:h-8 @sm:w-auto"
+                        onClick={() => openFaceAttendance('clock_out')}
+                      >
+                        <ScanFace className="size-3.5" />
+                        Face Clock Out
+                      </Button>
+                    </>
+                  ) : (
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-8 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:w-auto"
+                      className="h-9 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:h-8 @sm:w-auto"
                       onClick={() => navigate('/employee/qr')}
                     >
                       <ScanFace className="size-3.5" />
@@ -1328,7 +1372,7 @@ export default function EmployeeDashboard() {
             </div>
           )}
         </div>
-        <div className="flex w-full flex-wrap items-stretch justify-start @lg:w-auto @lg:justify-end">
+        <div className="flex w-full min-w-0 flex-wrap items-stretch justify-start @lg:w-auto @lg:justify-end">
           <LiveClock />
         </div>
       </Motion.div>
@@ -1343,7 +1387,7 @@ export default function EmployeeDashboard() {
         </Motion.div>
       )}
       <Motion.div
-        className="grid gap-4 @lg:grid-cols-2 @xl:grid-cols-[minmax(0,1.65fr)_minmax(240px,0.95fr)_minmax(280px,1.08fr)]"
+        className="grid min-w-0 gap-3 @md:grid-cols-2 @lg:gap-4 @xl:grid-cols-[minmax(0,1.65fr)_minmax(240px,0.95fr)_minmax(280px,1.08fr)]"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1352,8 +1396,8 @@ export default function EmployeeDashboard() {
       >
         {/* Today — primary, elevated */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-        <Card className="min-h-[11.2rem] overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] dark:bg-card/85">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] @sm:min-h-[11.2rem] dark:bg-card/85">
+          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pb-2">
             <div className="flex flex-wrap items-center gap-2">
               <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-foreground">
                 Today
@@ -1375,16 +1419,16 @@ export default function EmployeeDashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-3xl font-extrabold tracking-tight text-foreground @md:text-4xl">
+            <div className="flex flex-col gap-1 @sm:flex-row @sm:items-baseline @sm:justify-between @sm:gap-2">
+              <span className="text-2xl font-extrabold tracking-tight text-foreground @sm:text-3xl @md:text-4xl">
                 {loading ? '—' : formatTodayStatus()}
               </span>
-              <span className="shrink-0 text-sm font-medium text-muted-foreground">
+              <span className="shrink-0 text-xs font-medium text-muted-foreground @sm:text-sm">
                 {formatTodayDate(summary?.today?.date)}
               </span>
             </div>
             {!loading && formatTodayContext() && (
-              <p className="mt-2 text-base text-muted-foreground transition-opacity duration-200">
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground transition-opacity duration-200 @sm:text-base">
                 {formatTodayContext()}
               </p>
             )}
@@ -1393,7 +1437,7 @@ export default function EmployeeDashboard() {
         </Motion.div>
         {/* Today's Time — secondary */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
-        <Card className="min-h-[11.2rem] overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
+        <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] @sm:min-h-[11.2rem] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
               Today&apos;s Time
@@ -1448,7 +1492,7 @@ export default function EmployeeDashboard() {
           </CardContent>
         </Card>
         </Motion.div>
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@xl:row-span-2">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:col-span-2 @xl:col-span-1 @xl:row-span-2">
         <Card className="h-full overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] dark:bg-card/85">
           <CardHeader className="space-y-3 pb-2">
             <div className="flex items-start justify-between gap-3">
@@ -1510,7 +1554,7 @@ export default function EmployeeDashboard() {
               transition={{ duration: 0.24, ease: [0.25, 0.1, 0.25, 1] }}
               className="space-y-3"
             >
-              <div className="grid grid-cols-2 gap-3 text-base">
+              <div className="grid grid-cols-2 gap-3 text-sm @sm:text-base">
                 <div>
                   <div className="text-sm text-muted-foreground">Late days</div>
                   <div className="mt-0.5 text-lg font-medium">
@@ -1540,7 +1584,7 @@ export default function EmployeeDashboard() {
                 <p className="mb-2.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Overtime (selected month)
                 </p>
-                <div className="grid grid-cols-3 gap-2 divide-x divide-border/50 text-center">
+                <div className="grid grid-cols-1 gap-2 text-center @sm:grid-cols-3 @sm:divide-x @sm:divide-border/50">
                   <div className="px-1">
                     <div className="text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:text-amber-300/90">
                       Pending
@@ -1589,7 +1633,7 @@ export default function EmployeeDashboard() {
               </Button>
             </Motion.div>
             {monthTrend && (
-              <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
+              <div className="mt-3 flex flex-col gap-1 text-sm text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
                 <span className={`inline-flex items-center gap-1 font-medium ${monthTrend.colorClass}`}>
                   {monthTrend.direction === 'up' ? (
                     <ArrowUpRight className="size-3.5" />
@@ -1732,7 +1776,7 @@ export default function EmployeeDashboard() {
                 )}
                 <p className="pt-0.5">Total detected OT: {summary.today.ot_detection.total_extra_label}.</p>
               </div>
-              <div className="mt-2.5 flex gap-2">
+          <div className="mt-2.5 flex flex-col gap-2 @sm:flex-row @sm:flex-wrap">
                 {(() => {
                   const hasPre = Boolean(summary.today.ot_detection.pre_shift)
                   const hasPost = Boolean(summary.today.ot_detection.post_shift)
@@ -1742,14 +1786,14 @@ export default function EmployeeDashboard() {
                       <>
                         <Button
                           size="sm"
-                          className="h-8 px-3 text-xs"
+                          className="h-9 w-full px-3 text-xs @sm:h-8 @sm:w-auto"
                           onClick={() => navigate(`/employee/overtime?date=${encodeURIComponent(todayDate)}&segments=pre_shift`)}
                         >
                           File pre-shift
                         </Button>
                         <Button
                           size="sm"
-                          className="h-8 px-3 text-xs"
+                          className="h-9 w-full px-3 text-xs @sm:h-8 @sm:w-auto"
                           onClick={() => navigate(`/employee/overtime?date=${encodeURIComponent(todayDate)}&segments=post_shift`)}
                         >
                           File post-shift
@@ -1760,7 +1804,7 @@ export default function EmployeeDashboard() {
                   return (
                     <Button
                       size="sm"
-                      className="h-8 px-3 text-xs"
+                      className="h-9 w-full px-3 text-xs @sm:h-8 @sm:w-auto"
                       onClick={() => navigate('/employee/overtime')}
                     >
                       File OT
@@ -1770,7 +1814,7 @@ export default function EmployeeDashboard() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-8 px-3 text-xs text-amber-700 hover:bg-amber-200/40 hover:text-amber-800 dark:text-amber-400 dark:hover:bg-amber-800/30"
+                  className="h-9 w-full px-3 text-xs text-amber-700 hover:bg-amber-200/40 hover:text-amber-800 @sm:h-8 @sm:w-auto dark:text-amber-400 dark:hover:bg-amber-800/30"
                   onClick={() => setOtNoticeDismissed(true)}
                 >
                   Ignore
@@ -1802,14 +1846,14 @@ export default function EmployeeDashboard() {
       )}
 
       <Motion.div
-        className="flex flex-col gap-3 rounded-xl border border-border bg-card px-5 py-4 text-base shadow-[0_12px_30px_-24px_rgba(15,23,42,0.7)] @sm:flex-row @sm:items-center @sm:justify-between dark:bg-card/85"
+        className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-4 text-sm shadow-[0_12px_30px_-24px_rgba(15,23,42,0.7)] @sm:flex-row @sm:items-center @sm:justify-between @md:px-5 @md:text-base dark:bg-card/85"
         variants={itemVariants}
         initial="hidden"
         whileInView="visible"
         viewport={scrollViewport}
         transition={scrollRevealTransition}
       >
-        <p className="flex items-center gap-3 text-sm text-muted-foreground">
+        <p className="flex min-w-0 items-start gap-3 text-sm text-muted-foreground @sm:items-center">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-orange-200 bg-orange-50 text-orange-600">
             <Zap className="size-4" />
           </span>
@@ -1839,12 +1883,46 @@ export default function EmployeeDashboard() {
           >
             File overtime
           </Button>
+          {user?.has_face ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-10 w-full gap-2 rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
+                onClick={() => openFaceAttendance('clock_in')}
+                disabled={!canClockWithFace}
+              >
+                <ScanFace className="size-4" />
+                Face Clock In
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-10 w-full gap-2 rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
+                onClick={() => openFaceAttendance('clock_out')}
+                disabled={!canClockWithFace}
+              >
+                <ScanFace className="size-4" />
+                Face Clock Out
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-10 w-full gap-2 rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
+              onClick={() => navigate('/employee/qr')}
+            >
+              <ScanFace className="size-4" />
+              Register Face
+            </Button>
+          )}
         </div>
       </Motion.div>
 
       {/* Attendance calendar */}
       <Motion.div
-        className="grid gap-6 @xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]"
+        className="grid min-w-0 gap-4 @lg:gap-6 @xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1853,7 +1931,7 @@ export default function EmployeeDashboard() {
       >
         <Motion.div variants={itemVariants}>
           <Card className="overflow-hidden rounded-xl border-border bg-card shadow-[0_14px_36px_-26px_rgba(15,23,42,0.8)] dark:bg-card/85">
-            <CardHeader className="bg-card dark:bg-card/85">
+            <CardHeader className="bg-card px-4 @md:px-6 dark:bg-card/85">
               <CardTitle className="flex items-center gap-3 text-lg font-extrabold tracking-tight text-foreground @md:text-xl">
                 <span className="flex size-7 items-center justify-center rounded-lg bg-orange-50 text-orange-600">
                   <CalendarDays className="size-4" />
@@ -1866,7 +1944,7 @@ export default function EmployeeDashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 p-0">
-              <div className="bg-card px-3 py-2.5 @sm:px-4 md:px-6 dark:bg-card/85">
+              <div className="bg-card px-2.5 py-2.5 @sm:px-4 md:px-6 dark:bg-card/85">
                 <div className="mx-auto flex w-full max-w-6xl min-w-0 items-center justify-center gap-0.5 rounded-xl border border-border bg-card p-1 dark:bg-card/85">
                   <Button
                     type="button"
@@ -1903,13 +1981,13 @@ export default function EmployeeDashboard() {
                   </div>
                 )}
               </div>
-              <div className="mt-2 space-y-2 px-3 pb-3 @sm:px-4 md:pb-4">
+              <div className="mt-2 space-y-2 px-2.5 pb-3 @sm:px-4 md:pb-4">
                 <div className="mx-auto w-full max-w-6xl min-w-0 overflow-x-auto @sm:overflow-x-visible">
-                  <div className="grid w-full min-w-[320px] grid-cols-7 grid-rows-[auto_repeat(6,minmax(4.25rem,1fr))] gap-2 @sm:min-w-0 @sm:grid-rows-[auto_repeat(6,minmax(5rem,1fr))]">
+                  <div className="grid w-full min-w-[276px] grid-cols-7 grid-rows-[auto_repeat(6,minmax(3.9rem,1fr))] gap-1.5 @sm:min-w-0 @sm:grid-rows-[auto_repeat(6,minmax(5rem,1fr))] @sm:gap-2">
                     {WEEKDAYS.map((w) => (
                       <div
                         key={w}
-                        className="min-w-0 rounded-md bg-card px-1.5 py-2 text-center text-[10px] font-extrabold uppercase leading-tight tracking-wide text-muted-foreground @sm:py-2.5 @sm:text-xs"
+                        className="min-w-0 rounded-md bg-card px-1 py-1.5 text-center text-[9px] font-extrabold uppercase leading-tight tracking-wide text-muted-foreground @sm:px-1.5 @sm:py-2.5 @sm:text-xs"
                       >
                         {w}
                       </div>
@@ -1934,14 +2012,14 @@ export default function EmployeeDashboard() {
                       const tooltipTitle = lines.length ? lines.join('\n') : undefined
 
                       return (
-                        <div key={`${key}-${idx}`} className="flex min-h-17 min-w-0 @sm:min-h-20">
+                        <div key={`${key}-${idx}`} className="flex min-h-15 min-w-0 @sm:min-h-20">
                           <button
                             type="button"
                             title={tooltipTitle}
                             onClick={() => setSelectedDay(new Date(cell.year, cell.month, cell.day))}
                             className={cn(
                               visual.tileClass,
-                              'text-base',
+                              'text-sm @sm:text-base',
                               isToday && 'ring-1 ring-orange-500 ring-offset-2 ring-offset-background',
                               isSelected &&
                                 'z-1 border-orange-500 ring-1 ring-orange-300 ring-offset-1 ring-offset-background',
@@ -1951,12 +2029,12 @@ export default function EmployeeDashboard() {
                             <div className="flex items-start justify-between gap-1">
                               <span
                                 className={cn(
-                                  'text-base font-semibold tabular-nums leading-none tracking-tight @sm:text-lg',
+                                  'text-sm font-semibold tabular-nums leading-none tracking-tight @sm:text-lg',
                                   cell.isAdjacent && !record && 'text-muted-foreground/80',
                                 )}
                               >
                                 {isToday ? (
-                                  <span className="inline-flex min-w-8 items-center justify-center rounded-md bg-orange-500 px-2 py-0.5 text-sm font-semibold text-white @sm:min-w-9 @sm:px-2.5 @sm:text-base">
+                                  <span className="inline-flex min-w-6 items-center justify-center rounded-md bg-orange-500 px-1.5 py-0.5 text-xs font-semibold text-white @sm:min-w-9 @sm:px-2.5 @sm:text-base">
                                     {cell.day}
                                   </span>
                                 ) : (
@@ -1964,7 +2042,7 @@ export default function EmployeeDashboard() {
                                 )}
                               </span>
                               {cell.isAdjacent && (
-                                <span className="shrink-0 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                                <span className="shrink-0 text-[8px] font-medium uppercase tracking-wide text-muted-foreground @sm:text-[9px]">
                                   {monthShort}
                                 </span>
                               )}
@@ -1973,7 +2051,7 @@ export default function EmployeeDashboard() {
                               <div className="mt-auto space-y-1 pt-1">
                                 <span className={visual.badgeClass}>{visual.badge}</span>
                                 {timeLines.length > 0 && (
-                                  <div className="space-y-0.5 text-left text-[9px] font-semibold leading-tight text-muted-foreground @sm:text-[10px]">
+                                  <div className="hidden space-y-0.5 text-left text-[9px] font-semibold leading-tight text-muted-foreground @sm:block @sm:text-[10px]">
                                     {timeLines.map((row) => (
                                       <div key={row.label} className="truncate tabular-nums">
                                         <span className="uppercase tracking-wide">{row.label}:</span>{' '}
@@ -2007,7 +2085,7 @@ export default function EmployeeDashboard() {
               </CardTitle>
               <CardDescription className="text-sm text-muted-foreground">Upcoming holidays</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 px-4 @md:px-6">
               <div className="space-y-2">
                 {holidayLoading ? (
                   Array.from({ length: 3 }).map((_, index) => (
@@ -2019,7 +2097,7 @@ export default function EmployeeDashboard() {
                     return (
                       <div
                         key={`${holiday.date}-${holiday.name}-${holiday.scope || 'nationwide'}`}
-                        className="flex items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-3 shadow-sm dark:bg-card/70"
+                        className="flex min-w-0 items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-3 shadow-sm dark:bg-card/70"
                       >
                         <div className="flex w-12 shrink-0 flex-col items-center justify-center rounded-lg bg-orange-50 px-2 py-1.5 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300">
                           <span className="text-[10px] font-extrabold uppercase tracking-wide">{dateParts.month}</span>
@@ -2098,7 +2176,7 @@ export default function EmployeeDashboard() {
         }}
       >
         <DialogContent
-          className="max-w-md rounded-2xl border-border sm:max-w-md"
+          className="w-[calc(100vw-1rem)] max-w-md rounded-2xl border-border sm:max-w-md"
           innerClassName="gap-0 p-0 pr-0"
           closeButtonClassName="right-4 top-4 bg-card/95"
           onPointerDown={(event) => {
@@ -2107,7 +2185,7 @@ export default function EmployeeDashboard() {
         >
           {selectedDayDetails && (
             <>
-              <DialogHeader className="border-b border-border/70 bg-gradient-to-br from-orange-50 via-card to-card px-5 py-5 pr-16 text-left dark:from-orange-500/10 dark:via-card dark:to-card">
+              <DialogHeader className="border-b border-border/70 bg-linear-to-br from-orange-50 via-card to-card px-5 py-5 pr-16 text-left dark:from-orange-500/10 dark:via-card dark:to-card">
                 <div className="flex items-center gap-3">
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-300">
                     <CalendarDays className="size-5" />
@@ -2239,7 +2317,7 @@ export default function EmployeeDashboard() {
       </Dialog>
 
       <Dialog open={otDetailsOpen} onOpenChange={setOtDetailsOpen}>
-        <DialogContent className="max-w-lg sm:max-w-2xl" innerClassName="gap-0">
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-lg sm:max-w-2xl" innerClassName="gap-0">
           <DialogHeader className="pb-2 pr-2">
             <DialogTitle className="text-lg font-semibold tracking-tight">Overtime — {getMonthLabel()}</DialogTitle>
             <DialogDescription>
@@ -2247,7 +2325,7 @@ export default function EmployeeDashboard() {
               selected above. Times are shown in 12-hour form (your attendance timezone).
             </DialogDescription>
           </DialogHeader>
-          <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl border border-border/60 bg-muted/20 p-3 text-center">
+          <div className="mt-2 grid grid-cols-1 gap-2 rounded-xl border border-border/60 bg-muted/20 p-3 text-center @sm:grid-cols-3">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300/90">
                 Pending
@@ -2372,6 +2450,36 @@ export default function EmployeeDashboard() {
             <Button type="button" onClick={() => { setOtDetailsOpen(false); navigate('/employee/overtime') }}>
               File or manage OT
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={faceAttendanceOpen} onOpenChange={setFaceAttendanceOpen}>
+        <DialogContent
+          className="w-[calc(100vw-1rem)] max-w-2xl overflow-hidden rounded-2xl border-border bg-card p-0 text-card-foreground shadow-xl"
+          innerClassName="gap-0 p-0"
+        >
+          <DialogHeader className="border-b border-border/70 bg-card px-5 py-4 text-left">
+            <DialogTitle className="flex items-center gap-2 text-lg font-extrabold text-foreground">
+              <ScanFace className="size-5 text-orange-600" />
+              {faceAttendanceType === 'clock_out' ? 'Face Clock Out' : 'Face Clock In'}
+            </DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              Complete face liveness to record your {faceAttendanceType === 'clock_out' ? 'clock-out' : 'clock-in'} for today.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="bg-card px-4 py-5 @sm:px-6">
+            {faceAttendanceOpen ? (
+              <FaceRekognitionLiveness
+                kioskMode
+                authenticatedAttendance
+                surface="light"
+                kioskType={faceAttendanceType}
+                onKioskSuccess={handleFaceAttendanceSuccess}
+                onKioskCancel={() => setFaceAttendanceOpen(false)}
+                instructionText="Face the camera straight, align your face in the frame, and hold still in good lighting."
+              />
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

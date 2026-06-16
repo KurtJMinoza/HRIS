@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Sanctum SPA stateful middleware (cookies + CSRF for first-party frontend)
         $middleware->statefulApi();
+        $middleware->redirectGuestsTo(fn (Request $request): ?string => null);
 
         $middleware->alias([
             'admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,

@@ -1574,6 +1574,28 @@ class AttendanceController extends Controller
      * Kiosk face scan: Amazon Rekognition Face Liveness session or legacy image.
      * Verify liveness → extract descriptor → identify user → record attendance.
      */
+    public function scanAuthenticatedFace(Request $request): JsonResponse
+    {
+        /** @var User|null $user */
+        $user = $request->user();
+        if (! $user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $login = $user->email ?: $user->username;
+        if (! $login) {
+            return response()->json([
+                'message' => 'Your account needs an email or username before using face attendance.',
+                'errors' => ['face' => ['Your account needs an email or username before using face attendance.']],
+                'error_code' => 'face_login_identifier_missing',
+            ], 422);
+        }
+
+        $request->merge(['login' => $login]);
+
+        return $this->scanFace($request);
+    }
+
     public function scanFace(Request $request): JsonResponse
     {
         $serverReceivedAt = $this->markAttendanceRequestReceived($request);

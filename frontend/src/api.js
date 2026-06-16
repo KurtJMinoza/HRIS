@@ -7040,6 +7040,52 @@ export async function recordAttendanceKioskFace(type, payload) {
 }
 
 /**
+ * Record clock in/out by face for the authenticated employee.
+ * Uses Rekognition liveness and binds the face match to the logged-in account.
+ * @param {'clock_in'|'clock_out'} type
+ * @param {{ liveness_session_id?: string, image_base64?: string } | string} payload
+ */
+export async function recordAttendanceFace(type, payload) {
+  const attempt = attendanceAttemptPayload(payload || {}, 'face')
+  const location = payload?.latitude == null && payload?.longitude == null
+    ? geolocationPayload((await prepareAttendanceLocation({
+        method: 'face',
+        validate: true,
+        clock_type: type,
+        device_type: payload?.device_type ?? payload?.deviceType,
+        clicked_at: attempt.clicked_at,
+      })).location)
+    : geolocationPayload(payload)
+  const body =
+    typeof payload === 'string'
+      ? { type, clock_type: type, image_base64: payload, ...attempt, ...location }
+      : {
+          type,
+          clock_type: type,
+          liveness_session_id: payload?.liveness_session_id,
+          image_base64: payload?.image_base64,
+          device_id: payload?.device_id,
+          camera_info: payload?.camera_info,
+          client_capture_started_at_ms: payload?.client_capture_started_at_ms,
+          ...attempt,
+          ...location,
+        }
+  const res = await authenticatedFetch('/attendance/face', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = data.errors?.face?.[0] || data.errors?.type?.[0] || data.message || 'Face verification failed'
+    const err = new Error(msg)
+    err.errorCode = data.error_code || null
+    err.kioskCorrection = data.kiosk_correction || null
+    throw err
+  }
+  return data
+}
+
+/**
  * Get recent attendance logs for kiosk display (no auth).
  */
 export async function getKioskRecentAttendance() {
