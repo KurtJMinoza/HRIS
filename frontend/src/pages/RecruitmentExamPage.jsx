@@ -1,11 +1,43 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Flag, Send } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Flag, Send } from 'lucide-react'
 import { getPublicRecruitmentExam, submitPublicRecruitmentExam } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+
+const OPTION_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+
+function answerValueExists(value) {
+  return Array.isArray(value) ? value.length > 0 : value != null && value !== ''
+}
+
+function normalizeQuestionType(type) {
+  return String(type || '').trim().toLowerCase()
+}
+
+function questionTypeLabel(type) {
+  const normalized = normalizeQuestionType(type)
+  if (normalized === 'multiple choice') return 'Multiple Choice'
+  if (normalized === 'true / false' || normalized === 'true/false') return 'True / False'
+  if (normalized === 'checkbox') return 'Checkbox'
+  if (normalized === 'file upload') return 'File Upload'
+  if (normalized === 'identification') return 'Identification'
+  if (normalized === 'short answer') return 'Short Answer'
+  return type || 'Essay'
+}
+
+function applicantInitials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (parts.length === 0) return 'AP'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+}
 
 export default function RecruitmentExamPage() {
   const { token } = useParams()
@@ -16,6 +48,7 @@ export default function RecruitmentExamPage() {
   const [flagged, setFlagged] = useState({})
   const [error, setError] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [remainingSeconds, setRemainingSeconds] = useState(null)
   const autoSubmittedRef = useRef(false)
 
@@ -29,13 +62,16 @@ export default function RecruitmentExamPage() {
         const totalSeconds = Number(data.exam?.duration_minutes || 0) * 60
         setRemainingSeconds(Math.max(0, Math.floor((startedAt + totalSeconds * 1000 - Date.now()) / 1000)))
       })
-      .catch((err) => setError(err.message || 'Failed to load exam'))
+      .catch((err) => {
+        if (mounted) setError(err.message || 'Failed to load exam')
+      })
     return () => { mounted = false }
   }, [token])
 
   async function submit() {
-    if (autoSubmittedRef.current && submitted) return
+    if (submitted || isSubmitting) return
     setError('')
+    setIsSubmitting(true)
     try {
       const payload = (exam?.questions || []).map((question) => ({
         question_id: question.id,
@@ -46,6 +82,8 @@ export default function RecruitmentExamPage() {
       setSubmitted(true)
     } catch (err) {
       setError(err.message || 'Failed to submit exam')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -67,10 +105,8 @@ export default function RecruitmentExamPage() {
 
   const questions = exam?.questions || []
   const currentQuestion = questions[currentIndex] || null
-  const answeredCount = questions.filter((question) => {
-    const value = answers[question.id]
-    return Array.isArray(value) ? value.length > 0 : value != null && value !== ''
-  }).length
+  const answeredCount = questions.filter((question) => answerValueExists(answers[question.id]) || Boolean(files[question.id])).length
+  const notAnsweredCount = Math.max(0, questions.length - answeredCount)
   const progress = questions.length ? Math.round((answeredCount / questions.length) * 100) : 0
 
   const timerLabel = useMemo(() => {
@@ -81,16 +117,42 @@ export default function RecruitmentExamPage() {
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
   }, [remainingSeconds])
 
-  if (error) {
-    return <div className="mx-auto max-w-2xl p-6 text-center text-red-600">{error}</div>
+  const applicantInfo = useMemo(() => ([
+    ['Position Applied', exam?.position_applied || '-'],
+    ['Department', exam?.department || '-'],
+    ['Company', exam?.company || '-'],
+    ['Branch', exam?.branch || '-'],
+    ['Assessment Status', exam?.status || 'In Progress'],
+    ['Attempt', `Attempt ${exam?.attempt_number || 1} of ${exam?.max_attempts || 1}`],
+    ['Exam', exam?.title || '-'],
+  ]), [exam])
+
+  if (!exam && error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f4f6fb] px-4 text-slate-950">
+        <div className="max-w-md rounded-[22px] border border-red-100 bg-white p-8 text-center shadow-[0_20px_55px_-35px_rgba(15,23,42,0.6)]">
+          <AlertCircle className="mx-auto size-11 text-red-500" />
+          <h1 className="mt-4 text-lg font-black">Assessment unavailable</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-500">{error}</p>
+        </div>
+      </div>
+    )
   }
+
   if (!exam) {
-    return <div className="mx-auto max-w-2xl p-6 text-center text-slate-600">Loading exam...</div>
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f4f6fb] px-4 text-slate-950">
+        <div className="rounded-[22px] border border-slate-200 bg-white px-8 py-6 text-center text-sm font-semibold text-slate-500 shadow-sm">
+          Loading assessment...
+        </div>
+      </div>
+    )
   }
+
   if (submitted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-        <div className="max-w-md rounded-3xl border border-emerald-100 bg-white p-8 text-center shadow-xl">
+      <div className="flex min-h-screen items-center justify-center bg-[#f4f6fb] px-4 text-slate-950">
+        <div className="max-w-md rounded-[26px] border border-emerald-100 bg-white p-8 text-center shadow-[0_24px_70px_-42px_rgba(15,23,42,0.65)]">
           <CheckCircle2 className="mx-auto size-12 text-emerald-600" />
           <h1 className="mt-4 text-xl font-extrabold text-slate-950">Assessment submitted</h1>
           <p className="mt-2 text-sm text-slate-500">Your answers were submitted to AGCTek Recruitment. HR will review your result.</p>
@@ -114,132 +176,202 @@ export default function RecruitmentExamPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="leading-none">
-              <div className="text-2xl font-black tracking-tight text-slate-950">AGC<span className="text-orange-600">TEK</span></div>
-              <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-500">People · Technology · Innovation</div>
+    <div className="min-h-screen bg-[#f4f6fb] text-[#111827]">
+      <header className="border-b border-slate-200/80 bg-white px-5 py-3 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+        <div className="mx-auto flex max-w-[1260px] flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-7">
+            <div className="shrink-0 leading-none">
+              <div className="text-[1.55rem] font-black tracking-[-0.06em] text-slate-950">
+                AGC<span className="text-[#f36a21]">TEK</span>
+              </div>
+              <div className="mt-1 text-[0.42rem] font-extrabold uppercase tracking-[0.13em] text-slate-500">
+                People · Technology · Innovation
+              </div>
             </div>
-            <div className="h-9 w-px bg-slate-200" />
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wide text-orange-600">Recruitment Assessment Portal</p>
-              <h1 className="text-lg font-extrabold">{exam.title}</h1>
+            <div className="min-w-0">
+              <p className="text-[0.56rem] font-black uppercase tracking-[0.13em] text-[#f36a21]">Recruitment Assessment Portal</p>
+              <h1 className="mt-0.5 truncate text-lg font-black uppercase tracking-[-0.02em] text-slate-950">{exam.title}</h1>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-[10px] font-bold uppercase text-slate-400">Question</p>
-              <p className="text-sm font-extrabold">{Math.min(currentIndex + 1, questions.length)} of {questions.length}</p>
+
+          <div className="grid grid-cols-3 gap-3 sm:min-w-[380px]">
+            <div className="rounded-lg border border-slate-100 bg-[#f7f8fd] px-4 py-2 shadow-[0_8px_22px_-18px_rgba(15,23,42,0.45)]">
+              <p className="text-[0.56rem] font-black uppercase tracking-wide text-slate-400">Question</p>
+              <p className="mt-1 text-sm font-black">{Math.min(currentIndex + 1, questions.length)} of {questions.length}</p>
             </div>
-            <div className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-2 text-orange-700">
-              <p className="text-[10px] font-bold uppercase">Time Remaining</p>
-              <p className="flex items-center gap-1 text-sm font-black"><Clock className="size-4" /> {timerLabel}</p>
+            <div className="rounded-lg border border-orange-100 bg-[#fff6ee] px-4 py-2 text-[#ea580c] shadow-[0_8px_22px_-18px_rgba(234,88,12,0.55)]">
+              <p className="text-[0.56rem] font-black uppercase tracking-wide">Time Remaining</p>
+              <p className="mt-1 flex items-center gap-1.5 text-sm font-black tabular-nums"><Clock className="size-3.5" /> {timerLabel}</p>
             </div>
-            <div className="min-w-36 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-[10px] font-bold uppercase text-slate-400">Progress</p>
-              <div className="mt-1 h-2 rounded-full bg-slate-200"><div className="h-2 rounded-full bg-orange-500" style={{ width: `${progress}%` }} /></div>
+            <div className="rounded-lg border border-slate-100 bg-[#f7f8fd] px-4 py-2 shadow-[0_8px_22px_-18px_rgba(15,23,42,0.45)]">
+              <p className="text-[0.56rem] font-black uppercase tracking-wide text-slate-400">Progress</p>
+              <div className="mt-2 flex items-center gap-3">
+                <div className="h-2 flex-1 rounded-full bg-slate-300/80">
+                  <div className="h-2 rounded-full bg-slate-500 transition-all" style={{ width: `${progress}%` }} />
+                </div>
+                <span className="text-xs font-black text-slate-700">{progress}%</span>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-4 px-4 py-5 xl:grid-cols-[270px_minmax(0,1fr)_250px]">
-        <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-extrabold">Applicant Information</h2>
-          <div className="mt-4 space-y-3 text-xs">
-            {[
-              ['Applicant Name', exam.applicant_name],
-              ['Position Applied', exam.position_applied || '-'],
-              ['Company', exam.company || '-'],
-              ['Branch', exam.branch || '-'],
-              ['Assessment Status', exam.status || 'In Progress'],
-              ['Attempt', `Attempt ${exam.attempt_number || 1} of ${exam.max_attempts || 1}`],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-xl bg-slate-50 px-3 py-2">
-                <p className="text-[10px] font-bold uppercase text-slate-400">{label}</p>
-                <p className="mt-1 font-bold text-slate-800">{value}</p>
+      <main className="mx-auto grid max-w-[1260px] gap-4 px-4 py-5 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)_280px]">
+        <aside className="rounded-[10px] border border-slate-200 bg-white p-4 shadow-[0_16px_42px_-32px_rgba(15,23,42,0.55)]">
+          <h2 className="text-sm font-black">Applicant Information</h2>
+
+          <div className="mt-5 flex items-center gap-3">
+            <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-[#ffe7d6] text-lg font-black text-[#f36a21]">
+              {applicantInitials(exam.applicant_name)}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-black text-slate-950">{exam.applicant_name || 'Applicant'}</p>
+              <p className="text-[0.7rem] font-semibold text-slate-500">{exam.position_applied || '-'}</p>
+              <p className="mt-0.5 text-[0.65rem] font-bold text-slate-500">{exam.applicant_no || `APP-${exam.assignment_id}`}</p>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {applicantInfo.map(([label, value]) => (
+              <div key={label} className="rounded-lg bg-[#f8fafc] px-3 py-2.5">
+                <p className="text-[0.58rem] font-black uppercase tracking-wide text-slate-400">{label}</p>
+                <p className={cn('mt-1 text-[0.72rem] font-black leading-5 text-slate-900', label === 'Assessment Status' && 'text-[#f36a21]')}>
+                  {value}
+                </p>
               </div>
             ))}
           </div>
-          {exam.instructions ? <p className="mt-4 rounded-xl border border-orange-100 bg-orange-50 p-3 text-[11px] leading-5 text-orange-800">{exam.instructions}</p> : null}
+
+          {exam.instructions ? (
+            <div className="mt-4 rounded-lg border border-orange-100 bg-orange-50/80 p-3 text-[0.68rem] font-medium leading-5 text-orange-800">
+              {exam.instructions}
+            </div>
+          ) : null}
         </aside>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-[10px] border border-slate-200 bg-white shadow-[0_16px_42px_-32px_rgba(15,23,42,0.55)]">
           {currentQuestion ? (
             <>
-              <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-orange-600">{currentQuestion.category || exam.category || 'Assessment Question'}</p>
-                  <h2 className="mt-1 text-lg font-extrabold">Question {currentIndex + 1}</h2>
+                  <p className="text-[0.55rem] font-black uppercase tracking-[0.13em] text-[#f36a21]">{currentQuestion.category || exam.category || 'Custom'}</p>
+                  <h2 className="mt-1 text-lg font-black tracking-[-0.02em]">Question {currentIndex + 1}</h2>
                 </div>
-                <button type="button" onClick={() => setFlagged((state) => ({ ...state, [currentQuestion.id]: !state[currentQuestion.id] }))} className={cn('inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-bold', flagged[currentQuestion.id] ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 text-slate-600')}>
-                  <Flag className="size-3.5" /> Flag
+                <button
+                  type="button"
+                  onClick={() => setFlagged((state) => ({ ...state, [currentQuestion.id]: !state[currentQuestion.id] }))}
+                  className={cn(
+                    'inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-bold shadow-sm transition',
+                    flagged[currentQuestion.id] ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                  )}
+                >
+                  <Flag className="size-3.5" /> {flagged[currentQuestion.id] ? 'Flagged' : 'Flag Question'}
                 </button>
               </div>
-              <div className="py-6">
-                <p className="text-base font-semibold leading-7 text-slate-900">{currentQuestion.question}</p>
-                <p className="mt-2 text-xs text-slate-500">{currentQuestion.question_type} · {currentQuestion.points} point(s)</p>
+              <div className="min-h-[430px] px-5 py-6">
+                <p className="text-[0.95rem] font-black leading-7 text-slate-900">{currentQuestion.question}</p>
+                <p className="mt-2 text-xs font-medium text-slate-500">{questionTypeLabel(currentQuestion.question_type)} · {currentQuestion.points} point(s)</p>
 
-                {currentQuestion.question_type === 'Multiple Choice' || currentQuestion.question_type === 'True / False' ? (
-                  <div className="mt-5 grid gap-3">
-                    {(currentQuestion.question_type === 'True / False' ? ['True', 'False'] : currentQuestion.choices || []).map((choice) => (
-                      <label key={choice} className={cn('flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold transition', answers[currentQuestion.id] === choice ? 'border-orange-300 bg-orange-50 text-orange-800' : 'border-slate-200 hover:bg-slate-50')}>
-                        <input type="radio" name={`q-${currentQuestion.id}`} value={choice} checked={answers[currentQuestion.id] === choice} onChange={(e) => updateAnswer(currentQuestion.id, e.target.value)} />
-                        {choice}
+                {['multiple choice', 'true / false', 'true/false'].includes(normalizeQuestionType(currentQuestion.question_type)) ? (
+                  <div className="mt-6 grid gap-4">
+                    {(['true / false', 'true/false'].includes(normalizeQuestionType(currentQuestion.question_type)) ? ['True', 'False'] : currentQuestion.choices || []).map((choice, index) => (
+                      <label
+                        key={choice}
+                        className={cn(
+                          'flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-4 text-sm font-black transition',
+                          answers[currentQuestion.id] === choice
+                            ? 'border-[#f36a21] bg-orange-50 text-orange-800 shadow-[0_12px_26px_-24px_rgba(234,88,12,0.7)]'
+                            : 'border-slate-200 bg-white text-slate-900 hover:border-orange-200 hover:bg-orange-50/40',
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={`q-${currentQuestion.id}`}
+                          value={choice}
+                          checked={answers[currentQuestion.id] === choice}
+                          onChange={(e) => updateAnswer(currentQuestion.id, e.target.value)}
+                          className="accent-[#f36a21]"
+                        />
+                        <span>{OPTION_LETTERS[index]}. {choice}</span>
                       </label>
                     ))}
                   </div>
-                ) : currentQuestion.question_type === 'Checkbox' ? (
-                  <div className="mt-5 grid gap-3">
-                    {(currentQuestion.choices || []).map((choice) => (
-                      <label key={choice} className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold hover:bg-slate-50">
-                        <input type="checkbox" checked={(answers[currentQuestion.id] || []).includes(choice)} onChange={() => toggleCheckbox(currentQuestion.id, choice)} />
-                        {choice}
+                ) : normalizeQuestionType(currentQuestion.question_type) === 'checkbox' ? (
+                  <div className="mt-6 grid gap-4">
+                    {(currentQuestion.choices || []).map((choice, index) => (
+                      <label
+                        key={choice}
+                        className={cn(
+                          'flex cursor-pointer items-center gap-3 rounded-lg border px-4 py-4 text-sm font-black transition',
+                          (answers[currentQuestion.id] || []).includes(choice)
+                            ? 'border-[#f36a21] bg-orange-50 text-orange-800'
+                            : 'border-slate-200 bg-white text-slate-900 hover:border-orange-200 hover:bg-orange-50/40',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={(answers[currentQuestion.id] || []).includes(choice)}
+                          onChange={() => toggleCheckbox(currentQuestion.id, choice)}
+                          className="accent-[#f36a21]"
+                        />
+                        <span>{OPTION_LETTERS[index]}. {choice}</span>
                       </label>
                     ))}
                   </div>
-                ) : currentQuestion.question_type === 'File Upload' ? (
-                  <Input className="mt-5" type="file" onChange={(e) => setFiles((state) => ({ ...state, [currentQuestion.id]: e.target.files?.[0] || null }))} />
-                ) : currentQuestion.question_type === 'Identification' || currentQuestion.question_type === 'Short Answer' ? (
-                  <Input className="mt-5 h-12" value={answers[currentQuestion.id] || ''} onChange={(e) => updateAnswer(currentQuestion.id, e.target.value)} placeholder="Type your answer" />
+                ) : normalizeQuestionType(currentQuestion.question_type) === 'file upload' ? (
+                  <div className="mt-6 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5">
+                    <Input type="file" onChange={(e) => setFiles((state) => ({ ...state, [currentQuestion.id]: e.target.files?.[0] || null }))} />
+                    {files[currentQuestion.id] ? <p className="mt-2 text-xs font-semibold text-slate-500">{files[currentQuestion.id].name}</p> : null}
+                  </div>
+                ) : ['identification', 'short answer'].includes(normalizeQuestionType(currentQuestion.question_type)) ? (
+                  <Input className="mt-6 h-12 rounded-lg border-slate-200 text-sm font-semibold" value={answers[currentQuestion.id] || ''} onChange={(e) => updateAnswer(currentQuestion.id, e.target.value)} placeholder="Type your answer" />
                 ) : (
-                  <Textarea className="mt-5 min-h-40" value={answers[currentQuestion.id] || ''} onChange={(e) => updateAnswer(currentQuestion.id, e.target.value)} placeholder="Type your answer" />
+                  <Textarea className="mt-6 min-h-44 rounded-lg border-slate-200 text-sm font-semibold" value={answers[currentQuestion.id] || ''} onChange={(e) => updateAnswer(currentQuestion.id, e.target.value)} placeholder="Type your answer" />
                 )}
+
+                {error ? (
+                  <div className="mt-5 flex gap-2 rounded-lg border border-red-100 bg-red-50 p-3 text-xs font-semibold leading-5 text-red-700">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    {error}
+                  </div>
+                ) : null}
               </div>
-              <div className="flex items-center justify-between border-t border-slate-100 pt-4">
-                <Button variant="outline" className="gap-2" onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))} disabled={currentIndex === 0}><ChevronLeft className="size-4" /> Previous</Button>
+              <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
+                <Button variant="outline" className="h-10 gap-2 rounded-md border-slate-200 px-4 font-bold" onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))} disabled={currentIndex === 0}>
+                  <ChevronLeft className="size-4" /> Previous
+                </Button>
                 {currentIndex === questions.length - 1 ? (
-                  <Button className="gap-2 bg-orange-600 text-white hover:bg-orange-700" onClick={submit}>
-                    <Send className="size-4" /> Submit Assessment
+                  <Button className="h-10 gap-2 rounded-md bg-[#ff5a14] px-5 font-bold text-white shadow-[0_12px_26px_-18px_rgba(249,115,22,0.9)] hover:bg-[#e94d0d]" onClick={submit} disabled={isSubmitting}>
+                    <Send className="size-4" /> {isSubmitting ? 'Submitting...' : 'Submit Assessment'}
                   </Button>
                 ) : (
-                  <Button className="gap-2 bg-orange-600 text-white hover:bg-orange-700" onClick={() => setCurrentIndex((index) => Math.min(questions.length - 1, index + 1))}>Next <ChevronRight className="size-4" /></Button>
+                  <Button className="h-10 gap-2 rounded-md bg-[#ff5a14] px-5 font-bold text-white shadow-[0_12px_26px_-18px_rgba(249,115,22,0.9)] hover:bg-[#e94d0d]" onClick={() => setCurrentIndex((index) => Math.min(questions.length - 1, index + 1))}>
+                    Next <ChevronRight className="size-4" />
+                  </Button>
                 )}
               </div>
             </>
           ) : (
-            <div className="py-16 text-center text-sm text-slate-500">No questions are available for this assessment.</div>
+            <div className="py-16 text-center text-sm font-semibold text-slate-500">No questions are available for this assessment.</div>
           )}
         </section>
 
-        <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-extrabold">Question Navigator</h2>
-          <div className="mt-4 grid grid-cols-5 gap-2">
+        <aside className="rounded-[10px] border border-slate-200 bg-white p-5 shadow-[0_16px_42px_-32px_rgba(15,23,42,0.55)] lg:col-span-2 xl:col-span-1">
+          <h2 className="text-sm font-black">Question Navigator</h2>
+          <div className="mt-4 flex flex-wrap gap-3">
             {questions.map((question, index) => {
-              const isAnswered = Array.isArray(answers[question.id]) ? answers[question.id].length > 0 : answers[question.id] != null && answers[question.id] !== ''
+              const isAnswered = answerValueExists(answers[question.id]) || Boolean(files[question.id])
               return (
                 <button
                   key={question.id}
                   type="button"
                   onClick={() => setCurrentIndex(index)}
                   className={cn(
-                    'size-9 rounded-lg text-xs font-black ring-1',
-                    flagged[question.id] && 'bg-red-50 text-red-700 ring-red-200',
-                    !flagged[question.id] && currentIndex === index && 'bg-orange-500 text-white ring-orange-500',
-                    !flagged[question.id] && currentIndex !== index && isAnswered && 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-                    !flagged[question.id] && currentIndex !== index && !isAnswered && 'bg-slate-100 text-slate-500 ring-slate-200',
+                    'size-9 rounded-full text-xs font-black shadow-sm ring-1 transition',
+                    flagged[question.id] && 'bg-rose-100 text-rose-700 ring-rose-200',
+                    !flagged[question.id] && currentIndex === index && 'bg-[#ff5a14] text-white ring-[#ff5a14]',
+                    !flagged[question.id] && currentIndex !== index && isAnswered && 'bg-emerald-100 text-emerald-700 ring-emerald-200',
+                    !flagged[question.id] && currentIndex !== index && !isAnswered && 'bg-slate-100 text-slate-700 ring-slate-200',
                   )}
                 >
                   {index + 1}
@@ -247,21 +379,58 @@ export default function RecruitmentExamPage() {
               )
             })}
           </div>
-          <div className="mt-5 space-y-2 text-[11px] font-semibold text-slate-600">
-            <p><span className="mr-2 inline-block size-3 rounded bg-slate-200" /> Not Answered</p>
-            <p><span className="mr-2 inline-block size-3 rounded bg-orange-500" /> Current</p>
-            <p><span className="mr-2 inline-block size-3 rounded bg-emerald-200" /> Answered</p>
-            <p><span className="mr-2 inline-block size-3 rounded bg-red-200" /> Flagged</p>
+
+          <div className="mt-5 space-y-3 border-b border-slate-100 pb-5 text-[0.68rem] font-semibold text-slate-500">
+            <p><span className="mr-2 inline-block size-3 rounded-sm bg-slate-100 align-middle ring-1 ring-slate-200" /> Not Answered</p>
+            <p><span className="mr-2 inline-block size-3 rounded-sm bg-[#ff5a14] align-middle" /> Current</p>
+            <p><span className="mr-2 inline-block size-3 rounded-sm bg-emerald-100 align-middle ring-1 ring-emerald-200" /> Answered</p>
+            <p><span className="mr-2 inline-block size-3 rounded-sm bg-rose-100 align-middle ring-1 ring-rose-200" /> Flagged</p>
           </div>
-          <Button className="mt-6 w-full gap-2 bg-orange-600 text-white hover:bg-orange-700" onClick={submit}>
+
+          <div className="mt-5">
+            <h3 className="text-sm font-black">Exam Summary</h3>
+            <div className="mt-4 space-y-3 text-[0.72rem] font-semibold text-slate-600">
+              <div className="flex items-center justify-between gap-3">
+                <span className="inline-flex items-center gap-2"><CheckCircle2 className="size-3.5 text-slate-500" /> Total Questions</span>
+                <span className="font-black text-slate-900">{questions.length}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="inline-flex items-center gap-2"><CheckCircle2 className="size-3.5 text-slate-500" /> Answered</span>
+                <span className="font-black text-slate-900">{answeredCount}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="inline-flex items-center gap-2"><AlertCircle className="size-3.5 text-slate-500" /> Not Answered</span>
+                <span className="font-black text-slate-900">{notAnsweredCount}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="inline-flex items-center gap-2"><Clock className="size-3.5 text-slate-500" /> Time Remaining</span>
+                <span className="font-black text-[#f36a21]">{timerLabel}</span>
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="inline-flex items-center gap-2"><ChevronRight className="size-3.5 text-slate-500" /> Progress</span>
+                  <span className="font-black text-slate-900">{progress}%</span>
+                </div>
+                <div className="mt-2 h-1.5 rounded-full bg-slate-200">
+                  <div className="h-1.5 rounded-full bg-[#ff5a14] transition-all" style={{ width: `${progress}%` }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <Button className="mt-6 h-11 w-full gap-2 rounded-md bg-[#ff5a14] text-sm font-black text-white shadow-[0_16px_28px_-18px_rgba(249,115,22,0.95)] hover:bg-[#e94d0d]" onClick={submit} disabled={isSubmitting}>
             <Send className="size-4" />
-            Submit Assessment
+            {isSubmitting ? 'Submitting...' : 'Submit Assessment'}
           </Button>
           {remainingSeconds === 0 ? (
-            <div className="mt-3 flex gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700"><AlertTriangle className="size-4 shrink-0" /> Time expired. Auto-submitting...</div>
+            <div className="mt-3 flex gap-2 rounded-lg bg-red-50 p-3 text-xs font-semibold text-red-700"><AlertTriangle className="size-4 shrink-0" /> Time expired. Auto-submitting...</div>
           ) : null}
         </aside>
       </main>
+
+      <footer className="pb-5 pt-24 text-center text-[0.65rem] font-medium text-slate-500">
+        © 2026 AGCTEK Solutions Inc. All rights reserved.
+      </footer>
     </div>
   )
 }

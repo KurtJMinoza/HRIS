@@ -547,7 +547,7 @@ class RecruitmentController extends Controller
 
     public function publicExam(string $token): JsonResponse
     {
-        $assignment = RecruitmentExamAssignment::with(['applicant.department.branch', 'template.questions'])
+        $assignment = RecruitmentExamAssignment::with(['applicant.department.branch', 'applicant.department.company', 'template.questions'])
             ->where('exam_link_token', $token)
             ->firstOrFail();
 
@@ -568,12 +568,12 @@ class RecruitmentController extends Controller
             ]);
         }
 
-        return response()->json(['exam' => $this->publicExamResponse($assignment->fresh(['applicant', 'template.questions']))]);
+        return response()->json(['exam' => $this->publicExamResponse($assignment->fresh(['applicant.department.branch', 'applicant.department.company', 'template.questions']))]);
     }
 
     public function submitPublicExam(Request $request, string $token): JsonResponse
     {
-        $assignment = RecruitmentExamAssignment::with(['template.questions', 'applicant.department.branch'])
+        $assignment = RecruitmentExamAssignment::with(['template.questions', 'applicant.department.branch', 'applicant.department.company'])
             ->where('exam_link_token', $token)
             ->firstOrFail();
 
@@ -1307,8 +1307,10 @@ class RecruitmentController extends Controller
         return [
             'assignment_id' => $assignment->id,
             'applicant_name' => $assignment->applicant?->full_name,
+            'applicant_no' => $assignment->applicant?->applicant_no,
             'position_applied' => $assignment->applicant?->applied_position ?: $assignment->applicant?->appliedPosition?->name,
-            'company' => $assignment->applicant?->department?->name,
+            'department' => $assignment->applicant?->department?->name,
+            'company' => $assignment->applicant?->department?->company?->name,
             'branch' => $assignment->applicant?->department?->branch?->name,
             'title' => $assignment->template?->title,
             'category' => $assignment->template?->category ?? 'Custom',
