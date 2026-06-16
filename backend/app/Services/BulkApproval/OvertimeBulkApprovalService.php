@@ -184,34 +184,19 @@ class OvertimeBulkApprovalService
                     ]);
 
                 if ($upsertRows !== []) {
-                    DB::table('overtimes')->upsert(
-                        $upsertRows,
-                        ['id'],
-                        [
-                            'status',
-                            'pending_approval',
-                            'approval_stage',
-                            'second_approver_id',
-                            'second_approved_at',
-                            'approved_by',
-                            'approved_at',
-                            'approved_ot_start',
-                            'approved_ot_end',
-                            'approved_ot_hours',
-                            'remarks',
-                            'locked_at',
-                            'updated_by',
-                            'updated_at',
-                        ],
-                    );
+                    foreach ($upsertRows as $row) {
+                        $id = $row['id'];
+                        unset($row['id']);
+                        Overtime::query()->whereKey($id)->update($row);
+                    }
                 }
 
                 if ($firstStepRows !== []) {
-                    DB::table('overtimes')->upsert(
-                        $firstStepRows,
-                        ['id'],
-                        ['first_approver_id', 'first_approved_at', 'approval_stage', 'remarks', 'updated_by', 'updated_at'],
-                    );
+                    foreach ($firstStepRows as $row) {
+                        $id = $row['id'];
+                        unset($row['id']);
+                        Overtime::query()->whereKey($id)->update($row);
+                    }
                 }
 
                 if ($auditRows !== []) {
