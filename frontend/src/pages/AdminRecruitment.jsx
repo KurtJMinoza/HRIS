@@ -264,8 +264,16 @@ function formatDateTime(value) {
   })
 }
 
+function isDateTimeLocalValue(value) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(value || ''))
+}
+
 function toDateTimeLocalValue(value) {
   if (!value) return ''
+  if (isDateTimeLocalValue(value)) {
+    return String(value)
+  }
+
   const local = localDateTimeParts(value)
   if (local?.hour) {
     return `${local.year}-${local.month}-${local.day}T${local.hour}:${local.minute}`
@@ -2471,7 +2479,7 @@ function ExamsPanel({ applicants, selectedApplicant, selectingApplicantId, refre
     : ''
 
   useEffect(() => {
-    setScheduleAt(toDateTimeLocalValue(selectedAssignment?.scheduled_at || selectedAssignment?.expires_at || ''))
+    setScheduleAt(toDateTimeLocalValue(selectedAssignment?.scheduled_at || ''))
     setExpiresAt(toDateTimeLocalValue(selectedAssignment?.expires_at || ''))
   }, [selectedAssignment?.expires_at, selectedAssignment?.scheduled_at])
 
@@ -2499,8 +2507,8 @@ function ExamsPanel({ applicants, selectedApplicant, selectingApplicantId, refre
       return
     }
     await runExamAction('reschedule', activeApplicant?.id, {
-      scheduled_at: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
-      expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+      scheduled_at: scheduleAt ? normalizeDateTimeLocalForApi(scheduleAt) : undefined,
+      expires_at: expiresAt ? normalizeDateTimeLocalForApi(expiresAt) : undefined,
     })
   }
 
@@ -2844,8 +2852,8 @@ function ExamsPanel({ applicants, selectedApplicant, selectingApplicantId, refre
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button className="h-10 gap-2 rounded-lg bg-orange-600 px-4 text-xs font-bold text-white hover:bg-orange-700" onClick={() => runExamAction(selectedAssignment ? 'reassign' : 'assign', activeApplicant?.id, {
                     exam_template_id: assignTemplateId || selectedAssignment?.exam_template_id,
-                    scheduled_at: scheduleAt ? new Date(scheduleAt).toISOString() : undefined,
-                    expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+                    scheduled_at: scheduleAt ? normalizeDateTimeLocalForApi(scheduleAt) : undefined,
+                    expires_at: expiresAt ? normalizeDateTimeLocalForApi(expiresAt) : undefined,
                   })} disabled={acting || hasExamScheduleErrors || (!assignTemplateId && !selectedAssignment)}>
                     <FileText className="size-4" />
                     {selectedAssignment ? 'Update Assignment' : 'Assign Exam'}

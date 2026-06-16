@@ -205,7 +205,7 @@ class RecruitmentStageActionService
         if ($action === 'reschedule') {
             $assignment->update([
                 'scheduled_at' => $validated['scheduled_at'] ?? $assignment->scheduled_at ?? now(),
-                'expires_at' => $validated['expires_at'] ?? now()->addDays(7),
+                'expires_at' => $validated['expires_at'] ?? $assignment->expires_at ?? now()->addDays(7),
                 'status' => 'Assigned',
             ]);
             $applicant->update(['status' => 'For Exam']);
