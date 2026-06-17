@@ -7047,15 +7047,28 @@ export async function recordAttendanceKioskFace(type, payload) {
  */
 export async function recordAttendanceFace(type, payload) {
   const attempt = attendanceAttemptPayload(payload || {}, 'face')
-  const location = payload?.latitude == null && payload?.longitude == null
-    ? geolocationPayload((await prepareAttendanceLocation({
-        method: 'face',
-        validate: true,
-        clock_type: type,
-        device_type: payload?.device_type ?? payload?.deviceType,
-        clicked_at: attempt.clicked_at,
-      })).location)
-    : geolocationPayload(payload)
+  let location = geolocationPayload(payload)
+  if (location.latitude == null || location.longitude == null) {
+    location = geolocationPayload((await prepareAttendanceLocation({
+      method: 'face',
+      validate: true,
+      clock_type: type,
+      device_type: payload?.device_type ?? payload?.deviceType,
+      clicked_at: attempt.clicked_at,
+    })).location)
+  } else if (!location.geofence_validation_id) {
+    const result = await validateAttendanceGeofence({
+      ...location,
+      clock_type: type,
+      clicked_at: attempt.clicked_at,
+      method: 'face',
+      device_type: payload?.device_type ?? payload?.deviceType ?? location.device_type,
+    })
+    location = {
+      ...location,
+      geofence_validation_id: result?.geofence_validation_id ?? result?.id ?? location.geofence_validation_id ?? null,
+    }
+  }
   const body =
     typeof payload === 'string'
       ? { type, clock_type: type, image_base64: payload, ...attempt, ...location }
@@ -7076,7 +7089,13 @@ export async function recordAttendanceFace(type, payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const msg = data.errors?.face?.[0] || data.errors?.type?.[0] || data.message || 'Face verification failed'
+    const msg =
+      data.errors?.face?.[0]
+      || data.errors?.geofence_validation_id?.[0]
+      || data.errors?.geofence?.[0]
+      || data.errors?.type?.[0]
+      || data.message
+      || 'Face verification failed'
     const err = new Error(msg)
     err.errorCode = data.error_code || null
     err.kioskCorrection = data.kiosk_correction || null
