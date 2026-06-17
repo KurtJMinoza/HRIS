@@ -49,6 +49,12 @@ export function ScheduleEditorDialog({
   onSubmit,
   submitting,
   error,
+  title,
+  description,
+  submitLabel,
+  headerExtra,
+  readOnly = false,
+  secondaryAction,
 }) {
   const [ndPreview, setNdPreview] = useState(true)
 
@@ -92,13 +98,18 @@ export function ScheduleEditorDialog({
                 <Calendar className="size-5" aria-hidden />
               </span>
               <span className="min-w-0 leading-snug">
-                {editingSchedule ? 'Edit work schedule' : 'New work schedule'}
+                {title ?? (editingSchedule ? 'Edit work schedule' : 'New work schedule')}
               </span>
             </DialogTitle>
             <DialogDescription className="max-w-3xl text-xs leading-relaxed text-muted-foreground @sm:text-sm">
-              Fixed shift template for PH teams. Night shift: set time out earlier than time in (e.g. 10:00 PM → 6:00 AM).
-              Night differential preview uses the DOLE {formatShiftRange12h('22:00', '06:00')} window; payroll still follows your active policy.
+              {description ?? (
+                <>
+                  Fixed shift template for PH teams. Night shift: set time out earlier than time in (e.g. 10:00 PM → 6:00 AM).
+                  Night differential preview uses the DOLE {formatShiftRange12h('22:00', '06:00')} window; payroll still follows your active policy.
+                </>
+              )}
             </DialogDescription>
+            {headerExtra}
           </DialogHeader>
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6">
@@ -113,6 +124,8 @@ export function ScheduleEditorDialog({
                   placeholder="e.g. Night Shift – Production"
                   className="h-11 min-h-11"
                   required
+                  readOnly={readOnly}
+                  disabled={readOnly}
                 />
               </div>
               <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
@@ -125,6 +138,8 @@ export function ScheduleEditorDialog({
                     onChange={(e) => setEditForm((f) => ({ ...f, time_in: e.target.value }))}
                     className="h-11 min-h-11"
                     required
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -136,6 +151,8 @@ export function ScheduleEditorDialog({
                     onChange={(e) => setEditForm((f) => ({ ...f, time_out: e.target.value }))}
                     className="h-11 min-h-11"
                     required
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
               </div>
@@ -148,6 +165,8 @@ export function ScheduleEditorDialog({
                     value={editForm.break_start}
                     onChange={(e) => setEditForm((f) => ({ ...f, break_start: e.target.value }))}
                     className="h-11 min-h-11"
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -158,6 +177,8 @@ export function ScheduleEditorDialog({
                     value={editForm.break_end}
                     onChange={(e) => setEditForm((f) => ({ ...f, break_end: e.target.value }))}
                     className="h-11 min-h-11"
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
               </div>
@@ -172,6 +193,8 @@ export function ScheduleEditorDialog({
                     value={editForm.grace_period_minutes}
                     onChange={(e) => setEditForm((f) => ({ ...f, grace_period_minutes: e.target.value }))}
                     className="h-11 min-h-11"
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -184,6 +207,8 @@ export function ScheduleEditorDialog({
                     value={editForm.early_timein_minutes}
                     onChange={(e) => setEditForm((f) => ({ ...f, early_timein_minutes: e.target.value }))}
                     className="h-11 min-h-11"
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
               </div>
@@ -197,6 +222,8 @@ export function ScheduleEditorDialog({
                   value={editForm.overtime_buffer_minutes}
                   onChange={(e) => setEditForm((f) => ({ ...f, overtime_buffer_minutes: e.target.value }))}
                   className="h-11 min-h-11"
+                  readOnly={readOnly}
+                  disabled={readOnly}
                 />
               </div>
               <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
@@ -211,6 +238,8 @@ export function ScheduleEditorDialog({
                     value={editForm.late_allowance_minutes}
                     onChange={(e) => setEditForm((f) => ({ ...f, late_allowance_minutes: e.target.value }))}
                     className="h-11 min-h-11"
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -224,6 +253,8 @@ export function ScheduleEditorDialog({
                     value={editForm.early_timeout_minutes}
                     onChange={(e) => setEditForm((f) => ({ ...f, early_timeout_minutes: e.target.value }))}
                     className="h-11 min-h-11"
+                    readOnly={readOnly}
+                    disabled={readOnly}
                   />
                 </div>
               </div>
@@ -237,6 +268,7 @@ export function ScheduleEditorDialog({
                   onCheckedChange={(c) => setNdPreview(c === true)}
                   aria-label="Toggle ND preview"
                   className="size-5"
+                  disabled={readOnly}
                 />
               </div>
               <div className="space-y-2">
@@ -254,6 +286,7 @@ export function ScheduleEditorDialog({
                       <button
                         key={d.key}
                         type="button"
+                        disabled={readOnly}
                         onClick={() =>
                           setEditForm((f) => ({ ...f, rest_days: toggleRestDay(f.rest_days, d.key) }))
                         }
@@ -288,9 +321,13 @@ export function ScheduleEditorDialog({
                 restDays={editForm.rest_days}
                 breakStart={editForm.break_start}
                 breakEnd={editForm.break_end}
-                onShiftChange={(tin, tout) => {
-                  setEditForm((f) => ({ ...f, time_in: tin, time_out: tout }))
-                }}
+                onShiftChange={
+                  readOnly
+                    ? undefined
+                    : (tin, tout) => {
+                        setEditForm((f) => ({ ...f, time_in: tin, time_out: tout }))
+                      }
+                }
               />
               <ScheduleComplianceBar
                 weeklyHours={wh}
@@ -316,7 +353,7 @@ export function ScheduleEditorDialog({
           </div>
 
           {/* flex-col until md: avoids clipping when Cancel + Create sit side-by-side on narrow widths */}
-          <div className="flex w-full min-w-0 shrink-0 flex-col gap-2 border-t border-border/60 bg-muted/30 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] @sm:px-6 md:flex-row md:justify-end md:gap-3">
+          <div className="flex w-full min-w-0 shrink-0 flex-col gap-2 border-t border-border/60 bg-muted/30 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] @sm:px-6 md:flex-row md:flex-wrap md:justify-end md:gap-3">
             <Button
               type="button"
               variant="outline"
@@ -325,6 +362,17 @@ export function ScheduleEditorDialog({
             >
               Cancel
             </Button>
+            {secondaryAction ? (
+              <Button
+                type="button"
+                variant={secondaryAction.variant || 'outline'}
+                className={cn('h-11 w-full min-w-0 md:w-auto', secondaryAction.className)}
+                disabled={secondaryAction.disabled || submitting}
+                onClick={secondaryAction.onClick}
+              >
+                {secondaryAction.label}
+              </Button>
+            ) : null}
             <Button
               type="submit"
               className="h-11 w-full min-w-0 md:w-auto"
@@ -332,10 +380,8 @@ export function ScheduleEditorDialog({
             >
               {submitting ? (
                 <Loader2 className="size-4 shrink-0 animate-spin" />
-              ) : editingSchedule ? (
-                'Save schedule'
               ) : (
-                'Create schedule'
+                submitLabel ?? (editingSchedule ? 'Save schedule' : 'Create schedule')
               )}
             </Button>
           </div>

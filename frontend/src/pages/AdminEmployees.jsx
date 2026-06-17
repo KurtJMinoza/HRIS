@@ -54,7 +54,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFo
 import {
   getEmployees,
   exportAllEmployeesCsv,
-  updateEmployeeSchedule,
   toggleEmployeeActive,
   getEmployeeQr,
   regenerateEmployeeQr,
@@ -76,6 +75,7 @@ import {
 } from '@/api'
 import { TableSkeleton } from '@/components/skeletons'
 import ImportEmployeesModal from '@/components/admin/ImportEmployeesModal'
+import { EmployeeScheduleAssignDialog } from '@/components/schedules/EmployeeScheduleAssignDialog'
 import { QRCodeCanvas } from 'qrcode.react'
 import { useToast } from '@/components/ui/use-toast'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
@@ -86,18 +86,6 @@ import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
 import { useAuth } from '@/contexts/AuthContext'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-
-const DEFAULT_SCHEDULE = {
-  mon: { in: '08:00', out: '17:00' },
-  tue: { in: '08:00', out: '17:00' },
-  wed: { in: '08:00', out: '17:00' },
-  thu: { in: '08:00', out: '17:00' },
-  fri: { in: '08:00', out: '17:00' },
-  sat: null,
-  sun: null,
-}
-
 const EMPLOYEE_LEVEL_OPTIONS = [
   { value: '0', label: 'Level 0 Staff / Employee' },
   { value: '1', label: 'Level 1 OIC / Team Leader / Unit/Section Head' },
@@ -107,9 +95,6 @@ const EMPLOYEE_LEVEL_OPTIONS = [
   { value: '5', label: 'Level 5 Company Head / Executive' },
   { value: '6', label: 'Level 6 Admin' },
 ]
-
-/** No working days — employee cannot clock in/out until admin assigns a schedule. */
-const EMPTY_SCHEDULE = Object.fromEntries(DAY_KEYS.map((k) => [k, null]))
 
 function hasWorkingDays(schedule) {
   if (!schedule || typeof schedule !== 'object') return false
@@ -223,6 +208,7 @@ export default function AdminEmployees() {
   const canEditEmployees = perms.has('employees.edit')
   const canDeleteEmployees = perms.has('employees.delete')
   const canAssignSchedule = perms.has('schedule.assign')
+  const canManageSchedules = perms.has('schedule.manage') || perms.has('manage-schedules')
   const canPasswordReset = perms.has('employees.password_reset')
   const canScopedEditEmployees = canEditEmployees && isAdminOrHr
   const canDeleteEmployeeTarget = (emp) => canDeleteEmployees && isAdminOrHr && Number(emp?.id) !== Number(user?.id)
@@ -243,6 +229,7 @@ export default function AdminEmployees() {
   const didInitialEmployeeLoadRef = useRef(false)
   const [filterStatus, setFilterStatus] = useState('active')
   const [filterCompany, setFilterCompany] = useState('')
+  const [filterBranch, setFilterBranch] = useState(() => searchParams.get('branch_id') || '')
   const [filterLevel, setFilterLevel] = useState('')
   const [filterSchedule, setFilterSchedule] = useState('')
   const [filterFace, setFilterFace] = useState('')
@@ -263,8 +250,6 @@ export default function AdminEmployees() {
 
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleEmployee, setScheduleEmployee] = useState(null)
-  const [scheduleForm, setScheduleForm] = useState(DEFAULT_SCHEDULE)
-  const [scheduleSubmitting, setScheduleSubmitting] = useState(false)
 
   const [togglingId, setTogglingId] = useState(null)
   const [deactivateOpen, setDeactivateOpen] = useState(false)
@@ -353,7 +338,7 @@ export default function AdminEmployees() {
 
   useEffect(() => {
     setPage(1)
-  }, [filterStatus, filterCompany, filterLevel, filterSchedule, filterFace])
+  }, [filterStatus, filterCompany, filterBranch, filterLevel, filterSchedule, filterFace])
 
   useEffect(() => {
     if (location.pathname === hrPanelPath(hrBase, 'employees/add')) {
@@ -368,6 +353,7 @@ export default function AdminEmployees() {
       q: debouncedSearchQuery,
       activeFilter: filterStatus,
       companyId: filterCompany,
+      branchId: filterBranch,
       employeeLevel: filterLevel,
       scheduleFilter: filterSchedule,
       faceFilter: filterFace,
@@ -380,6 +366,7 @@ export default function AdminEmployees() {
         q: debouncedSearchQuery || undefined,
         active_filter: filterStatus || 'active',
         company_id: filterCompany || undefined,
+        branch_id: filterBranch || undefined,
         employee_level: filterLevel || undefined,
         schedule_filter: filterSchedule || undefined,
         face_filter: filterFace || undefined,
@@ -411,6 +398,23 @@ export default function AdminEmployees() {
     else next.delete('q')
     setSearchParams(next, { replace: true })
   }, [searchQuery, searchParams, setSearchParams, urlQ])
+
+  // Keep URL ?branch_id= in sync for deep links from Branches / org modules.
+  useEffect(() => {
+    const current = searchParams.get('branch_id') || ''
+    if ((filterBranch || '') === current) return
+    const next = new URLSearchParams(searchParams)
+    if (filterBranch) next.set('branch_id', filterBranch)
+    else next.delete('branch_id')
+    setSearchParams(next, { replace: true })
+  }, [filterBranch, searchParams, setSearchParams])
+
+  useEffect(() => {
+    const urlBranch = searchParams.get('branch_id') || ''
+    if (urlBranch !== filterBranch) {
+      setFilterBranch(urlBranch)
+    }
+  }, [searchParams]) // eslint-disable-line react-hooks/exhaustive-deps -- sync external URL changes only
 
   // When URL changes from outside (e.g. back button, global search link), sync to input.
   // Do not overwrite searchQuery when we just updated the URL ourselves (avoids corrupting input while typing).
@@ -748,77 +752,8 @@ export default function AdminEmployees() {
 
   const openSchedule = (emp) => {
     setScheduleEmployee(emp)
-    if (!hasWorkingDays(emp.schedule)) {
-      setScheduleForm({ ...EMPTY_SCHEDULE })
-    } else {
-      setScheduleForm({ ...DEFAULT_SCHEDULE, ...emp.schedule })
-    }
+    setBulkScheduleIds([])
     setScheduleOpen(true)
-  }
-
-  const handleScheduleSubmit = async (e) => {
-    e.preventDefault()
-    if (!scheduleEmployee && bulkScheduleIds.length === 0) return
-    setScheduleSubmitting(true)
-    setError(null)
-    try {
-      const schedule = Object.fromEntries(
-        Object.entries(scheduleForm).map(([day, v]) => [
-          day,
-          v && v.in && v.out ? { in: v.in, out: v.out } : null,
-        ])
-      )
-      const normalizedSchedule = hasWorkingDays(schedule) ? schedule : null
-
-      const targetIds =
-        bulkScheduleIds.length > 0
-          ? [...bulkScheduleIds]
-          : scheduleEmployee
-            ? [scheduleEmployee.id]
-            : []
-
-      await Promise.all(
-        targetIds.map((id) =>
-          updateEmployeeSchedule(id, { schedule: normalizedSchedule })
-        )
-      )
-      setScheduleOpen(false)
-      setScheduleEmployee(null)
-      setBulkScheduleIds([])
-      await queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })
-      await fetchEmployees()
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setScheduleSubmitting(false)
-    }
-  }
-
-  const handleClearSchedule = async () => {
-    if (!scheduleEmployee && bulkScheduleIds.length === 0) return
-    setScheduleSubmitting(true)
-    setError(null)
-    try {
-      const targetIds =
-        bulkScheduleIds.length > 0
-          ? [...bulkScheduleIds]
-          : scheduleEmployee
-            ? [scheduleEmployee.id]
-            : []
-
-      await Promise.all(
-        targetIds.map((id) => updateEmployeeSchedule(id, { schedule: null }))
-      )
-      setScheduleOpen(false)
-      setScheduleEmployee(null)
-      setBulkScheduleIds([])
-      await queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })
-      await fetchEmployees()
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setScheduleSubmitting(false)
-    }
   }
 
   const handleDeleteEmployee = async () => {
@@ -903,13 +838,14 @@ export default function AdminEmployees() {
     () =>
       Boolean(
         filterCompany ||
+        filterBranch ||
         filterLevel ||
         filterSchedule ||
         filterFace ||
         debouncedSearchQuery ||
         (filterStatus && filterStatus !== 'active'),
       ),
-    [filterCompany, filterLevel, filterSchedule, filterFace, debouncedSearchQuery, filterStatus],
+    [filterCompany, filterBranch, filterLevel, filterSchedule, filterFace, debouncedSearchQuery, filterStatus],
   )
 
   const toggleSort = (column) => {
@@ -945,6 +881,41 @@ export default function AdminEmployees() {
         .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
     [companies]
   )
+
+  const branchFilterOptions = useMemo(() => {
+    let list = [...branches]
+    if (filterCompany && filterCompany !== 'no_company') {
+      list = list.filter((branch) => String(branch.company_id) === String(filterCompany))
+    }
+    return list.sort((a, b) => {
+      const companyCompare = String(a.company_name || '').localeCompare(String(b.company_name || ''))
+      if (companyCompare !== 0) return companyCompare
+      return String(a.name || '').localeCompare(String(b.name || ''))
+    })
+  }, [branches, filterCompany])
+
+  const handleCompanyFilterChange = useCallback((nextCompany) => {
+    setFilterCompany(nextCompany)
+    setFilterBranch((current) => {
+      if (!current || !nextCompany || nextCompany === 'no_company') return ''
+      const branch = branches.find((item) => String(item.id) === String(current))
+      if (!branch) return ''
+      return String(branch.company_id) === String(nextCompany) ? current : ''
+    })
+  }, [branches])
+
+  const handleBranchFilterChange = useCallback((nextBranch) => {
+    setFilterBranch(nextBranch)
+    if (!nextBranch) return
+    const branch = branches.find((item) => String(item.id) === String(nextBranch))
+    if (!branch?.company_id) return
+    if (filterCompany && filterCompany !== 'no_company' && String(filterCompany) !== String(branch.company_id)) {
+      return
+    }
+    if (!filterCompany || filterCompany === 'no_company') {
+      setFilterCompany(String(branch.company_id))
+    }
+  }, [branches, filterCompany])
 
   const getCompanyNameById = useCallback((companyId) => companyNameById.get(String(companyId)) || '', [companyNameById])
 
@@ -1045,7 +1016,6 @@ export default function AdminEmployees() {
     }
     setScheduleEmployee(null)
     setBulkScheduleIds([...selectedIds])
-    setScheduleForm({ ...DEFAULT_SCHEDULE })
     setScheduleOpen(true)
   }
 
@@ -1582,7 +1552,7 @@ export default function AdminEmployees() {
                       <span className="sr-only">Company</span>
                       <select
                         value={filterCompany}
-                        onChange={(event) => setFilterCompany(event.target.value)}
+                        onChange={(event) => handleCompanyFilterChange(event.target.value)}
                         className={`${FIELD_SELECT_CLASS} h-10 min-w-[13rem] rounded-md text-sm`}
                         aria-label="Filter employees by company"
                       >
@@ -1591,6 +1561,25 @@ export default function AdminEmployees() {
                         {activeCompanyOptions.map((company) => (
                           <option key={company.id} value={company.id}>
                             {company.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="inline-flex items-center gap-2">
+                      <span className="sr-only">Branch</span>
+                      <select
+                        value={filterBranch}
+                        onChange={(event) => handleBranchFilterChange(event.target.value)}
+                        disabled={filterCompany === 'no_company' || branchFilterOptions.length === 0}
+                        className={`${FIELD_SELECT_CLASS} h-10 min-w-[13rem] rounded-md text-sm disabled:cursor-not-allowed disabled:opacity-60`}
+                        aria-label="Filter employees by branch"
+                      >
+                        <option value="">All Branches</option>
+                        {branchFilterOptions.map((branch) => (
+                          <option key={branch.id} value={branch.id}>
+                            {branch.name}
+                            {branch.company_name && !filterCompany ? ` (${branch.company_name})` : ''}
                           </option>
                         ))}
                       </select>
@@ -1677,10 +1666,17 @@ export default function AdminEmployees() {
                     ))}
 
                     {/* Clear all active filters */}
-                    {(filterCompany || filterLevel || filterStatus || filterSchedule || filterFace) && (
+                    {(filterCompany || filterBranch || filterLevel || filterStatus || filterSchedule || filterFace) && (
                       <button
                         type="button"
-                        onClick={() => { setFilterCompany(''); setFilterLevel(''); setFilterStatus(''); setFilterSchedule(''); setFilterFace('') }}
+                        onClick={() => {
+                          setFilterCompany('')
+                          setFilterBranch('')
+                          setFilterLevel('')
+                          setFilterStatus('')
+                          setFilterSchedule('')
+                          setFilterFace('')
+                        }}
                         className="ml-auto inline-flex h-10 items-center gap-1 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                       >
                         <X className="size-3.5" />
@@ -2770,87 +2766,26 @@ export default function AdminEmployees() {
         </DialogContent>
       </Dialog>
 
-      {/* Assign schedule */}
-      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
-        <DialogContent className="max-w-xl gap-3">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <Clock className="size-5 text-primary" />
-              Assign schedule
-            </DialogTitle>
-            <DialogDescription>
-              <span className="font-medium text-foreground">{scheduleEmployee?.name}</span>
-              {' — '}Set clock-in and clock-out per day. Leave empty for day off.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleScheduleSubmit} className="flex max-h-[60vh] flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="grid gap-3 py-2">
-                <div className="grid grid-cols-[minmax(4rem,1fr)_1fr_1fr] items-center gap-3 text-xs font-medium text-muted-foreground">
-                  <span>Day</span>
-                  <span>In</span>
-                  <span>Out</span>
-                </div>
-                {[
-                  { key: 'mon', label: 'Monday' },
-                  { key: 'tue', label: 'Tuesday' },
-                  { key: 'wed', label: 'Wednesday' },
-                  { key: 'thu', label: 'Thursday' },
-                  { key: 'fri', label: 'Friday' },
-                  { key: 'sat', label: 'Saturday' },
-                  { key: 'sun', label: 'Sunday' },
-                ].map(({ key, label }) => (
-                  <div key={key} className="grid grid-cols-[minmax(4rem,1fr)_1fr_1fr] items-center gap-3">
-                    <Label className="text-sm font-normal">{label}</Label>
-                    <Input
-                      type="time"
-                      value={scheduleForm[key]?.in ?? ''}
-                      className="h-9"
-                      onChange={(e) =>
-                        setScheduleForm((s) => ({
-                          ...s,
-                          [key]: s[key] ? { ...s[key], in: e.target.value } : { in: e.target.value, out: '17:00' },
-                        }))
-                      }
-                    />
-                    <Input
-                      type="time"
-                      value={scheduleForm[key]?.out ?? ''}
-                      className="h-9"
-                      onChange={(e) =>
-                        setScheduleForm((s) => ({
-                          ...s,
-                          [key]: s[key] ? { ...s[key], out: e.target.value } : { in: '08:00', out: e.target.value },
-                        }))
-                      }
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-            <DialogFooter className="flex-wrap gap-2">
-              <Button type="button" variant="outline" onClick={() => setScheduleOpen(false)}>
-                Cancel
-              </Button>
-              {hasWorkingDays(scheduleEmployee?.schedule) && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  disabled={scheduleSubmitting}
-                  onClick={handleClearSchedule}
-                >
-                  Clear schedule
-                </Button>
-              )}
-              <Button type="submit" disabled={scheduleSubmitting}>
-                {scheduleSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Clock className="size-4" />}
-                Save schedule
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <EmployeeScheduleAssignDialog
+        open={scheduleOpen}
+        onOpenChange={(open) => {
+          setScheduleOpen(open)
+          if (!open) {
+            setScheduleEmployee(null)
+            setBulkScheduleIds([])
+          }
+        }}
+        employee={scheduleEmployee}
+        bulkEmployeeIds={bulkScheduleIds}
+        employees={employees}
+        workingSchedules={workingSchedules}
+        onWorkingSchedulesUpdated={setWorkingSchedules}
+        canManageSchedules={canManageSchedules}
+        onSuccess={async () => {
+          await queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })
+          await fetchEmployees()
+        }}
+      />
 
       {/* Deactivate confirmation */}
       <Dialog
