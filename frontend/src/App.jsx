@@ -1690,11 +1690,6 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
             <p className="max-w-104 text-[1.0625rem] font-medium leading-tight text-foreground md:text-[1.125rem]">
               Human Resource Information System
             </p>
-            <p className="text-[0.96875rem] font-normal leading-tight tracking-wide text-muted-foreground md:text-[1rem]">
-              <span className="text-foreground">Secure.</span>{' '}
-              <span className="text-foreground">Intelligent.</span>{' '}
-              <span className="font-semibold text-[#ff5912] dark:text-[#fb923c]">Automated.</span>
-            </p>
           </div>
         </div>
 
