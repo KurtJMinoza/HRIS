@@ -6,12 +6,8 @@ final class FaceImageDataUrl
 {
     public static function toDataUrl(?string $stored): ?string
     {
-        if ($stored === null) {
-            return null;
-        }
-
-        $img = trim($stored);
-        if ($img === '') {
+        $img = LegacyEncryptedString::normalize($stored);
+        if ($img === null) {
             return null;
         }
 

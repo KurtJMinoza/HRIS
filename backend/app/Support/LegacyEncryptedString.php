@@ -5,6 +5,10 @@ namespace App\Support;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Facades\Crypt;
 
+/**
+ * Normalizes plaintext fields that were accidentally encrypted by a legacy security command.
+ * Never encrypts — decrypt-on-read/write only when the stored value is a Laravel payload.
+ */
 final class LegacyEncryptedString
 {
     public static function normalize(mixed $value): ?string
