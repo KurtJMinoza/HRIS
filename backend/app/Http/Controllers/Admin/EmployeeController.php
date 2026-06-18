@@ -2315,7 +2315,7 @@ class EmployeeController extends Controller
     {
         $employee = $this->loadScopedEmployee($request, $id);
 
-        if (! $this->userHasFace($employee) || empty($employee->face_image)) {
+        if (! $this->userHasFace($employee)) {
             return response()->json([
                 'has_face' => false,
                 'face_image' => null,
@@ -2328,6 +2328,9 @@ class EmployeeController extends Controller
         return response()->json([
             'has_face' => true,
             'face_image' => $dataUrl,
+            'message' => $dataUrl === null
+                ? 'Face is registered for attendance. Reference photo is not available.'
+                : null,
         ]);
     }
 

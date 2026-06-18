@@ -333,7 +333,7 @@ class ProfileController extends Controller
 
         $hasFace = $user->hasRegisteredFace();
 
-        if (! $hasFace || empty($user->face_image)) {
+        if (! $hasFace) {
             return response()->json([
                 'has_face' => false,
                 'face_image' => null,
@@ -346,6 +346,9 @@ class ProfileController extends Controller
         return response()->json([
             'has_face' => true,
             'face_image' => $dataUrl,
+            'message' => $dataUrl === null
+                ? 'Face is registered for attendance. Reference photo is not available.'
+                : null,
         ]);
     }
 

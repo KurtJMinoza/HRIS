@@ -38,6 +38,7 @@ export default function EmployeeMyQr() {
 
   const [viewFaceOpen, setViewFaceOpen] = useState(false)
   const [viewFaceImage, setViewFaceImage] = useState(null)
+  const [viewFaceMessage, setViewFaceMessage] = useState(null)
   const [viewFaceLoading, setViewFaceLoading] = useState(false)
 
   const hasFace = user?.has_face === true
@@ -100,10 +101,17 @@ export default function EmployeeMyQr() {
     if (!hasFace) return
     setViewFaceOpen(true)
     setViewFaceImage(null)
+    setViewFaceMessage(null)
     setViewFaceLoading(true)
     try {
       const data = await getMyFace()
+      if (!data?.has_face) {
+        setError(data?.message || 'No face registered.')
+        setViewFaceOpen(false)
+        return
+      }
       setViewFaceImage(data.face_image)
+      setViewFaceMessage(data.message || null)
     } catch (e) {
       setError(e.message)
       setViewFaceOpen(false)
@@ -444,7 +452,9 @@ export default function EmployeeMyQr() {
               />
             </div>
           ) : (
-            <p className="py-8 text-center text-sm text-muted-foreground">No face registered.</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {viewFaceMessage || 'Face is registered for attendance. Reference photo is not available.'}
+            </p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setViewFaceOpen(false)}>

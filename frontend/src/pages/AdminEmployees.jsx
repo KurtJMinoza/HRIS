@@ -329,6 +329,7 @@ export default function AdminEmployees() {
   const [viewFaceOpen, setViewFaceOpen] = useState(false)
   const [viewFaceEmployee, setViewFaceEmployee] = useState(null)
   const [viewFaceImage, setViewFaceImage] = useState(null)
+  const [viewFaceMessage, setViewFaceMessage] = useState(null)
   const [viewFaceLoading, setViewFaceLoading] = useState(false)
 
   const [manageFaceOpen, setManageFaceOpen] = useState(false)
@@ -1277,11 +1278,18 @@ export default function AdminEmployees() {
     setViewFaceEmployee(emp)
     setViewFaceOpen(true)
     setViewFaceImage(null)
+    setViewFaceMessage(null)
     setViewFaceLoading(true)
     setError(null)
     try {
       const data = await getEmployeeFace(emp.id)
+      if (!data?.has_face) {
+        setError(data?.message || 'No face registered.')
+        setViewFaceOpen(false)
+        return
+      }
       setViewFaceImage(data.face_image)
+      setViewFaceMessage(data.message || null)
     } catch (e) {
       setError(e.message)
       setViewFaceOpen(false)
@@ -1294,6 +1302,7 @@ export default function AdminEmployees() {
     setViewFaceOpen(false)
     setViewFaceEmployee(null)
     setViewFaceImage(null)
+    setViewFaceMessage(null)
   }
 
   const openAddEmployeeModal = useCallback(() => {
@@ -2439,7 +2448,9 @@ export default function AdminEmployees() {
               />
             </div>
           ) : (
-            <p className="py-8 text-center text-sm text-muted-foreground">No face registered.</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {viewFaceMessage || 'Face is registered for attendance. Reference photo is not available.'}
+            </p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={closeViewFace}>

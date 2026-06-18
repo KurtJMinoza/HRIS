@@ -16,8 +16,7 @@ return new class extends Migration
     ];
 
     /**
-     * One-time cleanup: legacy security tooling encrypted government IDs and face photos at rest.
-     * HRIS stores these as plaintext; decrypt any rows that were affected.
+     * Repair government IDs and face photos left as Laravel encrypted blobs or PHP serialized strings.
      */
     public function up(): void
     {
@@ -30,12 +29,12 @@ return new class extends Migration
 
                         foreach (self::GOVERNMENT_ID_FIELDS as $field) {
                             $raw = $row->{$field} ?? null;
-                            if (! is_string($raw) || $raw === '' || ! str_starts_with($raw, 'eyJpdiI6')) {
+                            if (! is_string($raw) || $raw === '') {
                                 continue;
                             }
 
-                            $plain = self::decryptLaravelPayload($raw);
-                            if ($plain !== null && $plain !== $raw) {
+                            $plain = self::repairPlaintextValue($raw);
+                            if ($plain !== $raw) {
                                 $changes[$field] = $plain;
                             }
                         }
@@ -54,17 +53,48 @@ return new class extends Migration
                 ->chunkById(50, function ($rows): void {
                     foreach ($rows as $row) {
                         $raw = $row->face_image ?? null;
-                        if (! is_string($raw) || $raw === '' || ! str_starts_with($raw, 'eyJpdiI6')) {
+                        if (! is_string($raw) || $raw === '') {
                             continue;
                         }
 
-                        $plain = self::decryptLaravelPayload($raw);
-                        if ($plain !== null && $plain !== $raw) {
+                        $plain = self::repairPlaintextValue($raw);
+                        if ($plain !== $raw) {
                             DB::table('users')->where('id', $row->id)->update(['face_image' => $plain]);
                         }
                     }
                 });
         }
+    }
+
+    private static function repairPlaintextValue(string $raw): ?string
+    {
+        $value = trim($raw);
+        if ($value === '') {
+            return null;
+        }
+
+        for ($i = 0; $i < 5; $i++) {
+            $before = $value;
+
+            if (str_starts_with($value, 'eyJpdiI6')) {
+                $value = self::decryptLaravelPayload($value) ?? $value;
+            }
+
+            if (preg_match('/^s:\d+:"/s', $value)) {
+                $unserialized = @unserialize($value, ['allowed_classes' => false]);
+                if (is_string($unserialized)) {
+                    $value = trim($unserialized);
+                }
+            }
+
+            if ($value === $before) {
+                break;
+            }
+        }
+
+        $value = trim($value);
+
+        return $value === '' ? null : $value;
     }
 
     private static function decryptLaravelPayload(string $value): ?string
@@ -84,6 +114,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        // Irreversible plaintext migration.
+        // Irreversible plaintext repair.
     }
 };
