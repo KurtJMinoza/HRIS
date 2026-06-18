@@ -31,6 +31,7 @@ use App\Services\ESignatureService;
 use App\Services\FaceEmbeddingCacheService;
 use App\Services\FaceRegistrationStatusService;
 use App\Services\FaceVerificationService;
+use App\Support\FaceImageDataUrl;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\PayCycleService;
@@ -2322,10 +2323,7 @@ class EmployeeController extends Controller
             ]);
         }
 
-        $img = $employee->face_image;
-        $dataUrl = is_string($img) && (str_starts_with($img, 'data:') || preg_match('/^[A-Za-z0-9+\/=]+$/', $img))
-            ? (str_starts_with($img, 'data:') ? $img : 'data:image/jpeg;base64,'.$img)
-            : null;
+        $dataUrl = FaceImageDataUrl::toDataUrl($employee->face_image);
 
         return response()->json([
             'has_face' => true,

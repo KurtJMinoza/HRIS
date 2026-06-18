@@ -7,6 +7,7 @@ use App\Models\UserAdminActivityLog;
 use App\Jobs\ProcessFaceRegistrationJob;
 use App\Services\FaceRegistrationStatusService;
 use App\Services\RbacService;
+use App\Support\FaceImageDataUrl;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -340,10 +341,7 @@ class ProfileController extends Controller
             ]);
         }
 
-        $img = $user->face_image;
-        $dataUrl = is_string($img) && (str_starts_with($img, 'data:') || preg_match('/^[A-Za-z0-9+\/=]+$/', $img))
-            ? (str_starts_with($img, 'data:') ? $img : 'data:image/jpeg;base64,'.$img)
-            : null;
+        $dataUrl = FaceImageDataUrl::toDataUrl($user->face_image);
 
         return response()->json([
             'has_face' => true,

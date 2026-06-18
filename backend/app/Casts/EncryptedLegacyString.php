@@ -2,36 +2,17 @@
 
 namespace App\Casts;
 
+use App\Support\LegacyEncryptedString;
 use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
-use Illuminate\Contracts\Encryption\DecryptException;
-use Illuminate\Support\Facades\Crypt;
 
 /**
- * Backward-compatible plain-text cast for stale workers/deploys that still reference this class.
- * Government IDs are stored and returned as plaintext — no encryption on write.
+ * Decrypts legacy Laravel-encrypted values on read; stores plaintext on write.
  */
 class EncryptedLegacyString implements CastsAttributes
 {
     public function get($model, string $key, $value, array $attributes): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        $string = trim((string) $value);
-        if ($string === '') {
-            return null;
-        }
-
-        if (! str_starts_with($string, 'eyJpdiI6')) {
-            return $string;
-        }
-
-        try {
-            return Crypt::decryptString($string);
-        } catch (DecryptException) {
-            return $string;
-        }
+        return LegacyEncryptedString::normalize($value);
     }
 
     public function set($model, string $key, $value, array $attributes): ?string
@@ -45,12 +26,8 @@ class EncryptedLegacyString implements CastsAttributes
             return null;
         }
 
-        if (str_starts_with($string, 'eyJpdiI6')) {
-            try {
-                return Crypt::decryptString($string);
-            } catch (DecryptException) {
-                return $string;
-            }
+        if (LegacyEncryptedString::isEncryptedPayload($string)) {
+            return LegacyEncryptedString::normalize($string);
         }
 
         return $string;
