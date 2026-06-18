@@ -60,7 +60,7 @@ const CARD = 'rounded-2xl border border-border/80 bg-card text-card-foreground s
 const PAYSLIP_PREVIEW_DIALOG =
   '!max-w-[min(88rem,calc(100vw-1.5rem))] w-full overflow-hidden border-border/80 bg-card p-0 shadow-xl shadow-slate-900/[0.07] sm:!max-w-[min(88rem,calc(100vw-2rem))] dark:shadow-black/40'
 
-/** Matches non-draft payslip rows considered “done” for period lock + per-row Finalize button (align with backend). */
+/** Matches non-draft payslip rows considered done for period lock + per-row Finalize button (align with backend). */
 const PUBLISHED_PAYSLIP_STATUSES = new Set(['finalized', 'generated', 'emailed', 'sent_finalized', 'viewed'])
 
 function isPayslipPublishedDone(status) {
@@ -80,7 +80,7 @@ function formatPeso(n) {
 }
 
 function formatDate(value) {
-  if (!value) return '—'
+  if (!value) return '-'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return String(value)
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -128,7 +128,7 @@ function employeeRole(row) {
     row?.designation ||
     row?.role_name ||
     row?.role ||
-    '—'
+    '-'
   )
 }
 
@@ -167,10 +167,13 @@ function statusPill(label, color = 'gray') {
     green: 'border-brand/30 bg-brand/10 text-brand',
     gray: 'border-border/70 bg-muted/60 text-foreground',
   }
-  const dot = color === 'green' ? 'text-brand' : 'text-muted-foreground'
+  const dotClass =
+    color === 'green'
+      ? 'bg-brand'
+      : 'bg-slate-400 dark:bg-slate-500'
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium', map[color] || map.gray)}>
-      <span className={cn('text-[10px]', dot)}>?</span>
+      <span className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', dotClass)} aria-hidden />
       {label}
     </span>
   )
@@ -209,7 +212,7 @@ export default function AdminFinalizePayrollPage() {
     return { ...payload, company_id: fallbackCompanyId }
   }, [payload, user?.hr_role, user?.company_id])
 
-  /** Pay window + org scope only (excludes preview refresh token) — resets local finalize state when navigating batches. */
+  /** Pay window + org scope only (excludes preview refresh token) - resets local finalize state when navigating batches. */
   const finalizeScopeKey = useMemo(
     () =>
       JSON.stringify({
@@ -1081,7 +1084,7 @@ export default function AdminFinalizePayrollPage() {
               <h1 className={cn('text-[28px] font-extrabold leading-tight tracking-normal @md:text-[32px]', TEXT)}>Finalize Payroll</h1>
               <p className="max-w-3xl text-[15px] font-medium leading-7 text-muted-foreground">
                 Review totals from the same payroll engine as pay components, deductions, statutory lines, pay cycles, schedules, and
-                daily computation — then finalize to persist payroll periods, generate PDF payslips, and lock the run.
+                daily computation - then finalize to persist payroll periods, generate PDF payslips, and lock the run.
               </p>
             </div>
             <div
@@ -1095,7 +1098,7 @@ export default function AdminFinalizePayrollPage() {
                   {periodFinalized ? 'Status: Finalized' : draftProcessing ? `Status: ${batchRunStatus === 'queued' ? 'Pending' : 'Processing'}` : 'Status: Draft'}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {periodFinalized ? 'Locked - read only' : draftProcessing ? 'Generating payroll draft…' : 'Editable before finalize'}
+                  {periodFinalized ? 'Locked - read only' : draftProcessing ? 'Generating payroll draft...' : 'Editable before finalize'}
                 </p>
               </div>
               <Lock className="h-5 w-5 text-brand" />
@@ -1121,7 +1124,7 @@ export default function AdminFinalizePayrollPage() {
           {periodPreview ? (
             <div className="mt-4 grid grid-cols-1 gap-3 text-sm @md:grid-cols-3">
               <div className="rounded-xl border border-border/80 bg-background px-4 py-3 text-muted-foreground dark:bg-input/30">
-                <span className="font-semibold text-foreground">Pay Cycle:</span> {periodPreview?.pay_cycle_name || periodPreview?.cycle_label || '—'}
+                <span className="font-semibold text-foreground">Pay Cycle:</span> {periodPreview?.pay_cycle_name || periodPreview?.cycle_label || '-'}
                 {periodPreview?.pay_cycle_source_label ? (
                   <div className="mt-1 text-[11px] text-muted-foreground">{periodPreview.pay_cycle_source_label}</div>
                 ) : null}
@@ -1265,7 +1268,7 @@ export default function AdminFinalizePayrollPage() {
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search employee…"
+                  placeholder="Search employee..."
                   disabled={periodFinalized}
                   className="h-10 rounded-xl border-border/80 bg-background text-foreground dark:bg-input/35"
                 />
@@ -1418,13 +1421,13 @@ export default function AdminFinalizePayrollPage() {
                                     </Badge>
                                   ) : null}
                                 </div>
-                                {employeeRole(row) && employeeRole(row) !== '—' ? (
+                                {employeeRole(row) && employeeRole(row) !== '-' ? (
                                   <p className="mt-0.5 text-[15px] font-normal leading-snug text-muted-foreground">{employeeRole(row)}</p>
                                 ) : null}
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="py-2.5 px-2 text-[15px] font-normal text-muted-foreground">{row.department || '—'}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-[15px] font-normal text-muted-foreground">{row.department || '-'}</TableCell>
                           <TableCell className="py-2.5 px-2 text-right text-sm font-medium tabular-nums text-foreground/80">
                             {formatPeso(row.basic_salary)}
                             {Number(row.basic_salary_monthly || 0) > 0 ? (
@@ -1528,7 +1531,7 @@ export default function AdminFinalizePayrollPage() {
 
                 <div className="mt-3 flex flex-col gap-2 px-4 text-sm text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between @sm:px-5">
                   <span>
-                    Page {page} of {pageCount} · {Number(pagination.total || 0)} employee{Number(pagination.total || 0) === 1 ? '' : 's'}
+                    Page {page} of {pageCount} - {Number(pagination.total || 0)} employee{Number(pagination.total || 0) === 1 ? '' : 's'}
                   </span>
                   <div className="flex gap-2">
                     <Button type="button" variant="outline" size="sm" className="rounded-xl border-border/80 bg-background hover:bg-muted dark:bg-input/35" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
@@ -1566,7 +1569,7 @@ export default function AdminFinalizePayrollPage() {
                     <Label htmlFor="review" className={cn('cursor-pointer text-base font-bold leading-snug', TEXT)}>
                       I confirm I have reviewed all totals and employee details for this payroll batch.
                     </Label>
-                    <p className="mt-1.5 text-sm font-normal text-muted-foreground">Gross pay verified • Deductions correct • No open loans conflicting</p>
+                    <p className="mt-1.5 text-sm font-normal text-muted-foreground">Gross pay verified / Deductions correct / No open loans conflicting</p>
                   </div>
                 </div>
                 <Button
@@ -1583,7 +1586,7 @@ export default function AdminFinalizePayrollPage() {
                   {finalizing ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Finalizing payroll…
+                      Finalizing payroll...
                     </>
                   ) : (
                     <>
@@ -1639,8 +1642,8 @@ export default function AdminFinalizePayrollPage() {
                 ) : (
                   'Employee'
                 )}{' '}
-                ·{' '}
-                {breakdownRow?.employee_code || '—'}
+                -{' '}
+                {breakdownRow?.employee_code || '-'}
               </DialogDescription>
             </DialogHeader>
 
@@ -1704,7 +1707,7 @@ export default function AdminFinalizePayrollPage() {
                         <p className="truncate text-sm font-medium text-foreground">{String(l?.label || 'Deduction')}</p>
                         {l?.resolved_schedule || l?.resolved_calculation_standard ? (
                           <p className="mt-0.5 text-xs text-muted-foreground">
-                            {[l?.resolved_schedule, l?.resolved_calculation_standard].filter(Boolean).join(' · ')}
+                            {[l?.resolved_schedule, l?.resolved_calculation_standard].filter(Boolean).join(' / ')}
                           </p>
                         ) : null}
                       </div>
