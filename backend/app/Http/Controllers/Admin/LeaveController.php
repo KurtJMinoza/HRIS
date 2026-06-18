@@ -55,6 +55,7 @@ class LeaveController extends Controller
         private readonly BulkApprovalCacheService $bulkApprovalCache,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly NotificationService $notificationService,
+        private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
     /**
@@ -448,6 +449,7 @@ class LeaveController extends Controller
         );
         $leave->refresh();
         LeaveModuleCache::flush();
+        $this->emailTrigger->leaveFiled($leave);
 
         return response()->json([
             'message' => 'Leave request created.',
@@ -1045,6 +1047,7 @@ class LeaveController extends Controller
                     ($leave->user?->display_name ?? $leave->user?->name ?? 'An employee').' needs the next leave approval step.',
                     '/admin/leave?review_id='.$leave->id,
                 );
+                $this->emailTrigger->leaveNeedsNextApproval($leave, $nextPending);
             }
 
             if ($this->wantsLiteLeaveMutationResponse($request)) {
@@ -1145,6 +1148,7 @@ class LeaveController extends Controller
                 'Your leave request has been approved.',
                 '/employee/requests?request_id='.$leave->id,
             );
+            $this->emailTrigger->leaveFinalApproved($leave);
         }
 
         if ($this->wantsLiteLeaveMutationResponse($request)) {
@@ -1233,6 +1237,7 @@ class LeaveController extends Controller
                 '/employee/requests?request_id='.$leave->id,
                 'high',
             );
+            $this->emailTrigger->leaveRejected($leave);
         }
 
         if ($this->wantsLiteLeaveMutationResponse($request)) {

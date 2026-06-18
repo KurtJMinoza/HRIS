@@ -41,7 +41,14 @@
   $periodLabel = $formatDate($payslip->pay_period_start).' - '.$formatDate($payslip->pay_period_end);
   $payDate = $payslip->pay_date ?? $payslip->reference_date ?? null;
   $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
-  $statusLabel = strtolower(trim((string) ($payslip->status ?? ''))) === 'finalized' ? 'Finalized' : 'Draft';
+  $statusRaw = strtolower(trim((string) ($payslip->status ?? '')));
+  $statusLabel = match ($statusRaw) {
+      'sent_finalized', 'emailed' => 'Sent finalized',
+      'finalized', 'generated', 'viewed' => 'Finalized',
+      'voided' => 'Voided',
+      'draft', '' => 'Draft',
+      default => ucwords(str_replace('_', ' ', $statusRaw)),
+  };
   $compBreakdown = is_array($summary['compensation_breakdown'] ?? null) ? $summary['compensation_breakdown'] : [];
   $payrollModule = strtolower(trim((string) (
     $compBreakdown['payroll_module']

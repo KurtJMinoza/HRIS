@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\AttendanceClockEvent;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\Company;
@@ -104,6 +105,21 @@ class AttendanceController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::warning('Attendance clock notification failed', [
+                'attendance_log_id' => (int) $log->id,
+                'user_id' => (int) $user->id,
+                'type' => $log->type,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        try {
+            AttendanceClockEvent::dispatch($user->id, [
+                'type' => $log->type,
+                'date' => $clockAt->toDateString(),
+                'time' => $clockAt->format('g:i A'),
+            ])->afterResponse();
+        } catch (\Throwable $e) {
+            Log::warning('Attendance clock email event failed', [
                 'attendance_log_id' => (int) $log->id,
                 'user_id' => (int) $user->id,
                 'type' => $log->type,

@@ -8,6 +8,7 @@ use App\Models\Overtime;
 use App\Models\OvertimeApprovalAudit;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EmailTriggerService;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
 use App\Support\HrApprovalStages;
@@ -20,6 +21,7 @@ class OvertimeBulkApprovalService
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly DataScopeService $dataScopeService,
+        private readonly EmailTriggerService $emailTrigger,
     ) {}
 
     /**
@@ -203,6 +205,34 @@ class OvertimeBulkApprovalService
                     OvertimeApprovalAudit::query()->insert($auditRows);
                 }
             });
+        }
+
+        // Dispatch email notifications after DB commit
+        $upsertIds = array_column($upsertRows, 'id');
+        if ($upsertIds !== []) {
+            $finalOvertimes = Overtime::query()->whereIn('id', $upsertIds)->get();
+            foreach ($finalOvertimes as $ot) {
+                $this->emailTrigger->overtimeFinalApproved($ot);
+            }
+        }
+        if ($firstStepRows !== []) {
+            $firstStepIds = array_column($firstStepRows, 'id');
+            $nextPendingRecords = OrgApprovalRecord::query()
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                ->whereIn('request_id', $firstStepIds)
+                ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->orderBy('sequence_order')
+                ->get()
+                ->unique('request_id')
+                ->keyBy('request_id');
+            $firstStepOvertimes = Overtime::query()->whereIn('id', $firstStepIds)->get()->keyBy('id');
+            foreach ($firstStepIds as $otId) {
+                $ot = $firstStepOvertimes->get($otId);
+                $next = $nextPendingRecords->get($otId);
+                if ($ot && $next) {
+                    $this->emailTrigger->overtimeNeedsNextApproval($ot, $next);
+                }
+            }
         }
 
         return [

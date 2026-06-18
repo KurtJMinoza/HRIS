@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Admin\AdminUserAccountController;
+use App\Http\Controllers\EmailLogoController;
 use App\Http\Controllers\Admin\ApprovalWorkflowSettingsController;
 use App\Http\Controllers\Admin\AreaController;
 use App\Http\Controllers\Admin\AttendanceCorrectionController;
@@ -13,6 +13,7 @@ use App\Http\Controllers\Admin\DeductionScheduleController;
 use App\Http\Controllers\Admin\DeductionTypeController;
 use App\Http\Controllers\Admin\DepartmentController;
 use App\Http\Controllers\Admin\DivisionController;
+use App\Http\Controllers\Admin\EmailNotificationController;
 use App\Http\Controllers\Admin\EmployeeBenefitController;
 use App\Http\Controllers\Admin\EmployeeCompensationController;
 use App\Http\Controllers\Admin\EmployeeController;
@@ -83,6 +84,7 @@ Route::post('/face/liveness/results', [LivenessController::class, 'sessionResult
 Route::get('/face/liveness/session/{sessionId}', [LivenessController::class, 'getSessionResult']);
 Route::post('/face/verify-only', [AttendanceController::class, 'verifyFaceOnly']);
 Route::get('/media/public/{path}', [PublicMediaController::class, 'show'])->where('path', '.*');
+Route::get('/email/logo.png', [EmailLogoController::class, 'show']);
 Route::get('/public-settings', [PublicSettingsController::class, 'index']);
 Route::get('/recruitment/exam/{token}', [RecruitmentController::class, 'publicExam']);
 Route::post('/recruitment/exam/{token}', [RecruitmentController::class, 'submitPublicExam']);
@@ -727,6 +729,20 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/user-accounts', [AdminUserAccountController::class, 'store']);
             Route::patch('/admin/user-accounts/{id}', [AdminUserAccountController::class, 'update']);
             Route::post('/admin/user-accounts/{id}/reset-password', [AdminUserAccountController::class, 'resetPassword']);
+        });
+
+        Route::middleware('permission:email_notifications.view|email_notifications.manage|settings.manage')->group(function () {
+            Route::get('/admin/email-notifications/settings', [EmailNotificationController::class, 'index']);
+            Route::get('/admin/email-notifications/templates', [EmailNotificationController::class, 'templates']);
+            Route::get('/admin/email-notifications/logs', [EmailNotificationController::class, 'logs']);
+        });
+        Route::middleware('permission:email_notifications.manage|settings.manage')->group(function () {
+            Route::patch('/admin/email-notifications/settings/{id}', [EmailNotificationController::class, 'updateSetting']);
+            Route::get('/admin/email-notifications/templates/{id}/preview', [EmailNotificationController::class, 'previewTemplate']);
+            Route::patch('/admin/email-notifications/templates/{id}', [EmailNotificationController::class, 'updateTemplate']);
+            Route::post('/admin/email-notifications/logs/{id}/retry', [EmailNotificationController::class, 'retryLog']);
+            Route::post('/admin/email-notifications/test', [EmailNotificationController::class, 'testEmail']);
+            Route::post('/admin/email-notifications/clear-cache', [EmailNotificationController::class, 'clearCache']);
         });
 
         // Employee status management and regularization approval (HR)

@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\AttendanceCacheService;
 use App\Services\EmployeeDashboardCacheService;
 use App\Services\HrRoleResolver;
+use App\Services\EmailTriggerService;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeService;
@@ -49,6 +50,7 @@ class AttendanceCorrectionBulkFollowUpJob implements ShouldQueue
         PresenceFilingAttendanceLogSyncService $attendanceLogSyncService,
         PayrollDailyRecordSyncService $payrollDailyRecordSyncService,
         HrRoleResolver $hrRoleResolver,
+        EmailTriggerService $emailTrigger,
     ): void {
         $actor = User::query()->find($this->actorId);
         if (! $actor) {
@@ -148,6 +150,7 @@ class AttendanceCorrectionBulkFollowUpJob implements ShouldQueue
                     'Your attendance correction was approved and applied.',
                     '/employee/correction-requests?request_id='.$correction->id,
                 );
+                $emailTrigger->correctionFinalApproved($correction);
 
                 continue;
             }
@@ -168,6 +171,7 @@ class AttendanceCorrectionBulkFollowUpJob implements ShouldQueue
                     ($employee->display_name ?? $employee->name ?? 'An employee').' needs the next attendance correction approval step.',
                     '/admin/attendance/corrections?review_id='.$correction->id,
                 );
+                $emailTrigger->correctionNeedsNextApproval($correction, $nextPending);
             }
         }
 

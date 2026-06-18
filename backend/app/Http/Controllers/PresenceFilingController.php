@@ -61,6 +61,7 @@ class PresenceFilingController extends Controller
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
         private readonly AttendanceCorrectionStatusService $correctionStatusService,
+        private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
     private function normalizeTimeToHi(?string $value): ?string
@@ -315,6 +316,7 @@ class PresenceFilingController extends Controller
         AttendanceCorrectionModuleCache::flush();
 
         $this->notifyAttendanceCorrectionApprover($correction);
+        $this->emailTrigger->correctionFiled($correction);
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
@@ -552,6 +554,7 @@ class PresenceFilingController extends Controller
         AttendanceCorrectionModuleCache::flush();
 
         $this->notifyAttendanceCorrectionApprover($correction);
+        $this->emailTrigger->correctionFiled($correction);
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
@@ -2011,6 +2014,7 @@ class PresenceFilingController extends Controller
                     ($employee->display_name ?? $employee->name ?? 'An employee').' needs the next attendance correction approval step.',
                     '/admin/attendance/corrections?review_id='.$correction->id,
                 );
+                $this->emailTrigger->correctionNeedsNextApproval($correction, $nextPending);
             }
 
             if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
@@ -2154,6 +2158,7 @@ class PresenceFilingController extends Controller
             'Your attendance correction was approved and applied.',
             '/employee/correction-requests?request_id='.$correction->id,
         );
+        $this->emailTrigger->correctionFinalApproved($correction);
 
         if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
             return response()->json([
@@ -2259,6 +2264,7 @@ class PresenceFilingController extends Controller
             '/employee/correction-requests?request_id='.$correction->id,
             'high',
         );
+        $this->emailTrigger->correctionRejected($correction);
 
         if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
             return response()->json([

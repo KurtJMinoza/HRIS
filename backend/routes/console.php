@@ -71,6 +71,11 @@ Schedule::call(function () {
     Artisan::call('schedule:apply-pending');
 })->dailyAt('00:10')->timezone(config('attendance.timezone', 'Asia/Manila'));
 
+// Missing clock-in email reminders – every 5 minutes during business hours
+Schedule::command('attendance:send-missing-reminders')
+    ->everyFiveMinutes()
+    ->timezone(config('attendance.timezone', 'Asia/Manila'));
+
 // Remove bulk payslip ZIP exports older than 7 days
 Schedule::call(function () {
     CleanupExpiredPayslipBulkDownloadsJob::dispatchSync(7);

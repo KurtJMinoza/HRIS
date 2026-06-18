@@ -39,13 +39,15 @@ return [
 
         'smtp' => [
             'transport' => 'smtp',
-            'scheme' => env('MAIL_SCHEME'),
+            'scheme' => ($scheme = env('MAIL_SCHEME')) && ! in_array(strtolower((string) $scheme), ['', 'null'], true)
+                ? $scheme
+                : null,
             'url' => env('MAIL_URL'),
             'host' => env('MAIL_HOST', '127.0.0.1'),
             'port' => env('MAIL_PORT', 2525),
             'username' => env('MAIL_USERNAME'),
             'password' => env('MAIL_PASSWORD'),
-            'timeout' => null,
+            'timeout' => env('MAIL_TIMEOUT', 30),
             'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
         ],
 
@@ -113,6 +115,23 @@ return [
     'from' => [
         'address' => env('MAIL_FROM_ADDRESS', 'hello@example.com'),
         'name' => env('MAIL_FROM_NAME', 'Example'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Branded Notification Settings
+    |--------------------------------------------------------------------------
+    |
+    | logo_url: Public HTTPS URL for the email logo (recommended for Gmail).
+    | reply_to: Where employee replies should go (defaults to MAIL_FROM_*).
+    |
+    */
+
+    'logo_url' => env('MAIL_LOGO_URL'),
+
+    'reply_to' => [
+        'address' => env('MAIL_REPLY_TO', env('MAIL_FROM_ADDRESS', 'hello@example.com')),
+        'name' => env('MAIL_REPLY_TO_NAME', env('MAIL_FROM_NAME', 'Example')),
     ],
 
 ];

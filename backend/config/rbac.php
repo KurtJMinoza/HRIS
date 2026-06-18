@@ -176,6 +176,10 @@ return [
         // 19. EXECOM
         ['slug' => 'execom.view', 'module' => 'execom', 'label' => 'View EXECOM', 'description' => 'Open EXECOM payroll and management pages'],
         ['slug' => 'execom.manage', 'module' => 'execom', 'label' => 'Manage EXECOM', 'description' => 'Manage EXECOM employees, payroll settings, and payroll runs'],
+
+        // 20. Email notifications
+        ['slug' => 'email_notifications.view', 'module' => 'email_notifications', 'label' => 'View email notifications', 'description' => 'View email notification settings and logs'],
+        ['slug' => 'email_notifications.manage', 'module' => 'email_notifications', 'label' => 'Manage email notifications', 'description' => 'Configure email notification settings, templates, and retry failed emails'],
     ],
 
     /**

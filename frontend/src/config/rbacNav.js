@@ -9,6 +9,7 @@ const PATHS_ADMIN_HR_ONLY = new Set([
   '/admin/users-permissions',
   '/admin/daily-computation/policy-settings',
   '/admin/approval-workflow-settings',
+  '/admin/email-notifications',
 ])
 
 /** Minimum permission (any) required to show a nav entry; super admin sees all. */
@@ -56,6 +57,7 @@ const pathToPermissions = {
     'can_view_all_reports',
   ],
   '/admin/loans-deductions': ['loans.view_own', 'loans.request', 'request-loan'],
+  '/admin/email-notifications': ['email_notifications.view', 'email_notifications.manage', 'settings.manage'],
   '/admin/schedules': ['manage-schedules', 'schedule.view'],
   /** Self-service: same visibility rule as Profile (no extra permission slug). */
   '/admin/qr': [],
@@ -117,10 +119,24 @@ function navItemVisibleForUser(user, item) {
   return flagOk && permissionOk
 }
 
+function filterNavItemsForUser(items, user) {
+  if (!Array.isArray(items)) return []
+  const out = []
+  for (const item of items) {
+    if (Array.isArray(item.children) && item.children.length > 0) {
+      const children = filterNavItemsForUser(item.children, user)
+      if (children.length === 0) continue
+      out.push({ ...item, children })
+      continue
+    }
+    if (!navItemVisibleForUser(user, item)) continue
+    out.push({ ...item })
+  }
+  return out
+}
+
 export function buildEmployeeNav(user = null) {
-  return employeeNavItems
-    .filter((item) => navItemVisibleForUser(user, item))
-    .map((item) => ({ ...item }))
+  return filterNavItemsForUser(employeeNavItems, user)
 }
 
 /**

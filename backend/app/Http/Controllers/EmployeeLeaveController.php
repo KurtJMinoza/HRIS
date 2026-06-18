@@ -38,6 +38,7 @@ class EmployeeLeaveController extends Controller
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
         private readonly NotificationService $notificationService,
+        private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -845,6 +846,7 @@ class EmployeeLeaveController extends Controller
             ($user->display_name ?? $user->name ?? 'An employee').' filed a leave request.',
             '/admin/leave?review_id='.$leave->id,
         );
+        $this->emailTrigger->leaveFiled($leave);
 
         $leave->refresh();
         LeaveModuleCache::flush();

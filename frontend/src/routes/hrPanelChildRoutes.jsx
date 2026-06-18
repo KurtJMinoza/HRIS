@@ -45,6 +45,7 @@ const AdminHoliday = lazy(() => import('@/pages/AdminHoliday'))
 const AdminOvertime = lazy(() => import('@/pages/AdminOvertime'))
 const AdminRecruitment = lazy(() => import('@/pages/AdminRecruitment'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
+const AdminEmailNotifications = lazy(() => import('@/pages/AdminEmailNotifications'))
 
 function withSuspense(node, fallback) {
   return (
@@ -170,6 +171,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   />,
   <Route key="hr-at" path="attendance" element={withSuspense(<AdminAttendance />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-geofencing" path="geofencing" element={withSuspense(<AdminGeofencing />, <DataTableRouteFallback titleWidth="w-72" />)} />,
+  <Route key="hr-email-notifications" path="email-notifications" element={withSuspense(<AdminEmailNotifications />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-att-corr" path="attendance-corrections" element={<AttendanceCorrections />} />,
   <Route key="hr-corr" path="corrections" element={<AttendanceCorrections />} />,
   <Route key="hr-qr" path="qr" element={<EmployeeMyQr />} />,

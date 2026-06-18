@@ -54,6 +54,7 @@ class OvertimeController extends Controller
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
+        private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
     /**
@@ -1038,6 +1039,7 @@ class OvertimeController extends Controller
                     '/employee/overtime?request_id='.$overtime->id,
                     'high',
                 );
+                $this->emailTrigger->overtimeRejected($overtime);
             }
 
             if ($this->wantsLiteOvertimeMutationResponse($request)) {
@@ -1127,6 +1129,7 @@ class OvertimeController extends Controller
                     ($overtime->user?->display_name ?? $overtime->user?->name ?? 'An employee').' needs the next overtime approval step.',
                     '/admin/overtime?review_id='.$overtime->id,
                 );
+                $this->emailTrigger->overtimeNeedsNextApproval($overtime, $nextPending);
             }
 
             if ($this->wantsLiteOvertimeMutationResponse($request)) {
@@ -1221,6 +1224,7 @@ class OvertimeController extends Controller
                 'Your overtime request has been approved.',
                 '/employee/overtime?request_id='.$overtime->id,
             );
+            $this->emailTrigger->overtimeFinalApproved($overtime);
         }
 
         if ($this->wantsLiteOvertimeMutationResponse($request)) {

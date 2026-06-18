@@ -8,6 +8,7 @@ use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EmailTriggerService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\OrgApprovalWorkflowService;
@@ -24,6 +25,7 @@ class LeaveBulkApprovalService
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly DataScopeService $dataScopeService,
+        private readonly EmailTriggerService $emailTrigger,
     ) {}
 
     /**
@@ -261,6 +263,33 @@ class LeaveBulkApprovalService
                     LeaveApprovalAudit::query()->insert($auditRows);
                 }
             });
+        }
+
+        // Dispatch email notifications after DB commit
+        if ($finalApprovedIds !== []) {
+            $finalLeaves = LeaveRequest::query()->whereIn('id', $finalApprovedIds)->get();
+            foreach ($finalLeaves as $leave) {
+                $this->emailTrigger->leaveFinalApproved($leave);
+            }
+        }
+        if ($firstStepRows !== []) {
+            $firstStepIds = array_column($firstStepRows, 'id');
+            $nextPendingRecords = OrgApprovalRecord::query()
+                ->where('module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                ->whereIn('request_id', $firstStepIds)
+                ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->orderBy('sequence_order')
+                ->get()
+                ->unique('request_id')
+                ->keyBy('request_id');
+            $firstStepLeaves = LeaveRequest::query()->whereIn('id', $firstStepIds)->get()->keyBy('id');
+            foreach ($firstStepIds as $leaveId) {
+                $leave = $firstStepLeaves->get($leaveId);
+                $next = $nextPendingRecords->get($leaveId);
+                if ($leave && $next) {
+                    $this->emailTrigger->leaveNeedsNextApproval($leave, $next);
+                }
+            }
         }
 
         return [

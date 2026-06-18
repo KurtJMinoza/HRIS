@@ -349,7 +349,7 @@ function SidebarContent({
           <span className="sr-only">HRIS — home</span>
         </Link>
       </div>
-      <nav className={cn('flex flex-1 flex-col gap-1 p-3', collapsed && 'px-2')}>
+      <nav className={cn('flex flex-1 flex-col gap-1 overflow-y-auto p-3', collapsed && 'px-2')}>
         {navItems.map((item) => renderItem(item))}
       </nav>
       <div className={cn('border-t border-border/40 p-2', collapsed ? 'space-y-1' : 'space-y-2')}>

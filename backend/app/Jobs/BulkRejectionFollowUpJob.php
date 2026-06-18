@@ -6,6 +6,7 @@ use App\Models\AttendanceCorrection;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
+use App\Services\EmailTriggerService;
 use App\Services\NotificationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -25,7 +26,7 @@ class BulkRejectionFollowUpJob implements ShouldQueue
         private readonly array $requestIds,
     ) {}
 
-    public function handle(NotificationService $notificationService): void
+    public function handle(NotificationService $notificationService, EmailTriggerService $emailTrigger): void
     {
         [$modelClass, $type, $title, $message, $urlPrefix] = match ($this->module) {
             'leave' => [
@@ -70,6 +71,12 @@ class BulkRejectionFollowUpJob implements ShouldQueue
                 $urlPrefix.$record->id,
                 'high',
             );
+
+            match ($this->module) {
+                'leave' => $emailTrigger->leaveRejected($record),
+                'overtime' => $emailTrigger->overtimeRejected($record),
+                default => $emailTrigger->correctionRejected($record),
+            };
         }
     }
 }

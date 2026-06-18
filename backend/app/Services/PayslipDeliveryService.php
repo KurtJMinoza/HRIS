@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\EmailLog;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
@@ -19,6 +20,7 @@ final class PayslipDeliveryService
         private readonly PayslipService $payslipService,
         private readonly DataScopeService $dataScopeService,
         private readonly NotificationService $notificationService,
+        private readonly EmailTriggerService $emailTrigger,
     ) {}
 
     /**
@@ -37,6 +39,7 @@ final class PayslipDeliveryService
         $out = [
             'delivered' => 0,
             'notified' => 0,
+            'emailed' => 0,
             'skipped' => [],
             'errors' => [],
         ];
@@ -50,11 +53,13 @@ final class PayslipDeliveryService
         $out['delivered'] = $result['delivered'];
         $out['skipped'] = $result['skipped'];
         $out['notified'] = $this->notifyReleasedPayslips($result['notify_payslips']);
+        $out['emailed'] = $this->emailReleasedPayslips($result['email_payslips']);
 
         Log::info('Payslip delivery batch', [
             'actor_id' => (int) $actor->id,
             'delivered' => $out['delivered'],
             'notified' => $out['notified'],
+            'emailed' => $out['emailed'],
             'skipped_count' => count($out['skipped']),
             'error_count' => count($out['errors']),
         ]);
@@ -65,7 +70,7 @@ final class PayslipDeliveryService
     /**
      * Deliver all payslips for one finalized payroll batch run.
      *
-     * @return array{batch_id:int,targeted:int,delivered:int,notified:int,skipped:list<array{id:int,reason:string}>,errors:list<array{id:int,message:string}>}
+     * @return array{batch_id:int,targeted:int,delivered:int,notified:int,emailed:int,skipped:list<array{id:int,reason:string}>,errors:list<array{id:int,message:string}>}
      */
     public function deliverFinalizedBatchPayslips(int $batchId, User $actor): array
     {
@@ -87,6 +92,7 @@ final class PayslipDeliveryService
             'targeted' => count($payslipIds),
             'delivered' => (int) ($result['delivered'] ?? 0),
             'notified' => (int) ($result['notified'] ?? 0),
+            'emailed' => (int) ($result['emailed'] ?? 0),
             'skipped' => $result['skipped'] ?? [],
             'errors' => $result['errors'] ?? [],
         ];
@@ -100,7 +106,7 @@ final class PayslipDeliveryService
      * method can still perform the slower PDF guarantee when needed.
      *
      * @param  list<int>  $payslipIds
-     * @return array{delivered:int, notify_payslips:list<Payslip>, skipped:list<array{id:int,reason:string}>}
+     * @return array{delivered:int, notify_payslips:list<Payslip>, email_payslips:list<Payslip>, skipped:list<array{id:int,reason:string}>}
      */
     private function bulkMarkPayslipsDelivered(
         array $payslipIds,
@@ -112,6 +118,7 @@ final class PayslipDeliveryService
         $now = now();
         $deliveredIds = [];
         $notifyPayslips = [];
+        $emailPayslips = [];
         $publishedStatuses = Payslip::lockingStatuses();
 
         foreach (array_chunk($payslipIds, 500) as $chunk) {
@@ -141,6 +148,7 @@ final class PayslipDeliveryService
             }
 
             foreach ($rows as $payslip) {
+                $emailPayslips[] = $payslip;
                 if (! $payslip->is_sent || ! $payslip->sent_at || ! $payslip->delivered_at) {
                     $notifyPayslips[] = $payslip;
                 }
@@ -172,15 +180,22 @@ final class PayslipDeliveryService
         return [
             'delivered' => count($deliveredIds),
             'notify_payslips' => $notifyPayslips,
+            'email_payslips' => $emailPayslips,
             'skipped' => $skipped,
         ];
     }
 
     /**
+     * In-app notification for newly released payslips (first delivery only).
+     *
      * @param  list<Payslip>  $payslips
      */
     private function notifyReleasedPayslips(array $payslips): int
     {
+        if ($payslips === []) {
+            return 0;
+        }
+
         $sent = 0;
 
         foreach ($payslips as $payslip) {
@@ -208,6 +223,67 @@ final class PayslipDeliveryService
                 }
             } catch (\Throwable $e) {
                 Log::warning('Payslip delivery notification failed', [
+                    'payslip_id' => (int) $payslip->id,
+                    'user_id' => (int) $payslip->user_id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $sent;
+    }
+
+    /**
+     * Email employees for delivered payslips. Runs on every bulk send, but skips payslips
+     * that already have a queued/sent payslip_available email log.
+     *
+     * @param  list<Payslip>  $payslips
+     */
+    private function emailReleasedPayslips(array $payslips): int
+    {
+        if ($payslips === []) {
+            return 0;
+        }
+
+        $payslipMorph = (new Payslip)->getMorphClass();
+        $payslipIds = collect($payslips)->pluck('id')->map(fn ($id): int => (int) $id)->all();
+        $alreadyEmailed = EmailLog::query()
+            ->where('notification_key', 'payslip_available')
+            ->where('related_type', $payslipMorph)
+            ->whereIn('related_id', $payslipIds)
+            ->whereIn('status', ['queued', 'sent'])
+            ->pluck('related_id')
+            ->map(fn ($id): int => (int) $id)
+            ->flip()
+            ->all();
+
+        $employees = User::query()
+            ->select(['id', 'email', 'first_name', 'middle_name', 'last_name', 'suffix', 'name'])
+            ->whereIn('id', collect($payslips)->pluck('user_id')->unique()->filter()->all())
+            ->get()
+            ->keyBy('id');
+
+        $sent = 0;
+
+        foreach ($payslips as $payslip) {
+            if (isset($alreadyEmailed[(int) $payslip->id])) {
+                continue;
+            }
+
+            $employee = $employees->get((int) $payslip->user_id);
+            if (! $employee instanceof User || ! $employee->email) {
+                continue;
+            }
+
+            try {
+                $this->emailTrigger->payslipAvailable(
+                    $employee,
+                    $payslip,
+                    $this->periodLabel($payslip),
+                );
+                $sent++;
+            } catch (\Throwable $e) {
+                Log::warning('Payslip delivery email failed', [
                     'payslip_id' => (int) $payslip->id,
                     'user_id' => (int) $payslip->user_id,
                     'error' => $e->getMessage(),

@@ -440,6 +440,7 @@ class PayrollFinalizeController extends Controller
             'targeted' => $result['targeted'],
             'delivered' => $result['delivered'],
             'notified' => $result['notified'] ?? 0,
+            'emailed' => $result['emailed'] ?? 0,
             'skipped' => $result['skipped'],
             'errors' => $result['errors'],
         ]);

@@ -7891,3 +7891,110 @@ export async function getNearbyGeofenceOsmPoi(options = {}) {
   return data
 }
 
+// ===================== Email Notifications =====================
+
+export async function getEmailNotificationSettings(options = {}) {
+  const res = await authenticatedFetch('/admin/email-notifications/settings', {
+    method: 'GET',
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || 'Failed to load email notification settings')
+  return data
+}
+
+export async function updateEmailNotificationSetting(id, payload, options = {}) {
+  const res = await authenticatedFetch(`/admin/email-notifications/settings/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update setting')
+  return data
+}
+
+export async function getEmailTemplates(options = {}) {
+  const res = await authenticatedFetch('/admin/email-notifications/templates', {
+    method: 'GET',
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || 'Failed to load email templates')
+  return data
+}
+
+export async function previewEmailTemplate(id, options = {}) {
+  const res = await authenticatedFetch(`/admin/email-notifications/templates/${id}/preview`, {
+    method: 'GET',
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || 'Failed to load template preview')
+  return data
+}
+
+export async function updateEmailTemplate(id, payload, options = {}) {
+  const res = await authenticatedFetch(`/admin/email-notifications/templates/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update template')
+  return data
+}
+
+export async function getEmailLogs(params = {}, options = {}) {
+  const query = new URLSearchParams()
+  if (params.page) query.set('page', params.page)
+  if (params.per_page) query.set('per_page', params.per_page)
+  if (params.status && params.status !== 'all') query.set('status', params.status)
+  if (params.notification_key && params.notification_key !== 'all') query.set('notification_key', params.notification_key)
+  if (params.date_from) query.set('date_from', params.date_from)
+  if (params.date_to) query.set('date_to', params.date_to)
+  if (params.search) query.set('search', params.search)
+  const qs = query.toString()
+  const res = await authenticatedFetch(`/admin/email-notifications/logs${qs ? `?${qs}` : ''}`, {
+    method: 'GET',
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || 'Failed to load email logs')
+  return data
+}
+
+export async function retryEmailLog(id, options = {}) {
+  const res = await authenticatedFetch(`/admin/email-notifications/logs/${id}/retry`, {
+    method: 'POST',
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || 'Failed to retry email')
+  return data
+}
+
+export async function sendTestEmail(payload, options = {}) {
+  const res = await authenticatedFetch('/admin/email-notifications/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.error || data.message || 'Failed to send test email')
+  return data
+}
+
+export async function clearEmailNotificationCache(options = {}) {
+  const res = await authenticatedFetch('/admin/email-notifications/clear-cache', {
+    method: 'POST',
+    signal: options.signal,
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || 'Failed to clear cache')
+  return data
+}
+

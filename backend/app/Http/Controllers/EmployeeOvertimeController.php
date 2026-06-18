@@ -32,6 +32,7 @@ class EmployeeOvertimeController extends Controller
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
         private readonly NotificationService $notificationService,
+        private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
     private function attendanceTimezone(): string
@@ -842,6 +843,7 @@ class EmployeeOvertimeController extends Controller
                 ($user->display_name ?? $user->name ?? 'An employee').' filed an overtime request.',
                 '/admin/overtime?review_id='.$overtime->id,
             );
+            $this->emailTrigger->overtimeFiled($overtime);
         }
         OvertimeModuleCache::flush();
 
