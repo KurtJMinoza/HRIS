@@ -347,10 +347,6 @@ class GeofenceController extends Controller
             ],
         );
 
-        if (($result['allowed'] ?? false) === false && isset($result['geofence_validation_id'])) {
-            $this->geofenceLiveMonitor->recordFromValidationLog((int) $result['geofence_validation_id'], $request);
-        }
-
         return response()->json($result);
     }
 

@@ -297,6 +297,7 @@ class GeofenceValidationService
                 $request->attributes->set('geofence_result', $result);
 
                 if (! ($result['allowed'] ?? false)) {
+                    $this->recordLiveMonitorBlockedAttemptFromResult($result, $request, (int) $validationId);
                     abort(403, $result['failure_reason'] ?? 'Attendance without geofence is not authorized.');
                 }
 
@@ -350,6 +351,7 @@ class GeofenceValidationService
             $request->attributes->set('geofence_result', $result);
 
             if (! ($result['allowed'] ?? false)) {
+                $this->recordLiveMonitorBlockedAttemptFromResult($result, $request, (int) $validationId);
                 abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
             }
 
@@ -378,6 +380,7 @@ class GeofenceValidationService
         $request->attributes->set('geofence_result', $result);
 
         if (! ($result['allowed'] ?? false)) {
+            $this->recordLiveMonitorBlockedAttemptFromResult($result, $request);
             abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
         }
 
@@ -814,6 +817,11 @@ class GeofenceValidationService
                 $log = GeofenceValidationLog::query()->create($logPayload);
                 $payload['geofence_validation_id'] = (int) $log->id;
                 $payload['id'] = (int) $log->id;
+                $payload['log_created'] = true;
+
+                if (! ($payload['allowed'] ?? false)) {
+                    $this->recordLiveMonitorBlockedAttempt((int) $log->id);
+                }
             } catch (\Throwable $e) {
                 Log::warning('Unable to write geofence validation log', [
                     'employee_id' => $result['employee_id'] ?? null,
@@ -839,6 +847,38 @@ class GeofenceValidationService
         ]);
 
         return $payload;
+    }
+
+    /**
+     * @param  array<string, mixed>  $result
+     */
+    private function recordLiveMonitorBlockedAttemptFromResult(array $result, \Illuminate\Http\Request $request, ?int $fallbackValidationId = null): void
+    {
+        if ($result['log_created'] ?? false) {
+            return;
+        }
+
+        $validationLogId = (int) ($result['geofence_validation_id'] ?? $result['id'] ?? $fallbackValidationId ?? 0);
+        if ($validationLogId <= 0) {
+            return;
+        }
+
+        $this->recordLiveMonitorBlockedAttempt($validationLogId, $request);
+    }
+
+    private function recordLiveMonitorBlockedAttempt(int $validationLogId, ?\Illuminate\Http\Request $request = null): void
+    {
+        try {
+            app(GeofenceLiveMonitorService::class)->recordFromValidationLog(
+                $validationLogId,
+                $request ?? request(),
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Unable to record geofence live monitor blocked attempt', [
+                'geofence_validation_log_id' => $validationLogId,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
