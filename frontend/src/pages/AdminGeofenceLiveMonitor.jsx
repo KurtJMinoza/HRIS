@@ -74,15 +74,23 @@ function methodLabel(value) {
   return value || 'Face'
 }
 
-function markerIcon(event) {
+function branchOptionLabel(branch) {
+  const name = branch?.branch_name || branch?.name || 'Branch'
+  const company = branch?.company_name || 'Unknown company'
+  return `${name} — ${company}`
+}
+
+function markerIcon(event, highlighted = false) {
   const color = eventColor(event)
+  const size = highlighted ? 14 : 10
+  const border = highlighted ? 3 : 2
   return L.divIcon({
     className: '',
     html: `
-      <span style="display:block;width:10px;height:10px;border-radius:9999px;background:${color};border:2px solid white;box-shadow:0 2px 8px rgba(15,23,42,.35)"></span>
+      <span style="display:block;width:${size}px;height:${size}px;border-radius:9999px;background:${color};border:${border}px solid white;box-shadow:0 ${highlighted ? 4 : 2}px ${highlighted ? 12 : 8}px rgba(15,23,42,${highlighted ? '.45' : '.35'})"></span>
     `,
-    iconSize: [10, 10],
-    iconAnchor: [5, 5],
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
     popupAnchor: [0, -6],
   })
 }
@@ -222,6 +230,7 @@ export default function AdminGeofenceLiveMonitor() {
   const geofenceLayerRef = useRef(null)
   const liveClockDotsLayerRef = useRef(null)
   const outsideAttemptsLayerRef = useRef(null)
+  const eventMarkersRef = useRef(new Map())
   const [events, setEvents] = useState([])
   const [branches, setBranches] = useState([])
   const [summary, setSummary] = useState(null)
@@ -243,6 +252,7 @@ export default function AdminGeofenceLiveMonitor() {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [focusedEventId, setFocusedEventId] = useState('')
 
   const filteredEvents = useMemo(
     () => events.filter((event) => passesClientToggles(event, toggles)).slice(0, 300),
@@ -358,8 +368,12 @@ export default function AdminGeofenceLiveMonitor() {
     if (!liveLayer || !outsideLayer || !map) return
     liveLayer.clearLayers()
     outsideLayer.clearLayers()
+    eventMarkersRef.current.clear()
     const markers = filteredEvents.map((event) => {
-      const marker = L.marker([event.lat, event.lng], { icon: markerIcon(event) }).bindPopup(popupHtml(event))
+      const eventKey = String(event.event_id)
+      const highlighted = focusedEventId === eventKey
+      const marker = L.marker([event.lat, event.lng], { icon: markerIcon(event, highlighted) }).bindPopup(popupHtml(event))
+      eventMarkersRef.current.set(eventKey, marker)
       if (['outside', 'failed'].includes(event.geofence_status)) {
         marker.addTo(outsideLayer)
       } else {
@@ -367,13 +381,24 @@ export default function AdminGeofenceLiveMonitor() {
       }
       return marker
     })
-    if (markers.length > 0 && toggles.autoFollow) {
+    if (markers.length > 0 && toggles.autoFollow && !focusedEventId) {
       const latest = filteredEvents[0]
       map.setView([latest.lat, latest.lng], Math.max(map.getZoom(), 15), { animate: true })
     } else if (markers.length > 0 && map.getZoom() <= 3) {
       map.fitBounds(L.featureGroup(markers).getBounds().pad(0.2))
     }
-  }, [filteredEvents, toggles.autoFollow])
+  }, [filteredEvents, toggles.autoFollow, focusedEventId])
+
+  const followEventOnMap = useCallback((event) => {
+    const map = mapRef.current
+    if (!map || !Number.isFinite(event?.lat) || !Number.isFinite(event?.lng)) return
+    const eventKey = String(event.event_id)
+    setFocusedEventId(eventKey)
+    map.setView([event.lat, event.lng], Math.max(map.getZoom(), 16), { animate: true })
+    window.setTimeout(() => {
+      eventMarkersRef.current.get(eventKey)?.openPopup()
+    }, 250)
+  }, [])
 
   useEffect(() => {
     if (!user?.id) return undefined
@@ -445,7 +470,7 @@ export default function AdminGeofenceLiveMonitor() {
             <RefreshCw className={cn('mr-2 size-3.5', loading && 'animate-spin')} />
             Refresh
           </Button>
-          <Button variant="outline" size="sm" className="h-9 rounded-md border-slate-200 bg-white px-4 text-xs font-semibold shadow-sm" onClick={() => setEvents([])}>
+          <Button variant="outline" size="sm" className="h-9 rounded-md border-slate-200 bg-white px-4 text-xs font-semibold shadow-sm" onClick={() => { setEvents([]); setFocusedEventId('') }}>
             <Trash2 className="mr-2 size-3.5" />
             Clear Dots
           </Button>
@@ -481,7 +506,7 @@ export default function AdminGeofenceLiveMonitor() {
               <option value="">All Branches</option>
               {branches
                 .filter((branch) => !filters.company_id || String(branch.company_id) === String(filters.company_id))
-                .map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name}</option>)}
+                .map((branch) => <option key={branch.id} value={branch.id}>{branchOptionLabel(branch)}</option>)}
             </select>
           </div>
 
@@ -537,23 +562,33 @@ export default function AdminGeofenceLiveMonitor() {
       </div>
 
       <div className="overflow-x-auto border-t border-slate-100">
-        <div className="min-w-[980px]">
-          <div className="grid grid-cols-[130px_220px_160px_180px_90px_130px_100px_90px] gap-3 border-b border-slate-100 bg-white px-4 py-3 text-[10px] font-extrabold uppercase tracking-wide text-slate-500">
+        <div className="min-w-[1120px]">
+          <div className="grid grid-cols-[130px_220px_160px_150px_150px_90px_130px_100px_90px_80px] gap-3 border-b border-slate-100 bg-white px-4 py-3 text-[10px] font-extrabold uppercase tracking-wide text-slate-500">
             <span>Time</span>
             <span>Employee</span>
             <span>Event</span>
+            <span>Company</span>
             <span>Branch</span>
             <span>Clock</span>
             <span>Device</span>
             <span>Status</span>
             <span>Accuracy</span>
+            <span>Map</span>
           </div>
           <div className="max-h-[290px] overflow-y-auto">
             {filteredEvents.slice(0, 50).map((event) => {
               const StatusIcon = DEVICE_ICONS[event.device_type] || Monitor
               const status = statusMeta(event)
+              const eventKey = String(event.event_id)
+              const isFocused = focusedEventId === eventKey
               return (
-                <div key={event.event_id} className="grid grid-cols-[130px_220px_160px_180px_90px_130px_100px_90px] items-center gap-3 border-b border-slate-100 px-4 py-3 text-xs text-slate-700 last:border-b-0">
+                <div
+                  key={event.event_id}
+                  className={cn(
+                    'grid grid-cols-[130px_220px_160px_150px_150px_90px_130px_100px_90px_80px] items-center gap-3 border-b border-slate-100 px-4 py-3 text-xs text-slate-700 last:border-b-0',
+                    isFocused && 'bg-orange-50/80 ring-1 ring-inset ring-orange-200',
+                  )}
+                >
                   <span className="truncate font-medium text-slate-600">{dateTimeLabel(event.created_at || event.time)}</span>
                   <span className="flex min-w-0 items-center gap-3">
                     <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[10px] font-extrabold text-orange-700 ring-1 ring-orange-200">
@@ -571,7 +606,12 @@ export default function AdminGeofenceLiveMonitor() {
                       <span className="block truncate text-[10px] font-medium text-slate-400">{eventSubtitle(event)}</span>
                     </span>
                   </span>
-                  <span className="truncate font-semibold text-slate-700">{event.branch_name || '-'}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-semibold text-slate-800">{event.company_name || '-'}</span>
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-semibold text-slate-800">{event.branch_name || '-'}</span>
+                  </span>
                   <span className="font-semibold text-slate-700">{timeOnly(event.created_at || event.time)}</span>
                   <span className="flex min-w-0 items-center gap-2">
                     <StatusIcon className="size-3.5 shrink-0 text-slate-500" />
@@ -593,6 +633,21 @@ export default function AdminGeofenceLiveMonitor() {
                   )}>
                     {accuracyLabel(event)}
                   </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      'h-8 rounded-md px-2.5 text-[10px] font-bold shadow-sm',
+                      isFocused
+                        ? 'border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-50'
+                        : 'border-slate-200 bg-white text-slate-700',
+                    )}
+                    onClick={() => followEventOnMap(event)}
+                  >
+                    <LocateFixed className="mr-1 size-3" />
+                    Follow
+                  </Button>
                 </div>
               )
             })}
