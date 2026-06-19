@@ -20,6 +20,7 @@ use App\Services\FaceAuthService;
 use App\Services\FaceRecognitionAuditService;
 use App\Services\FaceVerificationService;
 use App\Services\FaceVerificationResultCacheService;
+use App\Services\GeofenceLiveMonitorService;
 use App\Services\GeofenceValidationService;
 use App\Services\LeaveCreditService;
 use App\Services\NotificationService;
@@ -50,6 +51,7 @@ class AttendanceController extends Controller
         private readonly AttendanceRollupService $attendanceRollup,
         private readonly NotificationService $notificationService,
         private readonly GeofenceValidationService $geofenceValidation,
+        private readonly GeofenceLiveMonitorService $geofenceLiveMonitor,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -791,6 +793,7 @@ class AttendanceController extends Controller
                 ->whereKey((int) $validationId)
                 ->whereNull('attendance_log_id')
                 ->update(['attendance_log_id' => (int) $log->id]);
+            $this->geofenceLiveMonitor->recordFromValidationLog((int) $validationId, $request, (int) $log->id);
         } catch (\Throwable $e) {
             Log::warning('Unable to link geofence validation to attendance log', [
                 'geofence_validation_id' => $validationId,

@@ -20,6 +20,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
+import AdminGeofenceLiveMonitor from '@/pages/AdminGeofenceLiveMonitor'
 import {
   captureAttendanceLocation,
   companyLogoUrl,
@@ -35,6 +36,7 @@ import {
   updateBranchGeofence,
   updateBranchGeofenceSettings,
 } from '@/api'
+import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -1334,6 +1336,9 @@ function GeofenceMapOptimized({
   )
 }
 export default function AdminGeofencing() {
+  const { user } = useAuth()
+  const canViewLiveMonitoring = ['admin', 'super_admin'].includes(String(user?.role || '').toLowerCase())
+  const [activeTab, setActiveTab] = useState('setup')
   const [branches, setBranches] = useState([])
   const [attendanceWithoutGeofenceEnabled, setAttendanceWithoutGeofenceEnabled] = useState(true)
   const [allowedWithoutGeofenceBranchIds, setAllowedWithoutGeofenceBranchIds] = useState([])
@@ -2018,6 +2023,31 @@ export default function AdminGeofencing() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm dark:border-border dark:bg-card">
+        {[
+          ['setup', 'Setup'],
+          ...(canViewLiveMonitoring ? [['live_monitoring', 'Live Monitoring']] : []),
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setActiveTab(key)}
+            className={cn(
+              'rounded-md px-4 py-2 text-sm font-semibold transition',
+              activeTab === key
+                ? 'bg-[#f04414] text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-foreground',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'live_monitoring' && canViewLiveMonitoring ? (
+        <AdminGeofenceLiveMonitor />
+      ) : (
+        <>
       <div className="grid gap-4 xl:grid-cols-[minmax(560px,1fr)_minmax(330px,380px)]">
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
           <div className="border-b border-slate-200 p-3 dark:border-border">
@@ -2679,6 +2709,8 @@ export default function AdminGeofencing() {
         </div>
       </section>
 
+        </>
+      )}
     </div>
   )
 }

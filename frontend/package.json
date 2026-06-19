@@ -30,6 +30,7 @@
     "framer-motion": "^12.34.3",
     "gsap": "^3.14.2",
     "laravel-echo": "^2.3.4",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.575.0",
     "mammoth": "^1.11.0",
     "mapillary-js": "^4.1.2",

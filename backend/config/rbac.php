@@ -37,6 +37,7 @@ return [
         ['slug' => 'geofence.delete', 'module' => 'attendance', 'label' => 'Delete geofences', 'description' => 'Remove branch geofences'],
         ['slug' => 'geofence.test', 'module' => 'attendance', 'label' => 'Test geofences', 'description' => 'Test employee coordinates against branch geofences'],
         ['slug' => 'geofence.enable_disable', 'module' => 'attendance', 'label' => 'Enable geofences', 'description' => 'Enable or disable branch geofence enforcement'],
+        ['slug' => 'geofence.live_monitoring.view', 'module' => 'attendance', 'label' => 'View geofence live monitoring', 'description' => 'View real-time geofence clock dots and outside attempts'],
 
         // 4. Overtime
         ['slug' => 'overtime.view', 'module' => 'overtime', 'label' => 'View OT', 'description' => 'List overtime requests in scope'],

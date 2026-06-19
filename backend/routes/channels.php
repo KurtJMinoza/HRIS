@@ -26,6 +26,10 @@ Broadcast::channel('role.admin', function (User $user): bool {
     return $user->isAdmin() || $user->isSuperAdmin();
 });
 
+Broadcast::channel('geofence-monitoring.admin', function (User $user): bool {
+    return $user->isAdmin() || $user->isSuperAdmin();
+});
+
 Broadcast::channel('role.hr', function (User $user) use ($notificationUserCanAny): bool {
     return $user->isAdmin()
         || $notificationUserCanAny($user, ['dashboard.view', 'leave.approve', 'attendance.corrections.approve']);

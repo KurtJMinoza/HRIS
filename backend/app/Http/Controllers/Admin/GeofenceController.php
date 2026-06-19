@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\UserAdminActivityLog;
 use App\Services\DataScopeService;
 use App\Services\BranchEmployeeResolver;
+use App\Services\GeofenceLiveMonitorService;
 use App\Services\GeofenceValidationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,6 +29,7 @@ class GeofenceController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly BranchEmployeeResolver $branchEmployeeResolver,
         private readonly GeofenceValidationService $geofenceValidation,
+        private readonly GeofenceLiveMonitorService $geofenceLiveMonitor,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -345,7 +347,31 @@ class GeofenceController extends Controller
             ],
         );
 
+        if (($result['allowed'] ?? false) === false && isset($result['geofence_validation_id'])) {
+            $this->geofenceLiveMonitor->recordFromValidationLog((int) $result['geofence_validation_id'], $request);
+        }
+
         return response()->json($result);
+    }
+
+    public function liveMonitorEvents(Request $request): JsonResponse
+    {
+        return response()->json($this->geofenceLiveMonitor->recentEvents($request->user(), $request->query()));
+    }
+
+    public function liveMonitorSummary(Request $request): JsonResponse
+    {
+        return response()->json(['summary' => $this->geofenceLiveMonitor->summary($request->user(), $request->query())]);
+    }
+
+    public function liveMonitorEvent(Request $request, int $eventId): JsonResponse
+    {
+        return response()->json($this->geofenceLiveMonitor->event($request->user(), $eventId));
+    }
+
+    public function liveMonitorBoundaries(Request $request): JsonResponse
+    {
+        return response()->json(['boundaries' => $this->geofenceLiveMonitor->boundaries($request->user(), $request->query())]);
     }
 
     public function searchLocation(Request $request): JsonResponse

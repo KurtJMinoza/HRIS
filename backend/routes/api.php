@@ -46,6 +46,7 @@ use App\Http\Controllers\Admin\RecruitmentController;
 use App\Http\Controllers\Admin\ScheduleController;
 use App\Http\Controllers\Admin\ScheduleRequestController;
 use App\Http\Controllers\Admin\SectionUnitController;
+use App\Http\Controllers\Admin\AdminUserAccountController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmployeeCertificationController;
@@ -258,6 +259,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/geofencing/search-location', [GeofenceController::class, 'searchLocation']);
             Route::post('/geofencing/osm/search', [GeofenceController::class, 'osmPoiSearch']);
             Route::post('/geofencing/osm/nearby', [GeofenceController::class, 'osmPoiNearby']);
+        });
+        Route::middleware('permission:geofence.live_monitoring.view')->group(function () {
+            Route::get('/geofencing/live-monitor/events', [GeofenceController::class, 'liveMonitorEvents']);
+            Route::get('/geofencing/live-monitor/summary', [GeofenceController::class, 'liveMonitorSummary']);
+            Route::get('/geofencing/live-monitor/event/{eventId}', [GeofenceController::class, 'liveMonitorEvent'])->whereNumber('eventId');
+            Route::get('/geofencing/live-monitor/boundaries', [GeofenceController::class, 'liveMonitorBoundaries']);
         });
         Route::middleware('permission:geofence.create')->post('/admin/branches/{id}/geofences', [GeofenceController::class, 'store'])->whereNumber('id');
         Route::middleware('permission:geofence.create')->post('/geofencing/geofences', [GeofenceController::class, 'storeFromPayload']);

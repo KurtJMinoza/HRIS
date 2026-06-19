@@ -7846,6 +7846,44 @@ export async function updateAttendanceWithoutGeofenceSettings(payload) {
   return data
 }
 
+function geofenceLiveMonitorQuery(params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value) !== '') {
+      query.set(key, String(value))
+    }
+  })
+  return query.toString() ? `?${query.toString()}` : ''
+}
+
+export async function getGeofenceLiveMonitorEvents(params = {}) {
+  const res = await authenticatedFetch(`/geofencing/live-monitor/events${geofenceLiveMonitorQuery(params)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load geofence live monitor events')
+  return data
+}
+
+export async function getGeofenceLiveMonitorSummary(params = {}) {
+  const res = await authenticatedFetch(`/geofencing/live-monitor/summary${geofenceLiveMonitorQuery(params)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load geofence live monitor summary')
+  return data
+}
+
+export async function getGeofenceLiveMonitorEvent(eventId) {
+  const res = await authenticatedFetch(`/geofencing/live-monitor/event/${eventId}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load geofence live monitor event')
+  return data
+}
+
+export async function getGeofenceLiveMonitorBoundaries(params = {}) {
+  const res = await authenticatedFetch(`/geofencing/live-monitor/boundaries${geofenceLiveMonitorQuery(params)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load geofence live monitor boundaries')
+  return data
+}
+
 export async function searchGeofenceLocation(query, options = {}) {
   const res = await authenticatedFetch('/admin/geofencing/search-location', {
     method: 'POST',
