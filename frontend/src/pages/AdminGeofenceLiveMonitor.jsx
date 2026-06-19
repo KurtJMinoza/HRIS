@@ -70,10 +70,6 @@ function clockLabel(value) {
   return value === 'clock_out' ? 'Out' : 'In'
 }
 
-function methodLabel(value) {
-  return value || 'Face'
-}
-
 function branchOptionLabel(branch) {
   const name = branch?.branch_name || branch?.name || 'Branch'
   const company = branch?.company_name || 'Unknown company'
@@ -111,36 +107,65 @@ function branchPinIcon(label) {
   })
 }
 
+function escapeHtml(value) {
+  return String(value ?? '-')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function popupTimeLabel(event) {
+  if (event.time) return event.time
+  const parsed = new Date(event.created_at || '')
+  if (Number.isNaN(parsed.getTime())) return '-'
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`
+}
+
+function popupCoord(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toFixed(7) : '-'
+}
+
+function popupDistance(value) {
+  if (value == null || value === '') return '-'
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toFixed(2) : String(value)
+}
+
 function popupHtml(event) {
   const rows = [
-    ['Employee', event.employee_name],
     ['Employee #', event.employee_number],
     ['Company', event.company_name],
     ['Branch', event.branch_name],
-    ['Department', event.department],
+    ['Department', event.department || '-'],
     ['Clock type', clockLabel(event.clock_type)],
     ['Device type', deviceLabel(event.device_type)],
-    ['Browser', event.browser || methodLabel(event.method)],
-    ['Latitude', event.lat],
-    ['Longitude', event.lng],
-    ['Accuracy meters', event.accuracy_meters ?? event.accuracy],
-    ['Distance from geofence', event.distance_meters],
+    ['Browser', event.browser || '-'],
+    ['Latitude', popupCoord(event.lat ?? event.latitude)],
+    ['Longitude', popupCoord(event.lng ?? event.longitude)],
+    ['Accuracy meters', event.accuracy_meters ?? event.accuracy ?? '-'],
+    ['Distance from geofence', popupDistance(event.distance_meters)],
     ['Geofence status', event.geofence_status],
-    ['Matched geofence', event.matched_geofence],
-    ['Time', event.time],
-    ['Failure reason', event.failure_reason],
+    ['Matched geofence', event.matched_geofence || '-'],
+    ['Time', popupTimeLabel(event)],
   ]
   return `
-    <div style="min-width:260px;font-family:Inter,system-ui,sans-serif">
-      <strong style="display:block;margin-bottom:8px">${event.employee_name || 'Attendance event'}</strong>
+    <div style="width:230px;font-family:Inter,system-ui,sans-serif;font-size:11px;line-height:1.35;color:#0f172a">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #e2e8f0">${escapeHtml(event.employee_name || 'Attendance event')}</div>
       ${rows.map(([label, value]) => `
-        <div style="display:flex;gap:8px;justify-content:space-between;border-top:1px solid #e5e7eb;padding:4px 0;font-size:12px">
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:3px 0;border-bottom:1px solid #f8fafc">
           <span style="color:#64748b">${label}</span>
-          <span style="max-width:150px;text-align:right;color:#0f172a">${value ?? '-'}</span>
+          <span style="color:#0f172a;font-weight:600;text-align:right;max-width:108px;word-break:break-word">${escapeHtml(value ?? '-')}</span>
         </div>
       `).join('')}
     </div>
   `
+}
+
+function popupOptions() {
+  return { maxWidth: 250, minWidth: 220, className: 'geofence-live-popup' }
 }
 
 function passesClientToggles(event, toggles) {
@@ -154,16 +179,6 @@ function uniqueById(items) {
   const map = new Map()
   items.forEach((item) => map.set(String(item.event_id), item))
   return [...map.values()]
-}
-
-function timeOnly(value) {
-  const raw = value || ''
-  const parsed = new Date(raw)
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
-  }
-  const match = String(raw).match(/\b(\d{1,2}:\d{2})(?::\d{2})?\b/)
-  return match ? match[1] : '-'
 }
 
 function dateTimeLabel(value) {
@@ -221,6 +236,86 @@ function accuracyLabel(event) {
   if (value == null || value === '') return '—'
   const number = Number(value)
   return Number.isFinite(number) ? `${Math.round(number)}m` : String(value)
+}
+
+function LiveMonitorEventRow({ event, isFocused, onFollow }) {
+  const StatusIcon = DEVICE_ICONS[event.device_type] || Monitor
+  const status = statusMeta(event)
+
+  return (
+    <article
+      className={cn(
+        'border-b border-slate-100 px-4 py-3 text-xs text-slate-700 last:border-b-0',
+        isFocused && 'bg-orange-50/80 ring-1 ring-inset ring-orange-200',
+      )}
+    >
+      <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,0.95fr)_minmax(0,0.75fr)_auto] lg:items-center lg:gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[10px] font-extrabold text-orange-700 ring-1 ring-orange-200">
+            {employeeInitials(event.employee_name)}
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate font-bold text-slate-900">{event.employee_name || '-'}</span>
+            <span className="block truncate text-[10px] font-medium text-slate-400">{event.employee_number || '-'}</span>
+            <span className="mt-0.5 block truncate text-[10px] font-medium text-slate-500">{dateTimeLabel(event.created_at || event.time)}</span>
+          </span>
+        </div>
+
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-1 size-2 shrink-0 rounded-full" style={{ backgroundColor: eventColor(event) }} />
+          <span className="min-w-0">
+            <span className="block truncate font-bold text-slate-900">{eventTitle(event)}</span>
+            <span className="block truncate text-[10px] font-medium text-slate-400">{eventSubtitle(event)}</span>
+          </span>
+        </div>
+
+        <div className="min-w-0">
+          <span className="block truncate font-semibold text-slate-800">{event.company_name || '-'}</span>
+          <span className="block truncate text-[10px] font-medium text-slate-400">{event.branch_name || '-'}</span>
+        </div>
+
+        <div className="flex min-w-0 items-center gap-2">
+          <StatusIcon className="size-3.5 shrink-0 text-slate-500" />
+          <span className="min-w-0">
+            <span className="block truncate font-bold text-slate-800">{deviceLabel(event.device_type)}</span>
+            <span className="block truncate text-[10px] font-medium text-slate-400">{event.browser || event.platform || 'Browser'}</span>
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn('inline-flex w-fit items-center rounded-md px-2 py-1 text-[10px] font-extrabold ring-1', status.className)}>
+            {status.label}
+          </span>
+          <span className={cn(
+            'inline-flex w-fit items-center rounded-md px-2 py-1 text-[10px] font-extrabold ring-1',
+            event.geofence_status === 'warning'
+              ? 'bg-amber-50 text-amber-700 ring-amber-100'
+              : accuracyLabel(event) === '—'
+                ? 'bg-slate-50 text-slate-400 ring-slate-100'
+                : 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+          )}>
+            {accuracyLabel(event)}
+          </span>
+        </div>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn(
+            'h-8 w-full rounded-md px-2.5 text-[10px] font-bold shadow-sm lg:w-auto',
+            isFocused
+              ? 'border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-50'
+              : 'border-slate-200 bg-white text-slate-700',
+          )}
+          onClick={() => onFollow(event)}
+        >
+          <LocateFixed className="mr-1 size-3" />
+          Follow
+        </Button>
+      </div>
+    </article>
+  )
 }
 
 export default function AdminGeofenceLiveMonitor() {
@@ -372,7 +467,7 @@ export default function AdminGeofenceLiveMonitor() {
     const markers = filteredEvents.map((event) => {
       const eventKey = String(event.event_id)
       const highlighted = focusedEventId === eventKey
-      const marker = L.marker([event.lat, event.lng], { icon: markerIcon(event, highlighted) }).bindPopup(popupHtml(event))
+      const marker = L.marker([event.lat, event.lng], { icon: markerIcon(event, highlighted) }).bindPopup(popupHtml(event), popupOptions())
       eventMarkersRef.current.set(eventKey, marker)
       if (['outside', 'failed'].includes(event.geofence_status)) {
         marker.addTo(outsideLayer)
@@ -561,100 +656,27 @@ export default function AdminGeofenceLiveMonitor() {
         </aside>
       </div>
 
-      <div className="overflow-x-auto border-t border-slate-100">
-        <div className="min-w-[1120px]">
-          <div className="grid grid-cols-[130px_220px_160px_150px_150px_90px_130px_100px_90px_80px] gap-3 border-b border-slate-100 bg-white px-4 py-3 text-[10px] font-extrabold uppercase tracking-wide text-slate-500">
-            <span>Time</span>
-            <span>Employee</span>
-            <span>Event</span>
-            <span>Company</span>
-            <span>Branch</span>
-            <span>Clock</span>
-            <span>Device</span>
-            <span>Status</span>
-            <span>Accuracy</span>
-            <span>Map</span>
-          </div>
-          <div className="max-h-[290px] overflow-y-auto">
-            {filteredEvents.slice(0, 50).map((event) => {
-              const StatusIcon = DEVICE_ICONS[event.device_type] || Monitor
-              const status = statusMeta(event)
-              const eventKey = String(event.event_id)
-              const isFocused = focusedEventId === eventKey
-              return (
-                <div
-                  key={event.event_id}
-                  className={cn(
-                    'grid grid-cols-[130px_220px_160px_150px_150px_90px_130px_100px_90px_80px] items-center gap-3 border-b border-slate-100 px-4 py-3 text-xs text-slate-700 last:border-b-0',
-                    isFocused && 'bg-orange-50/80 ring-1 ring-inset ring-orange-200',
-                  )}
-                >
-                  <span className="truncate font-medium text-slate-600">{dateTimeLabel(event.created_at || event.time)}</span>
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[10px] font-extrabold text-orange-700 ring-1 ring-orange-200">
-                      {employeeInitials(event.employee_name)}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate font-bold text-slate-900">{event.employee_name || '-'}</span>
-                      <span className="block truncate text-[10px] font-medium text-slate-400">{event.employee_number || 'employee@company.com'}</span>
-                    </span>
-                  </span>
-                  <span className="flex min-w-0 items-start gap-2">
-                    <span className="mt-1 size-2 shrink-0 rounded-full" style={{ backgroundColor: eventColor(event) }} />
-                    <span className="min-w-0">
-                      <span className="block truncate font-bold text-slate-900">{eventTitle(event)}</span>
-                      <span className="block truncate text-[10px] font-medium text-slate-400">{eventSubtitle(event)}</span>
-                    </span>
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold text-slate-800">{event.company_name || '-'}</span>
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold text-slate-800">{event.branch_name || '-'}</span>
-                  </span>
-                  <span className="font-semibold text-slate-700">{timeOnly(event.created_at || event.time)}</span>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <StatusIcon className="size-3.5 shrink-0 text-slate-500" />
-                    <span className="min-w-0">
-                      <span className="block truncate font-bold text-slate-800">{deviceLabel(event.device_type)} App</span>
-                      <span className="block truncate text-[10px] font-medium text-slate-400">{event.browser || event.platform || 'Browser'}</span>
-                    </span>
-                  </span>
-                  <span className={cn('inline-flex w-fit items-center rounded-md px-2 py-1 text-[10px] font-extrabold ring-1', status.className)}>
-                    {status.label}
-                  </span>
-                  <span className={cn(
-                    'inline-flex w-fit items-center rounded-md px-2 py-1 text-[10px] font-extrabold ring-1',
-                    event.geofence_status === 'warning'
-                      ? 'bg-amber-50 text-amber-700 ring-amber-100'
-                      : accuracyLabel(event) === '—'
-                        ? 'bg-slate-50 text-slate-400 ring-slate-100'
-                        : 'bg-emerald-50 text-emerald-700 ring-emerald-100',
-                  )}>
-                    {accuracyLabel(event)}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      'h-8 rounded-md px-2.5 text-[10px] font-bold shadow-sm',
-                      isFocused
-                        ? 'border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-50'
-                        : 'border-slate-200 bg-white text-slate-700',
-                    )}
-                    onClick={() => followEventOnMap(event)}
-                  >
-                    <LocateFixed className="mr-1 size-3" />
-                    Follow
-                  </Button>
-                </div>
-              )
-            })}
-            {filteredEvents.length === 0 ? (
-              <div className="px-4 py-10 text-center text-sm font-medium text-slate-500">No live geofence events yet.</div>
-            ) : null}
-          </div>
+      <div className="border-t border-slate-100">
+        <div className="hidden border-b border-slate-100 bg-white px-4 py-3 text-[10px] font-extrabold uppercase tracking-wide text-slate-500 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,0.95fr)_minmax(0,0.75fr)_auto] lg:gap-4">
+          <span>Employee</span>
+          <span>Event</span>
+          <span>Company / Branch</span>
+          <span>Device</span>
+          <span>Status</span>
+          <span>Map</span>
+        </div>
+        <div className="max-h-[290px] overflow-y-auto">
+          {filteredEvents.slice(0, 50).map((event) => (
+            <LiveMonitorEventRow
+              key={event.event_id}
+              event={event}
+              isFocused={focusedEventId === String(event.event_id)}
+              onFollow={followEventOnMap}
+            />
+          ))}
+          {filteredEvents.length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm font-medium text-slate-500">No live geofence events yet.</div>
+          ) : null}
         </div>
       </div>
     </div>

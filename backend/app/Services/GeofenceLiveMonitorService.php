@@ -58,11 +58,13 @@ class GeofenceLiveMonitorService
         $events = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $limit, $scopedBranchIds): array {
             $query = AttendanceGeofenceEvent::query()
                 ->with([
-                    'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id',
+                    'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
                     'employee.company:id,name',
+                    'employee.departmentRelation:id,name',
                     'branch:id,name,company_id',
                     'branch.company:id,name',
                     'company:id,name',
+                    'matchedGeofence:id,name',
                 ])
                 ->whereNotNull('latitude')
                 ->whereNotNull('longitude')
@@ -168,8 +170,9 @@ class GeofenceLiveMonitorService
 
         $event = AttendanceGeofenceEvent::query()
             ->with([
-                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id',
+                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
                 'employee.company:id,name',
+                'employee.departmentRelation:id,name',
                 'branch:id,name,company_id',
                 'branch.company:id,name',
                 'company:id,name',
@@ -288,11 +291,13 @@ class GeofenceLiveMonitorService
         DB::afterCommit(function () use ($event): void {
             $fresh = AttendanceGeofenceEvent::query()
                 ->with([
-                    'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id',
+                    'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
                     'employee.company:id,name',
+                    'employee.departmentRelation:id,name',
                     'branch:id,name,company_id',
                     'branch.company:id,name',
                     'company:id,name',
+                    'matchedGeofence:id,name',
                 ])
                 ->find($event->id);
 
@@ -327,6 +332,8 @@ class GeofenceLiveMonitorService
             'device_type' => $event->device_type,
             'browser' => $event->browser,
             'created_at' => $time->toIso8601String(),
+            'department' => $employee?->departmentRelation?->name,
+            'matched_geofence' => $event->matchedGeofence?->name,
         ];
 
         if ($includeDetail) {
