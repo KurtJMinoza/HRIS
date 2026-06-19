@@ -91,20 +91,34 @@ function markerIcon(event, highlighted = false) {
   })
 }
 
-function branchPinIcon(label) {
-  const text = String(label || 'Branch')
+
+function geofenceBoundaryLabelIcon(boundary) {
+  const company = escapeHtml(boundary?.company_name || 'Unknown company')
+  const branch = escapeHtml(boundary?.branch_name || 'Branch')
+  const geofence = escapeHtml(boundary?.name || 'Geofence')
   return L.divIcon({
     className: '',
     html: `
-      <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;font-family:Inter,system-ui,sans-serif;font-size:10px;font-weight:700;color:#111827;text-shadow:0 1px 0 #fff">
-        <span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:#f97316;color:white;border:2px solid white;box-shadow:0 4px 12px rgba(15,23,42,.24)">⌖</span>
-        <span>${text}</span>
+      <div style="display:flex;align-items:flex-start;gap:6px;font-family:Inter,system-ui,sans-serif;filter:drop-shadow(0 1px 2px rgba(15,23,42,.18))">
+        <span style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;flex-shrink:0;border-radius:9999px;background:#f97316;color:white;border:2px solid white;font-size:11px;font-weight:700">⌖</span>
+        <span style="min-width:0;max-width:190px;background:rgba(255,255,255,.95);border:1px solid #fdba74;border-radius:6px;padding:4px 8px;line-height:1.25">
+          <span style="display:block;font-size:10px;font-weight:800;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${company}</span>
+          <span style="display:block;font-size:9px;font-weight:700;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${branch}</span>
+          <span style="display:block;font-size:9px;font-weight:600;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${geofence}</span>
+        </span>
       </div>
     `,
-    iconSize: [190, 26],
-    iconAnchor: [12, 24],
-    popupAnchor: [0, -18],
+    iconSize: [220, 46],
+    iconAnchor: [11, 46],
+    popupAnchor: [0, -42],
   })
+}
+
+function geofenceBoundaryTooltip(boundary) {
+  const company = boundary?.company_name || 'Unknown company'
+  const branch = boundary?.branch_name || 'Branch'
+  const geofence = boundary?.name || 'Geofence'
+  return `${company} · ${branch} — ${geofence}`
 }
 
 function escapeHtml(value) {
@@ -390,6 +404,13 @@ export default function AdminGeofenceLiveMonitor() {
       const layer = L.layerGroup()
       ;(data.boundaries || []).forEach((boundary) => {
         const color = '#f97316'
+        const branchMeta = branches.find((branch) => String(branch.id) === String(boundary.branch_id))
+        const labeledBoundary = {
+          ...boundary,
+          company_name: boundary.company_name || branchMeta?.company_name || null,
+          branch_name: boundary.branch_name || branchMeta?.branch_name || branchMeta?.name || null,
+        }
+        const tooltip = geofenceBoundaryTooltip(labeledBoundary)
         let labelPoint = null
         if (boundary.type === 'circle' && boundary.center_lat != null && boundary.center_lng != null) {
           labelPoint = [Number(boundary.center_lat), Number(boundary.center_lng)]
@@ -400,19 +421,19 @@ export default function AdminGeofenceLiveMonitor() {
             fillOpacity: 0.12,
             weight: 1.5,
             dashArray: '4 4',
-          }).bindTooltip(boundary.name || 'Geofence').addTo(layer)
+          }).bindTooltip(tooltip, { sticky: true }).addTo(layer)
         } else if (boundary.type === 'polygon') {
           const coords = boundary.polygon_geojson?.geometry?.coordinates?.[0] || boundary.polygon_geojson?.coordinates?.[0]
           if (Array.isArray(coords)) {
             const latLngs = coords.map(([lng, lat]) => [Number(lat), Number(lng)]).filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))
             if (latLngs.length >= 3) {
-              L.polygon(latLngs, { color, fillColor: color, fillOpacity: 0.12, weight: 1.5, dashArray: '4 4' }).bindTooltip(boundary.name || 'Geofence').addTo(layer)
+              L.polygon(latLngs, { color, fillColor: color, fillOpacity: 0.12, weight: 1.5, dashArray: '4 4' }).bindTooltip(tooltip, { sticky: true }).addTo(layer)
               labelPoint = L.latLngBounds(latLngs).getCenter()
             }
           }
         }
         if (labelPoint) {
-          L.marker(labelPoint, { icon: branchPinIcon(boundary.branch_name || boundary.name) }).addTo(layer)
+          L.marker(labelPoint, { icon: geofenceBoundaryLabelIcon(labeledBoundary), interactive: false }).addTo(layer)
         }
       })
       if (!geofenceLayerRef.current) {
@@ -422,7 +443,7 @@ export default function AdminGeofenceLiveMonitor() {
     } catch {
       // Boundary display is optional; marker monitoring should continue.
     }
-  }, [filters.branch_id, filters.company_id, toggles.showBoundaries])
+  }, [branches, filters.branch_id, filters.company_id, toggles.showBoundaries])
 
   useEffect(() => {
     if (!mapElRef.current || mapRef.current) return
@@ -455,6 +476,18 @@ export default function AdminGeofenceLiveMonitor() {
   useEffect(() => {
     loadBoundaries()
   }, [loadBoundaries])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return undefined
+    const invalidate = () => map.invalidateSize()
+    const timer = window.setTimeout(invalidate, 120)
+    window.addEventListener('resize', invalidate)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('resize', invalidate)
+    }
+  }, [])
 
   useEffect(() => {
     const map = mapRef.current
@@ -574,8 +607,8 @@ export default function AdminGeofenceLiveMonitor() {
 
       {error ? <div className="mx-4 mt-3 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{error}</div> : null}
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="relative h-[420px] overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm">
+      <div className="flex flex-col gap-4 p-4">
+        <div className="relative min-h-[480px] h-[min(560px,58vh)] overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm">
           <div ref={mapElRef} className="h-full w-full" />
           <div className="absolute left-4 top-4 z-500 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-[11px] shadow-md backdrop-blur">
             <div className="mb-1.5 font-bold text-slate-800">Legend</div>
@@ -594,7 +627,7 @@ export default function AdminGeofenceLiveMonitor() {
           </div>
         </div>
 
-        <aside className="space-y-3">
+        <aside className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           <div className="grid gap-2">
             <Label className="text-xs font-bold text-slate-700">Branch</Label>
             <select className={selectClassName} value={filters.branch_id} onChange={(e) => updateFilter('branch_id', e.target.value)}>
@@ -610,22 +643,21 @@ export default function AdminGeofenceLiveMonitor() {
             <Input className={inputClassName} type="date" value={filters.date} onChange={(e) => updateFilter('date', e.target.value)} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-2">
-              <Label className="text-xs font-bold text-slate-700">Device Type</Label>
-              <select className={selectClassName} value={filters.device_type} onChange={(e) => updateFilter('device_type', e.target.value)}>
-                <option value="">All</option>
-                {['mobile', 'tablet', 'laptop', 'desktop', 'kiosk'].map((type) => <option key={type} value={type}>{deviceLabel(type)}</option>)}
-              </select>
-            </div>
-            <div className="grid gap-2">
-              <Label className="text-xs font-bold text-slate-700">Clock Type</Label>
-              <select className={selectClassName} value={filters.clock_type} onChange={(e) => updateFilter('clock_type', e.target.value)}>
-                <option value="">All</option>
-                <option value="clock_in">Clock In</option>
-                <option value="clock_out">Clock Out</option>
-              </select>
-            </div>
+          <div className="grid gap-2">
+            <Label className="text-xs font-bold text-slate-700">Device Type</Label>
+            <select className={selectClassName} value={filters.device_type} onChange={(e) => updateFilter('device_type', e.target.value)}>
+              <option value="">All</option>
+              {['mobile', 'tablet', 'laptop', 'desktop', 'kiosk'].map((type) => <option key={type} value={type}>{deviceLabel(type)}</option>)}
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <Label className="text-xs font-bold text-slate-700">Clock Type</Label>
+            <select className={selectClassName} value={filters.clock_type} onChange={(e) => updateFilter('clock_type', e.target.value)}>
+              <option value="">All</option>
+              <option value="clock_in">Clock In</option>
+              <option value="clock_out">Clock Out</option>
+            </select>
           </div>
 
           <div className="grid gap-2">
@@ -640,7 +672,9 @@ export default function AdminGeofenceLiveMonitor() {
               <option value="blocked">Blocked</option>
             </select>
           </div>
+        </aside>
 
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {[
             ['autoFollow', 'Auto follow latest event', LocateFixed],
             ['showBoundaries', 'Show geofence boundaries', MapPin],
@@ -653,7 +687,7 @@ export default function AdminGeofenceLiveMonitor() {
               <Switch checked={Boolean(toggles[key])} onCheckedChange={(checked) => updateToggle(key, checked)} />
             </div>
           ))}
-        </aside>
+        </div>
       </div>
 
       <div className="border-t border-slate-100">

@@ -459,7 +459,7 @@ class GeofenceLiveMonitorService
     private function boundaryQuery(?int $companyId, ?int $branchId, ?array $scopedBranchIds = null): array
     {
         $query = BranchGeofence::query()
-            ->with('branch:id,name,company_id')
+            ->with(['branch:id,name,company_id', 'branch.company:id,name'])
             ->where('status', 'active');
 
         if ($scopedBranchIds !== null) {
@@ -485,6 +485,7 @@ class GeofenceLiveMonitorService
                 'company_id' => (int) $geofence->company_id,
                 'branch_id' => (int) $geofence->branch_id,
                 'branch_name' => $geofence->branch?->name,
+                'company_name' => $geofence->branch?->company?->name,
                 'name' => $geofence->name,
                 'type' => $geofence->type,
                 'center_lat' => $geofence->center_lat,
