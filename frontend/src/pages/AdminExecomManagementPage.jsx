@@ -29,7 +29,13 @@ const ORANGE_BUTTON = 'bg-brand text-brand-foreground shadow-sm shadow-brand/20 
 const TABLE_HEAD = 'bg-[#fff8f1] text-[11px] font-extrabold uppercase tracking-[0.04em] text-muted-foreground dark:bg-input/25'
 
 function initialsFor(employee) {
-  const name = String(employee?.name || employee?.display_name || employee?.formatted_name || '').trim()
+  const name = String(
+    employee?.name
+    || employee?.employee_name
+    || employee?.display_name
+    || employee?.formatted_name
+    || '',
+  ).trim()
   if (!name) return 'EE'
   const parts = name.split(/\s+/).filter(Boolean)
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'EE'
@@ -340,8 +346,16 @@ export default function AdminExecomManagementPage() {
                   {rows.map((row) => (
                     <tr key={row.id} className="transition hover:bg-[#fff8f1]/60 dark:hover:bg-input/20">
                       <td className="px-4 py-4">
-                        <div className="font-extrabold leading-tight text-foreground">{row.employee_name || `#${row.employee_id}`}</div>
-                        <div className="mt-1 text-xs font-medium text-muted-foreground">{row.employee_code || '—'}</div>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar className="size-10 shrink-0 border border-brand/25 bg-card">
+                            <AvatarImage src={userProfileImageSrc(row)} alt="" className="object-cover" />
+                            <AvatarFallback className="bg-brand/10 text-sm font-bold text-brand">{initialsFor(row)}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <div className="truncate font-extrabold leading-tight text-foreground">{row.employee_name || `#${row.employee_id}`}</div>
+                            <div className="mt-1 truncate text-xs font-medium text-muted-foreground">{row.employee_code || '—'}</div>
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-4 font-semibold text-foreground">{row.company_name || '—'}</td>
                       <td className="max-w-[220px] px-4 py-4 text-xs font-medium uppercase leading-5 tracking-[0.02em] text-muted-foreground">
