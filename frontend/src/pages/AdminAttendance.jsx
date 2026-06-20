@@ -48,6 +48,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { FilterSelect, FilterField } from '@/components/ui/filter-select'
 import {
   getAdminAttendance,
   fetchAllAdminAttendanceRows,
@@ -184,6 +185,8 @@ export default function AdminAttendance() {
   })
 
   const rosterEmployees = rosterEmployeesQuery.data ?? []
+  const rosterFiltersLoading =
+    rosterEmployeesQuery.isLoading || (rosterEmployeesQuery.isFetching && rosterEmployees.length === 0)
 
   useEffect(() => {
     if (!showPayrollAttendanceColumns && premiumType !== 'all') {
@@ -270,16 +273,26 @@ export default function AdminAttendance() {
   }, [attendanceQuery.data, attendanceQuery.error, attendanceQuery.isLoading, attendanceQuery.isPlaceholderData])
 
   useEffect(() => {
-    const cp = attendanceQuery.data?.meta?.current_page
-    if (cp == null) return
-    const n = Number(cp)
-    if (!Number.isFinite(n) || n < 1) return
-    const lp = Math.max(1, Number(attendanceQuery.data?.meta?.last_page ?? 1))
-    const clamped = Math.min(n, lp)
-    if (clamped !== attendancePage) {
-      setAttendancePage(clamped)
+    if (attendanceQuery.isFetching || attendanceQuery.isPlaceholderData) return
+
+    const meta = attendanceQuery.data?.meta
+    if (!meta) return
+
+    const serverPage = Number(meta.current_page)
+    const lastPage = Math.max(1, Number(meta.last_page ?? 1))
+    if (!Number.isFinite(serverPage) || serverPage < 1) return
+
+    // Only align after a settled response — e.g. server clamped an out-of-range page.
+    if (serverPage !== attendancePage) {
+      setAttendancePage(Math.min(serverPage, lastPage))
     }
-  }, [attendanceQuery.data?.meta?.current_page, attendanceQuery.data?.meta?.last_page, attendancePage])
+  }, [
+    attendanceQuery.isFetching,
+    attendanceQuery.isPlaceholderData,
+    attendanceQuery.data?.meta?.current_page,
+    attendanceQuery.data?.meta?.last_page,
+    attendancePage,
+  ])
 
   // Tick every second for "X seconds ago" display
   useEffect(() => {
@@ -607,6 +620,7 @@ export default function AdminAttendance() {
 
   const secondsAgo = Math.floor((Date.now() - lastRefresh.getTime()) / 1000)
   const pageButtons = paginationWindow(attendancePage, attendanceLastPage)
+  const paginationBusy = attendanceQuery.isFetching
 
   function exportAttendanceCsv() {
     // Build CSV from the same column schema as the on-screen table for 1:1 parity.
@@ -963,149 +977,143 @@ export default function AdminAttendance() {
             />
           </div>
           <div className="flex flex-col gap-3 @md:flex-row @md:items-end @md:justify-between">
+          <div className="w-full rounded-xl border border-border/70 bg-muted/20 p-4 dark:bg-muted/10">
           <div className="grid w-full grid-cols-1 gap-3 @md:grid-cols-2 @xl:grid-cols-3 @2xl:grid-cols-6">
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">From</span>
+            <FilterField label="From">
               <div className="relative">
                 <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="date"
                   value={fromDate}
                   onChange={(e) => setFromDate(e.target.value)}
-                  className="h-9 pl-9 text-sm"
+                  className="h-10 border-border/70 bg-card pl-9 text-sm shadow-sm dark:bg-card/90"
                 />
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">To</span>
+            </FilterField>
+            <FilterField label="To">
               <div className="relative">
                 <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="h-9 pl-9 text-sm"
+                  className="h-10 border-border/70 bg-card pl-9 text-sm shadow-sm dark:bg-card/90"
                 />
               </div>
-            </div>
+            </FilterField>
             {attendanceScope?.kind === 'branch' && attendanceScope.branch_name ? (
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">Branch</span>
+              <FilterField label="Branch">
                 <Input
                   readOnly
                   disabled
                   value={attendanceScope.branch_name}
-                  className="h-9 cursor-not-allowed bg-muted/50 text-sm"
+                  className="h-10 cursor-not-allowed border-border/70 bg-muted/50 text-sm shadow-sm"
                   title="Your branch scope"
                 />
-              </div>
+              </FilterField>
             ) : null}
             {showCompanyFilter ? (
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">Company</span>
-                <Select value={companyFilter} onValueChange={setCompanyFilter}>
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue placeholder="All companies" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All companies</SelectItem>
-                    {companies.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <FilterField label="Company">
+                <FilterSelect
+                  value={companyFilter}
+                  onChange={(e) => setCompanyFilter(e.target.value)}
+                  loading={rosterFiltersLoading}
+                  loadingLabel="Loading companies…"
+                  placeholder="All companies"
+                  aria-label="Filter by company"
+                >
+                  <option value="all">All companies</option>
+                  {companies.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </FilterSelect>
+              </FilterField>
             ) : null}
             {!showCompanyFilter && attendanceScope?.kind === 'company' && attendanceScope.company_names?.length === 1 ? (
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground">Company</span>
+              <FilterField label="Company">
                 <Input
                   readOnly
                   disabled
                   value={attendanceScope.company_names[0]}
-                  className="h-9 cursor-not-allowed bg-muted/50 text-sm"
+                  className="h-10 cursor-not-allowed border-border/70 bg-muted/50 text-sm shadow-sm"
                   title="Your company scope"
                 />
-              </div>
+              </FilterField>
             ) : null}
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Department</span>
-              <Select
+            <FilterField label="Department">
+              <FilterSelect
                 value={department}
-                onValueChange={setDepartment}
+                onChange={(e) => setDepartment(e.target.value)}
                 disabled={departmentFilterDisabled}
+                loading={rosterFiltersLoading}
+                loadingLabel="Loading departments…"
+                placeholder={departmentSelectAllowsAll ? 'All departments' : 'Department'}
+                aria-label="Filter by department"
               >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder={departmentSelectAllowsAll ? 'All departments' : 'Department'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {departmentSelectAllowsAll ? (
-                    <SelectItem value="all">All departments</SelectItem>
-                  ) : null}
-                  {departmentFilterOptions.map((d) => (
-                    <SelectItem key={d} value={d}>
-                      {d}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Employee</span>
-              <Select value={employeeId} onValueChange={setEmployeeId}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="All employees" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All employees</SelectItem>
-                  {employees.map(([id, name]) => (
-                    <SelectItem key={id} value={String(id)}>
-                      {name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Status</span>
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="All statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="present">Present</SelectItem>
-                  <SelectItem value="late">Late</SelectItem>
-                  <SelectItem value="absent">Absent</SelectItem>
-                  <SelectItem value="rest">Rest Day</SelectItem>
-                  <SelectItem value="holiday">Holiday</SelectItem>
-                  <SelectItem value="leave">On Leave</SelectItem>
-                  <SelectItem value="halfday">Halfday</SelectItem>
-                  <SelectItem value="undertime">Undertime</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                {departmentSelectAllowsAll ? <option value="all">All departments</option> : null}
+                {departmentFilterOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </FilterSelect>
+            </FilterField>
+            <FilterField label="Employee">
+              <FilterSelect
+                value={employeeId}
+                onChange={(e) => setEmployeeId(e.target.value)}
+                loading={rosterFiltersLoading}
+                loadingLabel="Loading employees…"
+                placeholder="All employees"
+                aria-label="Filter by employee"
+              >
+                <option value="all">All employees</option>
+                {employees.map(([id, name]) => (
+                  <option key={id} value={String(id)}>
+                    {name}
+                  </option>
+                ))}
+              </FilterSelect>
+            </FilterField>
+            <FilterField label="Status">
+              <FilterSelect
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                placeholder="All statuses"
+                aria-label="Filter by status"
+              >
+                <option value="all">All statuses</option>
+                <option value="present">Present</option>
+                <option value="late">Late</option>
+                <option value="absent">Absent</option>
+                <option value="rest">Rest Day</option>
+                <option value="holiday">Holiday</option>
+                <option value="leave">On Leave</option>
+                <option value="halfday">Halfday</option>
+                <option value="undertime">Undertime</option>
+              </FilterSelect>
+            </FilterField>
             {showPayrollAttendanceColumns && (
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-muted-foreground" title="Premium type (DOLE rules: ordinary, rest day, holiday)">Premium</span>
-                <Select value={premiumType} onValueChange={setPremiumType}>
-                  <SelectTrigger className="h-9 text-sm">
-                    <SelectValue placeholder="All premium types" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All premium types</SelectItem>
-                    <SelectItem value="ordinary">Ordinary Day</SelectItem>
-                    <SelectItem value="rest_day">Rest Day</SelectItem>
-                    <SelectItem value="special_holiday">Special Holiday</SelectItem>
-                    <SelectItem value="regular_holiday">Regular Holiday</SelectItem>
-                    <SelectItem value="special_holiday_rest_day">Special Holiday + Rest</SelectItem>
-                    <SelectItem value="regular_holiday_rest_day">Regular Holiday + Rest</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <FilterField label="Premium" title="Premium type (DOLE rules: ordinary, rest day, holiday)">
+                <FilterSelect
+                  value={premiumType}
+                  onChange={(e) => setPremiumType(e.target.value)}
+                  placeholder="All premium types"
+                  aria-label="Filter by premium type"
+                >
+                  <option value="all">All premium types</option>
+                  <option value="ordinary">Ordinary Day</option>
+                  <option value="rest_day">Rest Day</option>
+                  <option value="special_holiday">Special Holiday</option>
+                  <option value="regular_holiday">Regular Holiday</option>
+                  <option value="special_holiday_rest_day">Special Holiday + Rest</option>
+                  <option value="regular_holiday_rest_day">Regular Holiday + Rest</option>
+                </FilterSelect>
+              </FilterField>
             )}
+          </div>
           </div>
           <div className="flex flex-col items-end gap-1.5">
             <div className="flex gap-2">
@@ -1284,7 +1292,7 @@ export default function AdminAttendance() {
                   variant="outline"
                   size="sm"
                   className="h-8 px-3"
-                  disabled={loading || attendancePage <= 1}
+                  disabled={paginationBusy || attendancePage <= 1}
                   onClick={() => setAttendancePage((p) => Math.max(1, p - 1))}
                 >
                   Previous
@@ -1300,7 +1308,7 @@ export default function AdminAttendance() {
                         'h-8 min-w-8 px-2.5',
                         page === attendancePage && 'bg-orange-600 text-white hover:bg-orange-500 dark:bg-orange-500 dark:hover:bg-orange-400',
                       )}
-                      disabled={loading}
+                      disabled={paginationBusy}
                       onClick={() => setAttendancePage(page)}
                     >
                       {page}
@@ -1314,7 +1322,7 @@ export default function AdminAttendance() {
                   variant="outline"
                   size="sm"
                   className="h-8 px-3"
-                  disabled={loading || attendancePage >= attendanceLastPage}
+                  disabled={paginationBusy || attendancePage >= attendanceLastPage}
                   onClick={() => setAttendancePage((p) => Math.min(attendanceLastPage, p + 1))}
                 >
                   Next

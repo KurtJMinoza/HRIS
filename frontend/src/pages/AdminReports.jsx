@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { FilterSelect, FilterField } from '@/components/ui/filter-select'
 import {
   getAdminReportsDetailed,
   getAdminPayslipsRecentByCompany,
@@ -312,6 +313,9 @@ export default function AdminReports() {
     const clamped = Math.min(n, lp)
     if (clamped !== detailedPage) setDetailedPage(clamped)
   }, [detailedQuery.data?.meta?.current_page, detailedQuery.data?.meta?.last_page, detailedPage])
+
+  const reportFiltersLoading =
+    filterEmployeesQuery.isLoading || (filterEmployeesQuery.isFetching && filterEmployees.length === 0)
 
   const companiesOptions = useMemo(() => {
     const map = new Map()
@@ -741,67 +745,67 @@ export default function AdminReports() {
         </CardHeader>
         <CardContent className="flex flex-col gap-3 bg-primary/5 px-4 py-3 @md:flex-row @md:items-end @md:justify-between">
           <div
-            className={`grid w-full grid-cols-1 gap-3 ${isEmployeeSelfReport ? '@md:max-w-md @md:grid-cols-2' : '@md:max-w-3xl @md:grid-cols-4'}`}
+            className={`w-full rounded-xl border border-border/70 bg-muted/20 p-4 dark:bg-muted/10 ${isEmployeeSelfReport ? '@md:max-w-md' : ''}`}
           >
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">From</span>
+          <div
+            className={`grid w-full grid-cols-1 gap-3 ${isEmployeeSelfReport ? '@md:grid-cols-2' : '@md:grid-cols-2 @lg:grid-cols-4'}`}
+          >
+            <FilterField label="From">
               <Input
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className="h-9 text-sm"
+                className="h-10 border-border/70 bg-card text-sm shadow-sm dark:bg-card/90"
               />
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">To</span>
+            </FilterField>
+            <FilterField label="To">
               <Input
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className="h-9 text-sm"
+                className="h-10 border-border/70 bg-card text-sm shadow-sm dark:bg-card/90"
               />
-            </div>
+            </FilterField>
             {!isEmployeeSelfReport && (
               <>
-                <div className="space-y-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">Company</span>
-                  <Select
+                <FilterField label="Company">
+                  <FilterSelect
                     value={companyId}
-                    onValueChange={(v) => {
-                      setCompanyId(v)
+                    onChange={(e) => {
+                      setCompanyId(e.target.value)
                       setEmployeeId('all')
                     }}
+                    loading={reportFiltersLoading}
+                    loadingLabel="Loading companies…"
+                    placeholder="All companies"
+                    aria-label="Filter by company"
                   >
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="All companies" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All companies</SelectItem>
-                      {companiesOptions.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">Employee</span>
-                  <Select value={employeeId} onValueChange={setEmployeeId}>
-                    <SelectTrigger className="h-9 text-sm">
-                      <SelectValue placeholder="All employees" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All employees</SelectItem>
-                      {employeesOptions.map((e) => (
-                        <SelectItem key={e.id} value={String(e.id)}>
-                          {e.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <label className="flex min-h-9 items-center gap-2 self-end text-sm text-muted-foreground">
+                    <option value="all">All companies</option>
+                    {companiesOptions.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </FilterSelect>
+                </FilterField>
+                <FilterField label="Employee">
+                  <FilterSelect
+                    value={employeeId}
+                    onChange={(e) => setEmployeeId(e.target.value)}
+                    loading={reportFiltersLoading}
+                    loadingLabel="Loading employees…"
+                    placeholder="All employees"
+                    aria-label="Filter by employee"
+                  >
+                    <option value="all">All employees</option>
+                    {employeesOptions.map((e) => (
+                      <option key={e.id} value={String(e.id)}>
+                        {e.name}
+                      </option>
+                    ))}
+                  </FilterSelect>
+                </FilterField>
+                <label className="flex min-h-10 items-center gap-2 self-end rounded-lg border border-border/70 bg-card px-3 text-sm text-muted-foreground shadow-sm dark:bg-card/90">
                   <input
                     type="checkbox"
                     checked={includeDeactivated}
@@ -815,6 +819,7 @@ export default function AdminReports() {
                 </label>
               </>
             )}
+          </div>
           </div>
           <div className="flex flex-wrap gap-2 @md:justify-end">
             <Button
@@ -871,49 +876,54 @@ export default function AdminReports() {
             </Button>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-3 pt-4 @md:grid-cols-[minmax(220px,320px)_1fr]">
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Company</span>
-              <Select
+            <FilterField label="Company">
+              <FilterSelect
                 value={payrollReportCompanyId}
-                onValueChange={(value) => {
-                  setPayrollReportCompanyId(value)
+                onChange={(e) => {
+                  setPayrollReportCompanyId(e.target.value)
                   setPayrollReportRunId('')
                 }}
+                loading={reportFiltersLoading}
+                loadingLabel="Loading companies…"
+                placeholder="All companies"
+                aria-label="Filter payroll report by company"
               >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder="All companies" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All companies</SelectItem>
-                  {companiesOptions.map((c) => (
-                    <SelectItem key={c.id} value={String(c.id)}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Finalized payroll run</span>
-              <Select value={payrollReportRunId} onValueChange={setPayrollReportRunId}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue placeholder={payrollRunsQuery.isFetching ? 'Loading finalized payroll runs...' : 'Select finalized payroll run'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {finalizedPayrollRunOptions.length === 0 ? (
-                    <SelectItem value="none" disabled>
-                      No finalized payroll runs found
-                    </SelectItem>
-                  ) : (
-                    finalizedPayrollRunOptions.map((run) => (
-                      <SelectItem key={run.id} value={run.id}>
+                <option value="all">All companies</option>
+                {companiesOptions.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </option>
+                ))}
+              </FilterSelect>
+            </FilterField>
+            <FilterField label="Finalized payroll run">
+              <FilterSelect
+                value={payrollReportRunId}
+                onChange={(e) => setPayrollReportRunId(e.target.value)}
+                loading={payrollRunsQuery.isFetching && finalizedPayrollRunOptions.length === 0}
+                loadingLabel="Loading payroll runs…"
+                disabled={!payrollRunsQuery.isFetching && finalizedPayrollRunOptions.length === 0}
+                placeholder="Select finalized payroll run"
+                aria-label="Select finalized payroll run"
+              >
+                {finalizedPayrollRunOptions.length === 0 ? (
+                  <option value="" disabled>
+                    {payrollRunsQuery.isFetching ? 'Loading finalized payroll runs...' : 'No finalized payroll runs found'}
+                  </option>
+                ) : (
+                  <>
+                    <option value="" disabled hidden>
+                      Select finalized payroll run
+                    </option>
+                    {finalizedPayrollRunOptions.map((run) => (
+                      <option key={run.id} value={run.id}>
                         {run.label}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
+                      </option>
+                    ))}
+                  </>
+                )}
+              </FilterSelect>
+            </FilterField>
           </CardContent>
         </Card>
       )}
