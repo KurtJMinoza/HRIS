@@ -735,7 +735,7 @@ function SmartDTRPreview({ className }) {
   return (
     <div
       className={cn(
-        'relative flex min-h-full w-full flex-col overflow-hidden bg-[#fbfbfc] text-[#090d18] lg:h-screen',
+        'relative flex min-h-full w-full flex-col bg-[#fbfbfc] text-[#090d18] lg:h-screen lg:overflow-hidden',
         'dark:bg-background dark:text-foreground dark:dashboard-content-canvas',
         className
       )}
@@ -806,8 +806,8 @@ function SmartDTRPreview({ className }) {
 
       <div className="relative z-10 mx-11 h-px bg-[#e3e5ea] dark:bg-border" aria-hidden />
 
-      {/* Scrollable body */}
-      <div className="relative z-10 flex-1 overflow-y-auto lg:overflow-hidden">
+      {/* Scrollable body — page scroll on mobile; panel scroll on desktop */}
+      <div className="relative z-10 flex-1 lg:overflow-hidden">
         <div className="space-y-3 px-8 pt-4 pb-2 sm:px-10 xl:px-12">
 
           {/* Mode segmented control — iOS-style filled vs outline */}
@@ -1672,7 +1672,7 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
   return (
     <div
       className={cn(
-        'relative flex min-h-screen w-full flex-col items-center justify-center bg-background px-6 py-10 md:px-8 lg:px-10',
+        'relative flex w-full flex-col items-center justify-center bg-background px-6 py-10 md:px-8 lg:min-h-screen lg:px-10',
         className,
       )}
     >
@@ -1729,7 +1729,6 @@ function LoginPageWrapper() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, loading, setUser, refreshUser } = useAuth()
-  const [previewOpen, setPreviewOpen] = useState(false)
 
   const resetSuccess = Boolean(location?.state?.resetSuccess)
   const fromLocation = location?.state?.from
@@ -1779,6 +1778,10 @@ function LoginPageWrapper() {
     return () => observer.disconnect()
   }, [])
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [])
+
   // Already logged in -> redirect to role dashboard
   if (!loading && user) {
     const path = targetPath || resolvePostLoginPath(user)
@@ -1808,37 +1811,14 @@ function LoginPageWrapper() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="flex flex-col lg:grid lg:grid-cols-2 lg:min-h-screen lg:items-stretch">
-        <main className="order-1 min-h-screen shrink-0 lg:order-2">
-          <AuthPanel onSuccess={handleAuthSuccess} resetSuccess={resetSuccess} />
-        </main>
-        <div className="order-2 flex justify-center border-t border-border bg-background px-4 py-3 lg:order-2 lg:hidden">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => setPreviewOpen((o) => !o)}
-            className="gap-2 text-muted-foreground hover:text-foreground"
-          >
-            {previewOpen ? 'Hide system preview' : 'See how it works'}
-            <svg
-              className={cn('size-4 transition-transform duration-200', previewOpen && 'rotate-180')}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </Button>
-        </div>
-        <aside
-          className={cn(
-            'order-3 min-h-0 overflow-auto transition-all duration-300 lg:order-1 lg:flex lg:min-h-screen lg:flex-col lg:border-r lg:border-border lg:bg-background',
-            previewOpen ? 'block' : 'hidden',
-          )}
-        >
+    <div className="min-h-screen scroll-smooth bg-background text-foreground">
+      <div className="flex snap-y snap-proximity flex-col lg:grid lg:snap-none lg:grid-cols-2 lg:min-h-screen lg:items-stretch">
+        <aside className="order-1 min-h-0 shrink-0 snap-start lg:order-1 lg:flex lg:min-h-screen lg:flex-col lg:border-r lg:border-border lg:bg-background">
           <SmartDTRPreview className="lg:min-h-full lg:flex-1" />
         </aside>
+        <main className="order-2 min-h-screen shrink-0 snap-start scroll-mt-4 lg:order-2 lg:min-h-screen">
+          <AuthPanel onSuccess={handleAuthSuccess} resetSuccess={resetSuccess} />
+        </main>
       </div>
     </div>
   )
