@@ -2187,6 +2187,7 @@ class FinalizePayrollService
         $draftDeductionCatalogByUser = [];
 
         $persistStartedAt = microtime(true);
+        $this->payrollComputation->flushRuntimeCaches();
         try {
             DB::transaction(function () use (
                 $employees,

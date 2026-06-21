@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
+use App\Services\PayrollComputationService;
 use App\Services\PayslipService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -51,12 +52,14 @@ class GeneratePayrollBatchJob implements ShouldQueue
         return [(new WithoutOverlapping('generate-payroll-batch-'.$this->batchRunId))->expireAfter(600)];
     }
 
-    public function handle(PayslipService $payslipService): void
+    public function handle(PayslipService $payslipService, PayrollComputationService $payrollComputation): void
     {
         if (function_exists('set_time_limit')) {
             @set_time_limit(0);
         }
         @ini_set('max_execution_time', '0');
+
+        $payrollComputation->flushRuntimeCaches();
 
         $jobStartedAt = microtime(true);
         $queryCount = 0;

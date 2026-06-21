@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\PayrollBatchRun;
 use App\Models\User;
 use App\Services\FinalizePayrollService;
+use App\Services\PayrollComputationService;
 use App\Services\ReportsCacheService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -55,7 +56,7 @@ class FinalizePayrollJob implements ShouldQueue
         return [(new WithoutOverlapping('finalize-payroll-'.$this->batchRunId))->expireAfter(600)];
     }
 
-    public function handle(FinalizePayrollService $finalizePayrollService): void
+    public function handle(FinalizePayrollService $finalizePayrollService, PayrollComputationService $payrollComputation): void
     {
         // HTTP requests use max_execution_time (e.g. 60s); this job runs in a queue worker and must
         // not inherit that ceiling for PDF generation, cache, and bulk DB work.
@@ -63,6 +64,8 @@ class FinalizePayrollJob implements ShouldQueue
             @set_time_limit(0);
         }
         @ini_set('max_execution_time', '0');
+
+        $payrollComputation->flushRuntimeCaches();
 
         $jobStartedAt = microtime(true);
         Log::info('FinalizePayrollJob started', [

@@ -744,6 +744,18 @@ class PayslipController extends Controller
                 $live['payroll']['cycle_label'] = $payslip->cycle_label ?: ($live['payroll']['cycle_label'] ?? null);
                 $live['source'] = 'live_computation';
 
+                // Keep the draft row aligned with what the user sees so PDF/export/batch totals
+                // do not fall back to an older generated snapshot.
+                try {
+                    $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                } catch (\Throwable $e) {
+                    Log::warning('Payslip view: draft snapshot refresh failed', [
+                        'payslip_id' => (int) $payslip->id,
+                        'employee_id' => (int) $employee->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
                 return response()->json($live);
             } catch (\RuntimeException $e) {
                 return response()->json(['message' => $e->getMessage()], 422);

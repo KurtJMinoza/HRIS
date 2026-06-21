@@ -1392,16 +1392,19 @@ class PayslipService
      */
     public function freezePayslipSnapshotForFinalization(Payslip $payslip): Payslip
     {
-        if (
-            (string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM
-            && ! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)
-        ) {
+        if (! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
             $employee = $payslip->relationLoaded('employee') && $payslip->employee instanceof User
                 ? $payslip->employee
                 : User::query()->find((int) $payslip->user_id);
 
             if ($employee instanceof User) {
-                $payslip = $this->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                $snapshotRaw = $payslip->snapshot ?? [];
+                $summary = is_array($snapshotRaw['summary'] ?? null) ? $snapshotRaw['summary'] : [];
+                if ($this->isConsultantSnapshot(is_array($snapshotRaw) ? $snapshotRaw : [], $summary)) {
+                    $payslip = $this->refreshConsultantDraftPayslipSnapshot($payslip, $employee);
+                } else {
+                    $payslip = $this->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                }
             }
         }
 
@@ -2423,20 +2426,25 @@ class PayslipService
     public function snapshotForPayslipRender(Payslip $payslip, User $employee): array
     {
         $snapshotRaw = $payslip->snapshot ?? [];
-        $isExecomPayslip = (string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM;
-        if ($isExecomPayslip && ! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+        $payrollModule = (string) ($payslip->payroll_module ?? PayrollBatchRun::MODULE_STANDARD);
+        $isLocked = in_array((string) $payslip->status, Payslip::lockingStatuses(), true);
+
+        // Draft/voided rows must recompute from current attendance + payroll rules. Bulk generation
+        // can persist a stale snapshot (for example pre-fix allowance day counts).
+        if (! $isLocked) {
             try {
                 $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
                 $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
                 if ($snapshot !== []) {
                     return $this->normalizeSnapshotForPayslipView(
-                        $this->snapshotWithPayrollModule($snapshot, PayrollBatchRun::MODULE_EXECOM)
+                        $this->snapshotWithPayrollModule($snapshot, $payrollModule)
                     );
                 }
             } catch (Throwable $e) {
-                Log::warning('EXECOM payslip render: live fixed-pay recomputation failed, falling back to stored snapshot', [
+                Log::warning('Payslip render: live recomputation failed, falling back to stored snapshot', [
                     'payslip_id' => (int) $payslip->id,
                     'user_id' => (int) $employee->id,
+                    'payroll_module' => $payrollModule,
                     'error' => $e->getMessage(),
                 ]);
             }

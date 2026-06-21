@@ -2232,8 +2232,10 @@ class PayrollComputationService
 
     /**
      * For each scheduled workday in the pay period (non-rest with required minutes > 0), credit
-     * min(1, paid_regular_minutes / required_minutes). Paid leave / undertime are already reflected
-     * in regular_day/regular_night minutes from {@see computeDayPayroll()}.
+     * min(1, paid_regular_minutes / required_minutes). Paid leave, undertime, and tardiness are
+     * already reflected in regular_day/regular_night minutes from {@see computeDayPayroll()}, so
+     * a 3-hour partial workday credits 0.375 day-units — never rounded up to a full day — keeping
+     * proratable allowances in lock-step with the same minute-accurate basis used by Regular pay.
      *
      * Used only when a pay component has is_proratable — others keep full semi-monthly schedule amounts.
      *
@@ -2311,22 +2313,31 @@ class PayrollComputationService
                 continue;
             }
 
-            $credited += 1.0;
-            $payableDays += 1.0;
+            // Day-unit credit must mirror Regular pay's minute-accurate basis: a worker who
+            // rendered only 3 of 8 required hours credits 0.375 day-units, not 1.0. Promoting the
+            // fraction to a whole day would over-pay proratable allowances for partial workdays.
+            $regularPaidMinutes = max(0, (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0)));
+            $dayFraction = $required > 0
+                ? min(1.0, max(0.0, $regularPaidMinutes / $required))
+                : 1.0;
+
+            $credited += $dayFraction;
+            $payableDays += $dayFraction;
             $reason = $resolution !== null ? (string) ($resolution['reason'] ?? 'payable_day') : 'payable_day';
             $sources = $resolution['sources'] ?? [];
             if ($reason === 'approved_paid_leave') {
-                $approvedPaidLeaveDays += 1.0;
+                $approvedPaidLeaveDays += $dayFraction;
             } elseif ($reason === 'approved_attendance_correction' || (bool) ($sources['approved_correction'] ?? false)) {
-                $approvedCorrectionDays += 1.0;
+                $approvedCorrectionDays += $dayFraction;
             } else {
-                $presentDays += 1.0;
+                $presentDays += $dayFraction;
             }
             $attendanceCounted[] = [
                 'date' => $dateKey,
                 'status' => $status,
                 'required_minutes' => $required,
-                'payable_day_unit' => 1.0,
+                'paid_regular_minutes' => $regularPaidMinutes,
+                'payable_day_unit' => round($dayFraction, 6),
                 'reason' => $reason,
                 'sources' => $sources,
             ];

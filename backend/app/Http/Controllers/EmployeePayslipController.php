@@ -190,6 +190,39 @@ class EmployeePayslipController extends Controller
         $employee = $payslip->employee;
         abort_unless($employee instanceof User, 404);
 
+        $status = strtolower(trim((string) ($payslip->status ?? '')));
+        $isFinalized = in_array($status, Payslip::lockingStatuses(), true);
+
+        if (! $isFinalized && (string) ($payslip->payroll_module ?? '') !== PayrollBatchRun::MODULE_EXECOM) {
+            $periodInput = $this->payslipService->periodInputFromPayslip($payslip);
+            $periodInput['password_protect'] = false;
+
+            try {
+                $live = $this->payslipService->computePayrollForEmployee(
+                    $employee,
+                    $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
+                    'draft',
+                    $periodInput
+                );
+                $live['payslip_id'] = (int) $payslip->id;
+                $live['source'] = 'live_computation';
+                if (isset($live['payroll']) && is_array($live['payroll'])) {
+                    $live['payroll']['status'] = (string) ($payslip->status ?? Payslip::STATUS_DRAFT);
+                    $live['payroll']['mode'] = 'draft';
+                }
+
+                try {
+                    $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                } catch (\Throwable) {
+                    // View still returns live payload when refresh fails.
+                }
+
+                return response()->json($live);
+            } catch (\RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        }
+
         $company = $payslip->company ?? $employee->company;
 
         return response()->json(PayslipStoredSnapshotViewPayload::fromStoredPayslip(
