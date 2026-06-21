@@ -9,6 +9,7 @@ import {
   adminQueueBulkPayslipDownload,
   adminRecomputeExecomPayroll,
   getExecomPayrollBatchStatus,
+  getExecomPayrollBatchPayslips,
   getExecomPayrollBatches,
   getExecomPayrollPayslips,
   getExecomPayrollReportPdfBlob,
@@ -77,6 +78,22 @@ function statusPill(status) {
       <Badge className="border-brand/30 bg-brand/10 text-brand hover:bg-brand/10">
         <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-brand" />
         Finalized
+      </Badge>
+    )
+  }
+  if (value === 'voided') {
+    return (
+      <Badge className="border-red-200/80 bg-red-50 text-red-900 hover:bg-red-50 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-100">
+        <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-red-500" />
+        Voided
+      </Badge>
+    )
+  }
+  if (value === 'sent_finalized' || value === 'viewed' || value === 'emailed') {
+    return (
+      <Badge className="border-emerald-200/80 bg-emerald-50 text-emerald-900 hover:bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-100">
+        <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+        {value === 'sent_finalized' ? 'Sent' : label}
       </Badge>
     )
   }
@@ -276,11 +293,7 @@ export default function AdminExecomFinalizePayrollPage() {
     setLoading(true)
     try {
       const status = await getExecomPayrollBatchStatus(batchId)
-      const list = await getExecomPayrollPayslips({
-        batch_run_id: batchId,
-        status: status?.status === 'finalized' ? 'finalized' : 'draft',
-        per_page: 100,
-      })
+      const list = await getExecomPayrollBatchPayslips(batchId, { per_page: 100 })
       setSelectedBatch(status)
       const rows = Array.isArray(list.payslips?.data) ? list.payslips.data : Array.isArray(list.data) ? list.data : []
       setPayslips(rows)
@@ -447,17 +460,21 @@ export default function AdminExecomFinalizePayrollPage() {
 
   const totals = useMemo(() => {
     const aggregate = selectedBatch?.aggregate || {}
-    const gross = Number(aggregate.total_gross_pay ?? selectedBatch?.total_gross_pay)
-    const deductions = Number(aggregate.total_deductions ?? selectedBatch?.total_deductions)
-    const net = Number(aggregate.total_net_pay ?? selectedBatch?.total_net_pay)
+    const batchTotals = selectedBatch?.totals || {}
+    const gross = Number(batchTotals.total_gross ?? aggregate.total_gross_pay ?? selectedBatch?.total_gross_pay ?? 0)
+    const deductions = Number(batchTotals.total_deductions ?? aggregate.total_deductions ?? selectedBatch?.total_deductions ?? 0)
+    const net = Number(batchTotals.total_net ?? aggregate.total_net_pay ?? selectedBatch?.total_net_pay ?? 0)
     const rowGross = payslips.reduce((sum, row) => sum + Number(row.gross_pay || 0), 0)
     const rowDeductions = payslips.reduce((sum, row) => sum + Number(row.total_deductions || 0), 0)
     const rowNet = payslips.reduce((sum, row) => sum + Number(row.net_pay || 0), 0)
+    const employeeCount = payslips.length > 0
+      ? payslips.length
+      : Number(batchTotals.employee_count ?? aggregate.payslip_count ?? selectedBatch?.employee_count ?? 0)
     return {
-      gross: payslips.length > 0 ? rowGross : (Number.isFinite(gross) && gross > 0 ? gross : 0),
-      deductions: payslips.length > 0 ? rowDeductions : (Number.isFinite(deductions) && deductions > 0 ? deductions : 0),
-      net: payslips.length > 0 ? rowNet : (Number.isFinite(net) && net > 0 ? net : 0),
-      employeeCount: Number(selectedBatch?.employee_count || selectedBatch?.payslip_count || payslips.length || 0),
+      gross: payslips.length > 0 ? rowGross : gross,
+      deductions: payslips.length > 0 ? rowDeductions : deductions,
+      net: payslips.length > 0 ? rowNet : net,
+      employeeCount,
     }
   }, [selectedBatch, payslips])
 
@@ -561,7 +578,7 @@ export default function AdminExecomFinalizePayrollPage() {
           Back
         </Button>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {finalized ? (
+          {finalized && !voided ? (
             <>
               <Button type="button" variant="outline" size="sm" className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted" onClick={downloadZip} disabled={loading || working}>
                 <FileDown className="h-4 w-4" />
@@ -605,10 +622,10 @@ export default function AdminExecomFinalizePayrollPage() {
           <div className={cn('flex w-fit items-center gap-3 rounded-xl border px-4 py-3 shadow-sm', finalized ? 'border-brand/30 bg-brand/10' : 'border-brand/25 bg-brand/10')}>
             <div>
               <p className="text-xs font-extrabold uppercase tracking-normal text-brand">
-                {finalized ? 'Status: Finalized' : processing ? 'Status: Processing' : failed ? 'Status: Failed' : draft ? 'Status: Draft' : 'Status: Select Batch'}
+                {voided ? 'Status: Voided' : finalized ? 'Status: Finalized' : processing ? 'Status: Processing' : failed ? 'Status: Failed' : draft ? 'Status: Draft' : 'Status: Select Batch'}
               </p>
               <p className="text-xs text-muted-foreground">
-                {finalized ? 'Locked - read only' : processing ? 'Finalizing in background...' : failed ? 'Retry finalization or recompute draft' : draft ? 'Editable before finalize' : 'Choose a batch to review'}
+                {voided ? 'Archived - regenerate to run payroll again' : finalized ? 'Locked - read only' : processing ? 'Finalizing in background...' : failed ? 'Retry finalization or recompute draft' : draft ? 'Editable before finalize' : 'Choose a batch to review'}
               </p>
             </div>
             <Lock className="h-5 w-5 text-brand" />
@@ -656,19 +673,26 @@ export default function AdminExecomFinalizePayrollPage() {
           </div>
         </div>
 
-        {!finalized ? (
+        {!finalized && !voided ? (
           <p className="mt-4 flex items-start gap-2 rounded-xl border border-brand/20 bg-brand/10 px-4 py-3 text-sm text-muted-foreground">
             <Lock className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
             <span>Figures below are computed for review only. PDFs are available after you confirm and finalize this EXECOM payroll.</span>
           </p>
-        ) : (
+        ) : voided ? (
+          <p className="mt-4 flex items-start gap-2 rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-100">
+            <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              <span className="font-semibold">This EXECOM payroll batch was voided.</span> Generate a new draft for the same pay period to run payroll again.
+            </span>
+          </p>
+        ) : finalized ? (
           <p className="mt-4 flex items-start gap-2 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm text-foreground">
             <Lock className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
             <span>
-              <span className="font-semibold text-brand">This EXECOM payroll has been finalized and is now locked.</span> You can view payslips, bulk download PDFs, or export the payroll report.
+              <span className="font-semibold text-brand">This EXECOM payroll has been finalized and is now locked.</span> You can view payslips, bulk download PDFs, send to employees, or export the payroll report.
             </span>
           </p>
-        )}
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 gap-4 @lg:grid-cols-4">
@@ -766,7 +790,11 @@ export default function AdminExecomFinalizePayrollPage() {
                   {!loading && visiblePayslips.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
-                        No payslips found for this batch.
+                        {voided
+                          ? 'This batch was voided. Generate a new EXECOM draft for this pay period.'
+                          : finalized
+                            ? 'No active payslips found for this batch. Try refreshing, or regenerate the draft if this batch was voided.'
+                            : 'No payslips found for this batch.'}
                       </TableCell>
                     </TableRow>
                   ) : null}

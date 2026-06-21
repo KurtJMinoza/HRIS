@@ -3085,6 +3085,15 @@ export async function getExecomPayrollBatches(params = {}) {
   return data
 }
 
+export async function getExecomPayrollBatchPayslips(batchRunId, params = {}) {
+  const res = await authenticatedFetch(
+    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/payslips${execomQueryString(params)}`
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load EXECOM batch payslips')
+  return data
+}
+
 export async function getExecomPayrollPayslips(params = {}) {
   const status = String(params.status || 'draft').toLowerCase() === 'finalized' ? 'finalized' : 'draft'
   const path = status === 'finalized' ? '/admin/execom/payroll/finalized' : '/admin/execom/payroll/draft'

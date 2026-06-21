@@ -57,8 +57,52 @@ class ExecomPayrollController extends Controller
         abort_if($employeeCount < 1, 422, 'No active EXECOM employees in the selected scope.');
 
         $batchKey = 'execom_'.$this->makeBatchKey($companyId, $branchId, $departmentId, $employeeIds[0] ?? null, $from, $to, $validated['pay_cycle_id'] ?? null);
+        $scopeBatchKey = PayrollBatchRun::buildScopeBatchKey(
+            PayrollBatchRun::MODULE_EXECOM,
+            $companyId,
+            $branchId,
+            $departmentId,
+            $employeeIds[0] ?? null,
+            $from,
+            $to,
+            $validated['pay_cycle_id'] ?? null
+        );
+        $legacyScopeBatchKey = PayrollBatchRun::buildLegacyScopeBatchKey(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $employeeIds[0] ?? null,
+            $from,
+            $to,
+            $validated['pay_cycle_id'] ?? null
+        );
+
+        $conflictingFinalized = PayrollBatchRun::findConflictingFinalizedBatch(
+            PayrollBatchRun::MODULE_EXECOM,
+            $companyId,
+            $branchId,
+            $departmentId,
+            $employeeIds[0] ?? null,
+            $from,
+            $to
+        );
+        if ($conflictingFinalized instanceof PayrollBatchRun) {
+            abort(
+                422,
+                'This EXECOM payroll period is already finalized (batch #'.$conflictingFinalized->id.'). Void that batch before generating a new draft.'
+            );
+        }
+
+        $existing = PayrollBatchRun::query()
+            ->whereIn('batch_key', [$batchKey, $scopeBatchKey, $legacyScopeBatchKey])
+            ->orderByDesc('id')
+            ->first();
+        if ($existing instanceof PayrollBatchRun && (string) $existing->status === PayrollBatchRun::STATUS_FINALIZED) {
+            abort(422, 'This EXECOM payroll period is already finalized. Void the finalized batch before generating a new draft.');
+        }
+
         $run = PayrollBatchRun::query()->updateOrCreate(
-            ['batch_key' => $batchKey],
+            ['batch_key' => $scopeBatchKey],
             [
                 'payroll_module' => PayrollBatchRun::MODULE_EXECOM,
                 'company_id' => $companyId,
@@ -82,6 +126,13 @@ class ExecomPayrollController extends Controller
                 'completed_at' => null,
                 'error_message' => null,
                 'finalized_by_user_id' => (int) $actor->id,
+                'finalized_at' => null,
+                'voided_at' => null,
+                'voided_by_user_id' => null,
+                'void_reason' => null,
+                'total_gross' => 0,
+                'total_deductions' => 0,
+                'total_net' => 0,
             ]
         );
 
@@ -145,7 +196,14 @@ class ExecomPayrollController extends Controller
 
     public function viewFinalized(Request $request): JsonResponse
     {
-        return $this->payslipList($request, Payslip::STATUS_FINALIZED);
+        return $this->payslipList($request, Payslip::lockingStatuses());
+    }
+
+    public function batchPayslips(Request $request, int $batchRunId): JsonResponse
+    {
+        $run = $this->execomRun($batchRunId);
+
+        return $this->payslipListForRun($request, $run);
     }
 
     public function finalize(Request $request, int $batchRunId): JsonResponse
@@ -191,6 +249,13 @@ class ExecomPayrollController extends Controller
     {
         $run = $this->execomRun($batchRunId);
         $aggregate = $this->payslipService->aggregateForBatchRun($run, false);
+        $payslipCount = (int) ($aggregate['payslip_count'] ?? 0);
+        $isVoided = (string) $run->status === PayrollBatchRun::STATUS_VOIDED;
+        $useStoredTotals = ! $isVoided && $payslipCount === 0 && in_array(
+            (string) $run->status,
+            [PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_QUEUED, PayrollBatchRun::STATUS_PROCESSING, PayrollBatchRun::STATUS_FAILED],
+            true
+        );
 
         return response()->json([
             ...$run->toArray(),
@@ -199,10 +264,18 @@ class ExecomPayrollController extends Controller
             'error_message' => $run->error_message,
             'progress' => $this->progressPayloadForRun($run),
             'totals' => [
-                'total_gross' => (float) ($run->total_gross ?? $aggregate['total_gross_pay'] ?? 0),
-                'total_deductions' => (float) ($run->total_deductions ?? $aggregate['total_deductions'] ?? 0),
-                'total_net' => (float) ($run->total_net ?? $aggregate['total_net_pay'] ?? 0),
-                'employee_count' => max((int) ($run->employee_count ?? 0), (int) ($run->total_employees ?? 0), (int) ($aggregate['payslip_count'] ?? 0)),
+                'total_gross' => $payslipCount > 0
+                    ? (float) $aggregate['total_gross_pay']
+                    : ($useStoredTotals ? (float) ($run->total_gross ?? 0) : 0.0),
+                'total_deductions' => $payslipCount > 0
+                    ? (float) $aggregate['total_deductions']
+                    : ($useStoredTotals ? (float) ($run->total_deductions ?? 0) : 0.0),
+                'total_net' => $payslipCount > 0
+                    ? (float) $aggregate['total_net_pay']
+                    : ($useStoredTotals ? (float) ($run->total_net ?? 0) : 0.0),
+                'employee_count' => $payslipCount > 0
+                    ? $payslipCount
+                    : ($useStoredTotals ? max((int) ($run->employee_count ?? 0), (int) ($run->total_employees ?? 0)) : 0),
             ],
         ]);
     }
@@ -302,7 +375,10 @@ class ExecomPayrollController extends Controller
         return $result['pdf']->download('EXECOM_'.$result['filename']);
     }
 
-    private function payslipList(Request $request, string $status): JsonResponse
+    /**
+     * @param  list<string>|string  $status
+     */
+    private function payslipList(Request $request, array|string $status): JsonResponse
     {
         $validated = $request->validate([
             'batch_run_id' => ['nullable', 'integer', 'exists:payroll_batch_runs,id'],
@@ -320,10 +396,16 @@ class ExecomPayrollController extends Controller
                 'company:id,name',
                 'payCycle:id,name',
             ])
-            ->where('payroll_module', PayrollBatchRun::MODULE_EXECOM)
-            ->where('status', $status)
-            ->orderByDesc('pay_period_end')
-            ->orderByDesc('id');
+            ->where('payroll_module', PayrollBatchRun::MODULE_EXECOM);
+
+        $statuses = is_array($status) ? $status : [$status];
+        $query->whereIn('status', $statuses);
+
+        if (! in_array(Payslip::STATUS_VOIDED, $statuses, true)) {
+            $query->where('period_slot', 0)->whereNull('voided_at');
+        }
+
+        $query->orderByDesc('pay_period_end')->orderByDesc('id');
 
         if (! empty($validated['batch_run_id'])) {
             $query->where('payroll_batch_run_id', (int) $validated['batch_run_id']);
@@ -338,7 +420,31 @@ class ExecomPayrollController extends Controller
             $query->whereDate('pay_period_start', '<=', $validated['to_date']);
         }
 
-        $paginator = $query->paginate((int) ($validated['per_page'] ?? 25));
+        return $this->paginatedPayslipListResponse($query, (int) ($validated['per_page'] ?? 25));
+    }
+
+    private function payslipListForRun(Request $request, PayrollBatchRun $run): JsonResponse
+    {
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $query = $this->payslipService->payslipDisplayQueryForBatch($run)
+            ->with([
+                'employee:id,name,first_name,last_name,employee_code,department,department_id',
+                'employee.departmentRelation:id,name',
+                'company:id,name',
+                'payCycle:id,name',
+            ])
+            ->orderByDesc('id');
+
+        return $this->paginatedPayslipListResponse($query, (int) ($validated['per_page'] ?? 25));
+    }
+
+    private function paginatedPayslipListResponse(\Illuminate\Database\Eloquent\Builder $query, ?int $perPage = null): JsonResponse
+    {
+        $paginator = $query->paginate($perPage ?? (int) request()->integer('per_page', 25));
         $paginator->getCollection()->transform(function (Payslip $payslip): array {
             $employee = $payslip->employee instanceof User ? $payslip->employee : null;
             $snapshot = $employee

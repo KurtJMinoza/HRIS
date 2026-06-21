@@ -541,20 +541,20 @@ class PayslipService
             return 0;
         }
 
-        $query = Payslip::query()
-            ->whereIn('id', $ids)
-            ->whereNull('voided_at')
-            ->whereNotIn('status', Payslip::lockingStatuses());
-
-        if ($payrollBatchRunId !== null && $payrollBatchRunId > 0) {
-            $query->where('payroll_batch_run_id', $payrollBatchRunId);
-        }
-
-        return (int) $query->update([
+        $update = [
             'status' => Payslip::STATUS_FINALIZED,
             'finalized_at' => now(),
             'finalized_by_user_id' => $finalizedByUserId,
-        ]);
+        ];
+        if ($payrollBatchRunId !== null && $payrollBatchRunId > 0) {
+            $update['payroll_batch_run_id'] = $payrollBatchRunId;
+        }
+
+        return (int) Payslip::query()
+            ->whereIn('id', $ids)
+            ->whereNull('voided_at')
+            ->whereNotIn('status', Payslip::lockingStatuses())
+            ->update($update);
     }
 
     /**
@@ -4606,6 +4606,101 @@ class PayslipService
     }
 
     /**
+     * Payslip rows to display for one payroll batch run (list UI, batch status, bulk actions).
+     */
+    public function payslipDisplayQueryForBatch(PayrollBatchRun $run): \Illuminate\Database\Eloquent\Builder
+    {
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        $batchStatus = (string) $run->status;
+
+        $query = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule);
+
+        if ($batchStatus === PayrollBatchRun::STATUS_VOIDED) {
+            return $query
+                ->where('status', Payslip::STATUS_VOIDED)
+                ->whereNotNull('voided_at');
+        }
+
+        if ($batchStatus === PayrollBatchRun::STATUS_FINALIZED) {
+            return $query
+                ->whereIn('status', Payslip::lockingStatuses())
+                ->where('period_slot', 0)
+                ->whereNull('voided_at');
+        }
+
+        return $query
+            ->whereIn('status', $this->draftSnapshotStatuses())
+            ->where('period_slot', 0)
+            ->whereNull('voided_at');
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function payslipDisplayIdsForBatch(PayrollBatchRun $run): array
+    {
+        if ((string) $run->status === PayrollBatchRun::STATUS_VOIDED) {
+            return Payslip::query()
+                ->where('payroll_batch_run_id', (int) $run->id)
+                ->where('status', Payslip::STATUS_VOIDED)
+                ->orderByDesc('id')
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
+        }
+
+        $this->attachMatchingPayslipsToBatchRun($run);
+
+        return $this->latestUniquePayslipIdsForQuery(
+            $this->batchLinkedPayslipQuery(
+                $run,
+                (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
+                    ? Payslip::lockingStatuses()
+                    : $this->draftSnapshotStatuses()
+            )
+        );
+    }
+
+    /**
+     * Payslip rows already linked to a payroll batch run (one source of truth for finalize/send/download).
+     *
+     * @param  list<string>|string|null  $statuses
+     */
+    public function batchLinkedPayslipQuery(PayrollBatchRun $run, array|string|null $statuses = null): \Illuminate\Database\Eloquent\Builder
+    {
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+        if ($statuses === null) {
+            $statuses = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED
+                ? Payslip::lockingStatuses()
+                : $this->draftSnapshotStatuses();
+        } elseif (is_string($statuses)) {
+            $statuses = [$statuses];
+        }
+
+        $query = Payslip::query()
+            ->where('payroll_batch_run_id', (int) $run->id)
+            ->where('payroll_module', $expectedModule)
+            ->whereNull('voided_at')
+            ->where('period_slot', 0)
+            ->whereIn('status', $statuses);
+
+        if ($run->pay_period_start !== null) {
+            $query->whereDate('pay_period_start', $run->pay_period_start->toDateString());
+        }
+        if ($run->pay_period_end !== null) {
+            $query->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+        }
+        if ($run->employee_id !== null) {
+            $query->where('user_id', (int) $run->employee_id);
+        }
+
+        return $query;
+    }
+
+    /**
      * Cheap ID-only lookup for "Bulk Send Payslips".
      *
      * Avoids {@see aggregateForBatchRun()} because delivery does not need gross/net totals,
@@ -4618,28 +4713,9 @@ class PayslipService
     {
         $this->attachMatchingPayslipsToBatchRun($run);
 
-        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
-        $q = Payslip::query()
-            ->where('payroll_batch_run_id', (int) $run->id)
-            ->where('payroll_module', $expectedModule)
-            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
-            ->whereDate('pay_period_end', $run->pay_period_end->toDateString())
-            ->whereIn('status', Payslip::lockingStatuses());
-
-        if ($run->company_id) {
-            $q->where('company_id', (int) $run->company_id);
-        }
-        if ($run->branch_id) {
-            $q->where('branch_id', (int) $run->branch_id);
-        }
-        if ($run->department_id) {
-            $q->where('department_id', (int) $run->department_id);
-        }
-        if ($run->employee_id) {
-            $q->where('user_id', (int) $run->employee_id);
-        }
-
-        return $this->latestUniquePayslipIdsForQuery($q);
+        return $this->latestUniquePayslipIdsForQuery(
+            $this->batchLinkedPayslipQuery($run, Payslip::lockingStatuses())
+        );
     }
 
     /**
@@ -4707,36 +4783,17 @@ class PayslipService
             $this->attachMatchingPayslipsToBatchRun($run);
         }
 
-        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
         $eligibleEmployeeIds = $this->employeeIdsForBatchScope($run);
+        $isFinalizedBatch = (string) $run->status === PayrollBatchRun::STATUS_FINALIZED;
 
-        $q = Payslip::query()
-            ->where('payroll_batch_run_id', (int) $run->id)
-            ->where('payroll_module', $expectedModule)
-            ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
-            ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+        $q = $this->batchLinkedPayslipQuery(
+            $run,
+            $isFinalizedBatch ? Payslip::lockingStatuses() : $this->draftSnapshotStatuses()
+        );
         if ($eligibleEmployeeIds !== []) {
             $q->whereIn('user_id', $eligibleEmployeeIds);
-        } else {
+        } elseif (! $isFinalizedBatch) {
             $q->whereRaw('1 = 0');
-        }
-        if ((string) $run->status === PayrollBatchRun::STATUS_FINALIZED) {
-            $q->whereIn('status', Payslip::lockingStatuses());
-        } else {
-            $q->whereIn('status', $this->draftSnapshotStatuses());
-        }
-
-        if ($run->company_id) {
-            $q->where('company_id', (int) $run->company_id);
-        }
-        if ($run->branch_id) {
-            $q->where('branch_id', (int) $run->branch_id);
-        }
-        if ($run->department_id) {
-            $q->where('department_id', (int) $run->department_id);
-        }
-        if ($run->employee_id) {
-            $q->where('user_id', (int) $run->employee_id);
         }
 
         $uniqueIds = $this->latestUniquePayslipIdsForQuery($q);
@@ -4890,7 +4947,7 @@ class PayslipService
 
     private function attachMatchingPayslipsToBatchRun(PayrollBatchRun $run): int
     {
-        if ($run->pay_period_start === null || $run->pay_period_end === null || $run->company_id === null) {
+        if ($run->pay_period_start === null || $run->pay_period_end === null) {
             return 0;
         }
 
@@ -4906,9 +4963,12 @@ class PayslipService
             ->whereIn('status', $expectedStatuses)
             ->where('period_slot', 0)
             ->where('payroll_module', $expectedModule)
-            ->where('company_id', (int) $run->company_id)
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
             ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+
+        if ($run->company_id !== null) {
+            $query->where('company_id', (int) $run->company_id);
+        }
 
         if ($run->branch_id !== null) {
             $query->where('branch_id', (int) $run->branch_id);

@@ -92,4 +92,98 @@ class PayrollBatchRun extends Model
     {
         return $this->belongsTo(Company::class);
     }
+
+    /**
+     * Stable identity for a payroll batch scope (module + org filters + pay window).
+     */
+    public static function buildScopeBatchKey(
+        string $payrollModule,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $employeeId,
+        \Carbon\Carbon|string $payPeriodStart,
+        \Carbon\Carbon|string $payPeriodEnd,
+        mixed $payCycleId = null,
+    ): string {
+        $start = $payPeriodStart instanceof \Carbon\Carbon
+            ? $payPeriodStart->toDateString()
+            : \Carbon\Carbon::parse((string) $payPeriodStart)->toDateString();
+        $end = $payPeriodEnd instanceof \Carbon\Carbon
+            ? $payPeriodEnd->toDateString()
+            : \Carbon\Carbon::parse((string) $payPeriodEnd)->toDateString();
+
+        return hash('sha256', implode('|', [
+            strtolower(trim($payrollModule)),
+            (string) ($companyId ?? 'x'),
+            (string) ($branchId ?? 'x'),
+            (string) ($departmentId ?? 'x'),
+            (string) ($employeeId ?? 'x'),
+            $start,
+            $end,
+            (string) ($payCycleId ?? 'x'),
+        ]));
+    }
+
+    /**
+     * Legacy finalize hash (pre-module batch keys). Kept for voided/finalized rows created before module-scoped keys.
+     */
+    public static function buildLegacyScopeBatchKey(
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $employeeId,
+        \Carbon\Carbon|string $payPeriodStart,
+        \Carbon\Carbon|string $payPeriodEnd,
+        mixed $payCycleId = null,
+    ): string {
+        $start = $payPeriodStart instanceof \Carbon\Carbon
+            ? $payPeriodStart->toDateString()
+            : \Carbon\Carbon::parse((string) $payPeriodStart)->toDateString();
+        $end = $payPeriodEnd instanceof \Carbon\Carbon
+            ? $payPeriodEnd->toDateString()
+            : \Carbon\Carbon::parse((string) $payPeriodEnd)->toDateString();
+
+        return hash('sha256', implode('|', [
+            (string) ($companyId ?? 'x'),
+            (string) ($branchId ?? 'x'),
+            (string) ($departmentId ?? 'x'),
+            (string) ($employeeId ?? 'x'),
+            $start,
+            $end,
+            (string) ($payCycleId ?? 'x'),
+        ]));
+    }
+
+    public static function findConflictingFinalizedBatch(
+        string $payrollModule,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $employeeId,
+        \Carbon\Carbon|string $payPeriodStart,
+        \Carbon\Carbon|string $payPeriodEnd,
+    ): ?self {
+        $query = static::query()
+            ->where('payroll_module', strtolower(trim($payrollModule)))
+            ->where('status', self::STATUS_FINALIZED)
+            ->whereDate('pay_period_start', $payPeriodStart instanceof \Carbon\Carbon ? $payPeriodStart->toDateString() : $payPeriodStart)
+            ->whereDate('pay_period_end', $payPeriodEnd instanceof \Carbon\Carbon ? $payPeriodEnd->toDateString() : $payPeriodEnd);
+
+        static::applyNullableScopeColumn($query, 'company_id', $companyId);
+        static::applyNullableScopeColumn($query, 'branch_id', $branchId);
+        static::applyNullableScopeColumn($query, 'department_id', $departmentId);
+        static::applyNullableScopeColumn($query, 'employee_id', $employeeId);
+
+        return $query->orderByDesc('id')->first();
+    }
+
+    private static function applyNullableScopeColumn(\Illuminate\Database\Eloquent\Builder $query, string $column, ?int $value): void
+    {
+        if ($value !== null && $value > 0) {
+            $query->where($column, $value);
+        } else {
+            $query->whereNull($column);
+        }
+    }
 }

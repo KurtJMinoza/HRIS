@@ -604,6 +604,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/execom/payroll-settings', [ExecomPayrollSettingsController::class, 'show']);
             Route::get('/admin/execom/payroll/batches', [ExecomPayrollController::class, 'recentBatches']);
             Route::get('/admin/execom/payroll/batches/{id}/status', [ExecomPayrollController::class, 'batchStatus'])->whereNumber('id');
+            Route::get('/admin/execom/payroll/batches/{id}/payslips', [ExecomPayrollController::class, 'batchPayslips'])->whereNumber('id');
             Route::get('/admin/execom/payroll/draft', [ExecomPayrollController::class, 'viewDraft']);
             Route::get('/admin/execom/payroll/finalized', [ExecomPayrollController::class, 'viewFinalized']);
         });

@@ -2336,7 +2336,6 @@ class FinalizePayrollService
                 }
 
                 $payload = [
-                    'batch_key' => $batchKey,
                     'company_id' => $companyId,
                     'branch_id' => $branchId,
                     'department_id' => $departmentId,
@@ -2715,7 +2714,7 @@ class FinalizePayrollService
 
     private function attachMatchingPayslipsToBatchRun(PayrollBatchRun $run): int
     {
-        if ($run->pay_period_start === null || $run->pay_period_end === null || $run->company_id === null) {
+        if ($run->pay_period_start === null || $run->pay_period_end === null) {
             return 0;
         }
 
@@ -2723,14 +2722,20 @@ class FinalizePayrollService
             ? Payslip::lockingStatuses()
             : $this->draftSnapshotStatuses();
 
+        $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
+
         $query = Payslip::query()
             ->whereNull('payroll_batch_run_id')
             ->whereNull('voided_at')
             ->whereIn('status', $expectedStatuses)
             ->where('period_slot', 0)
-            ->where('company_id', (int) $run->company_id)
+            ->where('payroll_module', $expectedModule)
             ->whereDate('pay_period_start', $run->pay_period_start->toDateString())
             ->whereDate('pay_period_end', $run->pay_period_end->toDateString());
+
+        if ($run->company_id !== null) {
+            $query->where('company_id', (int) $run->company_id);
+        }
 
         if ($run->branch_id !== null) {
             $query->where('branch_id', (int) $run->branch_id);
