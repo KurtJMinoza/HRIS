@@ -56,6 +56,7 @@ export const adminNavItems = [
       { to: '/admin/compensation/government-deduction', end: false, label: 'Statutory Deductions', icon: Landmark },
       { to: '/admin/compensation/deductions-loans', end: false, label: 'Loans & Deductions', icon: HandCoins },
       { to: '/admin/compensation/generate-payslips', end: false, label: 'Generate Payslips', icon: Receipt },
+      { to: '/admin/compensation/13th-month-pay', end: false, label: '13th Month Pay', icon: Calculator },
       { to: '/admin/execom/employees', end: false, label: 'EXECOM', icon: UserCog },
     ],
   },

@@ -490,7 +490,7 @@ class PayrollLinePersistService
             'line_key' => $key !== '' ? $key : ($componentCode !== '' ? $componentCode : 'line:'.$sortOrder),
             'component_code' => $componentCode !== '' ? $componentCode : null,
             'component_name' => trim((string) ($line['label'] ?? $line['name'] ?? '')),
-            'description' => null,
+            'description' => isset($line['description']) ? (string) $line['description'] : null,
             'type' => $type,
             'category' => isset($line['category']) ? (string) $line['category'] : null,
             'amount' => $amount,
@@ -499,11 +499,14 @@ class PayrollLinePersistService
             'calculation_standard' => $standard !== '' ? $standard : null,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
-            'metadata' => [
-                'component_amount' => $configured > 0 ? $configured : null,
-                'priority_bucket' => $line['priority_bucket'] ?? null,
-                'legal_warning' => $line['legal_warning'] ?? null,
-            ],
+            'metadata' => array_merge(
+                is_array($line['metadata'] ?? null) ? $line['metadata'] : [],
+                [
+                    'component_amount' => $configured > 0 ? $configured : null,
+                    'priority_bucket' => $line['priority_bucket'] ?? null,
+                    'legal_warning' => $line['legal_warning'] ?? null,
+                ]
+            ),
             'sort_order' => $sortOrder,
         ];
     }

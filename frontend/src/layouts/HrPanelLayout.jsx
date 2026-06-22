@@ -76,6 +76,10 @@ export function HrPanelLayout() {
   const isCompensationPath = /\/compensation(\/|$)/.test(path)
   if (isCompensationPath && !hrAdmin) {
     const isPayslipPath = /\/compensation\/(payslips|generate-payslips|finalize-payroll)(\/|$)/.test(path)
+    const isThirteenthMonthPath = /\/compensation\/13th-month-pay(\/|$)/.test(path)
+    if (isThirteenthMonthPath && !permissionSet.has('thirteenth_month.view')) {
+      return <Navigate to={hrBase} replace />
+    }
     if (isPayslipPath) {
       const canAccessPayslipPath =
         (/\/compensation\/generate-payslips(\/|$)/.test(path) && permissionSet.has('payslip.generate')) ||
@@ -84,7 +88,7 @@ export function HrPanelLayout() {
       if (!canAccessPayslipPath) {
         return <Navigate to={`${hrBase}/dashboard`} replace />
       }
-    } else if (!permissionSet.has('compensation.view')) {
+    } else if (!isThirteenthMonthPath && !permissionSet.has('compensation.view')) {
       return <Navigate to={`${hrBase}/dashboard`} replace />
     }
   }

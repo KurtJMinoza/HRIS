@@ -485,6 +485,8 @@ class PayslipController extends Controller
             'payroll_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id'],
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
+            'include_thirteenth_month' => ['nullable', 'boolean'],
+            'include_13th_month_pay' => ['nullable', 'boolean'],
         ]);
 
         $periodInput = [
@@ -499,6 +501,8 @@ class PayslipController extends Controller
             'payroll_period_id' => $v['payroll_period_id'] ?? null,
             'is_final_pay' => $v['is_final_pay'] ?? false,
             'password_protect' => (bool) ($v['password_protect'] ?? false),
+            'include_thirteenth_month' => (bool) ($v['include_13th_month_pay'] ?? $v['include_thirteenth_month'] ?? false),
+            'include_13th_month_pay' => (bool) ($v['include_13th_month_pay'] ?? $v['include_thirteenth_month'] ?? false),
         ];
 
         if (empty($v['employee_id'])) {
@@ -535,13 +539,53 @@ class PayslipController extends Controller
                 );
                 abort(422, (string) ($eligibility['exclusion_reason'] ?? 'Selected employee is not eligible for Regular Payroll in the selected period.'));
             }
-            // Single-employee generation should be quick and usable for preview immediately.
-            // PDFs are not generated here to keep the endpoint responsive.
+            $singleRun = null;
+            if (! empty($periodInput['include_thirteenth_month'])) {
+                $singleCompanyId = isset($v['company_id']) ? (int) $v['company_id'] : (int) $user->getEffectiveCompanyId();
+                $singleKey = $this->makeBatchKey(
+                    $singleCompanyId,
+                    isset($v['branch_id']) ? (int) $v['branch_id'] : null,
+                    isset($v['department_id']) ? (int) $v['department_id'] : null,
+                    (int) $user->id,
+                    $resolvedStartForEligibility->toDateString(),
+                    $resolvedEndForEligibility->toDateString(),
+                    $periodInput['pay_cycle_id'] ?? null
+                );
+                $singleRun = PayrollBatchRun::query()->where('batch_key', $singleKey)->first();
+                abort_if($singleRun && (string) $singleRun->status === PayrollBatchRun::STATUS_FINALIZED, 422, 'This employee payroll period is already finalized.');
+                $singleRun = PayrollBatchRun::query()->updateOrCreate(['batch_key' => $singleKey], [
+                    'payroll_module' => PayrollBatchRun::MODULE_STANDARD,
+                    'company_id' => $singleCompanyId,
+                    'branch_id' => isset($v['branch_id']) ? (int) $v['branch_id'] : null,
+                    'department_id' => isset($v['department_id']) ? (int) $v['department_id'] : null,
+                    'employee_id' => (int) $user->id,
+                    'pay_period_start' => $resolvedStartForEligibility->toDateString(),
+                    'pay_period_end' => $resolvedEndForEligibility->toDateString(),
+                    'pay_cycle_id' => $periodInput['pay_cycle_id'] ?? null,
+                    'password_protect' => (bool) ($periodInput['password_protect'] ?? false),
+                    'include_thirteenth_month' => true,
+                    'include_13th_month_pay' => true,
+                    'status' => PayrollBatchRun::STATUS_DRAFT,
+                    'employee_count' => 1,
+                    'total_employees' => 1,
+                    'processed_employees' => 1,
+                    'completed_at' => now(),
+                    'finalized_by_user_id' => $request->user()?->id,
+                ]);
+                $periodInput['payroll_batch_run_id'] = (int) $singleRun->id;
+            }
+
+            // Single-employee generation remains synchronous; the optional 13th-month line uses
+            // the same draft batch identity for duplicate prevention.
             $result = $this->payslipService->generatePayslip($user, $periodInput, withPdf: false);
+            if ($singleRun instanceof PayrollBatchRun) {
+                $this->payslipService->syncBatchRunTotals($singleRun->fresh());
+            }
 
             return response()->json([
                 'message' => 'Payslip generated.',
                 'payslip_id' => $result['payslip']->id,
+                'payroll_batch_run_id' => $singleRun?->id,
                 'pdf_password' => $result['pdf_password'],
             ]);
         }
@@ -647,6 +691,8 @@ class PayslipController extends Controller
             'payroll_period_id' => $periodInput['payroll_period_id'] ?? null,
             'is_final_pay' => (bool) ($periodInput['is_final_pay'] ?? false),
             'password_protect' => (bool) ($periodInput['password_protect'] ?? false),
+            'include_thirteenth_month' => (bool) ($periodInput['include_thirteenth_month'] ?? false),
+            'include_13th_month_pay' => (bool) ($periodInput['include_13th_month_pay'] ?? $periodInput['include_thirteenth_month'] ?? false),
             'reference_date' => isset($periodInput['reference_date']) ? \Carbon\Carbon::parse((string) $periodInput['reference_date'])->toDateString() : null,
             'status' => PayrollBatchRun::STATUS_QUEUED,
             'employee_count' => $employeeCount,
@@ -747,7 +793,16 @@ class PayslipController extends Controller
                 // Keep the draft row aligned with what the user sees so PDF/export/batch totals
                 // do not fall back to an older generated snapshot.
                 try {
-                    $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                    $refreshedPayslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                    $storedSnapshot = is_array($refreshedPayslip->snapshot) ? $refreshedPayslip->snapshot : [];
+                    $storedMetrics = $this->payslipService->payslipLineTotalsFromSnapshot($storedSnapshot);
+                    // Live computation is the base response, but generated/frozen earning lines
+                    // (including 13TH_MONTH_PAY) and their totals must come from the refreshed draft.
+                    $live['summary']['payslip_earning_lines'] = data_get($storedSnapshot, 'summary.payslip_earning_lines', []);
+                    $live['amounts']['gross_pay'] = $storedMetrics['gross_pay'];
+                    $live['amounts']['total_deductions'] = $storedMetrics['total_deductions'];
+                    $live['amounts']['net_pay'] = $storedMetrics['net_pay'];
+                    $live['snapshot'] = $storedSnapshot;
                 } catch (\Throwable $e) {
                     Log::warning('Payslip view: draft snapshot refresh failed', [
                         'payslip_id' => (int) $payslip->id,
@@ -870,6 +925,7 @@ class PayslipController extends Controller
             'payroll_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id'],
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
+            'include_thirteenth_month' => ['nullable', 'boolean'],
         ]);
 
         $employee = User::query()->findOrFail((int) $v['employee_id']);
@@ -884,6 +940,7 @@ class PayslipController extends Controller
             'payroll_period_id' => $v['payroll_period_id'] ?? null,
             'is_final_pay' => $v['is_final_pay'] ?? false,
             'password_protect' => (bool) ($v['password_protect'] ?? false),
+            'include_thirteenth_month' => (bool) ($v['include_thirteenth_month'] ?? false),
         ];
 
         try {
@@ -1009,6 +1066,7 @@ class PayslipController extends Controller
             'payroll_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id'],
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
+            'include_thirteenth_month' => ['nullable', 'boolean'],
         ]);
 
         $scoped = ! empty($v['company_id']) || ! empty($v['branch_id']) || ! empty($v['department_id']);
@@ -1025,6 +1083,7 @@ class PayslipController extends Controller
             'payroll_period_id' => $v['payroll_period_id'] ?? null,
             'is_final_pay' => $v['is_final_pay'] ?? false,
             'password_protect' => (bool) ($v['password_protect'] ?? false),
+            'include_thirteenth_month' => (bool) ($v['include_thirteenth_month'] ?? false),
         ];
 
         try {
@@ -1068,6 +1127,7 @@ class PayslipController extends Controller
             'payroll_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id'],
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
+            'include_thirteenth_month' => ['nullable', 'boolean'],
         ]);
 
         $periodInput = [
@@ -1079,6 +1139,7 @@ class PayslipController extends Controller
             'payroll_period_id' => $v['payroll_period_id'] ?? null,
             'is_final_pay' => $v['is_final_pay'] ?? false,
             'password_protect' => (bool) ($v['password_protect'] ?? false),
+            'include_thirteenth_month' => (bool) ($v['include_thirteenth_month'] ?? false),
         ];
 
         $employee = User::query()->findOrFail((int) $v['employee_id']);
@@ -1118,6 +1179,7 @@ class PayslipController extends Controller
             'payroll_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id'],
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
+            'include_thirteenth_month' => ['nullable', 'boolean'],
         ]);
 
         $employee = User::query()->findOrFail((int) $v['employee_id']);
@@ -1132,6 +1194,7 @@ class PayslipController extends Controller
             'payroll_period_id' => $v['payroll_period_id'] ?? null,
             'is_final_pay' => $v['is_final_pay'] ?? false,
             'password_protect' => (bool) ($v['password_protect'] ?? false),
+            'include_thirteenth_month' => (bool) ($v['include_thirteenth_month'] ?? false),
         ];
 
         try {

@@ -3,18 +3,19 @@
 namespace App\Services;
 
 use App\Enums\EmploymentStatus;
-use App\Support\BulkPayrollDraftContext;
 use App\Models\Company;
+use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\ExecomEmployeeProfile;
 use App\Models\ExecomPayrollSetting;
-use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\PayCycle;
 use App\Models\PayrollBatchRun;
 use App\Models\PayrollEmployee;
 use App\Models\PayrollLine;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
+use App\Models\ThirteenthMonthSetting;
 use App\Models\User;
+use App\Support\BulkPayrollDraftContext;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -22,8 +23,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Spatie\Browsershot\Browsershot;
 use setasign\Fpdi\Tcpdf\Fpdi;
+use Spatie\Browsershot\Browsershot;
 use Throwable;
 
 /**
@@ -58,6 +59,7 @@ class PayslipService
         private readonly PayCycleService $payCycleService,
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollEmployeeEligibilityService $payrollEligibility,
+        private readonly ThirteenthMonthPayComputationService $thirteenthMonthPay,
     ) {}
 
     /**
@@ -1076,6 +1078,9 @@ class PayslipService
             ! empty($periodInput['to_date']) ? Carbon::parse((string) $periodInput['to_date']) : ($payslip->pay_period_end ?? now()),
             (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
         );
+        // A recompute must retain the newly calculated 13th-month line. Re-applying the
+        // stored line here restored stale basis totals (for example, the old ₱524.97)
+        // immediately after applyToPayslipSnapshot() had calculated a fresh amount.
         $lineTotals = $this->payslipLineTotalsFromSnapshot($snapshot);
         $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
 
@@ -1596,8 +1601,7 @@ class PayslipService
         ?object $timingSink = null,
         ?array $precomputedContext = null,
         bool $skipMutableCheck = false,
-    ): array
-    {
+    ): array {
         if (is_array($precomputedContext) && count($precomputedContext) === 4) {
             [$from, $to, $preview, $cycle] = $precomputedContext;
         } else {
@@ -1707,6 +1711,27 @@ class PayslipService
             $to,
             $payrollModule
         );
+        if ((! empty($input['include_13th_month_pay']) || ! empty($input['include_thirteenth_month']))
+            && ! empty($input['payroll_batch_run_id'])) {
+            $recoveredBasisLines = $this->recoverMissingThirteenthMonthCutoffs(
+                $employee,
+                (int) ($payrollAssignment['company_id'] ?? $selectedCompanyId),
+                $from,
+                $to,
+                Carbon::parse((string) ($preview['pay_date'] ?? $to->toDateString())),
+                $payrollModule,
+                $snapshot
+            );
+            $snapshot = $this->thirteenthMonthPay->applyToPayslipSnapshot(
+                $snapshot,
+                $employee,
+                (int) ($payrollAssignment['company_id'] ?? $selectedCompanyId),
+                Carbon::parse((string) ($preview['pay_date'] ?? $to->toDateString())),
+                (int) $input['payroll_batch_run_id'],
+                $payrollModule,
+                $recoveredBasisLines
+            );
+        }
         $lineTotals = $this->payslipLineTotalsFromNormalizedSnapshot($snapshot);
         $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
         $grossPay = $lineTotals['gross_pay'];
@@ -1976,149 +2001,158 @@ class PayslipService
 
                 $ytdChunk = $this->bulkYtdPriorBalances($chunkIds, $periodStartForYtd);
 
-            $now = now();
-            $rows = [];
-            $periodStartStr = null;
-            $periodEndStr = null;
-            $loopStartedAt = microtime(true);
-            foreach ($users as $user) {
-                $uid = (int) $user->id;
-                try {
-                    $gen = $this->computePayslipGenerationData(
-                        $user,
-                        $periodInput,
-                        true,
-                        null,
-                        null,
-                        null,
-                        $ytdChunk[$uid] ?? ['ytd_gross' => 0.0, 'ytd_deductions' => 0.0, 'ytd_tax' => 0.0],
-                        $timingSink,
-                        $sharedComputationContext,
-                        skipMutableCheck: true,
-                    );
-                } catch (\Throwable $e) {
-                    $failedEmployees++;
-                    $employeeName = trim((string) ($user->display_name ?? $user->name ?? ''));
-                    $message = sprintf(
-                        'Employee %s (user_id=%d): %s',
-                        $employeeName !== '' ? $employeeName : 'unknown',
-                        $uid,
-                        $e->getMessage()
-                    );
-                    $employeeFailureMessages[] = $message;
-                    Log::error('payroll.batch.employee_failed', [
-                        'payroll_batch_run_id' => $progressRun instanceof PayrollBatchRun ? (int) $progressRun->id : null,
-                        'payroll_module' => $payrollModule,
-                        'employee_id' => $uid,
-                        'employee_name' => $employeeName,
-                        'message' => $e->getMessage(),
-                    ]);
-                    report($e);
+                $now = now();
+                $rows = [];
+                $periodStartStr = null;
+                $periodEndStr = null;
+                $loopStartedAt = microtime(true);
+                foreach ($users as $user) {
+                    $uid = (int) $user->id;
+                    try {
+                        $gen = $this->computePayslipGenerationData(
+                            $user,
+                            $periodInput,
+                            true,
+                            null,
+                            null,
+                            null,
+                            $ytdChunk[$uid] ?? ['ytd_gross' => 0.0, 'ytd_deductions' => 0.0, 'ytd_tax' => 0.0],
+                            $timingSink,
+                            $sharedComputationContext,
+                            skipMutableCheck: true,
+                        );
+                    } catch (\Throwable $e) {
+                        $failedEmployees++;
+                        $employeeName = trim((string) ($user->display_name ?? $user->name ?? ''));
+                        $message = sprintf(
+                            'Employee %s (user_id=%d): %s',
+                            $employeeName !== '' ? $employeeName : 'unknown',
+                            $uid,
+                            $e->getMessage()
+                        );
+                        $employeeFailureMessages[] = $message;
+                        Log::error('payroll.batch.employee_failed', [
+                            'payroll_batch_run_id' => $progressRun instanceof PayrollBatchRun ? (int) $progressRun->id : null,
+                            'payroll_module' => $payrollModule,
+                            'employee_id' => $uid,
+                            'employee_name' => $employeeName,
+                            'message' => $e->getMessage(),
+                        ]);
+                        report($e);
 
+                        continue;
+                    }
+
+                    $row = array_merge($gen['unique'], $gen['attributes']);
+                    $row['period_slot'] = 0;
+                    $periodStartStr ??= (string) $gen['unique']['pay_period_start'];
+                    $periodEndStr ??= (string) $gen['unique']['pay_period_end'];
+                    if (isset($row['snapshot']) && is_array($row['snapshot'])) {
+                        $row['snapshot'] = json_encode($row['snapshot'], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+                    }
+                    $row['pdf_password_protected'] = $gen['plain_password'] !== null;
+                    $row['updated_at'] = $now;
+                    $row['created_at'] = $now;
+                    $rows[] = $row;
+                }
+                $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
+
+                if ($rows === [] || $periodStartStr === null || $periodEndStr === null) {
                     continue;
                 }
 
-                $row = array_merge($gen['unique'], $gen['attributes']);
-                $row['period_slot'] = 0;
-                $periodStartStr ??= (string) $gen['unique']['pay_period_start'];
-                $periodEndStr ??= (string) $gen['unique']['pay_period_end'];
-                if (isset($row['snapshot']) && is_array($row['snapshot'])) {
-                    $row['snapshot'] = json_encode($row['snapshot'], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-                }
-                $row['pdf_password_protected'] = $gen['plain_password'] !== null;
-                $row['updated_at'] = $now;
-                $row['created_at'] = $now;
-                $rows[] = $row;
-            }
-            $timings['generation_loop_ms'] += (microtime(true) - $loopStartedAt) * 1000;
-
-            if ($rows === [] || $periodStartStr === null || $periodEndStr === null) {
-                continue;
-            }
-
-            if ($this->draftGenerationWasCancelled($progressRun)) {
-                $generationCancelled = true;
-                break;
-            }
-
-            $upsertStartedAt = microtime(true);
-            DB::transaction(function () use ($rows, $periodStartStr, $periodEndStr) {
-                $periodLinks = [];
-                $upsertRows = [];
-                foreach ($rows as $row) {
-                    $periodId = isset($row['payroll_period_id']) ? (int) $row['payroll_period_id'] : 0;
-                    $uid = (int) ($row['user_id'] ?? 0);
-                    if ($periodId > 0 && $uid > 0) {
-                        $periodLinks[$uid] = $periodId;
-                    }
-                    $clean = $row;
-                    unset($clean['payroll_period_id']);
-                    $upsertRows[] = $clean;
+                if ($this->draftGenerationWasCancelled($progressRun)) {
+                    $generationCancelled = true;
+                    break;
                 }
 
-                Payslip::query()->upsert(
-                    $upsertRows,
-                    ['user_id', 'company_id', 'pay_period_start', 'pay_period_end', 'period_slot'],
-                    [
-                        'pay_cycle_id',
-                        'payroll_batch_run_id',
-                        'company_id',
-                        'branch_id',
-                        'division_id',
-                        'department_id',
-                        'section_unit_id',
-                        'assignment_id',
-                        'assignment_type',
-                        'pay_date',
-                        'cycle_label',
-                        'gross_pay',
-                        'total_deductions',
-                        'net_pay',
-                        'ytd_gross',
-                        'ytd_deductions',
-                        'ytd_tax',
-                        'taxable_total_this_period',
-                        'non_taxable_total_this_period',
-                        'is_final_pay',
-                        'snapshot',
-                        'status',
-                        'pdf_password_protected',
-                        'updated_at',
-                    ]
-                );
-
-                foreach ($periodLinks as $uid => $periodId) {
-                    $payslip = Payslip::query()
-                        ->where('user_id', $uid)
-                        ->where('company_id', $upsertRows[0]['company_id'] ?? null)
-                        ->whereDate('pay_period_start', $periodStartStr)
-                        ->whereDate('pay_period_end', $periodEndStr)
-                        ->where('period_slot', 0)
-                        ->where('status', '!=', Payslip::STATUS_VOIDED)
-                        ->orderByDesc('id')
-                        ->first();
-                    if ($payslip instanceof Payslip) {
-                        if ($periodId > 0) {
-                            $this->assignPayrollPeriodId($payslip, $periodId);
+                $upsertStartedAt = microtime(true);
+                DB::transaction(function () use ($rows, $periodStartStr, $periodEndStr) {
+                    $periodLinks = [];
+                    $upsertRows = [];
+                    foreach ($rows as $row) {
+                        $periodId = isset($row['payroll_period_id']) ? (int) $row['payroll_period_id'] : 0;
+                        $uid = (int) ($row['user_id'] ?? 0);
+                        if ($periodId > 0 && $uid > 0) {
+                            $periodLinks[$uid] = $periodId;
                         }
-                        $this->ensureDraftPayrollLinesSynced($payslip);
+                        $clean = $row;
+                        unset($clean['payroll_period_id']);
+                        $upsertRows[] = $clean;
                     }
+
+                    Payslip::query()->upsert(
+                        $upsertRows,
+                        ['user_id', 'company_id', 'pay_period_start', 'pay_period_end', 'period_slot'],
+                        [
+                            'pay_cycle_id',
+                            'payroll_batch_run_id',
+                            'company_id',
+                            'branch_id',
+                            'division_id',
+                            'department_id',
+                            'section_unit_id',
+                            'assignment_id',
+                            'assignment_type',
+                            'pay_date',
+                            'cycle_label',
+                            'gross_pay',
+                            'total_deductions',
+                            'net_pay',
+                            'ytd_gross',
+                            'ytd_deductions',
+                            'ytd_tax',
+                            'taxable_total_this_period',
+                            'non_taxable_total_this_period',
+                            'is_final_pay',
+                            'snapshot',
+                            'status',
+                            'pdf_password_protected',
+                            'updated_at',
+                        ]
+                    );
+
+                    // Every generated draft must be mirrored into payroll_employees/payroll_lines.
+                    // Previously this ran only when payroll_period_id was present, so custom-date
+                    // batches kept the 13th-month line in JSON but never inserted the table row.
+                    foreach ($upsertRows as $upsertRow) {
+                        $uid = (int) ($upsertRow['user_id'] ?? 0);
+                        $companyIdForRow = isset($upsertRow['company_id']) ? (int) $upsertRow['company_id'] : null;
+                        if ($uid <= 0) {
+                            continue;
+                        }
+                        $payslip = Payslip::query()
+                            ->where('user_id', $uid)
+                            ->where('company_id', $companyIdForRow)
+                            ->whereDate('pay_period_start', $periodStartStr)
+                            ->whereDate('pay_period_end', $periodEndStr)
+                            ->where('period_slot', 0)
+                            ->where('status', '!=', Payslip::STATUS_VOIDED)
+                            ->orderByDesc('id')
+                            ->first();
+                        if ($payslip instanceof Payslip) {
+                            $periodId = (int) ($periodLinks[$uid] ?? 0);
+                            if ($periodId > 0) {
+                                $this->assignPayrollPeriodId($payslip, $periodId);
+                            }
+                            $this->ensureDraftPayrollLinesSynced($payslip);
+                        }
+                    }
+                });
+                $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
+                $processedEmployees += count($rows);
+                if ($progressRun instanceof PayrollBatchRun) {
+                    $progressPayload = [
+                        'processed_employees' => $processedEmployees,
+                        'employee_count' => $processedEmployees,
+                        'total_employees' => $employeeCount,
+                        'failed_employees' => $failedEmployees,
+                    ];
+                    if ($employeeFailureMessages !== []) {
+                        $progressPayload['error_message'] = Str::limit(implode(' | ', $employeeFailureMessages), 2000, '...');
+                    }
+                    $this->updateBatchRunProgress($progressRun, $progressPayload);
                 }
-            });
-            $timings['bulk_upsert_ms'] += (microtime(true) - $upsertStartedAt) * 1000;
-            $processedEmployees += count($rows);
-            if ($progressRun instanceof PayrollBatchRun) {
-                $progressPayload = [
-                    'processed_employees' => $processedEmployees,
-                    'employee_count' => $processedEmployees,
-                    'total_employees' => $employeeCount,
-                    'failed_employees' => $failedEmployees,
-                ];
-                if ($employeeFailureMessages !== []) {
-                    $progressPayload['error_message'] = Str::limit(implode(' | ', $employeeFailureMessages), 2000, '...');
-                }
-                $this->updateBatchRunProgress($progressRun, $progressPayload);
-            }
             }
         } finally {
             BulkPayrollDraftContext::$active = false;
@@ -2506,10 +2540,92 @@ class PayslipService
     }
 
     /**
+     * Rebuild cutoff earnings that exist in attendance/payroll computation history but have
+     * no surviving finalized payslip row. This prevents an incomplete legacy migration from
+     * reducing the employee's 13th-month basis to only the latest surviving run.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function recoverMissingThirteenthMonthCutoffs(User $employee, int $companyId, Carbon $currentFrom, Carbon $currentTo, Carbon $currentPayDate, string $payrollModule, array $currentSnapshot): array
+    {
+        $setting = $this->thirteenthMonthPay->activeSettingForCompany($companyId);
+        if (! $setting) {
+            return [];
+        }
+
+        $coverageStart = $setting->coverageStart();
+        $coverageEnd = $setting->coverageEnd()->min($currentTo);
+        $effectiveFrom = $employee->payroll_effective_date ?: $employee->hire_date;
+        if ($effectiveFrom) {
+            $coverageStart = $coverageStart->max(Carbon::parse((string) $effectiveFrom));
+        }
+        $finalizedKeys = $this->thirteenthMonthPay->finalizedPeriodKeys(
+            (int) $employee->id,
+            $companyId,
+            $setting->coverageStart(),
+            $setting->coverageEnd(),
+            $payrollModule
+        );
+        $windows = $this->payCycleService->getPayDatesForPeriod($coverageStart, $coverageEnd, null, $employee);
+        $currentKey = $currentFrom->toDateString().'|'.$currentTo->toDateString();
+        $lines = [];
+
+        foreach ($windows['periods'] ?? [] as $period) {
+            $from = Carbon::parse((string) ($period['cut_off_start_date'] ?? ''));
+            $to = Carbon::parse((string) ($period['cut_off_end_date'] ?? ''));
+            $payDate = Carbon::parse((string) ($period['pay_date'] ?? $to->toDateString()));
+            $key = $from->toDateString().'|'.$to->toDateString();
+            if ($payDate->gt($currentPayDate) || in_array($key, $finalizedKeys, true)) {
+                continue;
+            }
+
+            if ($key === $currentKey) {
+                $historicalSnapshot = $currentSnapshot;
+                $gross = (float) data_get($currentSnapshot, 'summary.total_pay', 0);
+            } else {
+                $preview = $this->previewDataForEmployee($employee, [
+                    'from_date' => $from->toDateString(),
+                    'to_date' => $to->toDateString(),
+                    'reference_date' => $payDate->toDateString(),
+                    'payroll_module' => $payrollModule,
+                    'company_id' => $companyId,
+                    'include_13th_month_pay' => false,
+                    'include_thirteenth_month' => false,
+                ]);
+                $historicalSnapshot = is_array($preview['snapshot'] ?? null) ? $preview['snapshot'] : [];
+                $gross = (float) data_get($preview, 'amounts.gross_pay', data_get($historicalSnapshot, 'summary.total_pay', 0));
+            }
+
+            $amount = $setting->basis_type === ThirteenthMonthSetting::BASIS_GROSS
+                ? $gross
+                : (float) data_get($historicalSnapshot, 'summary.basic_pay_this_period', 0);
+            if ($amount <= 0) {
+                continue;
+            }
+            $lines[] = [
+                'period_start' => $from->toDateString(),
+                'period_end' => $to->toDateString(),
+                'pay_date' => $payDate->toDateString(),
+                'component_code' => $setting->basis_type === ThirteenthMonthSetting::BASIS_GROSS ? 'GROSS_PAY' : 'BASIC_PAY',
+                'amount' => round($amount, 2),
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function periodInputFromPayslip(Payslip $payslip): array
     {
+        $includeThirteenthMonth = false;
+        if ($payslip->payroll_batch_run_id !== null) {
+            $run = PayrollBatchRun::query()->find((int) $payslip->payroll_batch_run_id);
+            $includeThirteenthMonth = $run instanceof PayrollBatchRun
+                && ((bool) $run->include_13th_month_pay || (bool) $run->include_thirteenth_month);
+        }
+
         return [
             'from_date' => $payslip->pay_period_start?->toDateString(),
             'to_date' => $payslip->pay_period_end?->toDateString(),
@@ -2524,6 +2640,8 @@ class PayslipService
             'payroll_period_id' => $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
             'is_final_pay' => (bool) $payslip->is_final_pay,
             'password_protect' => false,
+            'include_13th_month_pay' => $includeThirteenthMonth,
+            'include_thirteenth_month' => $includeThirteenthMonth,
         ];
     }
 
@@ -2922,6 +3040,7 @@ class PayslipService
             }
             if ($this->isPayslipGovernmentLineExempted($line, $exemption)) {
                 $govLines[$index] = $this->markPayslipGovernmentLineExempted($line, $exemption);
+
                 continue;
             }
             $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
@@ -3843,8 +3962,7 @@ class PayslipService
         bool $keepWithholdingWhenZero = false,
         bool $keepAllAmounts = false,
         ?float $defaultRegularHourlyRate = null
-    ): array
-    {
+    ): array {
         $rows = is_array($raw) ? $raw : [];
         $out = [];
         foreach ($rows as $row) {
@@ -3916,14 +4034,14 @@ class PayslipService
                     $label = $defaultLabel;
                 }
             }
-            $out[] = [
+            $out[] = array_merge($row, [
                 'key' => isset($row['key']) ? (string) $row['key'] : '',
                 'label' => $label,
                 'amount' => $amountFromMinutes ?? $amt,
                 'units' => $unitsFromMinutes ?: (($unitsStr !== null && $unitsStr !== '') ? $this->sanitizePayslipText($unitsStr) : null),
                 'minutes_worked' => $minutesWorked,
                 'hourly_rate' => $hourlyRate,
-            ];
+            ]);
         }
 
         return array_values($out);
@@ -4541,7 +4659,6 @@ class PayslipService
         ];
     }
 
-
     /**
      * Exposes the same pay-cycle / cut-off window resolution as payslip PDF generation for finalize payroll and previews.
      *
@@ -4824,6 +4941,7 @@ class PayslipService
         $totalGrossPay = $sums['total_gross'];
         $totalDeductions = $sums['total_deductions'];
         $totalNetPay = $sums['total_net'];
+
         return [
             'payslip_count' => $sums['employee_count'],
             'total_net_pay' => $totalNetPay,

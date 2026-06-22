@@ -19,6 +19,7 @@ const AdminDailyComputation = lazy(() => import('@/pages/AdminDailyComputation')
 const GovernmentDeductionPage = lazy(() => import('@/pages/GovernmentDeductionPage'))
 const AdminPayCycleManagementPage = lazy(() => import('@/pages/AdminPayCycleManagementPage'))
 const AdminPayComponentsPage = lazy(() => import('@/pages/AdminPayComponentsPage'))
+const AdminThirteenthMonthPayPage = lazy(() => import('@/pages/AdminThirteenthMonthPayPage'))
 const AdminDeductionScheduleSettingsPage = lazy(() => import('@/pages/AdminDeductionScheduleSettingsPage'))
 const AdminDeductionsLoansPage = lazy(() => import('@/pages/AdminDeductionsLoansPage'))
 const AdminGeneratePayslipsPage = lazy(() => import('@/pages/AdminGeneratePayslipsPage'))
@@ -117,6 +118,7 @@ export const HR_PANEL_CHILD_ROUTES = [
     element={withSuspense(<AdminPayCycleManagementPage />, <DataTableRouteFallback titleWidth="w-60" />)}
   />,
   <Route key="hr-pay-components" path="compensation/pay-components" element={withSuspense(<AdminPayComponentsPage />, <DataTableRouteFallback titleWidth="w-60" />)} />,
+  <Route key="hr-thirteenth-month" path="compensation/13th-month-pay" element={withSuspense(<AdminThirteenthMonthPayPage />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route
     key="hr-deduction-schedule-settings"
     path="compensation/deduction-schedule-settings"

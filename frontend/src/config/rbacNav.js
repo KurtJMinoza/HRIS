@@ -44,6 +44,7 @@ const pathToPermissions = {
   '/admin/compensation/government-deduction': ['compensation.view'],
   '/admin/compensation/deductions-loans': ['compensation.view'],
   '/admin/compensation/generate-payslips': ['payslip.generate'],
+  '/admin/compensation/13th-month-pay': ['thirteenth_month.view'],
   '/admin/compensation/finalize-payroll': ['payslip.finalize'],
   '/admin/execom/employees': ['execom.view', 'execom.manage'],
   '/admin/execom/payroll/finalize': ['execom.payroll.generate', 'execom.payroll.finalize', 'execom.view'],

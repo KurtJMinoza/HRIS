@@ -308,6 +308,7 @@ export default function AdminGeneratePayslipsPage() {
   const [useCompanyDefaultDates, setUseCompanyDefaultDates] = useState(true)
   const [companyDefaultMeta, setCompanyDefaultMeta] = useState({ weekend_adjusted: false, weekend_adjustment_note: null, cycle_label: null })
   const [passwordProtect, setPasswordProtect] = useState(false)
+  const [includeThirteenthMonth, setIncludeThirteenthMonth] = useState(false)
   const [employeeId, setEmployeeId] = useState('')
 
   const [preview, setPreview] = useState(null)
@@ -437,12 +438,14 @@ export default function AdminGeneratePayslipsPage() {
       // so the backend does NOT override the user-provided pay date with default cycle logic.
       use_company_default: useCompanyDefaultDates && !payCycleId,
       password_protect: passwordProtect,
+      include_thirteenth_month: includeThirteenthMonth,
+      include_13th_month_pay: includeThirteenthMonth,
       company_id: companyId ? Number(companyId) : null,
       branch_id: branchId ? Number(branchId) : null,
       department_id: departmentId ? Number(departmentId) : null,
       employee_id: String(employeeId || '').trim() ? Number(employeeId) : null,
     }),
-    [fromDate, toDate, payCycleId, referenceDate, useCompanyDefaultDates, passwordProtect, companyId, branchId, departmentId, employeeId],
+    [fromDate, toDate, payCycleId, referenceDate, useCompanyDefaultDates, passwordProtect, includeThirteenthMonth, companyId, branchId, departmentId, employeeId],
   )
 
   const execomBulkPayload = useMemo(
@@ -452,12 +455,14 @@ export default function AdminGeneratePayslipsPage() {
       pay_cycle_id: payCycleId ? Number(payCycleId) : null,
       reference_date: referenceDate || null,
       password_protect: passwordProtect,
+      include_thirteenth_month: includeThirteenthMonth,
+      include_13th_month_pay: includeThirteenthMonth,
       company_id: companyId ? Number(companyId) : null,
       branch_id: branchId ? Number(branchId) : null,
       department_id: departmentId ? Number(departmentId) : null,
       employee_id: String(employeeId || '').trim() ? Number(employeeId) : null,
     }),
-    [fromDate, toDate, payCycleId, referenceDate, passwordProtect, companyId, branchId, departmentId, employeeId],
+    [fromDate, toDate, payCycleId, referenceDate, passwordProtect, includeThirteenthMonth, companyId, branchId, departmentId, employeeId],
   )
 
   const setPayrollModule = useCallback(
@@ -1186,6 +1191,18 @@ export default function AdminGeneratePayslipsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="space-y-2">
+                    <Label className="text-sm font-normal text-muted-foreground">13th Month Pay</Label>
+                    <Select value={includeThirteenthMonth ? 'include' : 'exclude'} onValueChange={(value) => setIncludeThirteenthMonth(value === 'include')}>
+                      <SelectTrigger className={SELECT_TRIGGER}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="exclude">Exclude 13th Month Pay</SelectItem>
+                        <SelectItem value="include">Include 13th Month Pay</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Include uses the employee's payable amount from a finalized 13th month configuration.</p>
                 </div>
 
                 {/* Advanced Options */}

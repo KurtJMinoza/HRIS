@@ -421,6 +421,40 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(800.0, $result['regular_pay']);
     }
 
+    public function test_grace_period_with_seconds_does_not_reduce_regular_pay(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => null,
+            'tue' => null,
+            'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00', 'grace_period_minutes' => 5],
+            'thu' => null,
+            'fri' => null,
+            'sat' => null,
+        ];
+        $user = User::factory()->create(['company_id' => null, 'daily_rate' => 576.92]);
+        $dateKey = '2026-06-10';
+
+        $result = app(PayrollComputationService::class)->computeDayPayroll(
+            $user,
+            $dateKey,
+            Carbon::parse("{$dateKey} 08:05:15", 'Asia/Manila'),
+            Carbon::parse("{$dateKey} 17:07:39", 'Asia/Manila'),
+            $effectiveSchedule,
+            576.92,
+            'Asia/Manila'
+        );
+
+        $this->assertSame('on_time', $result['tardiness_status']);
+        $this->assertSame(0, $result['late_deduction_minutes']);
+        $this->assertSame(480, $result['paid_regular_minutes']);
+        $this->assertSame(576.92, $result['regular_pay']);
+    }
+
     public function test_approved_ot_hours_use_approved_basis_by_default(): void
     {
         if (! $this->tablesExist()) {

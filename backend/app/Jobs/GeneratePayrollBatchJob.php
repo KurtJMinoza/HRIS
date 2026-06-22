@@ -124,6 +124,8 @@ class GeneratePayrollBatchJob implements ShouldQueue
                 'payroll_module' => (string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD),
                 'is_final_pay' => (bool) $run->is_final_pay,
                 'password_protect' => (bool) $run->password_protect,
+                'include_thirteenth_month' => (bool) $run->include_thirteenth_month,
+                'include_13th_month_pay' => (bool) ($run->include_13th_month_pay || $run->include_thirteenth_month),
             ];
 
             $run->refresh();

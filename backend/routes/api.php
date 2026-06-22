@@ -46,6 +46,7 @@ use App\Http\Controllers\Admin\RecruitmentController;
 use App\Http\Controllers\Admin\ScheduleController;
 use App\Http\Controllers\Admin\ScheduleRequestController;
 use App\Http\Controllers\Admin\SectionUnitController;
+use App\Http\Controllers\Admin\ThirteenthMonthPaySettingsController;
 use App\Http\Controllers\Admin\AdminUserAccountController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AuthController;
@@ -598,6 +599,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/payslips/generate', [AdminPayslipController::class, 'generate']);
             Route::delete('/admin/payslips/batch/{id}', [AdminPayslipController::class, 'destroyDraftBatch'])->whereNumber('id');
         });
+        Route::middleware('permission:thirteenth_month.view')
+            ->get('/admin/thirteenth-month', [ThirteenthMonthPaySettingsController::class, 'show']);
+        Route::middleware('permission:thirteenth_month.manage')
+            ->put('/admin/thirteenth-month', [ThirteenthMonthPaySettingsController::class, 'update']);
         Route::middleware('permission:execom.view')->group(function () {
             Route::get('/admin/execom/employees', [ExecomManagementController::class, 'index']);
             Route::get('/admin/execom/employees/{id}/history', [ExecomManagementController::class, 'history'])->whereNumber('id');

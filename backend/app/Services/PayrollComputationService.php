@@ -855,9 +855,14 @@ class PayrollComputationService
                 $actualM = (int) $timeInTz->format('G') * 60 + (int) $timeInTz->format('i');
                 $schedM = (int) $schedStart->format('G') * 60 + (int) $schedStart->format('i');
                 $diffMin = $actualM - $schedM;
+                // Segmentation rounds a punch with seconds up to the next unpaid minute
+                // (08:05:15 becomes a six-minute shortfall), while attendance correctly
+                // classifies it by its displayed minute as within the 08:05 grace cutoff.
+                // Allow that one-minute precision delta so payroll impact and regular pay agree.
+                $segmentationPrecisionMinutes = 1;
                 if (abs($diffMin) <= $graceM
                     && $undertimeDeductionMinutes === 0
-                    && $regSeg >= $requiredMinutes - $graceM) {
+                    && $regSeg >= $requiredMinutes - $graceM - $segmentationPrecisionMinutes) {
                     $paidReg = max($paidReg, $requiredMinutes);
                 }
             }

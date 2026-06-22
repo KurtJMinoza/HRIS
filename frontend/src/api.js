@@ -8054,3 +8054,23 @@ export async function clearEmailNotificationCache(options = {}) {
   return data
 }
 
+
+
+// ===================== 13th Month Pay =====================
+export async function getThirteenthMonthSettings() {
+  const res = await authenticatedFetch('/admin/thirteenth-month')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load 13th Month Pay settings')
+  return data
+}
+
+export async function saveThirteenthMonthSettings(payload) {
+  const res = await authenticatedFetch('/admin/thirteenth-month', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to save 13th Month Pay settings')
+  return data
+}

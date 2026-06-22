@@ -115,6 +115,8 @@ class ExecomPayrollController extends Controller
                 'payroll_period_id' => $validated['payroll_period_id'] ?? null,
                 'is_final_pay' => (bool) ($validated['is_final_pay'] ?? false),
                 'password_protect' => (bool) ($validated['password_protect'] ?? false),
+                'include_thirteenth_month' => (bool) ($validated['include_13th_month_pay'] ?? $validated['include_thirteenth_month'] ?? false),
+                'include_13th_month_pay' => (bool) ($validated['include_13th_month_pay'] ?? $validated['include_thirteenth_month'] ?? false),
                 'reference_date' => isset($validated['reference_date']) ? Carbon::parse((string) $validated['reference_date'])->toDateString() : null,
                 'status' => PayrollBatchRun::STATUS_QUEUED,
                 'employee_count' => $employeeCount,
@@ -488,6 +490,8 @@ class ExecomPayrollController extends Controller
             'payroll_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id'],
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
+            'include_thirteenth_month' => ['nullable', 'boolean'],
+            'include_13th_month_pay' => ['nullable', 'boolean'],
         ]);
     }
 

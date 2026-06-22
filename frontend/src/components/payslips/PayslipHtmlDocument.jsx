@@ -357,13 +357,18 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                 <tbody>
                   {displayEarnings.map((line, idx) => {
                     const isHolidayPremium = String(line?.label || '').trim().toLowerCase() === 'holiday premium'
+                    const isThirteenthMonth = String(line?.component_code || '').trim().toUpperCase() === '13TH_MONTH_PAY'
+                    const basisType = String(line?.metadata?.basis_type || '').trim().toLowerCase()
+                    const earningLabel = isThirteenthMonth
+                      ? `13th Month Pay (${basisType === 'gross' ? 'Gross Pay' : 'Basic Pay'} Method)`
+                      : (line?.label || 'Daily computation')
                     return (
                       <tr
                         key={`dc-${idx}`}
                         className="border-b border-slate-100/90 transition-colors last:border-b-0 bg-white hover:bg-white"
                       >
                         <td className="py-2.5 pl-3 pr-2 font-normal text-[#0A0A0A]/88">
-                          {isHolidayPremium ? 'Holiday Pay' : line?.label || 'Daily computation'}
+                          {isHolidayPremium ? 'Holiday Pay' : earningLabel}
                           {isHolidayPremium && holidayPremiumDetails.length > 0 ? (
                             <div className="mt-1 space-y-0.5">
                               {holidayPremiumDetails.map((detail) => (
