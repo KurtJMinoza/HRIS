@@ -185,6 +185,23 @@ function ScheduleStatCard({ icon: Icon, label, value, helper, tone = 'brand', ch
   )
 }
 
+/** Normalize assign API id lists for Set lookups (API returns ints; employee.id may be string). */
+function normalizeIdSet(ids) {
+  return new Set((ids || []).map((id) => Number(id)))
+}
+
+/** Apply assign/unassign API result to local employee rows immediately. */
+function applyAssignResultToEmployees(prev, res, scheduleId) {
+  const assignedIds = normalizeIdSet(res?.assigned_ids)
+  const unassignedIds = normalizeIdSet(res?.unassigned_ids)
+  return prev.map((e) => {
+    const id = Number(e.id)
+    if (assignedIds.has(id)) return { ...e, working_schedule_id: scheduleId, schedule: null }
+    if (unassignedIds.has(id)) return { ...e, working_schedule_id: null, schedule: null }
+    return e
+  })
+}
+
 export default function AdminSchedules() {
   const queryClient = useQueryClient()
 
@@ -240,23 +257,27 @@ export default function AdminSchedules() {
   const [coverageStatus, setCoverageStatus] = useState('active')
   const [rowSelection, setRowSelection] = useState({})
 
-  async function loadSchedules() {
-    setLoading(true)
-    setError(null)
+  async function loadSchedules({ silent = false, fresh = false } = {}) {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
-      const data = await getWorkingSchedules()
+      const data = await getWorkingSchedules({ fresh: fresh || !silent })
       setSchedules(data.schedules || [])
     } catch (e) {
-      setError(e.message)
-      setSchedules([])
+      if (!silent) {
+        setError(e.message)
+        setSchedules([])
+      }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
-  async function loadEmployees() {
+  async function loadEmployees({ fresh = false } = {}) {
     try {
-      const data = await getEmployees({ for_schedule_assignment: true })
+      const data = await getEmployees({ for_schedule_assignment: true, fresh })
       const list = data.employees || []
       setEmployees(list)
       return list
@@ -264,6 +285,18 @@ export default function AdminSchedules() {
       setEmployees([])
       return []
     }
+  }
+
+  /** Refresh roster + stats after assign/unassign without skeleton flicker or stale GET cache. */
+  async function refreshAfterScheduleAssign(scheduleId) {
+    notifySchedulePropagation()
+    const list = await loadEmployees({ fresh: true })
+    await loadSchedules({ silent: true, fresh: true })
+    if (scheduleId != null) {
+      const onShiftIds = list.filter((e) => isOnThisSchedule(e, { id: scheduleId })).map((e) => e.id)
+      setSelectedEmployeeIds(onShiftIds)
+    }
+    return list
   }
 
   useEffect(() => {
@@ -373,7 +406,7 @@ export default function AdminSchedules() {
     setAssignOpen(true)
     setAssignEmployeesLoading(true)
     try {
-      const list = await loadEmployees()
+      const list = await loadEmployees({ fresh: true })
       const onThisShiftIds = list.filter((e) => isOnThisSchedule(e, schedule)).map((e) => e.id)
       setSelectedEmployeeIds(onThisShiftIds)
     } finally {
@@ -450,20 +483,16 @@ export default function AdminSchedules() {
       const res = await assignWorkingSchedule(assignSchedule.id, {
         employee_ids: selectedEmployeeIds.map((id) => Number(id)),
       })
-      const assignedIds = new Set(res?.assigned_ids || [])
-      const unassignedIds = new Set(res?.unassigned_ids || [])
-      setEmployees((prev) =>
-        prev.map((e) => {
-          if (assignedIds.has(e.id)) return { ...e, working_schedule_id: assignSchedule.id }
-          if (unassignedIds.has(e.id)) return { ...e, working_schedule_id: null, schedule: null }
-          return e
-        })
-      )
-      setAssignOpen(false)
-      setAssignSchedule(null)
-      setSelectedEmployeeIds([])
-      await Promise.all([loadSchedules(), loadEmployees()])
-      notifySchedulePropagation()
+      setEmployees((prev) => applyAssignResultToEmployees(prev, res, assignSchedule.id))
+      await refreshAfterScheduleAssign(assignSchedule.id)
+      const assigned = res?.assigned_count ?? 0
+      const unassigned = res?.unassigned_count ?? 0
+      toast.success('Schedule updated', {
+        description:
+          assigned || unassigned
+            ? `${assigned ? `${assigned} assigned` : ''}${assigned && unassigned ? ', ' : ''}${unassigned ? `${unassigned} unassigned` : ''}.`
+            : 'Roster saved.',
+      })
     } catch (err) {
       const msg = err.conflicts?.length
         ? `Employee already assigned: ${err.conflicts.map((c) => `${c.employee_name} (${c.current_schedule} ${formatScheduleLabel12h(c.current_time)})`).join('; ')}. Unassign first.`
@@ -486,6 +515,7 @@ export default function AdminSchedules() {
         return
       }
     }
+    const previousIds = selectedEmployeeIds
     setSelectedEmployeeIds(newIds)
     if (!assignSchedule || newIds.length === 0) return
     setAssignSubmitting(true)
@@ -494,24 +524,14 @@ export default function AdminSchedules() {
       const res = await assignWorkingSchedule(assignSchedule.id, {
         employee_ids: newIds.map((x) => Number(x)),
       })
-      // Optimistic update: apply assignment changes to local state so UI reflects immediately
-      const assignedIds = new Set(res?.assigned_ids || [])
-      const unassignedIds = new Set(res?.unassigned_ids || [])
-      setEmployees((prev) =>
-        prev.map((e) => {
-          if (assignedIds.has(e.id)) return { ...e, working_schedule_id: assignSchedule.id }
-          if (unassignedIds.has(e.id)) return { ...e, working_schedule_id: null, schedule: null }
-          return e
-        })
-      )
-      await Promise.all([loadSchedules(), loadEmployees()])
-      notifySchedulePropagation()
+      setEmployees((prev) => applyAssignResultToEmployees(prev, res, assignSchedule.id))
+      await refreshAfterScheduleAssign(assignSchedule.id)
     } catch (err) {
       const msg = err.conflicts?.length
         ? `Employee already assigned: ${err.conflicts.map((c) => `${c.employee_name} (${c.current_schedule} ${formatScheduleLabel12h(c.current_time)})`).join('; ')}. Unassign first.`
         : err.message
       setError(msg)
-      setSelectedEmployeeIds(selectedEmployeeIds)
+      setSelectedEmployeeIds(previousIds)
     } finally {
       setAssignSubmitting(false)
     }
@@ -523,12 +543,17 @@ export default function AdminSchedules() {
     if (!emp?.id || unassigningId) return
     setUnassigningId(emp.id)
     setError(null)
+    const empId = Number(emp.id)
     try {
       await updateEmployeeSchedule(emp.id, { schedule: null })
+      setEmployees((prev) =>
+        prev.map((row) =>
+          Number(row.id) === empId ? { ...row, working_schedule_id: null, schedule: null } : row
+        )
+      )
+      setSelectedEmployeeIds((prev) => prev.filter((id) => Number(id) !== empId))
       toast.success('Schedule unassigned', { description: `${emp.name} can now be assigned to a new shift.` })
-      await loadEmployees()
-      await loadSchedules()
-      notifySchedulePropagation()
+      await refreshAfterScheduleAssign(assignSchedule?.id)
     } catch (err) {
       setError(err.message)
       toast.error('Failed to unassign', { description: err.message })
@@ -1328,25 +1353,26 @@ export default function AdminSchedules() {
       >
         <DialogContent
           showCloseButton
+          surfaceStyle={{ width: 'min(98vw, 1280px)', maxWidth: 'min(98vw, 1280px)' }}
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-6 top-6 size-12 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
-          className="max-h-[92vh] max-w-[min(96vw,86rem)] overflow-hidden rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
-          innerClassName="gap-0 overflow-hidden p-0 pr-0"
+          closeButtonClassName="right-5 top-5 size-10 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="max-h-[min(92vh,calc(100dvh-2rem))]! max-w-none! w-full overflow-hidden rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0!"
           aria-describedby="schedule-assign-desc"
         >
-          <form onSubmit={handleAssignSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <DialogHeader className="shrink-0 border-b border-border/70 px-6 pb-6 pt-6 pr-20 text-left dark:border-white/10 @md:px-8">
-              <div className="flex items-start gap-5">
-                <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
-                  <Users className="size-7" aria-hidden />
+          <form onSubmit={handleAssignSubmit} className="flex max-h-[min(92vh,calc(100dvh-2rem))] min-h-[32rem] flex-col overflow-hidden">
+            <DialogHeader className="shrink-0 border-b border-border/70 px-6 pb-4 pt-5 pr-16 text-left dark:border-white/10">
+              <div className="flex items-start gap-4">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
+                  <Users className="size-6" aria-hidden />
                 </div>
-                <div className="min-w-0 space-y-2">
-                  <DialogTitle className="text-2xl font-black tracking-tight text-foreground">Assign schedule</DialogTitle>
-                  <p id="schedule-assign-desc" className="text-base leading-relaxed text-muted-foreground">
+                <div className="min-w-0 space-y-1">
+                  <DialogTitle className="text-xl font-black tracking-tight text-foreground">Assign schedule</DialogTitle>
+                  <p id="schedule-assign-desc" className="text-sm leading-relaxed text-muted-foreground">
                     {assignSchedule ? (
                       <>
                         <span className="font-bold text-brand">{assignSchedule.name}</span>
-                        <span className="mx-2 text-muted-foreground">-</span>
+                        <span className="mx-2 text-muted-foreground">·</span>
                         Select employees who should follow this schedule.
                       </>
                     ) : (
@@ -1357,23 +1383,23 @@ export default function AdminSchedules() {
               </div>
             </DialogHeader>
 
-            <div className="shrink-0 space-y-4 border-b border-border/70 px-6 py-5 dark:border-white/10 @md:px-8">
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-                <Input
-                  type="search"
-                  placeholder="Search by name, employee ID, or department..."
-                  value={assignSearch}
-                  onChange={(e) => {
-                    setAssignSearch(e.target.value)
-                    setAssignPage(1)
-                  }}
-                  className="h-14 rounded-xl border-border/80 bg-background pl-12 text-lg shadow-sm dark:border-white/10 dark:bg-background/40"
-                  aria-label="Search employees"
-                />
-              </div>
-              <div className="grid gap-4 @lg:grid-cols-[minmax(0,22rem)_1fr] @lg:items-end">
-                <label className="space-y-2 text-base font-medium text-foreground">
+            <div className="shrink-0 border-b border-border/70 px-6 py-4 dark:border-white/10">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_15rem_auto] lg:items-end">
+                <div className="relative min-w-0">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                  <Input
+                    type="search"
+                    placeholder="Search by name, employee ID, or department..."
+                    value={assignSearch}
+                    onChange={(e) => {
+                      setAssignSearch(e.target.value)
+                      setAssignPage(1)
+                    }}
+                    className="h-11 rounded-xl border-border/80 bg-background pl-10 text-sm shadow-sm dark:border-white/10 dark:bg-background/40"
+                    aria-label="Search employees"
+                  />
+                </div>
+                <label className="min-w-0 space-y-1.5 text-sm font-medium text-foreground">
                   <span>Filter</span>
                   <select
                     value={assignFilter}
@@ -1381,7 +1407,7 @@ export default function AdminSchedules() {
                       setAssignFilter(e.target.value)
                       setAssignPage(1)
                     }}
-                    className="h-14 w-full rounded-xl border border-border/80 bg-background px-4 text-base font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:border-white/10 dark:bg-background/40"
+                    className="h-11 w-full rounded-xl border border-border/80 bg-background px-3 text-sm font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:border-white/10 dark:bg-background/40"
                     aria-label="Filter by schedule status"
                   >
                     <option value="all">All others ({countNotOnThisShift})</option>
@@ -1395,19 +1421,21 @@ export default function AdminSchedules() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-14 justify-center gap-3 rounded-xl border-brand px-5 text-base font-bold text-brand hover:bg-brand/10 dark:border-brand/60 dark:hover:bg-brand/15"
+                    className="h-11 justify-center gap-2 rounded-xl border-brand px-4 text-sm font-bold text-brand hover:bg-brand/10 dark:border-brand/60 dark:hover:bg-brand/15"
                     onClick={bulkSelectWithoutSchedule}
                   >
-                    <Users className="size-5" aria-hidden />
+                    <Users className="size-4 shrink-0" aria-hidden />
                     Bulk: no schedule ({employeesWithoutSchedule.length})
                   </Button>
-                ) : null}
+                ) : (
+                  <div className="hidden lg:block" aria-hidden />
+                )}
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 @md:px-8">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 py-4">
               {assignEmployeesLoading ? (
-                <div className="flex min-h-80 items-center justify-center">
+                <div className="flex min-h-80 flex-1 items-center justify-center">
                   <Loader2 className="size-8 animate-spin text-muted-foreground" aria-hidden />
                 </div>
               ) : employees.length === 0 ? (
@@ -1415,32 +1443,32 @@ export default function AdminSchedules() {
                   No employees found. Add employees first.
                 </div>
               ) : (
-                <div className="space-y-5">
+                <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 overflow-hidden lg:grid-cols-2">
                   {assignSchedule ? (
-                    <section className="overflow-hidden rounded-xl border border-border/70 bg-background/60 shadow-sm dark:border-white/10 dark:bg-background/30">
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4 dark:border-white/10">
-                        <h3 className="text-lg font-black tracking-tight text-foreground">
+                    <section
+                      className={cn(
+                        'flex min-h-[280px] min-w-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-background/60 shadow-sm dark:border-white/10 dark:bg-background/30 lg:min-h-0',
+                        assignFilter === 'on_this_shift' && 'lg:col-span-2'
+                      )}
+                    >
+                      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/30 px-4 py-3 dark:border-white/10">
+                        <h3 className="text-sm font-black tracking-tight text-foreground">
                           On this shift
-                          <span className="ml-3 text-base font-semibold text-muted-foreground">({employeesOnThisShiftFiltered.length})</span>
+                          <span className="ml-2 font-semibold text-muted-foreground">({employeesOnThisShiftFiltered.length})</span>
                         </h3>
-                        <span className="text-sm font-medium text-muted-foreground">Uncheck or Unassign to remove</span>
+                        <span className="text-xs text-muted-foreground">Uncheck or Unassign to remove</span>
                       </div>
-                      {employeesOnThisShiftFiltered.length === 0 ? (
-                        <p className="px-5 py-8 text-sm text-muted-foreground">
-                          {countOnThisShift > 0 && assignSearchTrimmed
-                            ? 'No one on this shift matches your search.'
-                            : 'No employees assigned to this shift yet.'}
-                        </p>
-                      ) : (
-                        <div className="divide-y divide-border/70 dark:divide-white/10">
+                      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+                        {employeesOnThisShiftFiltered.length === 0 ? (
+                          <p className="px-4 py-8 text-sm text-muted-foreground">
+                            {countOnThisShift > 0 && assignSearchTrimmed
+                              ? 'No one on this shift matches your search.'
+                              : 'No employees assigned to this shift yet.'}
+                          </p>
+                        ) : (
+                          <div className="divide-y divide-border/70 dark:divide-white/10">
                           {employeesOnThisShiftFiltered.map((emp) => {
                             const checked = selectedEmployeeIds.includes(emp.id)
-                            const currentSchedule = emp.working_schedule_id
-                              ? schedules.find((s) => Number(s.id) === Number(emp.working_schedule_id))
-                              : null
-                            const currentTime = currentSchedule
-                              ? formatShiftRange12h(currentSchedule.time_in, currentSchedule.time_out, ' - ')
-                              : '-'
                             const initials =
                               (emp.name || '?')
                                 .trim()
@@ -1454,69 +1482,60 @@ export default function AdminSchedules() {
                               <div
                                 key={`on-${emp.id}`}
                                 role="row"
-                                className="grid cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-4 px-5 py-4 transition-colors hover:bg-muted/35 @lg:grid-cols-[auto_auto_minmax(0,1fr)_10rem_9rem_6rem]"
+                                className="grid cursor-pointer grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-2.5 transition-colors hover:bg-muted/35"
                                 onClick={() => toggleEmployeeSelection(emp.id)}
                               >
-                                <div className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
                                   <Checkbox
                                     checked={checked}
                                     onCheckedChange={() => toggleEmployeeSelection(emp.id)}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="size-5 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
+                                    className="size-4 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
                                   />
                                 </div>
-                                <Avatar className="size-12 shrink-0 rounded-full bg-brand/10">
+                                <Avatar className="size-9 rounded-full bg-brand/10">
                                   <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" className="object-cover" />
-                                  <AvatarFallback className="rounded-full bg-brand/10 text-sm font-bold text-brand dark:bg-brand/15">
+                                  <AvatarFallback className="rounded-full bg-brand/10 text-[10px] font-bold text-brand dark:bg-brand/15">
                                     {initials}
                                   </AvatarFallback>
                                 </Avatar>
-                                <div className="min-w-0">
-                                  <span className="block truncate text-base font-bold text-foreground">{emp.name}</span>
-                                  <span className="text-sm text-muted-foreground">{emp.department || 'No department'}</span>
+                                <div className="min-w-0 overflow-hidden">
+                                  <p className="truncate text-sm font-semibold text-foreground">{emp.name}</p>
+                                  <p className="truncate text-xs text-muted-foreground">{emp.department || 'No department'}</p>
                                 </div>
-                                <div className="hidden text-base tabular-nums text-foreground/80 @lg:block">{currentTime}</div>
-                                <div className="col-start-3 @lg:col-start-auto">
-                                  <span className="inline-flex items-center rounded-md bg-brand/10 px-3 py-1 text-sm font-bold text-brand dark:bg-brand/15">
-                                    On this shift
-                                  </span>
-                                </div>
-                                <div className="col-start-3 @lg:col-start-auto">
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    className="h-9 px-2 text-sm font-bold text-foreground hover:text-brand"
-                                    disabled={isUnassigning}
-                                    onClick={(e) => handleUnassign(emp, e)}
-                                  >
-                                    {isUnassigning ? <Loader2 className="size-4 animate-spin" /> : 'Unassign'}
-                                  </Button>
-                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 shrink-0 px-2 text-xs font-semibold text-muted-foreground hover:text-brand"
+                                  disabled={isUnassigning}
+                                  onClick={(e) => handleUnassign(emp, e)}
+                                >
+                                  {isUnassigning ? <Loader2 className="size-3.5 animate-spin" /> : 'Unassign'}
+                                </Button>
                               </div>
                             )
                           })}
-                        </div>
-                      )}
+                          </div>
+                        )}
+                      </div>
                     </section>
                   ) : null}
 
                   {assignFilter !== 'on_this_shift' ? (
-                    <section className="overflow-hidden rounded-xl border border-border/70 bg-background/60 shadow-sm dark:border-white/10 dark:bg-background/30">
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-4 dark:border-white/10">
-                        <h3 className="text-lg font-black tracking-tight text-foreground">
+                    <section className="flex min-h-[280px] min-w-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-background/60 shadow-sm dark:border-white/10 dark:bg-background/30 lg:min-h-0">
+                      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/30 px-4 py-3 dark:border-white/10">
+                        <h3 className="text-sm font-black tracking-tight text-foreground">
                           {assignFilter === 'available_only' || assignFilter === 'without_schedule'
                             ? 'Available - no shift assigned'
                             : assignFilter === 'with_schedule'
                               ? 'Has another shift'
                               : 'Other employees'}
-                          <span className="ml-3 text-base font-semibold text-muted-foreground">({assignFilteredOthers.length})</span>
+                          <span className="ml-2 font-semibold text-muted-foreground">({assignFilteredOthers.length})</span>
                         </h3>
-                        <span className="text-sm font-medium text-muted-foreground">
-                          Selected: {selectedEmployeeIds.length}
-                          {assignFilteredOthers.length !== countNotOnThisShift && ` - ${assignFilteredOthers.length} shown after filter`}
-                        </span>
+                        <span className="text-xs text-muted-foreground">Selected: {selectedEmployeeIds.length}</span>
                       </div>
-                      <label className="flex cursor-pointer items-center gap-4 border-b border-border/70 px-5 py-4 text-base font-bold hover:bg-muted/35 dark:border-white/10">
+                      <label className="flex shrink-0 cursor-pointer items-center gap-3 border-b border-border/70 px-4 py-2.5 text-xs font-semibold hover:bg-muted/35 dark:border-white/10">
                         <Checkbox
                           checked={
                             (() => {
@@ -1545,10 +1564,11 @@ export default function AdminSchedules() {
                         />
                         <span className="text-foreground">Select all with no shift (this page)</span>
                       </label>
-                      {assignFilteredOthers.length === 0 ? (
-                        <p className="px-5 py-8 text-sm text-muted-foreground">No employees in this list for the current filter.</p>
-                      ) : (
-                        <div className="divide-y divide-border/70 dark:divide-white/10">
+                      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+                        {assignFilteredOthers.length === 0 ? (
+                          <p className="px-5 py-8 text-sm text-muted-foreground">No employees in this list for the current filter.</p>
+                        ) : (
+                          <div className="divide-y divide-border/70 dark:divide-white/10">
                           {assignPaginatedOthers.map((emp) => {
                             const checked = selectedEmployeeIds.includes(emp.id)
                             const blockedOther = isAssignedOtherShift(emp, assignSchedule)
@@ -1580,8 +1600,8 @@ export default function AdminSchedules() {
                                 key={`other-${emp.id}`}
                                 role="row"
                                 className={cn(
-                                  'grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-4 px-5 py-4 transition-colors @lg:grid-cols-[auto_auto_minmax(0,1fr)_10rem_9rem_6rem]',
-                                  blockedOther ? 'cursor-not-allowed opacity-65 hover:bg-muted/20' : 'cursor-pointer hover:bg-muted/35'
+                                  'grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-2.5 transition-colors',
+                                  blockedOther ? 'cursor-not-allowed opacity-60 hover:bg-muted/20' : 'cursor-pointer hover:bg-muted/35'
                                 )}
                                 onClick={() => {
                                   if (blockedOther) {
@@ -1593,105 +1613,97 @@ export default function AdminSchedules() {
                                   }
                                 }}
                               >
-                                <div className="flex shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
                                   <Checkbox
                                     checked={checked}
                                     disabled={blockedOther}
                                     onCheckedChange={() => !blockedOther && toggleEmployeeSelection(emp.id)}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="size-5 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
+                                    className="size-4 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background"
                                   />
                                 </div>
-                                <Avatar className="size-12 shrink-0 rounded-full bg-brand/10">
+                                <Avatar className="size-9 rounded-full bg-brand/10">
                                   <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" className="object-cover" />
-                                  <AvatarFallback className="rounded-full bg-brand/10 text-sm font-bold text-brand dark:bg-brand/15">
+                                  <AvatarFallback className="rounded-full bg-brand/10 text-[10px] font-bold text-brand dark:bg-brand/15">
                                     {initials}
                                   </AvatarFallback>
                                 </Avatar>
-                                <div className="min-w-0">
-                                  <span className="block truncate text-base font-bold text-foreground">{emp.name}</span>
-                                  <span className="text-sm text-muted-foreground">{emp.department || 'No department'}</span>
+                                <div className="min-w-0 overflow-hidden">
+                                  <p className="truncate text-sm font-semibold text-foreground">{emp.name}</p>
+                                  <p className="truncate text-xs text-muted-foreground">{emp.department || 'No department'}</p>
                                 </div>
-                                <div className="hidden text-base tabular-nums text-foreground/80 @lg:block" title={currentScheduleName}>
-                                  {blockedOther ? currentTime : '-'}
-                                </div>
-                                <div className="col-start-3 @lg:col-start-auto">
-                                  {blockedOther ? (
+                                {blockedOther ? (
+                                  <div className="flex shrink-0 flex-col items-end gap-0.5">
                                     <span
-                                      className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-3 py-1 text-sm font-bold text-amber-700 dark:text-amber-300"
+                                      className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
                                       title={tooltipText}
                                     >
-                                      <Lock className="size-3.5" />
+                                      <Lock className="size-3" />
                                       Assigned
                                     </span>
-                                  ) : (
-                                    <span
-                                      className="inline-flex items-center rounded-md bg-emerald-500/15 px-3 py-1 text-sm font-bold text-emerald-700 dark:text-emerald-300"
-                                      title={tooltipText}
-                                    >
-                                      Available
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="col-start-3 @lg:col-start-auto">
-                                  {blockedOther ? (
                                     <Button
                                       type="button"
                                       variant="ghost"
-                                      className="h-9 px-2 text-sm font-bold text-foreground hover:text-brand"
+                                      size="sm"
+                                      className="h-7 px-1 text-[10px] font-semibold text-muted-foreground hover:text-brand"
                                       disabled={isUnassigning}
                                       onClick={(e) => handleUnassign(emp, e)}
                                     >
-                                      {isUnassigning ? <Loader2 className="size-4 animate-spin" /> : 'Unassign'}
+                                      {isUnassigning ? <Loader2 className="size-3 animate-spin" /> : 'Unassign'}
                                     </Button>
-                                  ) : (
-                                    <span className="inline-block text-sm text-muted-foreground">-</span>
-                                  )}
-                                </div>
+                                  </div>
+                                ) : (
+                                  <span
+                                    className="inline-flex shrink-0 items-center rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300"
+                                    title={tooltipText}
+                                  >
+                                    Available
+                                  </span>
+                                )}
                               </div>
                             )
                           })}
+                          </div>
+                        )}
+                      </div>
+                      {assignFilteredOthers.length > ASSIGN_PAGE_SIZE ? (
+                        <div className="flex shrink-0 items-center justify-between border-t border-border/70 px-5 py-3 text-sm dark:border-white/10">
+                          <span className="text-muted-foreground">
+                            Page {assignPage} of {assignTotalPages} ({assignFilteredOthers.length} employees)
+                          </span>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-9 rounded-lg px-3"
+                              disabled={assignPage <= 1}
+                              onClick={() => setAssignPage((p) => Math.max(1, p - 1))}
+                            >
+                              Previous
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-9 rounded-lg border-brand px-3 text-brand hover:bg-brand/10"
+                              disabled={assignPage >= assignTotalPages}
+                              onClick={() => setAssignPage((p) => Math.min(assignTotalPages, p + 1))}
+                            >
+                              Next
+                            </Button>
+                          </div>
                         </div>
-                      )}
+                      ) : null}
                     </section>
                   ) : null}
                 </div>
               )}
             </div>
 
-            {assignFilteredOthers.length > ASSIGN_PAGE_SIZE && assignFilter !== 'on_this_shift' ? (
-              <div className="flex shrink-0 items-center justify-between border-t border-border/70 px-6 py-4 text-sm dark:border-white/10 @md:px-8">
-                <span className="text-muted-foreground">
-                  Page {assignPage} of {assignTotalPages} ({assignFilteredOthers.length} employees)
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-10 rounded-lg px-4"
-                    disabled={assignPage <= 1}
-                    onClick={() => setAssignPage((p) => Math.max(1, p - 1))}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-10 rounded-lg border-brand px-4 text-brand hover:bg-brand/10"
-                    disabled={assignPage >= assignTotalPages}
-                    onClick={() => setAssignPage((p) => Math.min(assignTotalPages, p + 1))}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
-            <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-6 py-5 dark:border-white/10 @md:px-8">
+            <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-6 py-4 dark:border-white/10">
               <Button
                 type="button"
                 variant="outline"
-                className="h-12 min-w-36 rounded-xl border-border/80 bg-card px-8 text-base font-semibold text-foreground hover:bg-muted dark:border-white/10"
+                className="h-10 min-w-32 rounded-xl border-border/80 bg-card px-6 text-sm font-semibold text-foreground hover:bg-muted dark:border-white/10"
                 onClick={() => {
                   setAssignOpen(false)
                   setAssignSchedule(null)
@@ -1704,7 +1716,7 @@ export default function AdminSchedules() {
               <Button
                 type="submit"
                 disabled={assignSubmitting || selectedEmployeeIds.length === 0}
-                className="h-12 min-w-52 rounded-xl bg-brand px-8 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+                className="h-10 min-w-44 rounded-xl bg-brand px-6 text-sm font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
               >
                 {assignSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Assign schedule'}
               </Button>

@@ -3525,8 +3525,11 @@ export async function getMyContributions() {
 /**
  * @returns {Promise<{ schedules: Array<{ id: number, name: string, time_in: string, break_start?: string|null, break_end?: string|null, time_out: string, grace_period_minutes: number, rest_days: string[] }> }>}
  */
-export async function getWorkingSchedules() {
-  return cachedAuthenticatedGetJson('/admin/schedules', { ttlMs: 5 * 60 * 1000 })
+export async function getWorkingSchedules(params = {}) {
+  const suffix = params.fresh ? `?_ts=${Date.now()}` : ''
+  return cachedAuthenticatedGetJson(`/admin/schedules${suffix}`, {
+    ttlMs: params.fresh ? 0 : 5 * 60 * 1000,
+  })
 }
 
 /**
@@ -3539,6 +3542,7 @@ export async function createWorkingSchedule(payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to create schedule')
+  clearGetCacheByPrefix('/admin/schedules')
   return data
 }
 
@@ -3553,6 +3557,7 @@ export async function updateWorkingSchedule(id, payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to update schedule')
+  clearGetCacheByPrefix('/admin/schedules')
   return data
 }
 
@@ -3565,6 +3570,8 @@ export async function deleteWorkingSchedule(id) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to delete schedule')
+  clearGetCacheByPrefix('/admin/schedules')
+  clearGetCacheByPrefix('/admin/employees')
   return data
 }
 
@@ -3586,6 +3593,8 @@ export async function assignWorkingSchedule(id, payload) {
     err.status = res.status
     throw err
   }
+  clearGetCacheByPrefix('/admin/employees')
+  clearGetCacheByPrefix('/admin/schedules')
   return data
 }
 
