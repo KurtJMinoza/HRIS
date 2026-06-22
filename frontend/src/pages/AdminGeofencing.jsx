@@ -2532,70 +2532,6 @@ export default function AdminGeofencing() {
       </section>
 
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
-        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Attendance Without Geofence Settings</h2>
-            <p className="text-xs text-slate-500 dark:text-muted-foreground">Selected branches skip location validation while face liveness and identity checks continue.</p>
-          </div>
-          <div className="flex items-center gap-3 text-xs font-semibold">
-            <span>Allow for selected branches</span>
-            <Switch
-              checked={attendanceWithoutGeofenceEnabled}
-              disabled={bypassSaving}
-              onCheckedChange={(checked) => saveAttendanceWithoutGeofence(checked, allowedWithoutGeofenceBranchIds)}
-            />
-          </div>
-        </div>
-        <div className="max-h-[360px] overflow-auto">
-          <table className="w-full min-w-[900px] text-left text-xs">
-            <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-600 dark:bg-muted dark:text-muted-foreground">
-              <tr>
-                {['Select', 'Branch', 'Company', 'Geofence Required', 'Active Geofences Count', 'Allowed Without Geofence', 'Actions'].map((heading) => (
-                  <th key={heading} className="px-4 py-3 font-bold">{heading}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-border">
-              {branches.map((branch) => {
-                const allowed = allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(branch.id))
-                return (
-                  <tr key={branch.id}>
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        className="size-4 accent-[#f04414]"
-                        checked={allowed}
-                        disabled={bypassSaving}
-                        onChange={(event) => toggleAllowedWithoutGeofenceBranch(branch.id, event.target.checked)}
-                        aria-label={`Allow ${branch.branch_name} without geofence`}
-                      />
-                    </td>
-                    <td className="px-4 py-3 font-bold">{branch.branch_name}</td>
-                    <td className="px-4 py-3">{branch.company_name || '-'}</td>
-                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'No' : 'Yes'}</td>
-                    <td className="px-4 py-3">{Number(branch.active_geofences_count || 0)}</td>
-                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'Yes' : 'No'}</td>
-                    <td className="px-4 py-3">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px]"
-                        disabled={bypassSaving}
-                        onClick={() => toggleAllowedWithoutGeofenceBranch(branch.id, !allowed)}
-                      >
-                        {allowed ? 'Require geofence' : 'Allow without'}
-                      </Button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
         <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Branch geofence directory</h2>
@@ -2706,6 +2642,70 @@ export default function AdminGeofencing() {
               <ChevronRight className="size-4" />
             </Button>
           </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Attendance Without Geofence Settings</h2>
+            <p className="text-xs text-slate-500 dark:text-muted-foreground">Selected branches skip location validation while face liveness and identity checks continue.</p>
+          </div>
+          <div className="flex items-center gap-3 text-xs font-semibold">
+            <span>Allow for selected branches</span>
+            <Switch
+              checked={attendanceWithoutGeofenceEnabled}
+              disabled={bypassSaving}
+              onCheckedChange={(checked) => saveAttendanceWithoutGeofence(checked, allowedWithoutGeofenceBranchIds)}
+            />
+          </div>
+        </div>
+        <div className="max-h-[360px] overflow-auto">
+          <table className="w-full min-w-[900px] text-left text-xs">
+            <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-600 dark:bg-muted dark:text-muted-foreground">
+              <tr>
+                {['Select', 'Branch', 'Company', 'Geofence Required', 'Active Geofences Count', 'Allowed Without Geofence', 'Actions'].map((heading) => (
+                  <th key={heading} className="px-4 py-3 font-bold">{heading}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 dark:divide-border">
+              {branches.map((branch) => {
+                const allowed = allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(branch.id))
+                return (
+                  <tr key={branch.id}>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-[#f04414]"
+                        checked={allowed}
+                        disabled={bypassSaving}
+                        onChange={(event) => toggleAllowedWithoutGeofenceBranch(branch.id, event.target.checked)}
+                        aria-label={`Allow ${branch.branch_name} without geofence`}
+                      />
+                    </td>
+                    <td className="px-4 py-3 font-bold">{branch.branch_name}</td>
+                    <td className="px-4 py-3">{branch.company_name || '-'}</td>
+                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'No' : 'Yes'}</td>
+                    <td className="px-4 py-3">{Number(branch.active_geofences_count || 0)}</td>
+                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'Yes' : 'No'}</td>
+                    <td className="px-4 py-3">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={bypassSaving}
+                        onClick={() => toggleAllowedWithoutGeofenceBranch(branch.id, !allowed)}
+                      >
+                        {allowed ? 'Require geofence' : 'Allow without'}
+                      </Button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       </section>
 
