@@ -10,6 +10,7 @@ use App\Models\EmailTemplate;
 use App\Services\EmailNotificationService;
 use App\Support\AgcEmailTemplateBuilder as B;
 use App\Support\BrandedEmailSender;
+use Database\Seeders\EmailNotificationSeeder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -21,6 +22,8 @@ class EmailNotificationController extends Controller
 
     public function index(): JsonResponse
     {
+        $this->ensureDefaultCatalog();
+
         $settings = EmailNotificationSetting::query()
             ->with('template:id,template_key,subject,is_active')
             ->orderBy('notification_key')
@@ -67,6 +70,8 @@ class EmailNotificationController extends Controller
 
     public function templates(): JsonResponse
     {
+        $this->ensureDefaultCatalog();
+
         $templates = EmailTemplate::query()
             ->orderBy('template_key')
             ->get()
@@ -261,5 +266,11 @@ class EmailNotificationController extends Controller
         $this->emailService->clearCache();
 
         return response()->json(['message' => 'Email notification cache cleared.']);
+    }
+
+    private function ensureDefaultCatalog(): void
+    {
+        app(EmailNotificationSeeder::class)->run();
+        $this->emailService->clearCache();
     }
 }

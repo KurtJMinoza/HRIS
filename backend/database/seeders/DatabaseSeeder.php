@@ -21,5 +21,6 @@ class DatabaseSeeder extends Seeder
         $this->call(PayRuleConfigSeeder::class);
         $this->call(PolicySeeder::class);
         $this->call(StatutoryContributionSeeder::class);
+        $this->call(EmailNotificationSeeder::class);
     }
 }

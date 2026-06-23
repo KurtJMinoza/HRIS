@@ -12,14 +12,23 @@ class EmailNotificationSeeder extends Seeder
     public function run(): void
     {
         foreach ($this->definitions() as $def) {
-            $template = EmailTemplate::query()->updateOrCreate(
-                ['template_key' => $def['key']],
-                [
-                    'subject' => $def['subject'],
-                    'body_html' => $def['body_html'],
-                    'is_active' => true,
-                ]
+            $template = EmailTemplate::query()->firstOrNew(['template_key' => $def['key']]);
+            $template->fill(
+                $template->exists
+                    ? [
+                        'subject' => $template->subject ?: $def['subject'],
+                        'body_html' => $template->body_html ?: $def['body_html'],
+                        'body_text' => $template->body_text,
+                        'is_active' => $template->is_active ?? true,
+                    ]
+                    : [
+                        'subject' => $def['subject'],
+                        'body_html' => $def['body_html'],
+                        'body_text' => null,
+                        'is_active' => true,
+                    ]
             );
+            $template->save();
 
             $queueName = match (true) {
                 str_starts_with($def['key'], 'attendance_clock') || $def['key'] === 'attendance_missing_reminder' => 'attendance-emails',
@@ -28,18 +37,18 @@ class EmailNotificationSeeder extends Seeder
                 default => 'emails',
             };
 
-            EmailNotificationSetting::query()->updateOrCreate(
-                ['notification_key' => $def['key']],
-                [
-                    'label' => $def['label'],
-                    'description' => $def['description'],
-                    'enabled' => true,
-                    'recipient_type' => $def['recipient_type'],
-                    'template_id' => $template->id,
-                    'queue_name' => $queueName,
-                    'retry_attempts' => 3,
-                ]
-            );
+            $setting = EmailNotificationSetting::query()->firstOrNew(['notification_key' => $def['key']]);
+            $setting->fill([
+                'label' => $def['label'],
+                'description' => $def['description'],
+                'enabled' => $setting->exists ? (bool) $setting->enabled : true,
+                'recipient_type' => $def['recipient_type'],
+                'custom_recipient_email' => $setting->custom_recipient_email,
+                'template_id' => $template->id,
+                'queue_name' => $setting->queue_name ?: $queueName,
+                'retry_attempts' => $setting->retry_attempts ?? 3,
+            ]);
+            $setting->save();
         }
     }
 

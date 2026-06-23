@@ -72,7 +72,11 @@ const PAYSLIP_PREVIEW_DIALOG =
 const CARD_SHELL =
   'rounded-2xl border border-border/80 bg-card text-card-foreground shadow-sm shadow-slate-900/3 transition-shadow duration-200 hover:shadow-md dark:shadow-black/25 dark:hover:shadow-lg'
 const SELECT_TRIGGER =
-  'h-11 rounded-xl border-border/80 bg-background text-sm font-semibold text-foreground shadow-sm dark:bg-input/45'
+  'h-11 rounded-xl border-border/80 bg-background/95 px-3.5 text-sm font-semibold text-foreground shadow-sm shadow-slate-900/5 transition-all duration-200 hover:border-brand/45 hover:bg-card focus-visible:border-brand/60 focus-visible:ring-brand/20 data-[placeholder]:text-muted-foreground dark:bg-input/45 dark:hover:bg-input/60 [&_[data-select-option-avatar]]:h-7 [&_[data-select-option-avatar]]:w-7 [&_[data-select-option-avatar]]:rounded-lg [&_[data-select-option-subtitle]]:hidden [&_[data-select-option-title]]:truncate'
+const SELECT_CONTENT =
+  'max-h-80 rounded-2xl border-border/80 bg-popover/95 p-1.5 shadow-2xl shadow-slate-900/15 backdrop-blur-xl dark:shadow-black/40'
+const SELECT_ITEM =
+  'min-h-11 rounded-xl px-3 py-2.5 pr-9 text-sm font-medium transition-colors focus:bg-brand/10 focus:text-brand data-[state=checked]:bg-brand/10 data-[state=checked]:text-brand'
 const DEMO_ORG_NAME_PATTERN = /^(company\s+[ab]|acme\s+(corp|group))$/i
 
 function isDemoOrganization(item) {
@@ -195,6 +199,40 @@ function savePdfBlob(blob, filename) {
 
 function resolveLogoUrl(logoUrl) {
   return companyLogoUrl(logoUrl) || null
+}
+
+function firstFilled(...values) {
+  return values.find((value) => String(value ?? '').trim()) || null
+}
+
+function PayrollSelectItem({ value, icon: Icon, title, subtitle, logoUrl, className }) {
+  return (
+    <SelectItem value={value} className={cn(SELECT_ITEM, className)} textValue={title}>
+      <span className="flex min-w-0 items-center gap-3">
+        <span
+          data-select-option-avatar
+          className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/80 bg-background text-muted-foreground shadow-sm dark:bg-input/45"
+          aria-hidden
+        >
+          {logoUrl ? (
+            <img src={logoUrl} alt="" className="h-full w-full object-contain p-0.5" />
+          ) : Icon ? (
+            <Icon className="h-4 w-4" />
+          ) : null}
+        </span>
+        <span className="min-w-0">
+          <span data-select-option-title className="block truncate font-semibold leading-5 text-current">
+            {title}
+          </span>
+          {subtitle ? (
+            <span data-select-option-subtitle className="block truncate text-[11px] font-normal leading-4 text-muted-foreground">
+              {subtitle}
+            </span>
+          ) : null}
+        </span>
+      </span>
+    </SelectItem>
+  )
 }
 
 function CircularProgress({ value = 0, size = 160, strokeWidth = 10, children, className }) {
@@ -1058,7 +1096,7 @@ export default function AdminGeneratePayslipsPage() {
         {/* ── Generation Layout ── */}
         <div className={cn(
           'grid grid-cols-1 gap-6 lg:items-start',
-          isExecomModule ? 'lg:grid-cols-1' : 'lg:grid-cols-[1fr_400px]',
+          'lg:grid-cols-1',
         )}>
           {/* ── LEFT: Generation Parameters (70%) ── */}
           <div className="space-y-6">
@@ -1103,12 +1141,22 @@ export default function AdminGeneratePayslipsPage() {
                             <SelectTrigger className={`${SELECT_TRIGGER} h-12 w-full`}>
                               <SelectValue placeholder="Select company" />
                             </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">Select company…</SelectItem>
+                            <SelectContent position="popper" align="start" className={SELECT_CONTENT}>
+                              <PayrollSelectItem
+                                value="__none__"
+                                icon={Building2}
+                                title="Select company..."
+                                subtitle="Choose a company entity"
+                              />
                               {companies.map((c) => (
-                                <SelectItem key={c.id} value={String(c.id)}>
-                                  {c.name}
-                                </SelectItem>
+                                <PayrollSelectItem
+                                  key={c.id}
+                                  value={String(c.id)}
+                                  icon={Building2}
+                                  logoUrl={resolveLogoUrl(c)}
+                                  title={c.name}
+                                  subtitle={firstFilled(c.code, c.company_code, c.short_name, 'Company entity')}
+                                />
                               ))}
                             </SelectContent>
                           </Select>
@@ -1134,12 +1182,21 @@ export default function AdminGeneratePayslipsPage() {
                           <SelectTrigger className={SELECT_TRIGGER}>
                             <SelectValue placeholder={companyId ? 'All branches in company' : 'Select company first'} />
                           </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">All branches (company scope)</SelectItem>
+                          <SelectContent position="popper" align="start" className={SELECT_CONTENT}>
+                            <PayrollSelectItem
+                              value="__none__"
+                              icon={MapPin}
+                              title="All branches"
+                              subtitle="Use the whole company scope"
+                            />
                             {branches.map((b) => (
-                              <SelectItem key={b.id} value={String(b.id)}>
-                                {b.name}
-                              </SelectItem>
+                              <PayrollSelectItem
+                                key={b.id}
+                                value={String(b.id)}
+                                icon={MapPin}
+                                title={b.name}
+                                subtitle={firstFilled(b.code, b.branch_code, b.address, 'Branch location')}
+                              />
                             ))}
                           </SelectContent>
                         </Select>
@@ -1158,12 +1215,21 @@ export default function AdminGeneratePayslipsPage() {
                           <SelectTrigger className={SELECT_TRIGGER}>
                             <SelectValue placeholder={branchId ? 'All departments in branch' : 'Select branch first'} />
                           </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">All departments (branch scope)</SelectItem>
+                          <SelectContent position="popper" align="start" className={SELECT_CONTENT}>
+                            <PayrollSelectItem
+                              value="__none__"
+                              icon={Users}
+                              title="All departments"
+                              subtitle="Use the whole branch scope"
+                            />
                             {departments.map((d) => (
-                              <SelectItem key={d.id} value={String(d.id)}>
-                                {d.name}
-                              </SelectItem>
+                              <PayrollSelectItem
+                                key={d.id}
+                                value={String(d.id)}
+                                icon={Users}
+                                title={d.name}
+                                subtitle={firstFilled(d.code, d.department_code, d.branch_name, 'Department')}
+                              />
                             ))}
                           </SelectContent>
                         </Select>
@@ -1182,10 +1248,15 @@ export default function AdminGeneratePayslipsPage() {
                     <SelectTrigger className={SELECT_TRIGGER}>
                       <SelectValue placeholder="Default (employee / company cycle)" />
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">Use employee / company default</SelectItem>
+                    <SelectContent position="popper" align="start" className={SELECT_CONTENT}>
+                      <PayrollSelectItem
+                        value="__none__"
+                        icon={CalendarClock}
+                        title="Use employee / company default"
+                        subtitle="Applies the configured default pay cycle"
+                      />
                       {cycles.map((c) => (
-                        <SelectItem key={c.id} value={String(c.id)}>
+                        <SelectItem key={c.id} value={String(c.id)} className={SELECT_ITEM}>
                           {c.name} · {c.code}
                         </SelectItem>
                       ))}
@@ -1194,12 +1265,25 @@ export default function AdminGeneratePayslipsPage() {
                 </div>
 
                 <div className="space-y-2">
-                    <Label className="text-sm font-normal text-muted-foreground">13th Month Pay</Label>
+                    <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
+                      <PhilippinePeso className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
+                      13th Month Pay
+                    </Label>
                     <Select value={includeThirteenthMonth ? 'include' : 'exclude'} onValueChange={(value) => setIncludeThirteenthMonth(value === 'include')}>
                       <SelectTrigger className={SELECT_TRIGGER}><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="exclude">Exclude 13th Month Pay</SelectItem>
-                        <SelectItem value="include">Include 13th Month Pay</SelectItem>
+                      <SelectContent position="popper" align="start" className={SELECT_CONTENT}>
+                        <PayrollSelectItem
+                          value="exclude"
+                          icon={PhilippinePeso}
+                          title="Exclude 13th Month Pay"
+                          subtitle="Generate regular payroll only"
+                        />
+                        <PayrollSelectItem
+                          value="include"
+                          icon={Sparkles}
+                          title="Include 13th Month Pay"
+                          subtitle="Adds payable amount from finalized configuration"
+                        />
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">Include uses the employee's payable amount from a finalized 13th month configuration.</p>
@@ -1389,7 +1473,7 @@ export default function AdminGeneratePayslipsPage() {
           </div>
 
           {/* ── RIGHT: Live Processing Summary (30%) ── */}
-          {!isExecomModule && (
+          {false && !isExecomModule && (
             <div className="lg:sticky lg:top-6">
               <Card className={cn(CARD_SHELL, 'overflow-hidden')}>
                 <div className="bg-linear-to-br from-transparent via-transparent to-brand/5 dark:to-brand/10">
@@ -1523,15 +1607,31 @@ export default function AdminGeneratePayslipsPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <select
-                value={recentModuleFilter}
-                onChange={(event) => setRecentModuleFilter(event.target.value)}
-                className="h-9 rounded-lg border border-border/80 bg-background px-2.5 text-xs font-semibold text-foreground shadow-sm dark:bg-input/35"
-              >
-                <option value="all">All Modules</option>
-                <option value="regular">Regular</option>
-                <option value="execom">EXECOM</option>
-              </select>
+              <Select value={recentModuleFilter} onValueChange={setRecentModuleFilter}>
+                <SelectTrigger className={`${SELECT_TRIGGER} h-9 w-[11.5rem] rounded-lg text-xs`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" align="end" className={SELECT_CONTENT}>
+                  <PayrollSelectItem
+                    value="all"
+                    icon={Layers}
+                    title="All Modules"
+                    subtitle="Regular and EXECOM"
+                  />
+                  <PayrollSelectItem
+                    value="regular"
+                    icon={FileText}
+                    title="Regular Payroll"
+                    subtitle="Standard payslip batches"
+                  />
+                  <PayrollSelectItem
+                    value="execom"
+                    icon={Zap}
+                    title="EXECOM Payroll"
+                    subtitle="Executive payroll batches"
+                  />
+                </SelectContent>
+              </Select>
               <Button
                 type="button"
                 variant="outline"
