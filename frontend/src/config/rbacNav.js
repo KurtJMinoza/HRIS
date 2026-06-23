@@ -28,6 +28,7 @@ const pathToPermissions = {
   '/admin/holiday': ['holidays.view', 'holiday.view'],
   '/admin/leave': ['leave.view'],
   '/admin/attendance': ['can_view_subordinate_attendance'],
+  '/admin/geofencing': ['geofence.view'],
   /** Show nav if user can approve corrections OR at least view attendance (API still enforces approve on actions). */
   '/admin/attendance-corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/corrections': ['attendance.corrections.approve', 'attendance.view'],
