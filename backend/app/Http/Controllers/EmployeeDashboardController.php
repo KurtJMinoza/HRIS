@@ -13,6 +13,7 @@ use App\Services\AttendanceStatusService;
 use App\Services\EmployeeDashboardCacheService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
+use App\Services\PayrollComputationService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -36,6 +37,7 @@ class EmployeeDashboardController extends Controller
         private readonly AttendanceStatusResolver $statusResolver,
         private readonly OtDetectionService $otDetectionService,
         private readonly OvertimePayrollService $overtimePayroll,
+        private readonly PayrollComputationService $payrollComputation,
     ) {}
 
     /**
@@ -232,7 +234,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 7) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 8) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -501,6 +503,18 @@ class EmployeeDashboardController extends Controller
                 $unapprovedOtHours = 0.0;
             }
 
+            $payrollImpactHours = null;
+            if (! $isFuture && ($hasTimeIn || $hasTimeOut || $leaveOnDate !== null)) {
+                $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
+                    $user,
+                    $dateKey,
+                    $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : null,
+                    $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : null,
+                    $attendanceTz
+                );
+                $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
+            }
+
             if (in_array($status, ['present', 'present_with_ot', 'late'], true)) {
                 $metrics['present_count']++;
                 if ($status === 'late') {
@@ -534,6 +548,7 @@ class EmployeeDashboardController extends Controller
                 'formatted_time_out' => $this->formatTimeForDisplay($effectiveTimeOut),
                 'total_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                 'total_rendered_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
+                'payroll_impact_hours' => $payrollImpactHours,
                 'late_minutes' => $dayLateMinutes,
                 'late_label' => $dayLateLabel,
                 'undertime_minutes' => $dayUndertimeMinutes,
@@ -591,7 +606,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 7,
+                'schema_version' => 8,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,

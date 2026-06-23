@@ -504,7 +504,7 @@ export default function EmployeeDashboard() {
     const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    if (cached && cached?.meta?.schema_version === 4 && opts.force !== true) {
+    if (cached && cached?.meta?.schema_version === 8 && opts.force !== true) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
       mergeSummary({
         ...(cached.summary || {}),
@@ -2287,6 +2287,15 @@ export default function EmployeeDashboard() {
                             <span className="font-medium text-muted-foreground">Payable OT</span>
                             <span className="font-semibold text-emerald-700 dark:text-emerald-300">
                               {selectedDayDetails.payable_overtime_hours.toFixed(2)} hrs
+                            </span>
+                          </div>
+                        )}
+                      {typeof selectedDayDetails.payroll_impact_hours === 'number' &&
+                        Number.isFinite(selectedDayDetails.payroll_impact_hours) && (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2.5">
+                            <span className="font-medium text-muted-foreground">Payroll Impact</span>
+                            <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                              {selectedDayDetails.payroll_impact_hours.toFixed(2)} hrs
                             </span>
                           </div>
                         )}
