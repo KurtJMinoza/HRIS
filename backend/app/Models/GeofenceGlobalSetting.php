@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class GeofenceGlobalSetting extends Model
 {
     protected $fillable = [
+        'geofence_module_enabled',
         'attendance_without_geofence_enabled',
         'updated_by',
     ];
@@ -15,6 +16,7 @@ class GeofenceGlobalSetting extends Model
     protected function casts(): array
     {
         return [
+            'geofence_module_enabled' => 'boolean',
             'attendance_without_geofence_enabled' => 'boolean',
         ];
     }

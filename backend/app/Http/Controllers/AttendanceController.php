@@ -650,15 +650,22 @@ class AttendanceController extends Controller
             $data['time_out_clicked_at'] = $officialClockAt;
         }
         $geofence = $request->attributes->get('geofence_result');
-        $lat = is_array($geofence) && isset($geofence['latitude']) ? $geofence['latitude'] : $request->input('latitude');
-        $lng = is_array($geofence) && isset($geofence['longitude']) ? $geofence['longitude'] : $request->input('longitude');
+        $suppressLocationCapture = is_array($geofence) && (bool) ($geofence['suppress_location_capture'] ?? false);
+        $lat = $suppressLocationCapture
+            ? null
+            : (is_array($geofence) && isset($geofence['latitude']) ? $geofence['latitude'] : $request->input('latitude'));
+        $lng = $suppressLocationCapture
+            ? null
+            : (is_array($geofence) && isset($geofence['longitude']) ? $geofence['longitude'] : $request->input('longitude'));
         if ($lat !== null && $lng !== null) {
             $data['latitude'] = $lat;
             $data['longitude'] = $lng;
         }
-        $accuracyMeters = is_array($geofence) && array_key_exists('accuracy_meters', $geofence)
+        $accuracyMeters = $suppressLocationCapture
+            ? null
+            : (is_array($geofence) && array_key_exists('accuracy_meters', $geofence)
             ? $geofence['accuracy_meters']
-            : $request->input('accuracy_meters');
+            : $request->input('accuracy_meters'));
         if ($accuracyMeters !== null && Schema::hasColumn('attendance_logs', 'accuracy_meters')) {
             $data['accuracy_meters'] = $accuracyMeters;
         }

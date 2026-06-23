@@ -52,6 +52,8 @@ class GeofenceValidationService
     public static function forgetGlobalCache(): void
     {
         Cache::forget('geofence:global-settings');
+        Cache::forget('geofence:global-settings:module-enabled');
+        Cache::forget('geofence:global-settings:attendance-without-geofence-enabled');
     }
 
     /**
@@ -67,6 +69,18 @@ class GeofenceValidationService
     ): array {
         $selectedBranchId = isset($options['branch_id']) ? (int) $options['branch_id'] : null;
         $assignedBranch = $this->resolveBranchForEmployee($employee);
+
+        if (! $this->geofenceModuleEnabled()) {
+            $branch = $this->resolveBranchForEmployee($employee, $selectedBranchId);
+
+            return $this->moduleDisabledResult($branch ?? $assignedBranch, [
+                ...$options,
+                'employee_id' => (int) $employee->id,
+                'user_id' => (int) $employee->id,
+                'company_id' => (int) (($branch ?? $assignedBranch)?->company_id ?? $employee->getEffectiveCompanyId()),
+                'attempted_branch_id' => $selectedBranchId,
+            ]);
+        }
 
         if ($selectedBranchId !== null && $assignedBranch && (int) $assignedBranch->id !== $selectedBranchId) {
             $selected = Branch::query()->with('company:id,name')->find($selectedBranchId);
@@ -113,6 +127,10 @@ class GeofenceValidationService
         ?float $accuracyMeters = null,
         array $options = [],
     ): array {
+        if (! $this->geofenceModuleEnabled()) {
+            return $this->moduleDisabledResult($branch, $options);
+        }
+
         $context = [
             'method' => $options['method'] ?? null,
             'device_type' => $this->normalizeDeviceType($options['device_type'] ?? null),
@@ -276,13 +294,29 @@ class GeofenceValidationService
             return null;
         }
 
-        $lat = $request->input('latitude');
-        $lng = $request->input('longitude');
         $branch = $this->resolveBranchForEmployee(
             $employee,
             $request->input('branch_id') !== null ? (int) $request->input('branch_id') : null,
         );
         $deviceType = $request->input('device_type') ?: $this->deviceTypeFromRequest($request);
+
+        if (! $this->geofenceModuleEnabled()) {
+            $result = $this->moduleDisabledResult($branch, [
+                'employee_id' => (int) $employee->id,
+                'user_id' => (int) $employee->id,
+                'company_id' => (int) ($branch?->company_id ?? $employee->getEffectiveCompanyId()),
+                'attempted_branch_id' => $request->input('branch_id') !== null ? (int) $request->input('branch_id') : null,
+                'clock_type' => $this->normalizeClockType($request->input('clock_type') ?: $request->input('type')),
+                'device_type' => $deviceType,
+                'method' => $method ?? $request->input('method'),
+            ]);
+            $request->attributes->set('geofence_result', $result);
+
+            return $result;
+        }
+
+        $lat = $request->input('latitude');
+        $lng = $request->input('longitude');
         $validationId = $request->input('geofence_validation_id');
 
         if ($branch && $this->branchAllowsWithoutGeofence($branch)) {
@@ -709,22 +743,92 @@ class GeofenceValidationService
             return false;
         }
 
-        $globalEnabled = true;
-        if (Schema::hasTable('geofence_global_settings')) {
-            $globalEnabled = (bool) Cache::remember(
-                'geofence:global-settings',
-                self::CACHE_TTL_SECONDS,
-                fn (): bool => (bool) (GeofenceGlobalSetting::query()->find(1)?->attendance_without_geofence_enabled ?? true),
-            );
-        }
-
-        if (! $globalEnabled) {
+        if (! $this->attendanceWithoutGeofenceEnabled()) {
             return false;
         }
 
         return (bool) BranchGeofenceSetting::query()
             ->where('branch_id', (int) $branch->id)
             ->value('allow_without_geofence');
+    }
+
+    public function geofenceModuleEnabled(): bool
+    {
+        if (! Schema::hasTable('geofence_global_settings')) {
+            return true;
+        }
+
+        if (! Schema::hasColumn('geofence_global_settings', 'geofence_module_enabled')) {
+            return true;
+        }
+
+        return (bool) Cache::remember(
+            'geofence:global-settings:module-enabled',
+            self::CACHE_TTL_SECONDS,
+            fn (): bool => (bool) (GeofenceGlobalSetting::query()->find(1)?->geofence_module_enabled ?? true),
+        );
+    }
+
+    public function attendanceWithoutGeofenceEnabled(): bool
+    {
+        if (! Schema::hasTable('geofence_global_settings')) {
+            return true;
+        }
+
+        return (bool) Cache::remember(
+            'geofence:global-settings:attendance-without-geofence-enabled',
+            self::CACHE_TTL_SECONDS,
+            fn (): bool => (bool) (GeofenceGlobalSetting::query()->find(1)?->attendance_without_geofence_enabled ?? true),
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    public function moduleDisabledResult(?Branch $branch = null, array $options = []): array
+    {
+        return [
+            'allowed' => true,
+            'status' => 'skipped',
+            'message' => 'Geofencing is disabled. Attendance can continue without location validation.',
+            'latitude' => null,
+            'longitude' => null,
+            'matched_geofence' => null,
+            'matched_geofence_id' => null,
+            'distance' => null,
+            'distance_meters' => null,
+            'accuracy_meters' => null,
+            'failure_reason' => null,
+            'skip_reason' => 'geofence_module_disabled',
+            'warning' => null,
+            'validation_status' => 'skipped',
+            'enforcement_mode' => 'disabled',
+            'accuracy_threshold_meters' => null,
+            'radius_meters' => null,
+            'geofence_type' => null,
+            'device_type' => $options['device_type'] ?? null,
+            'device_scope_matched' => null,
+            'geofence_name' => null,
+            'sampled_readings_count' => null,
+            'selected_best_accuracy' => null,
+            'expires_at' => null,
+            'location_settings' => null,
+            'geofence_module_enabled' => false,
+            'suppress_location_capture' => true,
+            'employee_id' => $options['employee_id'] ?? null,
+            'user_id' => $options['user_id'] ?? ($options['employee_id'] ?? null),
+            'company_id' => $options['company_id'] ?? ($branch?->company_id ? (int) $branch->company_id : null),
+            'attempted_branch_id' => $options['attempted_branch_id'] ?? null,
+            'clock_type' => $options['clock_type'] ?? null,
+            'method' => $options['method'] ?? null,
+            'branch' => $branch ? [
+                'id' => (int) $branch->id,
+                'name' => $branch->name,
+                'company_id' => (int) $branch->company_id,
+                'company_name' => $branch->company?->name,
+            ] : null,
+        ];
     }
 
     /**

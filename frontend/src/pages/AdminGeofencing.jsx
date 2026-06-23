@@ -35,6 +35,7 @@ import {
   updateAttendanceWithoutGeofenceSettings,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
+  updateGeofenceModuleSettings,
 } from '@/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -1340,6 +1341,8 @@ export default function AdminGeofencing() {
   const canViewLiveMonitoring = ['admin', 'super_admin'].includes(String(user?.role || '').toLowerCase())
   const [activeTab, setActiveTab] = useState('setup')
   const [branches, setBranches] = useState([])
+  const [geofenceModuleEnabled, setGeofenceModuleEnabled] = useState(true)
+  const [geofenceModuleSaving, setGeofenceModuleSaving] = useState(false)
   const [attendanceWithoutGeofenceEnabled, setAttendanceWithoutGeofenceEnabled] = useState(true)
   const [allowedWithoutGeofenceBranchIds, setAllowedWithoutGeofenceBranchIds] = useState([])
   const [bypassSaving, setBypassSaving] = useState(false)
@@ -1422,6 +1425,7 @@ export default function AdminGeofencing() {
       const data = await getAdminGeofencing()
       const nextBranches = data.branches || []
       setBranches(nextBranches)
+      setGeofenceModuleEnabled(data.geofence_module?.enabled !== false)
       setAttendanceWithoutGeofenceEnabled(data.attendance_without_geofence?.enabled !== false)
       setAllowedWithoutGeofenceBranchIds(data.attendance_without_geofence?.branch_ids || [])
       setSelectedBranchId((current) => current || nextBranches[0]?.id || null)
@@ -1840,6 +1844,28 @@ export default function AdminGeofencing() {
       toast({ title: 'Settings failed', description: error.message, variant: 'error' })
     } finally {
       setBypassSaving(false)
+    }
+  }
+
+  async function saveGeofenceModuleEnabled(enabled) {
+    const previous = geofenceModuleEnabled
+    setGeofenceModuleEnabled(enabled)
+    setGeofenceModuleSaving(true)
+    try {
+      const data = await updateGeofenceModuleSettings({ enabled })
+      setGeofenceModuleEnabled(data.geofence_module?.enabled !== false)
+      toast({
+        title: data.geofence_module?.enabled === false ? 'Geofencing module turned off' : 'Geofencing module turned on',
+        description: data.geofence_module?.enabled === false
+          ? 'Clock in/out will no longer request location or require geofence validation.'
+          : 'Clock in/out will request location and enforce configured geofence rules again.',
+        variant: 'success',
+      })
+    } catch (error) {
+      setGeofenceModuleEnabled(previous)
+      toast({ title: 'Geofence module setting failed', description: error.message, variant: 'error' })
+    } finally {
+      setGeofenceModuleSaving(false)
     }
   }
 
@@ -2646,6 +2672,32 @@ export default function AdminGeofencing() {
       </section>
 
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
+        <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Geofencing Module</h2>
+            <p className="max-w-3xl text-xs leading-relaxed text-slate-500 dark:text-muted-foreground">
+              One master switch for attendance geofencing. When turned off, clock in/out will not ask for location and the backend will skip all geofence validation.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold dark:border-border dark:bg-muted/40">
+            <span className={geofenceModuleEnabled ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'}>
+              {geofenceModuleEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <Switch
+              checked={geofenceModuleEnabled}
+              disabled={geofenceModuleSaving}
+              onCheckedChange={saveGeofenceModuleEnabled}
+            />
+          </div>
+        </div>
+        {!geofenceModuleEnabled ? (
+          <div className="border-t border-orange-200 bg-orange-50 px-4 py-3 text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
+            Geofencing is currently off. Employees can clock in/out without location permission prompts.
+          </div>
+        ) : null}
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
         <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Attendance Without Geofence Settings</h2>
@@ -2655,7 +2707,7 @@ export default function AdminGeofencing() {
             <span>Allow for selected branches</span>
             <Switch
               checked={attendanceWithoutGeofenceEnabled}
-              disabled={bypassSaving}
+              disabled={bypassSaving || !geofenceModuleEnabled}
               onCheckedChange={(checked) => saveAttendanceWithoutGeofence(checked, allowedWithoutGeofenceBranchIds)}
             />
           </div>
@@ -2679,23 +2731,23 @@ export default function AdminGeofencing() {
                         type="checkbox"
                         className="size-4 accent-[#f04414]"
                         checked={allowed}
-                        disabled={bypassSaving}
+                        disabled={bypassSaving || !geofenceModuleEnabled}
                         onChange={(event) => toggleAllowedWithoutGeofenceBranch(branch.id, event.target.checked)}
                         aria-label={`Allow ${branch.branch_name} without geofence`}
                       />
                     </td>
                     <td className="px-4 py-3 font-bold">{branch.branch_name}</td>
                     <td className="px-4 py-3">{branch.company_name || '-'}</td>
-                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'No' : 'Yes'}</td>
+                    <td className="px-4 py-3">{!geofenceModuleEnabled ? 'Module off' : (attendanceWithoutGeofenceEnabled && allowed ? 'No' : 'Yes')}</td>
                     <td className="px-4 py-3">{Number(branch.active_geofences_count || 0)}</td>
-                    <td className="px-4 py-3">{attendanceWithoutGeofenceEnabled && allowed ? 'Yes' : 'No'}</td>
+                    <td className="px-4 py-3">{!geofenceModuleEnabled ? 'N/A' : (attendanceWithoutGeofenceEnabled && allowed ? 'Yes' : 'No')}</td>
                     <td className="px-4 py-3">
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
                         className="h-7 px-2 text-[11px]"
-                        disabled={bypassSaving}
+                        disabled={bypassSaving || !geofenceModuleEnabled}
                         onClick={() => toggleAllowedWithoutGeofenceBranch(branch.id, !allowed)}
                       >
                         {allowed ? 'Require geofence' : 'Allow without'}

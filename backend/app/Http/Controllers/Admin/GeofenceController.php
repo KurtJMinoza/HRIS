@@ -51,8 +51,11 @@ class GeofenceController extends Controller
 
         return response()->json([
             'branches' => $branches,
+            'geofence_module' => [
+                'enabled' => $this->geofenceValidation->geofenceModuleEnabled(),
+            ],
             'attendance_without_geofence' => [
-                'enabled' => (bool) (GeofenceGlobalSetting::query()->find(1)?->attendance_without_geofence_enabled ?? true),
+                'enabled' => $this->geofenceValidation->attendanceWithoutGeofenceEnabled(),
                 'branch_ids' => $branches
                     ->filter(fn (array $branch): bool => (bool) $branch['allowed_without_geofence'])
                     ->pluck('id')
@@ -71,6 +74,34 @@ class GeofenceController extends Controller
                 'maximum_samples' => 5,
                 'sample_timeout_seconds' => 15,
                 'require_backend_validation' => true,
+            ],
+        ]);
+    }
+
+    public function updateModuleSettings(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'enabled' => ['required', 'boolean'],
+        ]);
+
+        $settings = GeofenceGlobalSetting::query()->firstOrNew(['id' => 1]);
+        $settings->fill([
+            'geofence_module_enabled' => (bool) $validated['enabled'],
+            'attendance_without_geofence_enabled' => (bool) ($settings->attendance_without_geofence_enabled ?? true),
+            'updated_by' => $request->user()?->id,
+        ])->save();
+
+        GeofenceValidationService::forgetGlobalCache();
+        Cache::forget('app:public-settings');
+
+        $this->audit($request, 'geofence_module_settings_updated', null, null, [
+            'enabled' => (bool) $validated['enabled'],
+        ]);
+
+        return response()->json([
+            'message' => (bool) $validated['enabled'] ? 'Geofencing module enabled.' : 'Geofencing module disabled.',
+            'geofence_module' => [
+                'enabled' => (bool) $validated['enabled'],
             ],
         ]);
     }
@@ -272,6 +303,7 @@ class GeofenceController extends Controller
             GeofenceGlobalSetting::query()->updateOrCreate(
                 ['id' => 1],
                 [
+                    'geofence_module_enabled' => $this->geofenceValidation->geofenceModuleEnabled(),
                     'attendance_without_geofence_enabled' => (bool) $validated['enabled'],
                     'updated_by' => $request->user()?->id,
                 ],
@@ -295,6 +327,9 @@ class GeofenceController extends Controller
             'enabled' => (bool) $validated['enabled'],
             'branch_ids' => $requestedIds,
         ]);
+
+        GeofenceValidationService::forgetGlobalCache();
+        Cache::forget('app:public-settings');
 
         return response()->json([
             'message' => 'Attendance without geofence settings updated.',

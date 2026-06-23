@@ -16,6 +16,7 @@ const ATTENDANCE_DEVICE_TYPES = ['desktop', 'laptop', 'mobile', 'tablet', 'kiosk
 const ATTENDANCE_LOCATION_TIMEOUT_MS = 10000
 const USE_SANCTUM_SESSION = String(import.meta.env.VITE_USE_SANCTUM_SESSION ?? 'true') !== 'false'
 let csrfCookieBootPromise = null
+let geofenceModuleStatusCache = null
 
 function normalizeAttendanceDeviceType(deviceType) {
   const normalized = String(deviceType || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
@@ -495,6 +496,25 @@ export async function testAttendanceGeofence(payload = {}) {
 }
 
 export async function prepareAttendanceLocation(options = {}) {
+  const moduleStatus = options.geofenceModuleStatus || await getAttendanceGeofenceModuleStatus()
+  if (moduleStatus?.enabled === false && options.forceLocation !== true) {
+    const location = {
+      device_type: normalizeAttendanceDeviceType(options.device_type ?? options.deviceType) || attendanceDeviceType(),
+    }
+    const result = {
+      allowed: true,
+      status: 'skipped',
+      validation_status: 'skipped',
+      enforcement_mode: 'disabled',
+      skip_reason: 'geofence_module_disabled',
+      geofence_module_enabled: false,
+      suppress_location_capture: true,
+      message: 'Geofencing is disabled. Attendance can continue without location validation.',
+    }
+    options.onStateChange?.('GEOFENCE_PASSED', result)
+    return { location, result, geofenceDisabled: true }
+  }
+
   let location
   try {
     if (options.location) {
@@ -1410,6 +1430,35 @@ export async function getPublicSettings(options = {}) {
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load public settings')
   return data
+}
+
+export async function getAttendanceGeofenceModuleStatus({ refresh = false, signal } = {}) {
+  const now = Date.now()
+  if (
+    !refresh &&
+    geofenceModuleStatusCache &&
+    geofenceModuleStatusCache.expiresAt > now
+  ) {
+    return geofenceModuleStatusCache.value
+  }
+
+  try {
+    const settings = await getPublicSettings({ signal, timeoutMs: 5000 })
+    const value = {
+      enabled: settings?.geofence_module?.enabled !== false,
+    }
+    geofenceModuleStatusCache = {
+      value,
+      expiresAt: now + 60000,
+    }
+    return value
+  } catch {
+    return { enabled: true }
+  }
+}
+
+export function clearAttendanceGeofenceModuleStatusCache() {
+  geofenceModuleStatusCache = null
 }
 
 // ---- Password reset (OTP via email) ----
@@ -7851,6 +7900,23 @@ export async function updateBranchGeofenceSettings(branchId, payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update geofence settings')
+  return data
+}
+
+export async function updateGeofenceModuleSettings(payload) {
+  const res = await authenticatedFetch('/admin/geofencing/module-settings', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update geofence module settings')
+  clearAttendanceGeofenceModuleStatusCache()
+  if (data?.geofence_module) {
+    geofenceModuleStatusCache = {
+      value: { enabled: data.geofence_module.enabled !== false },
+      expiresAt: Date.now() + 60000,
+    }
+  }
   return data
 }
 

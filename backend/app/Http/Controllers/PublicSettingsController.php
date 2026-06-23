@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Company;
+use App\Services\GeofenceValidationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -29,6 +30,9 @@ class PublicSettingsController extends Controller
                     : null,
                 'timezone' => config('attendance.timezone', 'Asia/Manila'),
                 'theme' => 'light',
+                'geofence_module' => [
+                    'enabled' => app(GeofenceValidationService::class)->geofenceModuleEnabled(),
+                ],
             ];
         });
 
