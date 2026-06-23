@@ -70,6 +70,10 @@ module.exports = {
       'queue-payroll',
       'artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=1 --max-jobs=100',
     ),
+    laravelApp(
+      'queue-emails',
+      'artisan queue:work redis --queue=emails --timeout=60 --sleep=1 --tries=3',
+    ),
     laravelApp('scheduler', 'artisan schedule:work'),
   ],
 };

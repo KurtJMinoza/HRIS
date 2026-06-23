@@ -28,6 +28,7 @@ import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees, prefetchLeaveRequestReview } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { formatEmployeeName } from '@/lib/employeeSort'
+import { markLoginSplashShown } from '@/lib/loginSplash'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
@@ -511,7 +512,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
 
   async function handleLogout() {
     await logout()
-    navigate('/login', { replace: true })
+    markLoginSplashShown()
+    navigate('/login', { replace: true, state: { skipPreloader: true } })
   }
 
   const currentUserDisplayName = formatEmployeeName(user, 'User')

@@ -90,7 +90,7 @@ export default function ForgotPassword() {
               type="button"
               variant="ghost"
               className="w-full justify-center gap-2 text-muted-foreground"
-              onClick={() => navigate('/login')}
+              onClick={() => navigate('/login', { state: { skipPreloader: true } })}
             >
               <ArrowLeft className="size-4" />
               Back to login

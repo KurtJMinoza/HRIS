@@ -37,6 +37,7 @@ import { NotificationsProvider } from '@/contexts/NotificationsContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { useTheme } from '@/contexts/useTheme'
 import { resolvePostLoginPath } from '@/lib/hrRoutes'
+import { markLoginSplashShown, shouldShowLoginSplash } from '@/lib/loginSplash'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ScannerInput } from '@/components/ScannerInput'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -44,6 +45,8 @@ import { getEmployeeAvatarColorClass, kioskAttendanceAvatarSrc } from '@/lib/emp
 import Webcam from 'react-webcam'
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+import { AgcBrandLogoCrop } from '@/components/AgcBrandLogoCrop'
+import { LoginPagePreloader } from '@/components/LoginPagePreloader'
 
 const AuthenticatedRoutes = lazy(() => import('@/AuthenticatedRoutes'))
 const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
@@ -579,7 +582,7 @@ function SmartDTRPreview({ className }) {
 
   const goFileAttendanceCorrectionPortal = useCallback(() => {
     navigate('/login', {
-      state: { from: { pathname: '/employee/correction-requests' } },
+      state: { from: { pathname: '/employee/correction-requests' }, skipPreloader: true },
     })
   }, [navigate])
 
@@ -750,12 +753,15 @@ function SmartDTRPreview({ className }) {
 
       {/* Brand bar — AGC lockup + display theme (matches dashboard tokens) */}
       <div className="relative z-10 flex flex-wrap items-start justify-between gap-3 px-8 pt-6 pb-0 sm:px-10 xl:px-12">
-        <div className="relative h-[50px] w-[126px] shrink-0 overflow-hidden">
-          <AgcBrandLogo
-            variant="auto"
-            className="absolute left-0 top-[-37px] h-auto max-h-none w-[126px] max-w-none object-contain object-left"
-          />
-        </div>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          title="Restart page"
+          aria-label="Restart page"
+          className="cursor-pointer rounded-md transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6818]/40"
+        >
+          <AgcBrandLogoCrop preset="kiosk" variant="auto" />
+        </button>
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-2.5">
           <div className="inline-flex rounded-xl border border-border bg-card/90 p-0.5 shadow-sm dark:bg-card/80 dark:shadow-[0_2px_12px_rgba(0,0,0,0.25)]">
             <button
@@ -1729,6 +1735,10 @@ function LoginPageWrapper() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user, loading, setUser, refreshUser } = useAuth()
+  const preloaderMountRef = useRef(performance.now())
+  const showSplashOnMount = shouldShowLoginSplash(location)
+  const [preloaderVisible, setPreloaderVisible] = useState(showSplashOnMount)
+  const [preloaderExiting, setPreloaderExiting] = useState(false)
 
   const resetSuccess = Boolean(location?.state?.resetSuccess)
   const fromLocation = location?.state?.from
@@ -1782,6 +1792,49 @@ function LoginPageWrapper() {
     window.scrollTo({ top: 0, behavior: 'instant' })
   }, [])
 
+  useEffect(() => {
+    if (!showSplashOnMount) {
+      markLoginSplashShown()
+    }
+  }, [showSplashOnMount])
+
+  useEffect(() => {
+    if (loading || !preloaderVisible) return undefined
+
+    let cancelled = false
+    const minDisplayMs = 1400
+    const fadeMs = 700
+    const timers = []
+
+    const schedule = (fn, ms) => {
+      const id = window.setTimeout(fn, ms)
+      timers.push(id)
+    }
+
+    const startExit = () => {
+      const elapsed = performance.now() - preloaderMountRef.current
+      const delay = Math.max(0, minDisplayMs - elapsed)
+      schedule(() => {
+        if (cancelled) return
+        setPreloaderExiting(true)
+        schedule(() => {
+          if (!cancelled) {
+            markLoginSplashShown()
+            setPreloaderVisible(false)
+          }
+        }, fadeMs)
+      }, delay)
+    }
+
+    const fontsReady = document.fonts?.ready ?? Promise.resolve()
+    fontsReady.then(startExit).catch(startExit)
+
+    return () => {
+      cancelled = true
+      timers.forEach((id) => window.clearTimeout(id))
+    }
+  }, [loading, preloaderVisible])
+
   // Already logged in -> redirect to role dashboard
   if (!loading && user) {
     const path = targetPath || resolvePostLoginPath(user)
@@ -1802,6 +1855,7 @@ function LoginPageWrapper() {
       hydratedUser = basicUser
     }
     const path = targetPath || resolvePostLoginPath(hydratedUser)
+    markLoginSplashShown()
     navigate(path, { replace: true })
     setTimeout(() => {
       if (window.location.pathname === '/login') {
@@ -1811,16 +1865,25 @@ function LoginPageWrapper() {
   }
 
   return (
-    <div className="min-h-screen scroll-smooth bg-background text-foreground">
-      <div className="flex snap-y snap-proximity flex-col lg:grid lg:snap-none lg:grid-cols-2 lg:min-h-screen lg:items-stretch">
-        <aside className="order-1 min-h-0 shrink-0 snap-start lg:order-1 lg:flex lg:min-h-screen lg:flex-col lg:border-r lg:border-border lg:bg-background">
-          <SmartDTRPreview className="lg:min-h-full lg:flex-1" />
-        </aside>
-        <main className="order-2 min-h-screen shrink-0 snap-start scroll-mt-4 lg:order-2 lg:min-h-screen">
-          <AuthPanel onSuccess={handleAuthSuccess} resetSuccess={resetSuccess} />
-        </main>
+    <>
+      {preloaderVisible ? <LoginPagePreloader exiting={preloaderExiting} /> : null}
+      <div
+        className={cn(
+          'min-h-screen scroll-smooth bg-background text-foreground transition-opacity duration-700',
+          preloaderVisible && !preloaderExiting && 'opacity-0',
+          preloaderExiting && 'opacity-100',
+        )}
+      >
+        <div className="flex snap-y snap-proximity flex-col lg:grid lg:snap-none lg:grid-cols-2 lg:min-h-screen lg:items-stretch">
+          <aside className="order-1 min-h-0 shrink-0 snap-start lg:order-1 lg:flex lg:min-h-screen lg:flex-col lg:border-r lg:border-border lg:bg-background">
+            <SmartDTRPreview className="lg:min-h-full lg:flex-1" />
+          </aside>
+          <main className="order-2 min-h-screen shrink-0 snap-start scroll-mt-4 lg:order-2 lg:min-h-screen">
+            <AuthPanel onSuccess={handleAuthSuccess} resetSuccess={resetSuccess} />
+          </main>
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 

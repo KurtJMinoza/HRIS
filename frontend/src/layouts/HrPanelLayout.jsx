@@ -38,7 +38,7 @@ export function HrPanelLayout() {
   }
 
   if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    return <Navigate to="/login" state={{ from: location, skipPreloader: true }} replace />
   }
 
   if (!scope) {

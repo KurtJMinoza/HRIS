@@ -55,7 +55,7 @@ export default function ResetPassword() {
     setError('')
     try {
       await resetPasswordWithOtp(requestId, resetToken, password, confirm)
-      navigate('/login', { replace: true, state: { resetSuccess: true } })
+      navigate('/login', { replace: true, state: { resetSuccess: true, skipPreloader: true } })
     } catch (e2) {
       setError(e2.message)
     } finally {
@@ -129,7 +129,7 @@ export default function ResetPassword() {
               type="button"
               variant="ghost"
               className="w-full justify-center gap-2 text-muted-foreground"
-              onClick={() => navigate('/login', { replace: true })}
+              onClick={() => navigate('/login', { replace: true, state: { skipPreloader: true } })}
             >
               <ArrowLeft className="size-4" />
               Back to login

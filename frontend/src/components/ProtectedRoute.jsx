@@ -32,7 +32,7 @@ export function ProtectedRoute({ children, variant, role, permissions = [] }) {
   }
 
   if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />
+    return <Navigate to="/login" state={{ from: location, skipPreloader: true }} replace />
   }
 
   if (resolvedVariant === 'adminHr') {
