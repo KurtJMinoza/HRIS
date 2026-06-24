@@ -482,6 +482,7 @@ export default function AdminSchedules() {
     try {
       const res = await assignWorkingSchedule(assignSchedule.id, {
         employee_ids: selectedEmployeeIds.map((id) => Number(id)),
+        mode: 'replace_roster',
       })
       setEmployees((prev) => applyAssignResultToEmployees(prev, res, assignSchedule.id))
       await refreshAfterScheduleAssign(assignSchedule.id)
@@ -523,6 +524,7 @@ export default function AdminSchedules() {
     try {
       const res = await assignWorkingSchedule(assignSchedule.id, {
         employee_ids: newIds.map((x) => Number(x)),
+        mode: 'replace_roster',
       })
       setEmployees((prev) => applyAssignResultToEmployees(prev, res, assignSchedule.id))
       await refreshAfterScheduleAssign(assignSchedule.id)

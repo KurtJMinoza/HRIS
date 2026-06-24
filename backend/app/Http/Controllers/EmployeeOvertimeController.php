@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AttendanceLog;
 use App\Models\Overtime;
 use App\Models\OvertimeApprovalAudit;
 use App\Models\User;
@@ -17,7 +18,9 @@ use App\Support\PhPayrollReference;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -350,6 +353,413 @@ class EmployeeOvertimeController extends Controller
     }
 
     /**
+     * Lightweight employee overtime row for request tables.
+     *
+     * Keep this payload intentionally small: no approval history, attachment URLs,
+     * employee profile, attendance payload, audit logs, or payroll recomputation.
+     *
+     * @return array<string, mixed>
+     */
+    private function mapOvertimeTableRowForEmployee(Overtime $o, User $actor): array
+    {
+        $currentApprover = null;
+        if (($o->approval_stage ?? null) === \App\Support\HrApprovalStages::PENDING_FIRST) {
+            $currentApprover = $o->firstApprover;
+        } elseif (($o->approval_stage ?? null) === \App\Support\HrApprovalStages::PENDING_SECOND) {
+            $currentApprover = $o->secondApprover;
+        }
+
+        $canCancel = $this->canDeleteOvertimeRequest($actor, $o);
+        $canEdit = $o->status === Overtime::STATUS_PENDING
+            && (! $o->approval_stage || $o->approval_stage === \App\Support\HrApprovalStages::PENDING_FIRST);
+        $reason = trim((string) ($o->reason ?? ''));
+        $reasonSummary = null;
+        if ($reason !== '') {
+            $reasonSummary = strlen($reason) > 140 ? substr($reason, 0, 137).'...' : $reason;
+        }
+        $displayStatus = match ($o->status) {
+            Overtime::STATUS_APPROVED => 'HR Approved',
+            Overtime::STATUS_REJECTED => 'Rejected',
+            default => 'Pending',
+        };
+
+        return array_merge([
+            'id' => (int) $o->id,
+            'overtime_date' => $o->date?->toDateString(),
+            'requested_start_time' => $o->schedule_end?->format('H:i'),
+            'requested_end_time' => $o->expected_end_time?->format('H:i'),
+            'requested_hours' => (float) ($o->computed_hours ?? 0),
+            'approved_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
+            'status' => $o->status,
+            'approval_stage' => $o->approval_stage,
+            'current_approver_name' => $currentApprover?->display_name,
+            'reason_summary' => $reasonSummary,
+            'created_at' => $o->created_at?->toIso8601String(),
+            'updated_at' => $o->updated_at?->toIso8601String(),
+            'can_cancel' => $canCancel,
+            'can_view' => true,
+            'can_edit' => $canEdit,
+
+            // Compatibility aliases used by the existing shared table.
+            'date' => $o->date?->toDateString(),
+            'schedule_end' => $o->schedule_end?->format('H:i'),
+            'expected_end_time' => $o->expected_end_time?->format('H:i'),
+            'start_time' => $o->schedule_end?->format('H:i'),
+            'end_time' => $o->expected_end_time?->format('H:i'),
+            'computed_hours' => (float) ($o->computed_hours ?? 0),
+            'computed_minutes' => $o->computed_minutes,
+            'approved_ot_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
+            'actual_rendered_ot_hours' => (float) ($o->actual_rendered_ot_hours ?? 0),
+            'payable_ot_hours' => (float) ($o->payable_ot_hours ?? 0),
+            'unapproved_ot_hours' => (float) ($o->unapproved_ot_hours ?? 0),
+            'overtime_reduction_reason' => $o->overtime_reduction_reason,
+            'ot_type' => $o->ot_type,
+            'reason' => $reasonSummary,
+            'display_status' => $displayStatus,
+            'filed_at' => $o->filed_at?->toIso8601String(),
+            'actor_can_delete' => $canCancel,
+            'actor_can_approve' => false,
+            'actor_can_reject' => false,
+        ], PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
+    }
+
+    /**
+     * @return array{per_page:int,page:int}
+     */
+    private function employeeOvertimePagination(Request $request): array
+    {
+        $allowed = [10, 15, 25, 50];
+        $perPage = (int) $request->query('per_page', 15);
+        if (! in_array($perPage, $allowed, true)) {
+            $perPage = 15;
+        }
+
+        return [
+            'per_page' => $perPage,
+            'page' => max(1, (int) $request->query('page', 1)),
+        ];
+    }
+
+    /**
+     * @return array{status:string,from_date:?string,to_date:?string,date_filter:string,search:string}
+     */
+    private function employeeOvertimeFilters(Request $request): array
+    {
+        $status = strtolower((string) $request->query('status', 'all'));
+        if (! in_array($status, ['all', Overtime::STATUS_PENDING, Overtime::STATUS_APPROVED, Overtime::STATUS_REJECTED, 'cancelled'], true)) {
+            $status = 'all';
+        }
+
+        $from = $request->query('from_date');
+        $to = $request->query('to_date');
+        $from = is_string($from) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from) ? $from : null;
+        $to = is_string($to) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $to) ? $to : null;
+        $hasExplicitRange = $from !== null || $to !== null;
+
+        $dateFilter = strtolower((string) $request->query('date_filter', $hasExplicitRange ? 'range' : 'recent'));
+        if (! in_array($dateFilter, ['recent', 'range', 'current_month', 'last_month', 'this_year', 'all'], true)) {
+            $dateFilter = $hasExplicitRange ? 'range' : 'recent';
+        }
+
+        $today = Carbon::now($this->attendanceTimezone());
+        if ($dateFilter === 'current_month') {
+            $from = $today->copy()->startOfMonth()->toDateString();
+            $to = $today->copy()->endOfMonth()->toDateString();
+        } elseif ($dateFilter === 'last_month') {
+            $last = $today->copy()->subMonthNoOverflow();
+            $from = $last->copy()->startOfMonth()->toDateString();
+            $to = $last->copy()->endOfMonth()->toDateString();
+        } elseif ($dateFilter === 'this_year') {
+            $from = $today->copy()->startOfYear()->toDateString();
+            $to = $today->copy()->endOfYear()->toDateString();
+        } elseif ($dateFilter === 'recent') {
+            $from = $today->copy()->subDays(60)->toDateString();
+            $to = $today->toDateString();
+        }
+
+        $search = trim((string) $request->query('search', ''));
+        if (strlen($search) < 2) {
+            $search = '';
+        }
+
+        return [
+            'status' => $status,
+            'from_date' => $from,
+            'to_date' => $to,
+            'date_filter' => $dateFilter,
+            'search' => $search,
+        ];
+    }
+
+    private function applyEmployeeOvertimeFilters(\Illuminate\Database\Eloquent\Builder $query, array $filters): void
+    {
+        if (($filters['status'] ?? 'all') !== 'all') {
+            $query->where('status', $filters['status']);
+        }
+        if (! empty($filters['from_date'])) {
+            $query->whereDate('date', '>=', $filters['from_date']);
+        }
+        if (! empty($filters['to_date'])) {
+            $query->whereDate('date', '<=', $filters['to_date']);
+        }
+        if (! empty($filters['search'])) {
+            $needle = '%'.str_replace(['%', '_'], ['\%', '\_'], $filters['search']).'%';
+            $query->where(function ($q) use ($needle): void {
+                $q->where('reason', 'like', $needle)
+                    ->orWhere('ot_type', 'like', $needle)
+                    ->orWhere('status', 'like', $needle);
+            });
+        }
+    }
+
+    /**
+     * Cached lightweight employee request table.
+     */
+    public function myRequestsTable(Request $request): JsonResponse
+    {
+        $started = microtime(true);
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw ValidationException::withMessages(['user' => ['Unauthenticated.']]);
+        }
+        $this->ensureSelfOvertimeAccess($user);
+        $this->beginEmployeeOvertimeQueryLog();
+
+        $paginationInput = $this->employeeOvertimePagination($request);
+        $filters = $this->employeeOvertimeFilters($request);
+        $filtersHash = md5(json_encode([$filters, $paginationInput], JSON_THROW_ON_ERROR));
+        $version = OvertimeModuleCache::version();
+        $cacheKey = "employee:overtime:list:{$user->id}:v{$version}:{$paginationInput['page']}:{$filtersHash}";
+        $cacheHit = Cache::has($cacheKey);
+
+        $payload = Cache::remember($cacheKey, now()->addSeconds(60), function () use ($user, $paginationInput, $filters) {
+            $query = Overtime::query()
+                ->select([
+                    'id',
+                    'user_id',
+                    'date',
+                    'schedule_end',
+                    'expected_end_time',
+                    'computed_minutes',
+                    'computed_hours',
+                    'approved_ot_hours',
+                    'actual_rendered_ot_hours',
+                    'payable_ot_hours',
+                    'unapproved_ot_hours',
+                    'overtime_reduction_reason',
+                    'ot_type',
+                    'ph_ot_rule',
+                    'reason',
+                    'status',
+                    'approval_stage',
+                    'pending_approval',
+                    'first_approver_id',
+                    'second_approver_id',
+                    'rejected_at',
+                    'filed_at',
+                    'filed_by',
+                    'created_at',
+                    'updated_at',
+                ])
+                ->where('user_id', $user->id)
+                ->with([
+                    'firstApprover:id,name,first_name,middle_name,last_name,suffix',
+                    'secondApprover:id,name,first_name,middle_name,last_name,suffix',
+                ]);
+
+            $this->applyEmployeeOvertimeFilters($query, $filters);
+
+            $paginator = $query
+                ->orderByDesc('date')
+                ->orderByDesc('id')
+                ->paginate(
+                    $paginationInput['per_page'],
+                    ['*'],
+                    'page',
+                    $paginationInput['page'],
+                );
+
+            $rows = $paginator->getCollection()
+                ->map(fn (Overtime $overtime) => $this->mapOvertimeTableRowForEmployee($overtime, $user))
+                ->values()
+                ->all();
+
+            return [
+                'overtimes' => $rows,
+                'rows' => $rows,
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                    'last_page' => $paginator->lastPage(),
+                    'from' => $paginator->firstItem(),
+                    'to' => $paginator->lastItem(),
+                ],
+                'filters' => $filters,
+            ];
+        });
+
+        $payload['counts'] = $this->cachedEmployeeOvertimeCounts((int) $user->id);
+        $this->logEmployeeOvertimePerformance('employee.overtime.requests', $user, $cacheHit, count($payload['rows'] ?? []), $started);
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Cached aggregate status counts for employee overtime.
+     *
+     * @return array<string, int>
+     */
+    private function cachedEmployeeOvertimeCounts(int $employeeId): array
+    {
+        $version = OvertimeModuleCache::version();
+        $key = "employee:overtime:counts:{$employeeId}:v{$version}";
+
+        return Cache::remember($key, now()->addSeconds(60), function () use ($employeeId): array {
+            $rows = Overtime::query()
+                ->select('status', DB::raw('COUNT(*) as aggregate'))
+                ->where('user_id', $employeeId)
+                ->groupBy('status')
+                ->pluck('aggregate', 'status')
+                ->map(fn ($count) => (int) $count)
+                ->all();
+
+            return [
+                'total' => array_sum($rows),
+                'pending' => (int) ($rows[Overtime::STATUS_PENDING] ?? 0),
+                'approved' => (int) ($rows[Overtime::STATUS_APPROVED] ?? 0),
+                'rejected' => (int) ($rows[Overtime::STATUS_REJECTED] ?? 0),
+                'cancelled' => (int) ($rows['cancelled'] ?? 0),
+            ];
+        });
+    }
+
+    public function myDetailsLite(Request $request, int $id): JsonResponse
+    {
+        $started = microtime(true);
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw ValidationException::withMessages(['user' => ['Unauthenticated.']]);
+        }
+        $this->ensureSelfOvertimeAccess($user);
+        $this->beginEmployeeOvertimeQueryLog();
+
+        $version = OvertimeModuleCache::version();
+        $key = "employee:overtime:details:{$user->id}:{$id}:v{$version}";
+        $cacheHit = Cache::has($key);
+
+        $overtime = Cache::remember($key, now()->addMinutes(3), function () use ($user, $id): array {
+            $row = Overtime::query()
+                ->where('user_id', $user->id)
+                ->whereKey($id)
+                ->with([
+                    'approvedBy:id,name,first_name,middle_name,last_name,suffix',
+                    'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
+                    'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                    'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                    'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+                    'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
+                ])
+                ->firstOrFail();
+
+            $payload = $this->mapOvertimeRowForEmployee($row, $user);
+            $payload['request_summary'] = [
+                'id' => (int) $row->id,
+                'date' => $row->date?->toDateString(),
+                'status' => $row->status,
+                'requested_hours' => (float) ($row->computed_hours ?? 0),
+                'approved_hours' => $row->approved_ot_hours !== null ? (float) $row->approved_ot_hours : null,
+            ];
+            $payload['attendance_context'] = $this->attendanceContextForOvertime($row);
+            $payload['payroll_impact_summary'] = [
+                'approved_ot_hours' => $row->approved_ot_hours !== null ? (float) $row->approved_ot_hours : null,
+                'actual_rendered_ot_hours' => (float) ($row->actual_rendered_ot_hours ?? 0),
+                'payable_ot_hours' => (float) ($row->payable_ot_hours ?? 0),
+                'unapproved_ot_hours' => (float) ($row->unapproved_ot_hours ?? 0),
+                'overtime_reduction_reason' => $row->overtime_reduction_reason,
+            ];
+
+            return $payload;
+        });
+
+        $this->logEmployeeOvertimePerformance('employee.overtime.details_lite', $user, $cacheHit, 1, $started);
+
+        return response()->json(['overtime' => $overtime]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function attendanceContextForOvertime(Overtime $overtime): array
+    {
+        $date = $overtime->date?->toDateString();
+        if (! $date) {
+            return ['date' => null, 'logs' => []];
+        }
+
+        $tz = $this->attendanceTimezone();
+        $start = Carbon::parse($date.' 00:00:00', $tz)->utc();
+        $end = Carbon::parse($date.' 23:59:59', $tz)->utc();
+
+        $logs = AttendanceLog::query()
+            ->select(['id', 'type', 'verified_at', 'authentication_method', 'method'])
+            ->where('user_id', $overtime->user_id)
+            ->whereBetween('verified_at', [$start, $end])
+            ->orderBy('verified_at')
+            ->limit(12)
+            ->get()
+            ->map(fn (AttendanceLog $log): array => [
+                'id' => (int) $log->id,
+                'type' => $log->type,
+                'verified_at' => $log->verified_at?->toIso8601String(),
+                'method' => $log->authentication_method ?: $log->method,
+            ])
+            ->all();
+
+        return [
+            'date' => $date,
+            'logs' => $logs,
+        ];
+    }
+
+    private function logEmployeeOvertimePerformance(string $endpoint, User $user, bool $cacheHit, int $rowsReturned, float $started): void
+    {
+        try {
+            $queryLog = DB::getQueryLog();
+            $dbTimeMs = array_sum(array_map(static fn (array $query): float => (float) ($query['time'] ?? 0), $queryLog));
+            Log::info('employee_overtime.performance', [
+                'endpoint' => $endpoint,
+                'employee_id' => (int) $user->id,
+                'query_count' => count($queryLog),
+                'db_time_ms' => round($dbTimeMs, 2),
+                'cache_hit' => $cacheHit,
+                'rows_returned' => $rowsReturned,
+                'response_time_ms' => (int) round((microtime(true) - $started) * 1000),
+            ]);
+        } catch (\Throwable) {
+            // Never let performance logging affect employee overtime flows.
+        } finally {
+            try {
+                DB::disableQueryLog();
+            } catch (\Throwable) {
+                //
+            }
+        }
+    }
+
+    private function beginEmployeeOvertimeQueryLog(): void
+    {
+        try {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+        } catch (\Throwable) {
+            //
+        }
+    }
+
+    /**
      * List overtime records for the authenticated employee.
      */
     public function myIndex(Request $request): JsonResponse
@@ -612,33 +1022,47 @@ class EmployeeOvertimeController extends Controller
         ]);
 
         $dateYmd = Carbon::parse($request->query('date'))->toDateString();
+        $version = OvertimeModuleCache::version();
+        $cacheKey = "employee:overtime:form_context:{$user->id}:{$dateYmd}:v{$version}";
 
-        $phOtOptions = PhPayrollReference::otMultiplierDropdownOptions();
+        $payload = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($user, $dateYmd): array {
+            $phOtOptions = PhPayrollReference::otMultiplierDropdownOptions();
+            $defaultPhOtRule = 'ORD';
+            $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
+            $detectedSegments = $this->mapDetectedSegmentsForFiling($detected);
 
-        $defaultPhOtRule = 'ORD';
-        $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
-        $detectedSegments = $this->mapDetectedSegmentsForFiling($detected);
+            return [
+                'date' => $dateYmd,
+                'filing_window_days' => null,
+                'earliest_allowed_date' => null,
+                'has_assigned_schedule' => true,
+                'is_workday' => true,
+                'schedule_start' => null,
+                'schedule_end' => null,
+                'overnight_shift' => false,
+                'has_clock_in' => false,
+                'has_clock_out' => false,
+                'last_clock_out_at' => null,
+                'mode' => 'flexible',
+                'mode_label' => 'Flexible OT filing',
+                'help' => 'File OT anytime using your preferred start and end time range.',
+                'detected_segments' => $detectedSegments,
+                'ph_ot_rule_options' => $phOtOptions,
+                'default_ph_ot_rule' => $defaultPhOtRule,
+                'ph_ot_rule_help' => 'Select the PH pay condition if needed. You can file regardless of schedule, rest day, or holiday.',
+            ];
+        });
 
-        return response()->json([
-            'date' => $dateYmd,
-            'filing_window_days' => null,
-            'earliest_allowed_date' => null,
-            'has_assigned_schedule' => true,
-            'is_workday' => true,
-            'schedule_start' => null,
-            'schedule_end' => null,
-            'overnight_shift' => false,
-            'has_clock_in' => false,
-            'has_clock_out' => false,
-            'last_clock_out_at' => null,
-            'mode' => 'flexible',
-            'mode_label' => 'Flexible OT filing',
-            'help' => 'File OT anytime using your preferred start and end time range.',
-            'detected_segments' => $detectedSegments,
-            'ph_ot_rule_options' => $phOtOptions,
-            'default_ph_ot_rule' => $defaultPhOtRule,
-            'ph_ot_rule_help' => 'Select the PH pay condition if needed. You can file regardless of schedule, rest day, or holiday.',
-        ]);
+        return response()->json($payload);
+    }
+
+    public function formContext(Request $request): JsonResponse
+    {
+        if (! $request->query('date')) {
+            $request->query->set('date', Carbon::now($this->attendanceTimezone())->toDateString());
+        }
+
+        return $this->requestContext($request);
     }
 
     /**

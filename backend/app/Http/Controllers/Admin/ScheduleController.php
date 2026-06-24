@@ -6,8 +6,11 @@ use App\Events\ScheduleUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\WorkingSchedule;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class ScheduleController extends Controller
 {
@@ -213,11 +216,156 @@ class ScheduleController extends Controller
         $validated = $request->validate([
             'employee_ids' => ['required', 'array', 'min:1'],
             'employee_ids.*' => ['integer', 'exists:users,id'],
+            'effective_date' => ['nullable', 'date'],
+            'mode' => ['nullable', 'string', 'in:assign_only,replace_roster'],
         ]);
 
-        // `employee_ids` = desired roster for THIS shift after the update (full list, not per-row toggle).
+        // By default, `employee_ids` means only the selected employees to assign/reassign.
+        // The Schedule roster editor sends mode=replace_roster when it intentionally wants
+        // unchecked employees on this same schedule to be unassigned.
         $desiredIds = array_values(array_unique(array_map('intval', $validated['employee_ids'])));
         $scheduleId = (int) $schedule->id;
+        $mode = $validated['mode'] ?? 'assign_only';
+        $effectiveDate = isset($validated['effective_date']) && $validated['effective_date']
+            ? Carbon::parse($validated['effective_date'])->toDateString()
+            : null;
+        $isFutureAssignment = $effectiveDate !== null
+            && Carbon::parse($effectiveDate)->gt(Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfDay());
+
+        $selectedEmployees = User::query()
+            ->visibleEmployees()
+            ->whereIn('id', $desiredIds)
+            ->get();
+
+        $visibleSelectedIds = $selectedEmployees
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $createdCount = 0;
+        $updatedCount = 0;
+        $skippedCount = count(array_diff($desiredIds, $visibleSelectedIds));
+        $unassignedCount = 0;
+        $assignedIds = [];
+        $unassignedIds = [];
+        $affectedIds = [];
+        $assignmentAudit = [];
+
+        foreach ($selectedEmployees as $employee) {
+            $oldWorkingScheduleId = $employee->working_schedule_id !== null ? (int) $employee->working_schedule_id : null;
+            $oldPendingScheduleId = $employee->pending_working_schedule_id !== null ? (int) $employee->pending_working_schedule_id : null;
+            $oldScheduleSnapshot = [
+                'working_schedule_id' => $oldWorkingScheduleId,
+                'pending_working_schedule_id' => $oldPendingScheduleId,
+                'pending_schedule_effective_from' => $employee->pending_schedule_effective_from,
+                'has_custom_schedule' => $this->hasWorkingDays($employee->schedule),
+            ];
+            $hadScheduleAssignment = $oldWorkingScheduleId !== null
+                || $oldPendingScheduleId !== null
+                || $oldScheduleSnapshot['has_custom_schedule'];
+
+            if ($isFutureAssignment) {
+                $employee->pending_working_schedule_id = $scheduleId;
+                $employee->pending_schedule_effective_from = $effectiveDate;
+            } else {
+                $employee->schedule = null;
+                $employee->working_schedule_id = $scheduleId;
+                $employee->pending_working_schedule_id = null;
+                $employee->pending_schedule_effective_from = null;
+            }
+
+            if (! $employee->isDirty(['schedule', 'working_schedule_id', 'pending_working_schedule_id', 'pending_schedule_effective_from'])) {
+                continue;
+            }
+
+            $employee->save();
+
+            if ($hadScheduleAssignment) {
+                $updatedCount++;
+            } else {
+                $createdCount++;
+            }
+
+            $employeeId = (int) $employee->id;
+            $assignedIds[] = $employeeId;
+            $affectedIds[] = $employeeId;
+            $assignmentAudit[] = [
+                'employee_id' => $employeeId,
+                'old' => $oldScheduleSnapshot,
+                'new' => [
+                    'working_schedule_id' => $isFutureAssignment ? $oldWorkingScheduleId : $scheduleId,
+                    'pending_working_schedule_id' => $isFutureAssignment ? $scheduleId : null,
+                    'pending_schedule_effective_from' => $isFutureAssignment ? $effectiveDate : null,
+                ],
+            ];
+            $this->forgetEmployeeScheduleCaches($employeeId);
+        }
+
+        if ($mode === 'replace_roster') {
+            $employeesToUnassign = User::query()
+                ->visibleEmployees()
+                ->where('working_schedule_id', $scheduleId)
+                ->whereNotIn('id', $desiredIds)
+                ->get();
+
+            foreach ($employeesToUnassign as $employee) {
+                $employee->schedule = null;
+                $employee->working_schedule_id = null;
+                $employee->pending_working_schedule_id = null;
+                $employee->pending_schedule_effective_from = null;
+
+                if (! $employee->isDirty(['schedule', 'working_schedule_id', 'pending_working_schedule_id', 'pending_schedule_effective_from'])) {
+                    continue;
+                }
+
+                $employee->save();
+
+                $employeeId = (int) $employee->id;
+                $unassignedCount++;
+                $unassignedIds[] = $employeeId;
+                $affectedIds[] = $employeeId;
+                $this->forgetEmployeeScheduleCaches($employeeId);
+            }
+        }
+
+        Log::info('schedule_bulk_assignment', [
+            'selected_employee_count' => count($desiredIds),
+            'schedule_template_id' => $scheduleId,
+            'effective_date' => $effectiveDate,
+            'mode' => $mode,
+            'updated_count' => $updatedCount,
+            'created_count' => $createdCount,
+            'skipped_count' => $skippedCount,
+            'unassigned_count' => $unassignedCount,
+            'assignments' => $assignmentAudit,
+        ]);
+
+        $message = [];
+        if ($createdCount > 0) {
+            $message[] = "{$createdCount} assigned.";
+        }
+        if ($updatedCount > 0) {
+            $message[] = "{$updatedCount} reassigned.";
+        }
+        if ($unassignedCount > 0) {
+            $message[] = "{$unassignedCount} unassigned.";
+        }
+
+        $affectedIds = array_values(array_unique(array_map('intval', $affectedIds)));
+        if ($affectedIds !== []) {
+            ScheduleUpdated::dispatch($schedule->fresh(), $affectedIds, 'assigned');
+        }
+
+        return response()->json([
+            'message' => implode(' ', $message) ?: 'No changes.',
+            'assigned_count' => $createdCount + $updatedCount,
+            'created_count' => $createdCount,
+            'updated_count' => $updatedCount,
+            'skipped_count' => $skippedCount,
+            'unassigned_count' => $unassignedCount,
+            'assigned_ids' => $assignedIds,
+            'unassigned_ids' => $unassignedIds,
+        ]);
 
         $currentlyOnShift = User::query()
             ->visibleEmployees()
@@ -315,6 +463,13 @@ class ScheduleController extends Controller
             'assigned_ids' => $toAssign,
             'unassigned_ids' => $toUnassign,
         ]);
+    }
+
+    private function forgetEmployeeScheduleCaches(int $employeeId): void
+    {
+        Cache::forget("employee:schedule:{$employeeId}");
+        Cache::forget("employee:calendar:{$employeeId}");
+        Cache::forget("attendance:schedule:{$employeeId}");
     }
 
     private function hasWorkingDays(?array $schedule): bool

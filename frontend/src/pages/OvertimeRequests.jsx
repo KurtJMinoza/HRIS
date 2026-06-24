@@ -78,6 +78,7 @@ import {
   getMyOrganizationAssignments,
   getMyOvertimeRequestContext,
   getMyOvertimeRequests,
+  getAllMyOvertimeRequestsInRange,
   getMyOvertimeDetail,
   getMyAttendanceSummary,
   updateMyOvertimeRequest,
@@ -557,7 +558,19 @@ const STATUS_CHIPS = [
   { value: 'pending', label: 'Pending' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
+  { value: 'cancelled', label: 'Cancelled' },
 ]
+
+const EMPLOYEE_OT_DATE_FILTERS = [
+  { value: 'recent', label: 'Latest 60 days' },
+  { value: 'current_month', label: 'Current month' },
+  { value: 'last_month', label: 'Last month' },
+  { value: 'this_year', label: 'This year' },
+  { value: 'all', label: 'All dates' },
+]
+
+const EMPLOYEE_OT_PAGE_SIZES = [10, 15, 25, 50]
+const UNFILED_OT_PAGE_SIZE = 4
 
 const employeeOvertimeCardClass =
   'rounded-[18px] border border-border/70 bg-card shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
@@ -814,12 +827,27 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const detailAbortRef = useRef(null)
   const [unfiledLoading, setUnfiledLoading] = useState(false)
   const [unfiledRows, setUnfiledRows] = useState([])
+  const [unfiledPage, setUnfiledPage] = useState(1)
 
   const [allStatus, setAllStatus] = useState('all')
   const [allFrom, setAllFrom] = useState('')
   const [allTo, setAllTo] = useState('')
   const [allPage, setAllPage] = useState(1)
   const [allPagination, setAllPagination] = useState(null)
+  const [mineStatus, setMineStatus] = useState(() => searchParams.get('status') || 'all')
+  const [mineDateFilter, setMineDateFilter] = useState(() => searchParams.get('date_filter') || 'recent')
+  const [mineSearchInput, setMineSearchInput] = useState(() => searchParams.get('search') || '')
+  const [mineSearch, setMineSearch] = useState(() => {
+    const raw = searchParams.get('search') || ''
+    return raw.trim().length >= 2 ? raw.trim() : ''
+  })
+  const [minePage, setMinePage] = useState(() => Math.max(1, Number(searchParams.get('page') || 1) || 1))
+  const [minePerPage, setMinePerPage] = useState(() => {
+    const raw = Number(searchParams.get('per_page') || 15)
+    return EMPLOYEE_OT_PAGE_SIZES.includes(raw) ? raw : 15
+  })
+  const [minePagination, setMinePagination] = useState(null)
+  const [mineCounts, setMineCounts] = useState(null)
 
   const [fileOpen, setFileOpen] = useState(false)
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10))
@@ -910,27 +938,70 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const loadMine = useCallback(async (opts = {}) => {
     setLoadingMine(true)
     try {
-      const res =
-        !isHr
-          ? await getMyOvertimeRequests({ per_page: 25, from_date: monthFrom, to_date: monthTo, signal: opts.signal })
-          : await getMyOvertimeRequests({ per_page: 25, signal: opts.signal })
+      const res = await getMyOvertimeRequests({
+        page: minePage,
+        per_page: minePerPage,
+        status: mineStatus !== 'all' ? mineStatus : undefined,
+        date_filter: mineDateFilter,
+        search: mineSearch || undefined,
+        signal: opts.signal,
+      })
       setMineItems(Array.isArray(res.overtimes) ? res.overtimes : [])
+      setMinePagination(res.pagination || null)
+      setMineCounts(res.counts || null)
     } catch (e) {
       if (e?.name === 'AbortError') return
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
-      setMineItems([])
+      setMineItems((rows) => rows)
     } finally {
       if (!opts.signal?.aborted) setLoadingMine(false)
     }
-  }, [toast, isHr, monthFrom, monthTo])
+  }, [toast, minePage, minePerPage, mineStatus, mineDateFilter, mineSearch])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const next = mineSearchInput.trim()
+      setMineSearch(next.length >= 2 ? next : '')
+      setMinePage(1)
+    }, 350)
+
+    return () => window.clearTimeout(timer)
+  }, [mineSearchInput])
+
+  useEffect(() => {
+    if (isHr || tab !== 'mine') return
+    const next = new URLSearchParams(searchParams.toString())
+    if (mineStatus && mineStatus !== 'all') next.set('status', mineStatus)
+    else next.delete('status')
+    if (mineDateFilter && mineDateFilter !== 'recent') next.set('date_filter', mineDateFilter)
+    else next.delete('date_filter')
+    if (mineSearch) next.set('search', mineSearch)
+    else next.delete('search')
+    if (minePage > 1) next.set('page', String(minePage))
+    else next.delete('page')
+    if (minePerPage !== 15) next.set('per_page', String(minePerPage))
+    else next.delete('per_page')
+
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true })
+    }
+  }, [isHr, tab, mineStatus, mineDateFilter, mineSearch, minePage, minePerPage, searchParams, setSearchParams])
 
   const loadUnfiledForMonth = useCallback(async () => {
     if (isHr) return
     setUnfiledLoading(true)
     try {
+      const seenStorageKey = `hris:employee-overtime:seen-unfiled:${user?.id || 'me'}`
+      let seenRaw = []
+      try {
+        seenRaw = JSON.parse(window.localStorage.getItem(seenStorageKey) || '[]')
+      } catch {
+        seenRaw = []
+      }
+      const seenKeys = new Set(Array.isArray(seenRaw) ? seenRaw.map((item) => String(item)).filter(Boolean) : [])
       const attendance = await getMyAttendanceSummary({ from_date: monthFrom, to_date: monthTo })
       const days = Array.isArray(attendance?.days) ? attendance.days : []
-      const requests = Array.isArray(mineItems) ? mineItems : []
+      const requests = await getAllMyOvertimeRequestsInRange(monthFrom, monthTo, { dashboard_lite: true })
 
       const requestsByDate = {}
       for (const r of requests) {
@@ -963,22 +1034,39 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
         const summary = formatUnfiledOtClockSummary12h(unfiledPre, unfiledPost, unfiledH)
         if (!summary) continue
+        const preEndMinutes = unfiledPre ? timeToMinutes(unfiledPre.end ?? unfiledPre.end_time) : null
+        const postEndMinutes = unfiledPost ? timeToMinutes(unfiledPost.end ?? unfiledPost.end_time) : null
+        const sortMinutes = Math.max(preEndMinutes ?? -1, postEndMinutes ?? -1)
         rows.push({
+          key: `${normalizeAttendanceDateYmd(d.date) || String(d.date ?? '').trim().slice(0, 10)}:${unfiledPre ? 'pre' : ''}:${unfiledPost ? 'post' : ''}:${summary}`,
           date: normalizeAttendanceDateYmd(d.date) || String(d.date ?? '').trim().slice(0, 10),
+          sortMinutes,
           rawHours: roundHours1(unfiledH),
           pre: unfiledPre,
           post: unfiledPost,
           summary,
         })
       }
-      rows.sort((a, b) => String(b.date).localeCompare(String(a.date)))
-      setUnfiledRows(rows)
+      rows.sort((a, b) => {
+        const dateCompare = String(b.date).localeCompare(String(a.date))
+        if (dateCompare !== 0) return dateCompare
+        return (Number(b.sortMinutes) || 0) - (Number(a.sortMinutes) || 0)
+      })
+      const latestRow = rows[0] || null
+      const latestKey = latestRow ? String(latestRow.key) : ''
+      const markedRows = rows.map((row) => ({
+        ...row,
+        isNew: String(row.key) === latestKey && !seenKeys.has(String(row.key)),
+      }))
+      setUnfiledRows(markedRows)
+      setUnfiledPage(1)
+      window.localStorage.setItem(seenStorageKey, JSON.stringify(rows.map((row) => row.key).slice(0, 200)))
     } catch {
       setUnfiledRows([])
     } finally {
       setUnfiledLoading(false)
     }
-  }, [isHr, monthFrom, monthTo, mineItems])
+  }, [isHr, monthFrom, monthTo, user?.id])
 
   const loadAll = useCallback(async (opts = {}) => {
     setLoadingAll(true)
@@ -1249,6 +1337,16 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   })
 
   const totalAllPages = allPagination?.last_page || 1
+  const totalMinePages = minePagination?.last_page || 1
+  const totalUnfiledPages = Math.max(1, Math.ceil(unfiledRows.length / UNFILED_OT_PAGE_SIZE))
+  const visibleUnfiledRows = useMemo(
+    () => unfiledRows.slice((unfiledPage - 1) * UNFILED_OT_PAGE_SIZE, unfiledPage * UNFILED_OT_PAGE_SIZE),
+    [unfiledRows, unfiledPage],
+  )
+
+  useEffect(() => {
+    setUnfiledPage((page) => Math.min(Math.max(1, page), totalUnfiledPages))
+  }, [totalUnfiledPages])
 
   function openFile(optsMaybe) {
     const opts =
@@ -1293,7 +1391,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setSubmitError(null)
     setSubmitting(true)
     try {
-      await createMyOvertimeRequest({
+      const res = await createMyOvertimeRequest({
         date,
         start_time: startTime,
         end_time: endTime,
@@ -1306,7 +1404,12 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       })
       toast({ title: 'Overtime requested', description: 'Your request was submitted for approval.', variant: 'success' })
       setFileOpen(false)
-      await loadMine()
+      const created = Array.isArray(res?.overtimes) ? res.overtimes : []
+      if (created.length > 0) {
+        setMinePage(1)
+        setMineItems((rows) => [...created, ...rows.filter((row) => !created.some((item) => String(item.id) === String(row.id)))].slice(0, minePerPage))
+      }
+      void loadMine()
       if (tab === 'all') await loadAll()
     } catch (err) {
       setSubmitError(err.message)
@@ -1696,17 +1799,36 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         {!isHr && tab === 'mine' && (
           <Card className={cn(employeeOvertimeCardClass, 'overflow-hidden')}>
             <CardHeader className="px-4 py-5 @sm:px-5 md:px-6">
-              <div className="flex items-start gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
-                  <Timer className="size-5" aria-hidden />
-                </span>
-                <div className="min-w-0 space-y-2">
-                  <CardTitle className="text-xl font-semibold tracking-tight text-foreground">Unfiled OT (clock)</CardTitle>
-                  <CardDescription className="space-y-1 text-sm leading-relaxed text-muted-foreground">
-                    <span className="block">Detected from your clock logs for the current month.</span>
-                    <span className="block">Use the same windows when filing pre-shift or post-shift overtime.</span>
-                  </CardDescription>
+              <div className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between">
+                <div className="flex items-start gap-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                    <Timer className="size-5" aria-hidden />
+                  </span>
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CardTitle className="text-xl font-semibold tracking-tight text-foreground">Unfiled OT (clock)</CardTitle>
+                      {unfiledRows.some((row) => row.isNew) ? (
+                        <Badge className="rounded-full border border-emerald-500/20 bg-emerald-100 px-2.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-emerald-700 shadow-none dark:bg-emerald-950/45 dark:text-emerald-200">
+                          NEW
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <CardDescription className="space-y-1 text-sm leading-relaxed text-muted-foreground">
+                      <span className="block">Detected from your clock logs for the current month.</span>
+                      <span className="block">Shows 4 items per page in a 2-column layout.</span>
+                    </CardDescription>
+                  </div>
                 </div>
+                {unfiledRows.length > 0 ? (
+                  <div className="flex shrink-0 items-center gap-2 text-xs font-semibold text-muted-foreground">
+                    <span className="tabular-nums">
+                      {unfiledRows.length} item{unfiledRows.length === 1 ? '' : 's'}
+                    </span>
+                    {totalUnfiledPages > 1 ? (
+                      <span className="tabular-nums">• Page {unfiledPage} of {totalUnfiledPages}</span>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </CardHeader>
             <CardContent className="space-y-3 px-4 pb-5 @sm:px-5 md:px-6">
@@ -1720,8 +1842,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     No unfiled clock OT detected for this month.
                   </div>
                 ) : (
+                <>
                 <div className="grid gap-3 @lg:grid-cols-2">
-                  {unfiledRows.map((r) => {
+                  {visibleUnfiledRows.map((r) => {
                     const segments = []
                     const rowDate = normalizeAttendanceDateYmd(r.date) || String(r.date ?? '').trim().slice(0, 10)
                     const preMerged = r.pre ? { ...r.pre, key: 'pre_shift' } : null
@@ -1763,9 +1886,16 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       <div key={rowDate} className="rounded-xl border border-border/70 bg-card p-4 shadow-sm dark:border-white/10">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="text-base font-semibold tracking-tight text-foreground">
-                              {formatDateShort(`${rowDate}T12:00:00`)}
-                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-base font-semibold tracking-tight text-foreground">
+                                {formatDateShort(`${rowDate}T12:00:00`)}
+                              </p>
+                              {r.isNew ? (
+                                <Badge className="rounded-full border border-emerald-500/20 bg-emerald-100 px-2 py-0 text-[10px] font-black uppercase tracking-wide text-emerald-700 shadow-none dark:bg-emerald-950/45 dark:text-emerald-200">
+                                  NEW
+                                </Badge>
+                              ) : null}
+                            </div>
                             <p className="mt-0.5 text-xs uppercase tracking-wide text-muted-foreground">
                               Unfiled OT (clock)
                             </p>
@@ -1841,6 +1971,34 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     )
                   })}
                 </div>
+                {totalUnfiledPages > 1 ? (
+                  <div className="mt-4 flex items-center justify-center gap-2 border-t border-border/50 pt-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-9 rounded-lg"
+                      disabled={unfiledPage <= 1}
+                      onClick={() => setUnfiledPage((page) => Math.max(1, page - 1))}
+                    >
+                      <ChevronLeft className="size-4" aria-hidden />
+                    </Button>
+                    <span className="flex h-9 min-w-9 items-center justify-center rounded-lg bg-brand px-3 text-sm font-bold tabular-nums text-brand-foreground shadow-sm">
+                      {unfiledPage}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-9 rounded-lg"
+                      disabled={unfiledPage >= totalUnfiledPages}
+                      onClick={() => setUnfiledPage((page) => Math.min(totalUnfiledPages, page + 1))}
+                    >
+                      <ChevronRight className="size-4" aria-hidden />
+                    </Button>
+                  </div>
+                ) : null}
+                </>
               )}
             </CardContent>
           </Card>
@@ -1964,6 +2122,101 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   approving={bulkApproving}
                   progress={bulkProgress}
                 />
+              </div>
+            )}
+
+            {tab === 'mine' && (
+              <div className="flex flex-col gap-4 border-b border-border/40 px-4 py-5 @sm:px-6 md:px-8">
+                <div className="flex flex-col gap-3 @lg:flex-row @lg:items-center @lg:justify-between">
+                  <div
+                    className="inline-flex min-w-0 flex-wrap gap-2 rounded-2xl border border-slate-200/80 bg-white p-1 shadow-inner dark:border-slate-700 dark:bg-slate-900/40"
+                    role="group"
+                    aria-label="Filter my overtime requests by status"
+                  >
+                    {STATUS_CHIPS.map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setMineStatus(value)
+                          setMinePage(1)
+                        }}
+                        className={cn(
+                          'rounded-xl px-4 py-2.5 text-sm font-semibold transition-all',
+                          mineStatus === value
+                            ? 'bg-slate-900 text-white shadow-md dark:bg-white dark:text-slate-900'
+                            : 'text-muted-foreground hover:bg-slate-50 hover:text-foreground dark:hover:bg-slate-800/80'
+                        )}
+                      >
+                        {label}
+                        {mineCounts && value !== 'all' ? (
+                          <span className="ml-2 rounded-full bg-black/10 px-1.5 py-0.5 text-[11px] dark:bg-white/15">
+                            {mineCounts[value] ?? 0}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                  {loadingMine && mineItems.length > 0 ? (
+                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                      <Loader2 className="size-3.5 animate-spin" />
+                      Updating
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-3 @lg:grid-cols-[minmax(15rem,1fr)_13rem_9rem]">
+                  <div className="relative">
+                    <Input
+                      value={mineSearchInput}
+                      onChange={(event) => setMineSearchInput(event.target.value)}
+                      placeholder="Search reason or category..."
+                      className="h-11 rounded-xl border-border/80 bg-background pl-10 text-sm font-medium shadow-sm dark:bg-background/40"
+                    />
+                    <Info className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/70" aria-hidden />
+                  </div>
+                  <Select
+                    value={mineDateFilter}
+                    onValueChange={(value) => {
+                      setMineDateFilter(value)
+                      setMinePage(1)
+                    }}
+                  >
+                    <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background text-sm font-semibold shadow-sm dark:bg-background/40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EMPLOYEE_OT_DATE_FILTERS.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={String(minePerPage)}
+                    onValueChange={(value) => {
+                      setMinePerPage(Number(value))
+                      setMinePage(1)
+                    }}
+                  >
+                    <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background text-sm font-semibold shadow-sm dark:bg-background/40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EMPLOYEE_OT_PAGE_SIZES.map((size) => (
+                        <SelectItem key={size} value={String(size)}>
+                          {size} rows
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-semibold tabular-nums">{minePagination?.total ?? mineCounts?.total ?? 0}</span>
+                  <span>matching request{(minePagination?.total ?? mineCounts?.total ?? 0) === 1 ? '' : 's'}</span>
+                  {mineSearchInput.trim().length === 1 ? <span>• Type at least 2 characters to search.</span> : null}
+                </div>
               </div>
             )}
 
@@ -2144,16 +2397,36 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   </div>
                 )}
                 {tab === 'mine' && activeItems.length > 0 && (
-                  <div className="flex items-center justify-center gap-2 border-t border-border/50 px-4 pb-6 pt-5 @sm:px-6 md:px-8">
-                    <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" disabled>
-                      <ChevronLeft className="size-4" aria-hidden />
-                    </Button>
-                    <span className="flex size-9 items-center justify-center rounded-lg bg-brand text-sm font-bold tabular-nums text-brand-foreground shadow-sm">
-                      1
-                    </span>
-                    <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" disabled>
-                      <ChevronRight className="size-4" aria-hidden />
-                    </Button>
+                  <div className="flex flex-col gap-3 border-t border-border/50 px-4 pb-6 pt-5 @sm:flex-row @sm:items-center @sm:justify-between @sm:px-6 md:px-8">
+                    <div className="text-sm tabular-nums text-muted-foreground">
+                      Page {minePagination?.current_page || minePage} of {totalMinePages}
+                      {minePagination?.total != null ? ` • ${minePagination.total} total` : ''}
+                    </div>
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-9 rounded-lg"
+                        disabled={minePage <= 1 || loadingMine}
+                        onClick={() => setMinePage((p) => Math.max(1, p - 1))}
+                      >
+                        <ChevronLeft className="size-4" aria-hidden />
+                      </Button>
+                      <span className="flex size-9 items-center justify-center rounded-lg bg-brand text-sm font-bold tabular-nums text-brand-foreground shadow-sm">
+                        {minePagination?.current_page || minePage}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-9 rounded-lg"
+                        disabled={minePage >= totalMinePages || loadingMine}
+                        onClick={() => setMinePage((p) => Math.min(totalMinePages, p + 1))}
+                      >
+                        <ChevronRight className="size-4" aria-hidden />
+                      </Button>
+                    </div>
                   </div>
                 )}
               </AnimatedSection>

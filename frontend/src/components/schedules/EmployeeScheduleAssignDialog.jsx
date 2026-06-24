@@ -173,26 +173,10 @@ export function EmployeeScheduleAssignDialog({
         }
       }
 
-      const toClear = targetIds.filter((id) => {
-        const emp = employees.find((row) => Number(row.id) === Number(id))
-        if (!emp || !hasAssignedSchedule(emp)) return false
-        return Number(emp.working_schedule_id) !== Number(scheduleId)
+      await assignWorkingSchedule(scheduleId, {
+        employee_ids: targetIds.map((id) => Number(id)),
+        mode: 'assign_only',
       })
-
-      if (toClear.length > 0) {
-        await Promise.all(toClear.map((id) => updateEmployeeSchedule(id, { schedule: null })))
-      }
-
-      const toAssign = targetIds.filter((id) => {
-        const emp = employees.find((row) => Number(row.id) === Number(id))
-        return !emp || Number(emp.working_schedule_id) !== Number(scheduleId)
-      })
-
-      if (toAssign.length > 0) {
-        await assignWorkingSchedule(scheduleId, {
-          employee_ids: toAssign.map((id) => Number(id)),
-        })
-      }
 
       window.dispatchEvent(new Event('hr:schedules-changed'))
       toast.success('Schedule assigned', {

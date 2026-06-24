@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\EmailLogoController;
+use App\Http\Controllers\Admin\AdminUserAccountController;
 use App\Http\Controllers\Admin\ApprovalWorkflowSettingsController;
 use App\Http\Controllers\Admin\AreaController;
 use App\Http\Controllers\Admin\AttendanceCorrectionController;
@@ -40,16 +40,16 @@ use App\Http\Controllers\Admin\PayrollFinalizeController;
 use App\Http\Controllers\Admin\PayrollPeriodUnlockController;
 use App\Http\Controllers\Admin\PayslipController as AdminPayslipController;
 use App\Http\Controllers\Admin\RbacController;
+use App\Http\Controllers\Admin\RecruitmentController;
 use App\Http\Controllers\Admin\RegularizationApprovalController;
 use App\Http\Controllers\Admin\ReportsController;
-use App\Http\Controllers\Admin\RecruitmentController;
 use App\Http\Controllers\Admin\ScheduleController;
 use App\Http\Controllers\Admin\ScheduleRequestController;
 use App\Http\Controllers\Admin\SectionUnitController;
 use App\Http\Controllers\Admin\ThirteenthMonthPaySettingsController;
-use App\Http\Controllers\Admin\AdminUserAccountController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\EmailLogoController;
 use App\Http\Controllers\EmployeeCertificationController;
 use App\Http\Controllers\EmployeeContributionController;
 use App\Http\Controllers\EmployeeDashboardController;
@@ -174,6 +174,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/leave/{id}/document', [EmployeeLeaveController::class, 'uploadDocument']);
     Route::delete('/leave/{id}', [EmployeeLeaveController::class, 'destroy']);
     Route::get('/overtime/request-context', [EmployeeOvertimeController::class, 'requestContext']);
+    Route::get('/employee/overtime/form-context', [EmployeeOvertimeController::class, 'formContext']);
+    Route::get('/employee/overtime/requests', [EmployeeOvertimeController::class, 'myRequestsTable']);
+    Route::get('/employee/overtime/requests/{id}/details-lite', [EmployeeOvertimeController::class, 'myDetailsLite'])->whereNumber('id');
     Route::get('/overtime/my', [EmployeeOvertimeController::class, 'myIndex']);
     Route::get('/overtime/my/{id}', [EmployeeOvertimeController::class, 'myShow']);
     Route::patch('/overtime/my/{id}', [EmployeeOvertimeController::class, 'myUpdate']);

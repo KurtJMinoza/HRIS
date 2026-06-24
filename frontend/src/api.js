@@ -3627,7 +3627,7 @@ export async function deleteWorkingSchedule(id) {
 /**
  * Assign a schedule to a set of employees.
  * @param {number} id
- * @param {{ employee_ids: number[] }} payload
+ * @param {{ employee_ids: number[], mode?: 'assign_only'|'replace_roster', effective_date?: string }} payload
  * @returns {Promise<{ message: string, assigned_count?: number, conflicts?: Array<{ employee_id: number, employee_name: string, current_schedule: string, current_time: string }> }>}
  */
 export async function assignWorkingSchedule(id, payload) {
@@ -5680,11 +5680,23 @@ export async function getMyOvertimeRequests(params = {}) {
   if (params.per_page != null) q.set('per_page', String(params.per_page))
   if (params.from_date) q.set('from_date', String(params.from_date))
   if (params.to_date) q.set('to_date', String(params.to_date))
+  if (params.status) q.set('status', String(params.status))
+  if (params.date_filter) q.set('date_filter', String(params.date_filter))
+  if (params.search) q.set('search', String(params.search))
   if (params.page != null) q.set('page', String(params.page))
   if (params.dashboard_lite) q.set('dashboard_lite', '1')
   const suffix = q.toString() ? `?${q.toString()}` : ''
-  const res = await authenticatedFetch(`/overtime/my${suffix}`, params.signal ? { signal: params.signal } : {})
-  const data = await res.json().catch(() => ({}))
+  const path = params.lightweight === false ? '/overtime/my' : '/employee/overtime/requests'
+  let res = await authenticatedFetch(`${path}${suffix}`, params.signal ? { signal: params.signal } : {})
+  let data = await res.json().catch(() => ({}))
+  if (
+    params.lightweight !== false &&
+    (res.status >= 500 ||
+      (res.status === 404 && String(data?.message || '').toLowerCase().includes('route')))
+  ) {
+    res = await authenticatedFetch(`/overtime/my${suffix}`, params.signal ? { signal: params.signal } : {})
+    data = await res.json().catch(() => ({}))
+  }
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime requests')
   return data
 }
@@ -5721,11 +5733,25 @@ export async function getAllMyOvertimeRequestsInRange(from_date, to_date, option
  * @param {number} id
  */
 export async function getMyOvertimeDetail(id, options = {}) {
-  const res = await authenticatedFetch(
-    `/overtime/my/${id}`,
+  const path = options.lightweight === false
+    ? `/overtime/my/${id}`
+    : `/employee/overtime/requests/${id}/details-lite`
+  let res = await authenticatedFetch(
+    path,
     options.signal ? { signal: options.signal } : undefined,
   )
-  const data = await res.json().catch(() => ({}))
+  let data = await res.json().catch(() => ({}))
+  if (
+    options.lightweight !== false &&
+    (res.status >= 500 ||
+      (res.status === 404 && String(data?.message || '').toLowerCase().includes('route')))
+  ) {
+    res = await authenticatedFetch(
+      `/overtime/my/${id}`,
+      options.signal ? { signal: options.signal } : undefined,
+    )
+    data = await res.json().catch(() => ({}))
+  }
   if (!res.ok) throw new Error(data.message || 'Failed to load overtime details')
   return data
 }
