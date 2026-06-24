@@ -83,7 +83,7 @@ class EmailNotificationService
         $variables = array_merge($this->defaultTemplateVariables($forPreview), $variables);
 
         $subject = $template->subject;
-        $bodyHtml = $template->body_html;
+        $bodyHtml = AgcEmailTemplateBuilder::normalizeLogoImgTag($template->body_html);
 
         foreach ($variables as $key => $value) {
             $placeholder = '{{ '.$key.' }}';
@@ -102,6 +102,7 @@ class EmailNotificationService
 
     public function renderAdHocHtml(string $html, array $variables = [], bool $forPreview = false): string
     {
+        $html = AgcEmailTemplateBuilder::normalizeLogoImgTag($html);
         $variables = array_merge($this->defaultTemplateVariables($forPreview), $variables);
 
         foreach ($variables as $key => $value) {

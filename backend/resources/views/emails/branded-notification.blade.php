@@ -21,7 +21,10 @@
         $logoSrc = '';
     }
 
-    $renderedHtml = str_replace(\App\Support\BrandedEmailSender::LOGO_PLACEHOLDER, $logoSrc, $bodyHtml);
+    $renderedHtml = \App\Support\BrandedEmailSender::prepareHtml($bodyHtml, $logoPath, $publicLogoUrl);
+    if ($logoSrc !== '' && $publicLogoUrl === null) {
+        $renderedHtml = str_replace(\App\Support\BrandedEmailSender::LOGO_PLACEHOLDER, $logoSrc, $renderedHtml);
+    }
 @endphp
 {!! $renderedHtml !!}
 </body>

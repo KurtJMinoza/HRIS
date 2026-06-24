@@ -89,14 +89,14 @@ class BrandedEmailSender
 
     public static function prepareHtml(string $bodyHtml, ?string $logoPath = null, ?string $publicLogoUrl = null): string
     {
-        $logoPath ??= self::logoPath();
+        $bodyHtml = AgcEmailTemplateBuilder::normalizeLogoImgTag($bodyHtml);
         $publicLogoUrl ??= self::publicLogoUrl();
 
         if ($publicLogoUrl !== null) {
-            return self::replaceLogoPlaceholder($bodyHtml, $publicLogoUrl);
+            return str_replace(self::LOGO_PLACEHOLDER, $publicLogoUrl, $bodyHtml);
         }
 
-        return self::replaceLogoPlaceholder($bodyHtml, '');
+        return $bodyHtml;
     }
 
     public static function renderPreviewHtml(string $bodyHtml, ?string $logoPath = null, ?string $publicLogoUrl = null): string
@@ -118,6 +118,8 @@ class BrandedEmailSender
 
     private static function replaceLogoPlaceholder(string $html, string $logoSrc): string
     {
+        $html = AgcEmailTemplateBuilder::normalizeLogoImgTag($html);
+
         return str_replace(self::LOGO_PLACEHOLDER, $logoSrc, $html);
     }
 

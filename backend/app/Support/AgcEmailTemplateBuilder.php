@@ -8,11 +8,70 @@ class AgcEmailTemplateBuilder
 
     private const BRAND = '#ea580c';
 
-    private const LOGO_WIDTH = 150;
+    private const MAX_LOGO_WIDTH = 200;
+
+    private const MAX_LOGO_HEIGHT = 56;
 
     public static function logoUrl(): string
     {
         return BrandedEmailSender::LOGO_PLACEHOLDER;
+    }
+
+    /**
+     * @return array{0: int, 1: int}
+     */
+    public static function logoIntrinsicDimensions(): array
+    {
+        $path = BrandedEmailSender::logoPath();
+        if ($path === null) {
+            return [1, 1];
+        }
+
+        $size = @getimagesize($path);
+        if ($size === false || $size[0] < 1 || $size[1] < 1) {
+            return [1, 1];
+        }
+
+        return [(int) $size[0], (int) $size[1]];
+    }
+
+    /**
+     * @return array{0: int, 1: int}
+     */
+    public static function logoDisplayDimensions(?int $width = null, ?int $height = null): array
+    {
+        if ($width === null || $height === null) {
+            [$width, $height] = self::logoIntrinsicDimensions();
+        }
+
+        $scale = min(self::MAX_LOGO_WIDTH / $width, self::MAX_LOGO_HEIGHT / $height, 1);
+
+        return [
+            max(1, (int) round($width * $scale)),
+            max(1, (int) round($height * $scale)),
+        ];
+    }
+
+    public static function logoImgTag(): string
+    {
+        [$displayWidth, $displayHeight] = self::logoDisplayDimensions();
+
+        return '<img src="'.BrandedEmailSender::LOGO_PLACEHOLDER.'" alt="AGCTEK" width="'.$displayWidth.'" height="'.$displayHeight.'" style="display:block;border:0;outline:none;text-decoration:none;width:'.$displayWidth.'px;height:'.$displayHeight.'px;-ms-interpolation-mode:bicubic;" />';
+    }
+
+    public static function normalizeLogoImgTag(string $html): string
+    {
+        $pattern = '/<img\b(?=[^>]*\balt=["\']AGCTEK["\'])(?=[^>]*\bsrc=["\']([^"\']+)["\'])[^>]*>/i';
+
+        return preg_replace_callback(
+            $pattern,
+            static fn (array $matches): string => str_replace(
+                BrandedEmailSender::LOGO_PLACEHOLDER,
+                $matches[1],
+                self::logoImgTag(),
+            ),
+            $html,
+        ) ?? $html;
     }
 
     public static function embeddedLogoDataUri(): string
@@ -51,8 +110,8 @@ class AgcEmailTemplateBuilder
             .'<table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #d9dee7;box-shadow:0 8px 24px rgba(15,23,42,0.06);">'
             .'<tr><td style="padding:0;">'
             .'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">'
-            .'<tr><td style="padding:22px 32px 18px;background:#ffffff;text-align:left;">'
-            .'<img src="'.BrandedEmailSender::LOGO_PLACEHOLDER.'" alt="AGCTEK" width="'.self::LOGO_WIDTH.'" style="display:block;height:auto;border:0;outline:none;text-decoration:none;max-width:'.self::LOGO_WIDTH.'px;max-height:52px;" />'
+            .'<tr><td style="padding:28px 36px 22px;background:#ffffff;text-align:left;line-height:0;">'
+            .self::logoImgTag()
             .'</td></tr>'
             .'<tr><td style="height:3px;background:'.self::BRAND.';font-size:0;line-height:0;">&nbsp;</td></tr>'
             .'</table>'
