@@ -16,6 +16,8 @@ import {
   AlertTriangle,
   Briefcase,
   CalendarClock,
+  CalendarDays,
+  List,
   Paperclip,
   X,
   Info,
@@ -111,6 +113,7 @@ import {
   adminFormDialogContentClass,
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
+import { EmployeeLeaveCalendarView } from '@/components/leave/EmployeeLeaveCalendarView'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import { useAuth } from '@/contexts/AuthContext'
 import AdminLeave from '@/pages/AdminLeave'
@@ -451,11 +454,13 @@ function LeaveModalCreditsCard({
 
 function EmployeeLeaveSelfService() {
   const { toast } = useToast()
+  const { user } = useAuth()
 
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [statusFilter, setStatusFilter] = useState('')
+  const [activeView, setActiveView] = useState('calendar')
   const [leaveCreditInfo, setLeaveCreditInfo] = useState(null)
 
   const [undertimePreview, setUndertimePreview] = useState(null)
@@ -557,6 +562,14 @@ function EmployeeLeaveSelfService() {
   const minLeaveDate = useMemo(() => earliestLeaveStartYmd(), [])
   const minEndDate =
     addForm.start_date && addForm.start_date >= minLeaveDate ? addForm.start_date : minLeaveDate
+  const calendarViewerProfile = useMemo(
+    () => ({
+      name: user?.display_name || user?.name || '',
+      profileImage: user?.profile_image_url || user?.profile_image || '',
+      position: user?.position || '',
+    }),
+    [user?.display_name, user?.name, user?.position, user?.profile_image, user?.profile_image_url],
+  )
 
   const isFormInvalidBasic = (() => {
     if (!addForm.type) return true
@@ -884,20 +897,32 @@ function EmployeeLeaveSelfService() {
   }
 
   function openFileLeave() {
+    openFileLeaveWithDates('', '')
+  }
+
+  function openFileLeaveWithDates(startDate, endDate = startDate) {
     setAddError(null)
     setRestRangeCheck(null)
     setRestRangeValidating(false)
     setSelectedAssignmentId('')
     setAddForm({
       type: 'vacation',
-      start_date: '',
-      end_date: '',
+      start_date: startDate || '',
+      end_date: endDate || startDate || '',
       undertime_time: '',
       half_type: '',
       reason: '',
       supportingFiles: [],
     })
     setAddOpen(true)
+  }
+
+  function handleCalendarInvalidDate() {
+    toast({
+      title: 'Date not available',
+      description: `Leave can be filed from ${minLeaveDate} onward.`,
+      variant: 'error',
+    })
   }
 
   const totalCount = rows.length
@@ -1236,12 +1261,45 @@ function EmployeeLeaveSelfService() {
 
         <Card className={cn(employeeLeaveCardClass, 'w-full min-w-0 flex-1 overflow-hidden')}>
             <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 dark:border-border/50 dark:bg-muted/20 @sm:px-6 @sm:py-5">
+              <div className="flex w-full min-w-0 justify-start">
+                <div className="inline-flex w-full min-w-0 justify-start rounded-full border border-border/60 bg-muted/30 p-1 @sm:w-auto dark:border-border/50 dark:bg-muted/30">
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('calendar')}
+                    className={cn(
+                      'flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition-colors @sm:flex-initial @sm:gap-2 @sm:px-4',
+                      activeView === 'calendar'
+                        ? 'border border-brand/25 bg-brand text-brand-foreground shadow-sm'
+                        : 'border border-transparent text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <CalendarDays className="size-4 shrink-0" />
+                    Calendar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('list')}
+                    className={cn(
+                      'flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition-colors @sm:flex-initial @sm:gap-2 @sm:px-4',
+                      activeView === 'list'
+                        ? 'border border-brand/25 bg-brand text-brand-foreground shadow-sm'
+                        : 'border border-transparent text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <List className="size-4 shrink-0" />
+                    List
+                  </button>
+                </div>
+              </div>
               <div className="min-w-0">
                 <CardTitle className="text-lg font-semibold @md:text-xl">My leave requests</CardTitle>
                 <CardDescription className="text-sm @md:text-[15px]">
-                  Filter by status. Open details to see the approval chain and remarks.
+                  {activeView === 'calendar'
+                    ? 'Browse leave on the calendar. Tap open days to file; tap booked days to view details.'
+                    : 'Filter by status. Open details to see the approval chain and remarks.'}
                 </CardDescription>
               </div>
+              {activeView === 'list' ? (
               <div className="flex flex-wrap items-center gap-2">
                 {EMPLOYEE_LEAVE_STATUS_OPTIONS.map((opt) => {
                   const active = statusFilter === opt.value
@@ -1279,8 +1337,22 @@ function EmployeeLeaveSelfService() {
                   )
                 })}
               </div>
+              ) : null}
             </CardHeader>
             <CardContent className="p-0">
+              {activeView === 'calendar' ? (
+                <EmployeeLeaveCalendarView
+                  leaves={filteredRows}
+                  loading={loading}
+                  minLeaveDate={minLeaveDate}
+                  showEmployeeDetails
+                  viewerProfile={calendarViewerProfile}
+                  onFileLeave={openFileLeaveWithDates}
+                  onOpenLeave={openLeaveDetail}
+                  onInvalidDate={handleCalendarInvalidDate}
+                />
+              ) : (
+              <>
               <div className="hidden min-h-[280px] md:block">{renderLeaveTable()}</div>
               <div className="space-y-4 p-4 md:hidden">
                 {loading ? (
@@ -1379,6 +1451,8 @@ function EmployeeLeaveSelfService() {
                   </AnimatedSection>
                 )}
               </div>
+              </>
+              )}
             </CardContent>
           </Card>
 

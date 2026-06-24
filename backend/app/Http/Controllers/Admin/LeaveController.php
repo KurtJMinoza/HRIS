@@ -121,7 +121,7 @@ class LeaveController extends Controller
                 'created_at',
             ])
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
+                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,company_id,department_id,employee_level,employee_level_label',
             ]);
 
         $this->applyFilingApprovalVisibility($actor, $query, $request);
@@ -156,7 +156,7 @@ class LeaveController extends Controller
                 'request_no' => 'LV-'.$l->id,
                 'employee_id' => $l->user_id,
                 'employee_name' => $l->user?->display_name,
-                'employee_profile_image' => null,
+                'employee_profile_image' => $l->user?->profile_image_url,
                 'request_type' => 'leave',
                 'type' => $l->type,
                 'leave_type' => $l->type,
