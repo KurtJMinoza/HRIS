@@ -451,14 +451,6 @@ function LeaveModalCreditsCard({
 
 function EmployeeLeaveSelfService() {
   const { toast } = useToast()
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date()
-    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10)
-  })
-  const [toDate, setToDate] = useState(() => {
-    const d = new Date()
-    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10)
-  })
 
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -500,7 +492,7 @@ function EmployeeLeaveSelfService() {
     setLoading(true)
     setError(null)
     try {
-      const data = await getMyLeaveSummary({ from_date: fromDate, to_date: toDate })
+      const data = await getMyLeaveSummary()
       setRows(Array.isArray(data.leave_requests) ? data.leave_requests : [])
       setLeaveCreditInfo(data.leave_credits && typeof data.leave_credits === 'object' ? data.leave_credits : null)
     } catch (e) {
@@ -509,7 +501,7 @@ function EmployeeLeaveSelfService() {
     } finally {
       setLoading(false)
     }
-  }, [fromDate, toDate])
+  }, [])
 
   useEffect(() => {
     load()
@@ -1065,7 +1057,7 @@ function EmployeeLeaveSelfService() {
 
   return (
     <Motion.div
-      className="flex min-h-[calc(100vh-6rem)] min-w-0 max-w-full flex-col space-y-6 overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
+      className="flex min-h-[calc(100vh-6rem)] min-w-0 max-w-full flex-col space-y-6 overflow-x-clip px-1 py-4 @sm:px-0 @sm:py-6"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
@@ -1150,9 +1142,8 @@ function EmployeeLeaveSelfService() {
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground">Selected period</p>
+                    <p className="text-xs font-medium text-muted-foreground">Total requests</p>
                     <p className="mt-1 text-4xl font-black tracking-tight text-foreground">{totalCount}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Total requests</p>
                   </div>
                   <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/15 dark:bg-blue-500/20">
                     <Calendar className="size-5 text-blue-600 dark:text-blue-400" aria-hidden />
@@ -1189,7 +1180,6 @@ function EmployeeLeaveSelfService() {
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">Approved</p>
                     <p className="mt-1 text-4xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">{approvedCount}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Selected period</p>
                   </div>
                   <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 dark:bg-emerald-500/20">
                     <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" aria-hidden />
@@ -1204,7 +1194,6 @@ function EmployeeLeaveSelfService() {
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">Rejected</p>
                     <p className="mt-1 text-4xl font-black tracking-tight text-rose-600 dark:text-rose-400">{rejectedCount}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Selected period</p>
                   </div>
                   <div className="flex size-10 items-center justify-center rounded-xl bg-rose-500/15 dark:bg-rose-500/20">
                     <XCircle className="size-5 text-rose-600 dark:text-rose-400" aria-hidden />
@@ -1238,36 +1227,6 @@ function EmployeeLeaveSelfService() {
             </Button>
           </div>
         )}
-
-        {/* Period filter */}
-        <div className={cn(employeeLeaveCardClass, 'px-4 py-4 @md:px-5')}>
-          <div className="flex flex-col gap-4 @lg:flex-row @lg:items-end @lg:justify-between">
-            <div className="grid w-full max-w-lg grid-cols-1 gap-3 @sm:grid-cols-2">
-              <div className="space-y-2">
-                <span className="text-sm font-semibold text-foreground">From</span>
-                <Input
-                  type="date"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  className={employeeLeaveInputClass}
-                />
-              </div>
-              <div className="space-y-2">
-                <span className="text-sm font-semibold text-foreground">To</span>
-                <Input
-                  type="date"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                  className={employeeLeaveInputClass}
-                />
-              </div>
-            </div>
-            <p className="max-w-md text-sm leading-relaxed text-muted-foreground @lg:ml-auto @lg:text-right">
-              Filter the list below. Filing a new leave is not limited by these dates—you can choose any leave dates in the
-              form.
-            </p>
-          </div>
-        </div>
 
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
@@ -1434,18 +1393,18 @@ function EmployeeLeaveSelfService() {
         <DialogContent
           showCloseButton
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          closeButtonClassName="right-4 top-4 size-10 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted @md:right-7 @md:top-7 @md:size-14 dark:border-white/10 dark:bg-card/90"
           className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
           innerClassName="gap-0 overflow-hidden p-0 pr-0"
         >
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-8 pb-6 pt-8 text-left dark:to-brand/10 @md:px-12">
-              <AgcBrandLogo className="mb-7 h-9 @md:h-10" />
-              <div className="relative z-10 max-w-[43rem] space-y-3 pr-14 @md:pr-0">
-                <DialogTitle className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-5 pb-5 pt-6 text-left dark:to-brand/10 @md:px-12 @md:pb-6 @md:pt-8">
+              <AgcBrandLogo className="mb-5 h-8 @md:mb-7 @md:h-10" />
+              <div className="relative z-10 max-w-[43rem] space-y-3 pr-12 @md:pr-0">
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground @md:text-3xl">
                   File new leave
                 </DialogTitle>
-                <DialogDescription className="max-w-[42rem] text-base leading-relaxed text-muted-foreground @md:text-lg">
+                <DialogDescription className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground @md:text-lg">
                   Choose your leave type and dates. The earliest start date is tomorrow. Leave cannot cover dates that
                   already have complete attendance (clock-in and clock-out) for you, and cannot overlap another pending or
                   approved leave. Add optional remarks and supporting documents if needed.
@@ -1454,7 +1413,7 @@ function EmployeeLeaveSelfService() {
               <LeaveModalCalendarArt />
             </DialogHeader>
 
-            <div className="px-8 py-7 @md:px-12">
+            <div className="px-5 py-5 @md:px-12 @md:py-7">
             {addError && (
               <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive dark:bg-destructive/15">
                 {addError}
@@ -1733,11 +1692,11 @@ function EmployeeLeaveSelfService() {
             </div>
           </div>
 
-          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-8 py-5 @md:px-12">
+          <DialogFooter className="flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-card px-5 py-4 @sm:flex-row @sm:justify-end @md:px-12 @md:py-5">
             <Button
               type="button"
               variant="outline"
-              className="h-14 min-w-36 rounded-xl border-border/80 bg-card px-8 text-lg font-semibold text-foreground hover:bg-muted dark:border-white/10"
+              className="h-12 w-full rounded-xl border-border/80 bg-card px-6 text-base font-semibold text-foreground hover:bg-muted @sm:h-14 @sm:min-w-36 @sm:w-auto @md:px-8 @md:text-lg dark:border-white/10"
               onClick={() => setAddOpen(false)}
               disabled={submitting}
             >
@@ -1746,7 +1705,7 @@ function EmployeeLeaveSelfService() {
             <Button
               type="submit"
               form="emp-leave-file-form"
-              className="h-14 min-w-72 gap-4 rounded-xl bg-brand px-9 text-lg font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+              className="h-12 w-full gap-3 rounded-xl bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong @sm:h-14 @sm:min-w-72 @sm:w-auto @md:px-9 @md:text-lg dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
               disabled={submitting || isFormInvalidBasic || restDayBlocksSubmit}
             >
               {submitting && <Loader2 className="size-4 animate-spin" />}

@@ -12,10 +12,6 @@ import { Input } from '@/components/ui/input'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -24,12 +20,12 @@ import { useNotifications } from '@/contexts/NotificationsContext'
 import { useTheme } from '@/contexts/useTheme'
 import { cn } from '@/lib/utils'
 import { hrPanelPath } from '@/lib/hrRoutes'
-import { RoleBadge } from '@/components/RoleBadge'
 import { getEmployees, prefetchLeaveRequestReview } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { formatEmployeeName } from '@/lib/employeeSort'
 import { markLoginSplashShown } from '@/lib/loginSplash'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+import { UserAccountMenuContent } from '@/components/layout/UserAccountMenuContent'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
 const SIDEBAR_COLLAPSED_KEY = 'smartdtr_sidebar_collapsed'
@@ -381,7 +377,7 @@ function SidebarContent({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="w-full rounded-md border border-border/60 bg-background/70 p-2 text-left transition-colors hover:bg-muted/40"
+                className="w-full rounded-xl bg-muted/30 p-2 text-left transition-colors hover:bg-muted/50"
               >
                 <div className="flex items-center gap-2">
                   <Avatar
@@ -408,41 +404,21 @@ function SidebarContent({
                 </div>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top" className="w-56">
-              <DropdownMenuLabel>
-                <div className="flex flex-col">
-                  <span>{currentUserDisplayName}</span>
-                  <span className="text-xs font-normal text-muted-foreground">{user?.email}</span>
-                  <span className="mt-1">
-                    <RoleBadge user={user} size="sm" />
-                  </span>
-                </div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link to={homePath} onClick={onNavClick}>
-                  <LayoutDashboard className="mr-2 size-4" />
-                  Dashboard
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link to={profilePath} onClick={onNavClick}>
-                  <User className="mr-2 size-4" />
-                  Profile
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={async () => {
-                  await onLogout?.()
-                  onNavClick?.()
-                }}
-                className="text-destructive focus:text-destructive"
-              >
-                <LogOut className="mr-2 size-4" />
-                Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
+            <UserAccountMenuContent
+              align="end"
+              side="top"
+              user={user}
+              displayName={currentUserDisplayName}
+              initials={initials}
+              avatarSrc={sidebarAvatarSrc}
+              homePath={homePath}
+              profilePath={profilePath}
+              onLogout={async () => {
+                await onLogout?.()
+                onNavClick?.()
+              }}
+              onNavClick={onNavClick}
+            />
           </DropdownMenu>
         )}
         {collapsed ? (
@@ -993,25 +969,28 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               </PopoverTrigger>
               <PopoverContent
                 align="end"
-                className="w-[min(94vw,22rem)] overflow-hidden rounded-3xl border border-border/70 bg-card p-0 text-card-foreground shadow-xl shadow-black/10 ring-1 ring-black/5 dark:border-border/60 dark:ring-white/10"
-                sideOffset={10}
+                collisionPadding={12}
+                className="flex w-[min(calc(100vw-1rem),18.75rem)] max-h-[min(calc(100dvh-4.5rem),24rem)] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card p-0 text-card-foreground shadow-xl shadow-black/10 ring-1 ring-black/5 sm:w-[min(calc(100vw-1.5rem),22rem)] sm:max-h-[min(calc(100dvh-5rem),28rem)] sm:max-w-none sm:rounded-3xl dark:border-border/60 dark:ring-white/10"
+                sideOffset={8}
               >
-                <div className="border-b border-border/60 bg-card px-4 pt-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-brand/10 text-brand">
-                        <Bell className="size-5" />
+                <div className="shrink-0 border-b border-border/60 bg-card px-3 pt-3 sm:px-4 sm:pt-4">
+                  <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                    <div className="flex min-w-0 items-center gap-2.5 sm:items-start sm:gap-3">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand sm:size-10 sm:rounded-2xl">
+                        <Bell className="size-4 sm:size-5" />
                       </span>
                       <div className="min-w-0">
-                        <h2 id="notifications-popover-title" className="text-lg font-extrabold tracking-tight text-foreground">
+                        <h2 id="notifications-popover-title" className="text-base font-extrabold tracking-tight text-foreground sm:text-lg">
                           Notifications
                         </h2>
-                        <p className="mt-0.5 text-xs leading-snug text-muted-foreground">Recent updates from your workspace</p>
+                        <p className="mt-0.5 hidden text-xs leading-snug text-muted-foreground sm:block">
+                          Recent updates from your workspace
+                        </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center justify-between gap-2 sm:shrink-0 sm:justify-end">
                       {notificationCount > 0 ? (
-                        <span className="inline-flex shrink-0 items-center rounded-lg bg-brand px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-brand-foreground shadow-sm">
+                        <span className="inline-flex shrink-0 items-center rounded-lg bg-brand px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-brand-foreground shadow-sm sm:px-2.5 sm:py-1 sm:text-[11px]">
                           {notificationCount} new
                         </span>
                       ) : null}
@@ -1019,16 +998,16 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                         type="button"
                         onClick={markAllNotificationsRead}
                         disabled={notificationCount === 0}
-                        className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-xs font-semibold text-brand/90 underline-offset-2 transition hover:bg-brand/10 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:pointer-events-none disabled:text-muted-foreground/70 disabled:no-underline"
+                        className="inline-flex min-w-0 items-center gap-1 rounded-lg px-1.5 py-1 text-[11px] font-semibold text-brand/90 underline-offset-2 transition hover:bg-brand/10 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:pointer-events-none disabled:text-muted-foreground/70 disabled:no-underline sm:text-xs"
                       >
-                        <CheckCheck className="size-3.5" aria-hidden />
-                        Mark all read
+                        <CheckCheck className="size-3 shrink-0 sm:size-3.5" aria-hidden />
+                        <span className="truncate">Mark all read</span>
                       </button>
                     </div>
                   </div>
 
                   <div
-                    className="mt-4 flex gap-1 rounded-full bg-muted/70 p-1 dark:bg-muted/40"
+                    className="mt-3 flex gap-1 rounded-full bg-muted/70 p-0.5 dark:bg-muted/40 sm:mt-4 sm:p-1"
                     role="tablist"
                     aria-label="Filter notifications"
                   >
@@ -1046,7 +1025,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                           aria-selected={selected}
                           onClick={() => setNotificationTab(tab.id)}
                           className={cn(
-                            'min-w-0 flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-center text-sm font-semibold transition-colors',
+                            'min-w-0 flex flex-1 items-center justify-center gap-1 rounded-full px-2 py-1.5 text-center text-xs font-semibold transition-colors sm:gap-1.5 sm:px-3 sm:py-2 sm:text-sm',
                             selected
                               ? 'bg-brand text-brand-foreground shadow-md shadow-brand/20'
                               : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -1055,7 +1034,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                           {tab.label}
                           <span
                             className={cn(
-                              'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                              'rounded-full px-1 py-0.5 text-[9px] font-bold sm:px-1.5 sm:text-[10px]',
                               selected ? 'bg-brand-foreground/20 text-brand-foreground' : 'bg-background text-muted-foreground'
                             )}
                           >
@@ -1068,12 +1047,12 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 </div>
 
                 <div
-                  className="max-h-[min(52vh,19rem)] overflow-y-auto"
+                  className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
                   role="tabpanel"
                   aria-labelledby="notifications-popover-title"
                 >
                   {filteredNotifications.length === 0 ? (
-                    <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <div className="px-3 py-8 text-center text-sm text-muted-foreground sm:px-4 sm:py-10">
                       {notificationTab === 'unread'
                           ? "You're all caught up."
                           : 'No notifications.'}
@@ -1123,12 +1102,12 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                               aria-hidden
                             />
                           ) : null}
-                          <div className="flex min-w-0 flex-1 items-start gap-3 py-4 pr-4 pl-4">
+                          <div className="flex min-w-0 flex-1 items-start gap-2.5 py-3 pr-3 pl-3 sm:gap-3 sm:py-4 sm:pr-4 sm:pl-4">
                             {n.avatar ? (
-                              <Avatar className="size-11 shrink-0 ring-1 ring-border/50">
+                              <Avatar className="size-9 shrink-0 ring-1 ring-border/50 sm:size-11">
                                 <AvatarFallback
                                   className={cn(
-                                    'rounded-full text-[11px] font-bold',
+                                    'rounded-full text-[10px] font-bold sm:text-[11px]',
                                     getEmployeeAvatarColorClass(n.id, n.actor),
                                   )}
                                 >
@@ -1138,28 +1117,28 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                             ) : (
                               <span
                                 className={cn(
-                                  'flex size-11 shrink-0 items-center justify-center rounded-full ring-1 ring-border/40',
+                                  'flex size-9 shrink-0 items-center justify-center rounded-full ring-1 ring-border/40 sm:size-11',
                                   n.unread ? 'bg-brand/10 text-brand ring-brand/10' : config.iconBg
                                 )}
                               >
-                                <Icon className="size-5" strokeWidth={2} aria-hidden />
+                                <Icon className="size-4 sm:size-5" strokeWidth={2} aria-hidden />
                               </span>
                             )}
                             <div className="min-w-0 flex-1">
-                              <p className="line-clamp-1 text-sm font-bold leading-snug text-foreground">
+                              <p className="line-clamp-1 text-[13px] font-bold leading-snug text-foreground sm:text-sm">
                                 {n.actor}
                               </p>
                               {n.body ? (
-                                <p className="mt-1 line-clamp-2 text-sm leading-snug text-muted-foreground">{n.body}</p>
+                                <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-muted-foreground sm:mt-1 sm:text-sm">{n.body}</p>
                               ) : null}
                               {n.detail ? (
-                                <p className="mt-1 text-xs italic text-muted-foreground">{n.detail}</p>
+                                <p className="mt-0.5 line-clamp-1 text-[11px] italic text-muted-foreground sm:mt-1 sm:text-xs">{n.detail}</p>
                               ) : null}
-                              <p className="mt-2 text-xs text-muted-foreground">{n.time}</p>
+                              <p className="mt-1.5 text-[11px] text-muted-foreground sm:mt-2 sm:text-xs">{n.time}</p>
                             </div>
                             {n.unread ? (
                               <span
-                                className="mt-1.5 size-2.5 shrink-0 rounded-full bg-brand"
+                                className="mt-1 size-2 shrink-0 rounded-full bg-brand sm:mt-1.5 sm:size-2.5"
                                 title="Unread"
                                 aria-hidden
                               />
@@ -1171,15 +1150,15 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                   )}
                 </div>
 
-                <div className="border-t border-border/60 bg-card px-4 py-3">
+                <div className="shrink-0 border-t border-border/60 bg-card px-3 py-2.5 sm:px-4 sm:py-3">
                   <button
                     type="button"
                     onClick={() => navigate(role === 'employee' ? '/employee/notifications' : hrPanelPath(hrBasePath, 'notifications'))}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-transparent py-1.5 text-center text-sm font-semibold text-brand transition hover:border-brand/20 hover:bg-brand/5 hover:text-brand-strong"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-transparent py-1.5 text-center text-xs font-semibold text-brand transition hover:border-brand/20 hover:bg-brand/5 hover:text-brand-strong sm:gap-2 sm:text-sm"
                   >
-                    <FileText className="size-4" />
+                    <FileText className="size-3.5 sm:size-4" />
                     View all notifications
-                    <ChevronRight className="size-4" />
+                    <ChevronRight className="size-3.5 sm:size-4" />
                   </button>
                 </div>
               </PopoverContent>
@@ -1205,35 +1184,15 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
                 </Avatar>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>
-                <div className="flex flex-col">
-                  <span>{currentUserDisplayName}</span>
-                  <span className="text-xs font-normal text-muted-foreground">{user?.email}</span>
-                  <span className="mt-1">
-                    <RoleBadge user={user} size="sm" />
-                  </span>
-                </div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link to={homePath}>
-                  <LayoutDashboard className="mr-2 size-4" />
-                  Dashboard
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link to={profilePath}>
-                  <User className="mr-2 size-4" />
-                  Profile
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
-                <LogOut className="mr-2 size-4" />
-                Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
+            <UserAccountMenuContent
+              user={user}
+              displayName={currentUserDisplayName}
+              initials={initials}
+              avatarSrc={headerAvatarSrc}
+              homePath={homePath}
+              profilePath={profilePath}
+              onLogout={handleLogout}
+            />
             </DropdownMenu>
           </div>
         </header>
@@ -1241,7 +1200,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
         <main
           className={cn(
             /* Tight horizontal inset so main content sits closer to the sidebar on md+; vertical rhythm unchanged */
-            'flex-1 px-3 py-4 @sm:px-4 @md:py-5 @lg:px-5 @lg:py-6',
+            'flex-1 overflow-visible px-3 py-4 @sm:px-4 @md:py-5 @lg:px-5 @lg:py-6',
             isDashboardRoute && 'py-2 @md:py-3 @lg:py-3',
             'bg-white dark:bg-background'
           )}

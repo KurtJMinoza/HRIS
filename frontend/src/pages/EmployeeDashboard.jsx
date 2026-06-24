@@ -1297,7 +1297,7 @@ export default function EmployeeDashboard() {
 
   return (
     <Motion.div
-      className="min-w-0 max-w-full space-y-3 text-sm text-foreground @sm:space-y-4 @md:text-[15px]"
+      className="min-w-0 max-w-full space-y-3 overflow-x-clip text-sm text-foreground @sm:space-y-4 @md:text-[15px]"
       initial="hidden"
       animate="visible"
       variants={{ hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.04 } } }}
@@ -1982,8 +1982,8 @@ export default function EmployeeDashboard() {
                 )}
               </div>
               <div className="mt-2 space-y-2 px-2.5 pb-3 @sm:px-4 md:pb-4">
-                <div className="mx-auto w-full max-w-6xl min-w-0 overflow-x-auto @sm:overflow-x-visible">
-                  <div className="grid w-full min-w-[276px] grid-cols-7 grid-rows-[auto_repeat(6,minmax(3.9rem,1fr))] gap-1.5 @sm:min-w-0 @sm:grid-rows-[auto_repeat(6,minmax(5rem,1fr))] @sm:gap-2">
+                <div className="mx-auto w-full max-w-6xl min-w-0">
+                  <div className="grid w-full min-w-0 grid-cols-7 grid-rows-[auto_repeat(6,minmax(3.25rem,auto))] gap-1 @sm:grid-rows-[auto_repeat(6,minmax(4.75rem,auto))] @sm:gap-2">
                     {WEEKDAYS.map((w) => (
                       <div
                         key={w}

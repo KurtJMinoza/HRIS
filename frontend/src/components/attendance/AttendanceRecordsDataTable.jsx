@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useReactTable, getCoreRowModel, getSortedRowModel, flexRender } from '@tanstack/react-table'
-import { Eye, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { Eye, ArrowUpDown, ArrowUp, ArrowDown, Loader2 } from 'lucide-react'
 import {
   Table,
   TableBody,
@@ -403,7 +403,10 @@ export function AttendanceRecordsDataTable({
               type="button"
               size="sm"
               variant="outline"
-              className="h-8 gap-1 px-2.5"
+              className={cn(
+                'h-8 gap-1 px-2.5',
+                'border-border/80 bg-card shadow-sm hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12',
+              )}
               onClick={(e) => {
                 e.stopPropagation()
                 onOpenDetails?.(r)
@@ -450,13 +453,18 @@ export function AttendanceRecordsDataTable({
 
   if (loading) {
     return (
-      <div className="hidden w-full min-w-0 overflow-x-auto rounded-xl border border-border/50 md:block">
-        <table className="w-full min-w-0 text-sm">
-          <tbody>
-            <TableBodySkeleton rows={8} cols={colCount} />
-          </tbody>
-        </table>
-      </div>
+      <>
+        <div className="hidden w-full min-w-0 overflow-x-auto rounded-xl border border-border/50 md:block">
+          <table className="w-full min-w-0 text-sm">
+            <tbody>
+              <TableBodySkeleton rows={8} cols={colCount} />
+            </tbody>
+          </table>
+        </div>
+        <div className="flex justify-center rounded-xl border border-border/50 bg-card py-16 md:hidden">
+          <Loader2 className="size-10 animate-spin text-emerald-600" aria-hidden />
+        </div>
+      </>
     )
   }
 

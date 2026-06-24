@@ -50,6 +50,18 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FilterSelect, FilterField } from '@/components/ui/filter-select'
 import {
+  attendanceDropdownContentClass,
+  attendanceDropdownItemClass,
+  attendanceFilterInputClass,
+  attendanceOutlineButtonSmClass,
+  attendancePaginationActiveClass,
+  attendancePrimaryButtonSmClass,
+  attendanceScopeTabListClass,
+  attendanceSelectContentClass,
+  attendanceSelectItemClass,
+  attendanceSelectTriggerClass,
+} from '@/lib/attendanceUiClasses'
+import {
   getAdminAttendance,
   fetchAllAdminAttendanceRows,
   exportAdminAttendance,
@@ -667,7 +679,7 @@ export default function AdminAttendance() {
             type="button"
             variant="outline"
             size="sm"
-            className="border-border/70"
+            className={cn(attendanceOutlineButtonSmClass, 'h-8 px-3')}
             onClick={() => {
               const next = new URLSearchParams(searchParams)
               next.delete('tab')
@@ -847,7 +859,7 @@ export default function AdminAttendance() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-muted-foreground">Scope:</span>
               <div
-                className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5 dark:bg-muted/20"
+                className={attendanceScopeTabListClass}
                 role="tablist"
                 aria-label="Date scope"
               >
@@ -938,7 +950,7 @@ export default function AdminAttendance() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="gap-1.5 border-border/70 bg-background text-[#0A0A0A] shadow-sm hover:bg-muted/60 dark:text-foreground"
+                    className={cn(attendanceOutlineButtonSmClass, 'gap-1.5')}
                     disabled={loading || !attendanceTotalMatched}
                     title="Export Attendance (CSV / Excel)"
                   >
@@ -947,13 +959,13 @@ export default function AdminAttendance() {
                     <ChevronDown className="size-3.5 opacity-60" aria-hidden />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => void exportAttendanceCsv()}>
-                    <FileText className="size-4" />
+                <DropdownMenuContent align="end" className={attendanceDropdownContentClass}>
+                  <DropdownMenuItem className={attendanceDropdownItemClass} onSelect={() => void exportAttendanceCsv()}>
+                    <FileText className="size-4 text-muted-foreground" />
                     CSV
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void exportAttendanceExcel()}>
-                    <FileText className="size-4" />
+                  <DropdownMenuItem className={attendanceDropdownItemClass} onSelect={() => void exportAttendanceExcel()}>
+                    <FileText className="size-4 text-muted-foreground" />
                     Excel
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -977,7 +989,7 @@ export default function AdminAttendance() {
             />
           </div>
           <div className="flex flex-col gap-3 @md:flex-row @md:items-end @md:justify-between">
-          <div className="w-full rounded-xl border border-border/70 bg-muted/20 p-4 dark:bg-muted/10">
+          <div className="w-full rounded-xl bg-muted/20 p-4 ring-1 ring-border/40 dark:bg-muted/10">
           <div className="grid w-full grid-cols-1 gap-3 @md:grid-cols-2 @xl:grid-cols-3 @2xl:grid-cols-6">
             <FilterField label="From">
               <div className="relative">
@@ -986,7 +998,7 @@ export default function AdminAttendance() {
                   type="date"
                   value={fromDate}
                   onChange={(e) => setFromDate(e.target.value)}
-                  className="h-10 border-border/70 bg-card pl-9 text-sm shadow-sm dark:bg-card/90"
+                  className={cn(attendanceFilterInputClass, 'h-10')}
                 />
               </div>
             </FilterField>
@@ -997,7 +1009,7 @@ export default function AdminAttendance() {
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="h-10 border-border/70 bg-card pl-9 text-sm shadow-sm dark:bg-card/90"
+                  className={cn(attendanceFilterInputClass, 'h-10')}
                 />
               </div>
             </FilterField>
@@ -1007,7 +1019,7 @@ export default function AdminAttendance() {
                   readOnly
                   disabled
                   value={attendanceScope.branch_name}
-                  className="h-10 cursor-not-allowed border-border/70 bg-muted/50 text-sm shadow-sm"
+                  className="h-10 cursor-not-allowed rounded-lg border-border/80 bg-muted/50 text-sm shadow-sm dark:border-white/10"
                   title="Your branch scope"
                 />
               </FilterField>
@@ -1037,7 +1049,7 @@ export default function AdminAttendance() {
                   readOnly
                   disabled
                   value={attendanceScope.company_names[0]}
-                  className="h-10 cursor-not-allowed border-border/70 bg-muted/50 text-sm shadow-sm"
+                  className="h-10 cursor-not-allowed rounded-lg border-border/80 bg-muted/50 text-sm shadow-sm dark:border-white/10"
                   title="Your company scope"
                 />
               </FilterField>
@@ -1121,7 +1133,7 @@ export default function AdminAttendance() {
                 type="button"
                 variant="default"
                 size="sm"
-                className="gap-1.5 bg-orange-600 text-white shadow-sm shadow-orange-500/20 hover:bg-orange-500 dark:bg-orange-500 dark:hover:bg-orange-400"
+                className={cn(attendancePrimaryButtonSmClass, 'h-9 px-4')}
                 onClick={applyFilters}
               >
                 <Filter className="size-3.5" />
@@ -1131,7 +1143,7 @@ export default function AdminAttendance() {
                 type="button"
                 variant="outline"
                 size="sm"
-                className="gap-1.5"
+                className={cn(attendanceOutlineButtonSmClass, 'h-9 gap-1.5')}
                 onClick={load}
               >
                 <RefreshCw className="size-3.5" />
@@ -1218,7 +1230,7 @@ export default function AdminAttendance() {
                 type="button"
                 size="sm"
                 variant="outline"
-                className="gap-1.5 dark:border-white/10 dark:text-foreground dark:hover:bg-white/5"
+                className={cn(attendanceOutlineButtonSmClass, 'gap-1.5')}
                 disabled={!attendanceTotalMatched}
               >
                 <Download className="size-4" aria-hidden />
@@ -1226,17 +1238,17 @@ export default function AdminAttendance() {
                 <ChevronDown className="size-3.5 opacity-60" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => exportAttendanceCsv()}>
-                <FileText className="size-4" />
+            <DropdownMenuContent align="end" className={attendanceDropdownContentClass}>
+              <DropdownMenuItem className={attendanceDropdownItemClass} onSelect={() => exportAttendanceCsv()}>
+                <FileText className="size-4 text-muted-foreground" />
                 CSV
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => exportAttendanceExcel()}>
-                <FileText className="size-4" />
+              <DropdownMenuItem className={attendanceDropdownItemClass} onSelect={() => exportAttendanceExcel()}>
+                <FileText className="size-4 text-muted-foreground" />
                 Excel
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={exportingPdf} onSelect={() => handleExportPdf()}>
-                {exportingPdf ? <RefreshCw className="size-4 animate-spin" /> : <FileText className="size-4" />}
+              <DropdownMenuItem className={attendanceDropdownItemClass} disabled={exportingPdf} onSelect={() => handleExportPdf()}>
+                {exportingPdf ? <RefreshCw className="size-4 animate-spin" /> : <FileText className="size-4 text-muted-foreground" />}
                 PDF
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1273,12 +1285,12 @@ export default function AdminAttendance() {
                 <label className="flex items-center gap-2 text-[11px]">
                   <span className="text-muted-foreground">Rows per page:</span>
                   <Select value={String(attendancePerPage)} onValueChange={handleAttendancePerPageChange}>
-                    <SelectTrigger className="h-8 w-[72px] text-xs">
+                    <SelectTrigger className={cn(attendanceSelectTriggerClass, 'h-8 w-[72px] text-xs')}>
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className={attendanceSelectContentClass}>
                       {ATTENDANCE_PAGE_SIZE_OPTIONS.map((n) => (
-                        <SelectItem key={n} value={String(n)}>
+                        <SelectItem key={n} value={String(n)} className={attendanceSelectItemClass}>
                           {n}
                         </SelectItem>
                       ))}
@@ -1291,7 +1303,7 @@ export default function AdminAttendance() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 px-3"
+                  className={cn(attendanceOutlineButtonSmClass, 'h-8 px-3')}
                   disabled={paginationBusy || attendancePage <= 1}
                   onClick={() => setAttendancePage((p) => Math.max(1, p - 1))}
                 >
@@ -1306,7 +1318,7 @@ export default function AdminAttendance() {
                       size="sm"
                       className={cn(
                         'h-8 min-w-8 px-2.5',
-                        page === attendancePage && 'bg-orange-600 text-white hover:bg-orange-500 dark:bg-orange-500 dark:hover:bg-orange-400',
+                        page === attendancePage ? attendancePaginationActiveClass : attendanceOutlineButtonSmClass,
                       )}
                       disabled={paginationBusy}
                       onClick={() => setAttendancePage(page)}
@@ -1321,7 +1333,7 @@ export default function AdminAttendance() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 px-3"
+                  className={cn(attendanceOutlineButtonSmClass, 'h-8 px-3')}
                   disabled={paginationBusy || attendancePage >= attendanceLastPage}
                   onClick={() => setAttendancePage((p) => Math.min(attendanceLastPage, p + 1))}
                 >

@@ -59,6 +59,20 @@ import {
 } from '@/lib/adminFormDialogStyles'
 import { cn } from '@/lib/utils'
 import {
+  attendanceDropdownContentClass,
+  attendanceDropdownItemClass,
+  attendanceFilterInputClass,
+  attendanceOutlineButtonClass,
+  attendanceOutlineButtonSmClass,
+  attendancePaginationActiveClass,
+  attendancePrimaryButtonClass,
+  attendancePrimaryButtonSmClass,
+  attendanceScopeTabListClass,
+  attendanceSelectContentClass,
+  attendanceSelectItemClass,
+  attendanceSelectTriggerClass,
+} from '@/lib/attendanceUiClasses'
+import {
   getMyAttendanceSummary,
   recordAttendance,
   getStoredUser,
@@ -569,18 +583,18 @@ export default function EmployeeAttendance() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm">
+    <div className="min-w-0 max-w-full space-y-5 overflow-x-clip px-1 py-1 @sm:space-y-5 @sm:px-0 @sm:py-0">
+      <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm @sm:p-5">
         <div className="flex flex-col gap-4 @lg:flex-row @lg:items-start @lg:justify-between">
-          <div className="space-y-2">
+          <div className="min-w-0 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-orange-600">
               Attendance
             </p>
-            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">My Attendance</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight text-foreground @sm:text-3xl">My Attendance</h1>
             <p className="max-w-xl text-sm text-muted-foreground">
               Clock in, file corrections, and request leave — your daily records stay organized in one calm workspace.
             </p>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               Period:
               <span className="font-medium text-foreground">{fromDate}</span>
               —
@@ -588,18 +602,15 @@ export default function EmployeeAttendance() {
               <Calendar className="size-3.5 opacity-70" />
             </p>
           </div>
-          <div className="flex max-w-xl flex-col gap-2 @sm:flex-row @sm:flex-wrap @sm:justify-end">
-            <Button
-              className="gap-2 bg-orange-500 text-white hover:bg-orange-600"
-              onClick={() => openModal(isClockedIn ? 'clock_out' : 'clock_in')}
-            >
+          <div className="flex w-full max-w-xl flex-col gap-2 @sm:flex-row @sm:flex-wrap @sm:justify-end">
+            <Button className={attendancePrimaryButtonClass} onClick={() => openModal(isClockedIn ? 'clock_out' : 'clock_in')}>
               {isClockedIn ? <LogOut className="size-4" /> : <LogIn className="size-4" />}
               {isClockedIn ? 'Clock Out' : 'Clock In'}
             </Button>
-            <Button variant="outline" className="gap-2" asChild>
+            <Button variant="outline" className={attendanceOutlineButtonClass} asChild>
               <Link to="/employee/correction-requests">File correction</Link>
             </Button>
-            <Button variant="outline" className="gap-2" asChild>
+            <Button variant="outline" className={attendanceOutlineButtonClass} asChild>
               <Link to="/employee/requests">Request leave</Link>
             </Button>
           </div>
@@ -754,7 +765,7 @@ export default function EmployeeAttendance() {
               Submit and track attendance corrections in one place.
             </p>
           </div>
-          <Button variant="outline" asChild className="gap-1.5">
+          <Button variant="outline" asChild className={cn(attendanceOutlineButtonClass, 'h-10 w-full px-4 @md:w-auto')}>
             <Link to="/employee/correction-requests">
               Go to Correction Requests
               <ChevronRight className="size-4" />
@@ -773,7 +784,7 @@ export default function EmployeeAttendance() {
               </CardDescription>
             </div>
             <div
-              className="inline-flex flex-wrap rounded-xl border border-border/60 bg-muted/30 p-0.5"
+              className={attendanceScopeTabListClass}
               role="tablist"
               aria-label="Scope"
             >
@@ -824,75 +835,81 @@ export default function EmployeeAttendance() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4 @md:flex-row @md:items-end @md:justify-between">
-          <div className="relative w-full max-w-md">
+        <CardContent className="flex flex-col gap-4 px-4 py-4 @sm:px-5">
+          <div className="relative w-full min-w-0 max-w-md">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search date, status, record ID…"
-              className="h-9 pl-9 text-sm"
+              className={cn(attendanceFilterInputClass, 'pl-9')}
               aria-label="Search attendance history"
             />
           </div>
-          <div className="grid w-full grid-cols-1 gap-3 @md:max-w-xl @md:grid-cols-3">
-            <div className="space-y-1.5">
+          <div className="grid w-full min-w-0 grid-cols-1 gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
+            <div className="min-w-0 space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Month</span>
-              <div className="relative">
+              <div className="relative min-w-0">
                 <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-foreground/70" />
                 <input
                   type="month"
                   value={fromDate.slice(0, 7)}
                   onChange={handleMonthChange}
-                  className="flex h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={attendanceFilterInputClass}
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">From</span>
-              <div className="relative">
+              <div className="relative min-w-0">
                 <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-foreground/70" />
                 <Input
                   type="date"
                   value={fromDate}
                   onChange={(e) => setFromDate(e.target.value)}
-                  className="h-9 pl-9 text-sm"
+                  className={attendanceFilterInputClass}
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5 @sm:col-span-2 @lg:col-span-1">
               <span className="text-xs font-medium text-muted-foreground">To</span>
-              <div className="relative">
+              <div className="relative min-w-0">
                 <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-foreground/70" />
                 <Input
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="h-9 pl-9 text-sm"
+                  className={attendanceFilterInputClass}
                 />
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="default" size="sm" className="gap-1.5" onClick={fetchHistory}>
+          <div className="flex w-full flex-wrap items-center gap-2 @sm:w-auto">
+            <Button type="button" variant="default" size="sm" className={attendancePrimaryButtonSmClass} onClick={fetchHistory}>
               <RefreshCw className="size-3.5" />
               Apply
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={!displayRows.length}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn(attendanceOutlineButtonSmClass, 'h-9 flex-1 gap-1.5 @sm:flex-initial')}
+                  disabled={!displayRows.length}
+                >
                   <Download className="size-3.5" aria-hidden />
                   Export
                   <ChevronDown className="size-3.5 opacity-60" aria-hidden />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => exportEmployeeCsv()}>
-                  <FileText className="size-4" />
+              <DropdownMenuContent align="end" className={attendanceDropdownContentClass}>
+                <DropdownMenuItem className={attendanceDropdownItemClass} onSelect={() => exportEmployeeCsv()}>
+                  <FileText className="size-4 text-muted-foreground" />
                   CSV
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => exportEmployeeExcel()}>
-                  <FileText className="size-4" />
+                <DropdownMenuItem className={attendanceDropdownItemClass} onSelect={() => exportEmployeeExcel()}>
+                  <FileText className="size-4 text-muted-foreground" />
                   Excel
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -945,12 +962,12 @@ export default function EmployeeAttendance() {
                 <label className="flex w-full flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
                   <span>Rows per page:</span>
                   <Select value={String(historyPerPage)} onValueChange={handleHistoryPerPageChange}>
-                    <SelectTrigger className="h-8 w-[72px] text-xs">
+                    <SelectTrigger className={cn(attendanceSelectTriggerClass, 'h-8 w-[72px] text-xs')}>
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className={attendanceSelectContentClass}>
                       {ATTENDANCE_PAGE_SIZE_OPTIONS.map((n) => (
-                        <SelectItem key={n} value={String(n)}>
+                        <SelectItem key={n} value={String(n)} className={attendanceSelectItemClass}>
                           {n}
                         </SelectItem>
                       ))}
@@ -962,7 +979,7 @@ export default function EmployeeAttendance() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="gap-1"
+                    className={cn(attendanceOutlineButtonSmClass, 'gap-1')}
                     disabled={historyPage <= 1 || loading || loadingMore}
                     onClick={() => goToHistoryPage(historyPage - 1)}
                   >
@@ -976,7 +993,12 @@ export default function EmployeeAttendance() {
                         type="button"
                         variant={p === historyPage ? 'default' : 'outline'}
                         size="sm"
-                        className="min-w-20"
+                        className={cn(
+                          'min-w-20',
+                          p === historyPage
+                            ? attendancePaginationActiveClass
+                            : attendanceOutlineButtonSmClass,
+                        )}
                         disabled={loading || loadingMore}
                         onClick={() => goToHistoryPage(p)}
                       >
@@ -992,7 +1014,7 @@ export default function EmployeeAttendance() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="gap-1"
+                    className={cn(attendanceOutlineButtonSmClass, 'gap-1')}
                     disabled={historyPage >= historyLastPage || loading || loadingMore}
                     onClick={() => goToHistoryPage(historyPage + 1)}
                   >
@@ -1055,14 +1077,14 @@ export default function EmployeeAttendance() {
                   setError(null)
                 }}
               >
-                <SelectTrigger className="mt-1.5 h-9 bg-white dark:bg-background">
+                <SelectTrigger className={cn(attendanceSelectTriggerClass, 'mt-1.5 h-9')}>
                   <SelectValue placeholder="Select desktop or laptop" />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="desktop">Desktop computer</SelectItem>
-                  <SelectItem value="laptop">Laptop computer</SelectItem>
-                  <SelectItem value="mobile">Mobile phone</SelectItem>
-                  <SelectItem value="tablet">Tablet</SelectItem>
+                <SelectContent className={attendanceSelectContentClass}>
+                  <SelectItem value="desktop" className={attendanceSelectItemClass}>Desktop computer</SelectItem>
+                  <SelectItem value="laptop" className={attendanceSelectItemClass}>Laptop computer</SelectItem>
+                  <SelectItem value="mobile" className={attendanceSelectItemClass}>Mobile phone</SelectItem>
+                  <SelectItem value="tablet" className={attendanceSelectItemClass}>Tablet</SelectItem>
                 </SelectContent>
               </Select>
               <p className="mt-1.5 text-[11px] text-slate-500 dark:text-muted-foreground">
@@ -1079,7 +1101,12 @@ export default function EmployeeAttendance() {
             ) : null}
           </div>
           <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button type="button" variant="outline" onClick={() => { setModalOpen(false); setError(null); }}>
+            <Button
+              type="button"
+              variant="outline"
+              className={cn(attendanceOutlineButtonClass, 'h-10')}
+              onClick={() => { setModalOpen(false); setError(null); }}
+            >
               Cancel
             </Button>
           </DialogFooter>

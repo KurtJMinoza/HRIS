@@ -4,7 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { cn } from '@/lib/utils'
 
 export const FILTER_SELECT_TRIGGER_CLASS =
-  'h-10 w-full rounded-lg border-border/70 bg-card text-sm font-medium shadow-sm transition-[color,box-shadow,border-color] hover:border-border hover:bg-muted/30 focus-visible:border-brand/40 focus-visible:ring-brand/15 dark:bg-card/90'
+  'h-10 w-full rounded-lg border border-border/80 bg-card text-sm font-medium shadow-sm transition hover:border-brand/35 hover:bg-muted/20 focus-visible:border-brand/40 focus-visible:ring-brand/15 dark:border-white/10 dark:bg-card/80'
 
 export const FILTER_FIELD_LABEL_CLASS =
   'mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground'
@@ -103,7 +103,12 @@ export function FilterSelect({
           <SelectValue placeholder={emptyMessage || placeholder} />
         )}
       </SelectTrigger>
-      <SelectContent className={cn('max-h-64 rounded-lg border-border/70 shadow-lg', contentClassName)}>
+      <SelectContent
+        className={cn(
+          'max-h-64 overflow-hidden rounded-xl border border-border/55 bg-card/95 p-1 shadow-lg shadow-black/6 ring-1 ring-black/5 dark:border-border/50 dark:bg-card/90 dark:ring-white/5',
+          contentClassName,
+        )}
+      >
         {loading ? (
           <SelectItem value="__loading" disabled>
             {loadingLabel}
