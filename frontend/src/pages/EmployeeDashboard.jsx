@@ -262,6 +262,16 @@ function getCalendarDayVisual(record, dateKey, ctx) {
     }
   }
 
+  if (status === 'holiday' || record.is_holiday) {
+    const holidayName = String(record.holiday_name || record.status_label || '').trim()
+    const badge = holidayName && holidayName.length <= 18 ? holidayName : 'Holiday'
+    return {
+      badge,
+      tileClass: `${baseGridCell} ${tint.sky}`,
+      badgeClass: `${L.ink} ${L.sky}`,
+    }
+  }
+
   if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') {
     return {
       badge: 'Rest Day',
@@ -1202,6 +1212,7 @@ export default function EmployeeDashboard() {
     const todayKey = formatLocalDateKey(new Date())
     if (dateKey === todayKey && summary?.schedule_assigned === false) return 'No schedule'
     if (status === 'leave') return 'On leave'
+    if (status === 'holiday') return 'Holiday'
     if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') return 'Rest Day'
     if (status === 'absent' || status === '—') {
       if (isRestDay(dateKey)) return 'Rest Day'

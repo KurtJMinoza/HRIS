@@ -6,6 +6,8 @@ const VARIANTS = {
   nd: 'bg-purple-600/15 text-purple-800 dark:text-purple-200 border-purple-600/30',
   rest: 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/20',
   holiday: 'bg-sky-500/15 text-sky-800 dark:text-sky-200 border-sky-500/25',
+  info: 'bg-blue-500/15 text-blue-800 dark:text-blue-200 border-blue-500/30',
+  success: 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-200 border-emerald-500/30',
   muted: 'bg-muted text-muted-foreground border-border',
 }
 

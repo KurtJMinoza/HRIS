@@ -6,6 +6,7 @@ use App\Events\ScheduleUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\WorkingSchedule;
+use App\Services\ScheduleComputationService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,9 +17,10 @@ class ScheduleController extends Controller
 {
     private const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
-    /**
-     * Normalize time string to H:i (e.g. "12:00:00" -> "12:00"). Accepts H:i or H:i:s.
-     */
+    public function __construct(
+        private readonly ScheduleComputationService $scheduleComputation,
+    ) {}
+
     private function normalizeTimeToHi(?string $value): ?string
     {
         if ($value === null || trim($value) === '') {
@@ -32,9 +34,6 @@ class ScheduleController extends Controller
         return $v;
     }
 
-    /**
-     * List all working schedules.
-     */
     public function index(): JsonResponse
     {
         $schedules = WorkingSchedule::orderBy('name')->get();
@@ -44,13 +43,10 @@ class ScheduleController extends Controller
         ]);
     }
 
-    /**
-     * Create a new working schedule.
-     */
     public function store(Request $request): JsonResponse
     {
         $toMerge = [];
-        foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $key) {
+        foreach (['time_in', 'time_out', 'break_start', 'break_end', 'flexible_earliest_in', 'flexible_latest_out', 'core_hours_start', 'core_hours_end'] as $key) {
             $val = $request->input($key);
             if ($val !== null && $val !== '') {
                 $normalized = $this->normalizeTimeToHi(is_string($val) ? $val : (string) $val);
@@ -63,44 +59,9 @@ class ScheduleController extends Controller
             $request->merge($toMerge);
         }
 
-        $validated = $request->validate([
-            'name' => [
-                'required',
-                'string',
-                'max:255',
-                "regex:/^[A-Za-z0-9\s\-']+$/",
-            ],
-            'time_in' => ['required', 'date_format:H:i'],
-            'break_start' => ['nullable', 'date_format:H:i'],
-            'break_end' => ['nullable', 'date_format:H:i'],
-            'time_out' => ['required', 'date_format:H:i'],
-            'grace_period_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
-            'early_timein_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
-            'late_allowance_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
-            'early_timeout_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
-            'overtime_buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
-            'rest_days' => ['nullable', 'array'],
-            'rest_days.*' => ['string', 'in:mon,tue,wed,thu,fri,sat,sun'],
-        ], [
-            'name.regex' => 'Schedule name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
-        ]);
+        $validated = $request->validate($this->validationRules());
 
-        // Allow time_out <= time_in for night shift (e.g. 22:00 - 06:00)
-        // No extra validation; both times are required.
-
-        $schedule = WorkingSchedule::create([
-            'name' => $validated['name'],
-            'time_in' => $validated['time_in'],
-            'break_start' => $validated['break_start'] ?? null,
-            'break_end' => $validated['break_end'] ?? null,
-            'time_out' => $validated['time_out'],
-            'grace_period_minutes' => $validated['grace_period_minutes'] ?? 0,
-            'early_timein_minutes' => $validated['early_timein_minutes'] ?? 60,
-            'late_allowance_minutes' => $validated['late_allowance_minutes'] ?? null,
-            'early_timeout_minutes' => $validated['early_timeout_minutes'] ?? null,
-            'overtime_buffer_minutes' => $validated['overtime_buffer_minutes'] ?? 15,
-            'rest_days' => $validated['rest_days'] ?? [],
-        ]);
+        $schedule = WorkingSchedule::create($this->buildScheduleData($validated));
 
         return response()->json([
             'message' => 'Schedule created.',
@@ -108,15 +69,12 @@ class ScheduleController extends Controller
         ], 201);
     }
 
-    /**
-     * Update an existing working schedule.
-     */
     public function update(Request $request, int $id): JsonResponse
     {
         $schedule = WorkingSchedule::findOrFail($id);
 
         $toMerge = [];
-        foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $key) {
+        foreach (['time_in', 'time_out', 'break_start', 'break_end', 'flexible_earliest_in', 'flexible_latest_out', 'core_hours_start', 'core_hours_end'] as $key) {
             $val = $request->input($key);
             if ($val !== null && $val !== '') {
                 $normalized = $this->normalizeTimeToHi(is_string($val) ? $val : (string) $val);
@@ -129,32 +87,9 @@ class ScheduleController extends Controller
             $request->merge($toMerge);
         }
 
-        $validated = $request->validate([
-            'name' => [
-                'sometimes',
-                'required',
-                'string',
-                'max:255',
-                "regex:/^[A-Za-z0-9\s\-']+$/",
-            ],
-            'time_in' => ['sometimes', 'required', 'date_format:H:i'],
-            'break_start' => ['nullable', 'date_format:H:i'],
-            'break_end' => ['nullable', 'date_format:H:i'],
-            'time_out' => ['sometimes', 'required', 'date_format:H:i'],
-            'grace_period_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
-            'early_timein_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
-            'late_allowance_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
-            'early_timeout_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
-            'overtime_buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
-            'rest_days' => ['nullable', 'array'],
-            'rest_days.*' => ['string', 'in:mon,tue,wed,thu,fri,sat,sun'],
-        ], [
-            'name.regex' => 'Schedule name may only contain letters, numbers, spaces, hyphens, and apostrophes.',
-        ]);
+        $validated = $request->validate($this->validationRules(true));
 
-        // Allow time_out <= time_in for night shift (e.g. 22:00 - 06:00)
-
-        $schedule->fill($validated);
+        $schedule->fill($this->buildScheduleData($validated, true));
         $schedule->save();
 
         $affectedIds = User::query()
@@ -173,9 +108,6 @@ class ScheduleController extends Controller
         ]);
     }
 
-    /**
-     * Delete a working schedule. Unassigns all employees who had this schedule.
-     */
     public function destroy(int $id): JsonResponse
     {
         $schedule = WorkingSchedule::findOrFail($id);
@@ -187,7 +119,6 @@ class ScheduleController extends Controller
             ->map(fn ($id) => (int) $id)
             ->all();
 
-        // Unassign all employees before deleting so they show as "Available".
         User::where('working_schedule_id', $schedule->id)
             ->visibleEmployees()
             ->update([
@@ -206,9 +137,6 @@ class ScheduleController extends Controller
         ]);
     }
 
-    /**
-     * Assign schedule to one or more employees using live template linkage.
-     */
     public function assign(Request $request, int $id): JsonResponse
     {
         $schedule = WorkingSchedule::findOrFail($id);
@@ -220,9 +148,6 @@ class ScheduleController extends Controller
             'mode' => ['nullable', 'string', 'in:assign_only,replace_roster'],
         ]);
 
-        // By default, `employee_ids` means only the selected employees to assign/reassign.
-        // The Schedule roster editor sends mode=replace_roster when it intentionally wants
-        // unchecked employees on this same schedule to be unassigned.
         $desiredIds = array_values(array_unique(array_map('intval', $validated['employee_ids'])));
         $scheduleId = (int) $schedule->id;
         $mode = $validated['mode'] ?? 'assign_only';
@@ -366,103 +291,38 @@ class ScheduleController extends Controller
             'assigned_ids' => $assignedIds,
             'unassigned_ids' => $unassignedIds,
         ]);
+    }
 
-        $currentlyOnShift = User::query()
-            ->visibleEmployees()
-            ->where('working_schedule_id', $scheduleId)
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
+    /**
+     * Preview computation for a specific schedule + attendance input.
+     */
+    public function preview(Request $request, int $id): JsonResponse
+    {
+        $schedule = WorkingSchedule::findOrFail($id);
 
-        $toUnassign = array_values(array_diff($currentlyOnShift, $desiredIds));
-        $toAssignCandidates = array_values(array_diff($desiredIds, $currentlyOnShift));
-
-        $toAssign = [];
-        $otherSchedule = [];
-
-        $newAssignees = User::query()
-            ->whereIn('id', $toAssignCandidates)
-            ->visibleEmployees()
-            ->with('workingSchedule')
-            ->get();
-
-        foreach ($newAssignees as $emp) {
-            $onThisSchedule = (int) $emp->working_schedule_id === $scheduleId;
-            $hasOtherSchedule = $emp->working_schedule_id !== null && $emp->workingSchedule !== null
-                ? ! $onThisSchedule
-                : false;
-
-            if ($hasOtherSchedule) {
-                $currentName = $emp->workingSchedule?->name ?? 'Custom schedule';
-                $currentTime = $emp->workingSchedule
-                    ? "{$emp->workingSchedule->time_in}–{$emp->workingSchedule->time_out}"
-                    : self::formatCustomScheduleTime($emp->schedule);
-                $otherSchedule[] = [
-                    'employee_id' => $emp->id,
-                    'employee_name' => $emp->display_name,
-                    'current_schedule' => $currentName,
-                    'current_time' => $currentTime,
-                ];
-            } else {
-                $toAssign[] = $emp->id;
-            }
-        }
-
-        if (! empty($otherSchedule)) {
-            return response()->json([
-                'message' => 'Employee already assigned to another shift. Please unassign first before reassigning.',
-                'conflicts' => $otherSchedule,
-            ], 422);
-        }
-
-        $assignedCount = 0;
-        $unassignedCount = 0;
-
-        if (! empty($toAssign)) {
-            $assignedCount = User::whereIn('id', $toAssign)
-                ->visibleEmployees()
-                ->update([
-                    'schedule' => null,
-                    'working_schedule_id' => $schedule->id,
-                    'pending_working_schedule_id' => null,
-                    'pending_schedule_effective_from' => null,
-                ]);
-        }
-
-        if (! empty($toUnassign)) {
-            $unassignedCount = User::whereIn('id', $toUnassign)
-                ->visibleEmployees()
-                ->update([
-                    'schedule' => null,
-                    'working_schedule_id' => null,
-                    'pending_working_schedule_id' => null,
-                    'pending_schedule_effective_from' => null,
-                ]);
-        }
-
-        $message = [];
-        if ($assignedCount > 0) {
-            $message[] = "{$assignedCount} assigned.";
-        }
-        if ($unassignedCount > 0) {
-            $message[] = "{$unassignedCount} unassigned.";
-        }
-
-        $rosterChanged = array_values(array_unique(array_merge(
-            array_map('intval', $toAssign),
-            array_map('intval', $toUnassign)
-        )));
-        if ($rosterChanged !== []) {
-            ScheduleUpdated::dispatch($schedule->fresh(), $rosterChanged, 'assigned');
-        }
-
-        return response()->json([
-            'message' => implode(' ', $message) ?: 'No changes.',
-            'assigned_count' => $assignedCount,
-            'unassigned_count' => $unassignedCount,
-            'assigned_ids' => $toAssign,
-            'unassigned_ids' => $toUnassign,
+        $validated = $request->validate([
+            'date' => ['required', 'date'],
+            'time_in' => ['nullable', 'date_format:Y-m-d H:i:s'],
+            'time_out' => ['nullable', 'date_format:Y-m-d H:i:s'],
         ]);
+
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $daySchedule = $this->scheduleComputation->buildDayScheduleFromModel($schedule);
+        $timeIn = ! empty($validated['time_in']) ? Carbon::parse($validated['time_in'], $tz) : null;
+        $timeOut = ! empty($validated['time_out']) ? Carbon::parse($validated['time_out'], $tz) : null;
+
+        $result = $this->scheduleComputation->compute(
+            $validated['date'],
+            $daySchedule,
+            $timeIn,
+            $timeOut,
+            $tz,
+        );
+
+        $result['scheduled_start'] = $result['scheduled_start']?->toIso8601String();
+        $result['scheduled_end'] = $result['scheduled_end']?->toIso8601String();
+
+        return response()->json($result);
     }
 
     private function forgetEmployeeScheduleCaches(int $employeeId): void
@@ -486,36 +346,139 @@ class ScheduleController extends Controller
         return false;
     }
 
-    private function formatCustomScheduleTime(?array $schedule): string
+    private function validationRules(bool $isUpdate = false): array
     {
-        if (! is_array($schedule) || empty($schedule)) {
-            return '—';
-        }
-        foreach (self::DAY_KEYS as $day) {
-            $dayConfig = $schedule[$day] ?? null;
-            if (is_array($dayConfig) && ! empty($dayConfig['in']) && ! empty($dayConfig['out'])) {
-                return "{$dayConfig['in']}–{$dayConfig['out']}";
+        $sometimes = $isUpdate ? 'sometimes|' : '';
+
+        return [
+            'name' => [
+                ...($isUpdate ? ['sometimes'] : []),
+                'required',
+                'string',
+                'max:255',
+                "regex:/^[A-Za-z0-9\s\-']+$/",
+            ],
+            'schedule_code' => ['nullable', 'string', 'max:32'],
+            'shift_type' => ['nullable', 'string', 'in:fixed,flexible,split,overnight,rotating,compressed'],
+            'time_in' => [...($isUpdate ? ['sometimes'] : []), 'required', 'date_format:H:i'],
+            'break_start' => ['nullable', 'date_format:H:i'],
+            'break_end' => ['nullable', 'date_format:H:i'],
+            'time_out' => [...($isUpdate ? ['sometimes'] : []), 'required', 'date_format:H:i'],
+            'crosses_midnight' => ['nullable', 'boolean'],
+            'expected_paid_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
+            'half_day_threshold_minutes' => ['nullable', 'integer', 'min:0', 'max:720'],
+            'grace_period_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
+            'early_timein_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'late_allowance_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
+            'early_timeout_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
+            'overtime_buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'rest_days' => ['nullable', 'array'],
+            'rest_days.*' => ['string', 'in:mon,tue,wed,thu,fri,sat,sun'],
+            'breaks' => ['nullable', 'array'],
+            'breaks.*.start' => ['required_with:breaks', 'date_format:H:i'],
+            'breaks.*.end' => ['required_with:breaks', 'date_format:H:i'],
+            'breaks.*.is_paid' => ['nullable', 'boolean'],
+            'work_blocks' => ['nullable', 'array'],
+            'work_blocks.*.start' => ['required_with:work_blocks', 'date_format:H:i'],
+            'work_blocks.*.end' => ['required_with:work_blocks', 'date_format:H:i'],
+            'flexible_required_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
+            'flexible_earliest_in' => ['nullable', 'date_format:H:i'],
+            'flexible_latest_out' => ['nullable', 'date_format:H:i'],
+            'core_hours_start' => ['nullable', 'date_format:H:i'],
+            'core_hours_end' => ['nullable', 'date_format:H:i'],
+            'description' => ['nullable', 'string', 'max:1000'],
+        ];
+    }
+
+    private function buildScheduleData(array $validated, bool $isUpdate = false): array
+    {
+        $data = [];
+
+        $directFields = [
+            'name', 'schedule_code', 'time_in', 'time_out',
+            'break_start', 'break_end', 'breaks', 'work_blocks',
+            'rest_days', 'description',
+            'flexible_earliest_in', 'flexible_latest_out',
+            'core_hours_start', 'core_hours_end',
+        ];
+
+        foreach ($directFields as $field) {
+            if (array_key_exists($field, $validated)) {
+                $data[$field] = $validated[$field];
             }
         }
 
-        return '—';
+        $data['shift_type'] = $validated['shift_type'] ?? 'fixed';
+
+        if (array_key_exists('crosses_midnight', $validated)) {
+            $data['crosses_midnight'] = (bool) $validated['crosses_midnight'];
+        } elseif (! $isUpdate) {
+            $timeIn = $validated['time_in'] ?? null;
+            $timeOut = $validated['time_out'] ?? null;
+            $data['crosses_midnight'] = ($timeIn && $timeOut && $timeOut <= $timeIn);
+        }
+
+        $intFields = [
+            'expected_paid_minutes' => null,
+            'half_day_threshold_minutes' => null,
+            'grace_period_minutes' => 0,
+            'early_timein_minutes' => 60,
+            'late_allowance_minutes' => null,
+            'early_timeout_minutes' => null,
+            'overtime_buffer_minutes' => 15,
+            'flexible_required_minutes' => null,
+        ];
+
+        foreach ($intFields as $field => $default) {
+            if (array_key_exists($field, $validated)) {
+                $data[$field] = $validated[$field] !== null && $validated[$field] !== ''
+                    ? (int) $validated[$field]
+                    : $default;
+            } elseif (! $isUpdate) {
+                $data[$field] = $default;
+            }
+        }
+
+        if (! $isUpdate && ! array_key_exists('rest_days', $data)) {
+            $data['rest_days'] = [];
+        }
+
+        return $data;
     }
 
     private function scheduleResponse(WorkingSchedule $schedule): array
     {
+        $daySchedule = $this->scheduleComputation->buildDayScheduleFromModel($schedule);
+        $summary = $this->scheduleComputation->summarize(now()->toDateString(), $daySchedule);
+
         return [
             'id' => $schedule->id,
             'name' => $schedule->name,
+            'schedule_code' => $schedule->schedule_code,
+            'shift_type' => $schedule->shift_type ?? 'fixed',
             'time_in' => $schedule->time_in,
             'break_start' => $schedule->break_start,
             'break_end' => $schedule->break_end,
             'time_out' => $schedule->time_out,
+            'crosses_midnight' => (bool) ($schedule->crosses_midnight ?? false),
+            'expected_paid_minutes' => $schedule->expected_paid_minutes,
+            'computed_paid_minutes' => $summary['required_minutes'],
+            'half_day_threshold_minutes' => $schedule->effective_half_day_threshold,
+            'breaks' => $schedule->breaks ?? [],
+            'work_blocks' => $schedule->work_blocks ?? [],
             'grace_period_minutes' => $schedule->grace_period_minutes,
             'early_timein_minutes' => $schedule->early_timein_minutes ?? 60,
             'late_allowance_minutes' => $schedule->late_allowance_minutes,
             'early_timeout_minutes' => $schedule->early_timeout_minutes,
             'overtime_buffer_minutes' => $schedule->overtime_buffer_minutes ?? 15,
             'rest_days' => $schedule->rest_days ?? [],
+            'flexible_required_minutes' => $schedule->flexible_required_minutes,
+            'flexible_earliest_in' => $schedule->flexible_earliest_in,
+            'flexible_latest_out' => $schedule->flexible_latest_out,
+            'core_hours_start' => $schedule->core_hours_start,
+            'core_hours_end' => $schedule->core_hours_end,
+            'description' => $schedule->description,
+            'is_active' => (bool) ($schedule->is_active ?? true),
             'created_at' => $schedule->created_at?->toIso8601String(),
             'updated_at' => $schedule->updated_at?->toIso8601String(),
         ];

@@ -839,7 +839,7 @@ class PayrollComputationService
                 $cap = max(0, $requiredMinutes - $bucketMin);
                 $paidReg = min($regSeg, $cap);
             } elseif ($schedStatus === 'half_day') {
-                $paidReg = min($regSeg, AttendanceStatusService::getHalfDayRegularCapMinutes());
+                $paidReg = min($regSeg, AttendanceStatusService::getHalfDayRegularCapMinutes($daySchedule));
             }
         }
 

@@ -7,32 +7,19 @@ use Carbon\Carbon;
 use Carbon\CarbonInterface;
 
 /**
- * Attendance lateness and half-day computation (QA / System Requirement).
+ * Attendance lateness and half-day computation.
  *
- * Rules based on employee's scheduled start time (default 8:00 AM):
+ * Late bands (30-min buckets from scheduled start + grace):
+ *   Present → 30 min → 1 hr → 1.5 hr → 2 hr → 2.5 hr → 3 hr → 3.5 hr → 4 hr late.
  *
- * | Time Range        | Status                |
- * |------------------|------------------------|
- * | Before 8:05 AM   | Present                |
- * | 8:06 – 8:29 AM  | 30 Minutes late        |
- * | 8:30 – 8:59 AM  | 1 Hour Late            |
- * | 9:00 – 9:29 AM  | 1 Hour 30 minutes late |
- * | 9:30 – 9:59 AM  | 2 Hours Late           |
- * | 10:00 – 10:29 AM| 2 Hours 30 minutes late|
- * | 10:30 – 10:59 AM| 3 Hours Late           |
- * | 11:00 – 11:29 AM| 3 Hours 30 minutes late|
- * | 11:30 – 11:59 AM| 4 Hours Late           |
- * | 12:00 PM – 1:00 PM (config window) | Half Day |
- *
- * Applied consistently in: Admin Reports, Employee Dashboard, Admin Dashboard, DTR.
+ * Half Day: triggered ONLY when lateness >= half_day_threshold_minutes
+ *   (= scheduled_paid_minutes / 2, typically 240 min for an 8 h shift).
+ *   Never based on clock-in time-of-day or hardcoded windows.
  */
 class AttendanceStatusService
 {
     /** Default grace minutes when not in schedule; fallback after config. */
     public const DEFAULT_GRACE_MINUTES = 5;
-
-    /** Default hour (24h) for half-day; 12 = 12:00 PM (noon). */
-    public const DEFAULT_HALF_DAY_START_HOUR = 12;
 
     /** Maximum grace minutes (8:05 cutoff). Schedules cannot exceed this for Present vs Late. */
     public const MAX_GRACE_MINUTES = 5;
@@ -50,43 +37,25 @@ class AttendanceStatusService
         return min($grace, self::MAX_GRACE_MINUTES);
     }
 
-    /** Hour (24h) at or after which first time-in is half day; from config. */
-    public static function getHalfDayStartHour(): int
-    {
-        $h = config('attendance.half_day_start_hour', self::DEFAULT_HALF_DAY_START_HOUR);
-
-        return (int) $h;
-    }
-
     /**
-     * End of half-day clock-in window (exclusive): e.g. 13 = treat 12:00–12:59 as half day, 13:00+ uses tardiness bands.
+     * Paid regular cap for half-day classification.
+     * Uses schedule's half_day_threshold_minutes if available, else falls back to
+     * scheduled_paid_minutes / 2, then config (default 4h = 240m).
      */
-    public static function getHalfDayEndHour(): int
+    public static function getHalfDayRegularCapMinutes(?array $daySchedule = null): int
     {
-        return (int) config('attendance.half_day_end_hour', 13);
-    }
+        if ($daySchedule !== null) {
+            $explicit = $daySchedule['half_day_threshold_minutes'] ?? null;
+            if ($explicit !== null && (int) $explicit > 0) {
+                return (int) $explicit;
+            }
 
-    public static function getHalfDayEndMinute(): int
-    {
-        return (int) config('attendance.half_day_end_minute', 0);
-    }
+            $paidMinutes = $daySchedule['expected_paid_minutes'] ?? null;
+            if ($paidMinutes !== null && (int) $paidMinutes > 0) {
+                return (int) floor((int) $paidMinutes / 2);
+            }
+        }
 
-    /**
-     * Minutes from midnight of the exclusive end of the half-day clock-in window (e.g. 13:00 → 780).
-     */
-    public static function getHalfDayClockInWindowEndMinutesFromMidnight(): int
-    {
-        $h = self::getHalfDayEndHour();
-        $m = self::getHalfDayEndMinute();
-
-        return $h * 60 + $m;
-    }
-
-    /**
-     * Paid regular cap for half-day classification (default 4h = 240m).
-     */
-    public static function getHalfDayRegularCapMinutes(): int
-    {
         return (int) config('attendance.half_day_regular_minutes', 240);
     }
 
@@ -178,14 +147,10 @@ class AttendanceStatusService
 
     /**
      * Clock-in status for a single time-in.
-     * All comparisons use the attendance timezone. Half Day applies only in the configured noon
-     * clock-in window (default 12:00–13:00); all other times use Present (within grace) or late buckets.
-     * Schedule date is taken from the clock-in date in attendance timezone so same-day comparison is correct.
      *
-     * Time-in rules (scheduled start from day schedule, grace capped at 5 min e.g. through 8:05 for 8:00 start):
-     * - At or before scheduled start + grace → Present.
-     * - After grace → late bands from getLateBucket (caps at "4 Hours Late" for very late arrivals, e.g. evening).
-     * - Half Day only when actual clock-in falls in [half_day_start_hour, half_day_end_hour), e.g. 12:00 PM–1:00 PM.
+     * Half Day is determined ONLY by lateness >= half_day_threshold (scheduled_paid_minutes / 2).
+     * The old hardcoded noon clock-in window (12:00–13:00) was removed because it incorrectly
+     * classified afternoon-shift employees (e.g. 12 PM start) as Half Day on normal clock-ins.
      *
      * @return array{status: 'on_time'|'late'|'half_day', late_minutes: int, late_label: string}
      */
@@ -193,32 +158,18 @@ class AttendanceStatusService
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $actualTimeIn = $actualTimeIn->copy()->timezone($tz);
-        // Use clock-in calendar date in attendance timezone so schedule is always same-day
         $dateKey = $actualTimeIn->format('Y-m-d');
 
         $graceMinutes = self::getGraceMinutes($daySchedule);
-        $halfDayStartMin = self::getHalfDayStartHour() * 60;
-        $halfDayEndMin = self::getHalfDayClockInWindowEndMinutesFromMidnight();
         $scheduleIn = trim((string) ($daySchedule['in'] ?? '08:00'));
         if (strpos($scheduleIn, ':') === false) {
             $scheduleIn = '08:00';
         }
         $scheduledStart = Carbon::parse($dateKey.' '.$scheduleIn, $tz);
 
-        // Minutes from midnight (same timezone) for explicit comparison
         $actualMinutesFromMidnight = (int) $actualTimeIn->format('G') * 60 + (int) $actualTimeIn->format('i');
         $scheduledMinutesFromMidnight = (int) $scheduledStart->format('G') * 60 + (int) $scheduledStart->format('i');
 
-        // 1) Half-day rule: clock-in in [half_day_start, half_day_end), e.g. 12:00 PM–1:00 PM (end exclusive)
-        if ($actualMinutesFromMidnight >= $halfDayStartMin && $actualMinutesFromMidnight < $halfDayEndMin) {
-            return [
-                'status' => 'half_day',
-                'late_minutes' => 0,
-                'late_label' => 'Half Day',
-            ];
-        }
-
-        // 2) Present vs Late: at or before scheduled_start + grace (e.g. 8:05) → Present; after that → late brackets.
         $graceCutoffMinutes = $scheduledMinutesFromMidnight + $graceMinutes;
         if ($actualMinutesFromMidnight <= $graceCutoffMinutes) {
             return [
@@ -228,12 +179,10 @@ class AttendanceStatusService
             ];
         }
 
-        // 3) Late: raw minutes late = actual - scheduled start
         $rawMinutesLate = $actualMinutesFromMidnight - $scheduledMinutesFromMidnight;
 
-        // Extremely late (≥4 hours): treat as Half Day so badge appears consistently
-        $halfDayLateThreshold = (int) config('attendance.half_day_late_minutes_threshold', 240);
-        if ($rawMinutesLate >= $halfDayLateThreshold) {
+        $halfDayThreshold = self::getHalfDayRegularCapMinutes($daySchedule);
+        if ($rawMinutesLate >= $halfDayThreshold) {
             return [
                 'status' => 'half_day',
                 'late_minutes' => $rawMinutesLate,
@@ -304,52 +253,31 @@ class AttendanceStatusService
     }
 
     /**
-     * Required working minutes for the day: (scheduled end − scheduled start) − break duration.
-     * Break time (e.g. 12:00–1:00) is unpaid and must be deducted so total = 8 hours, not 9.
+     * Required working minutes for the day. Delegates to ScheduleComputationService
+     * for consistent multi-break and shift-type support.
      *
      * @param  string  $dateKey  Y-m-d date string
-     * @param  array{in?: string, out?: string, break_start?: string|null, break_end?: string|null}  $daySchedule
+     * @param  array  $daySchedule
      */
     public static function getRequiredWorkingMinutes(string $dateKey, array $daySchedule, ?string $tz = null): int
     {
         $in = $daySchedule['in'] ?? null;
         $out = $daySchedule['out'] ?? null;
-        if ($in === null || $in === '' || $out === null || $out === '') {
+        if (($in === null || $in === '') && ($daySchedule['shift_type'] ?? 'fixed') !== 'split') {
             return 0;
         }
-        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
-        $scheduledStart = Carbon::parse($dateKey.' '.$in, $tz);
-        $scheduledEnd = self::getScheduledEndForDate($dateKey, $daySchedule, $tz);
-        if (! $scheduledEnd) {
-            return 0;
-        }
-        $totalSpanMinutes = (int) $scheduledStart->diffInMinutes($scheduledEnd);
 
-        $breakStart = trim((string) ($daySchedule['break_start'] ?? ''));
-        $breakEnd = trim((string) ($daySchedule['break_end'] ?? ''));
-        if ($breakStart !== '' && $breakEnd !== '' && preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $breakStart) && preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $breakEnd)) {
-            $breakStartCarbon = Carbon::parse($dateKey.' '.substr($breakStart, 0, 5), $tz);
-            $breakEndCarbon = Carbon::parse($dateKey.' '.substr($breakEnd, 0, 5), $tz);
-            if ($breakEndCarbon->lessThanOrEqualTo($breakStartCarbon)) {
-                $breakEndCarbon->addDay();
-            }
-            $breakMinutes = (int) $breakStartCarbon->diffInMinutes($breakEndCarbon);
-            $totalSpanMinutes = max(0, $totalSpanMinutes - $breakMinutes);
+        $explicitPaid = $daySchedule['expected_paid_minutes'] ?? null;
+        if ($explicitPaid !== null && (int) $explicitPaid > 0) {
+            return (int) $explicitPaid;
         }
 
-        return $totalSpanMinutes;
+        return app(ScheduleComputationService::class)->requiredWorkingMinutes($dateKey, $daySchedule, $tz);
     }
 
     /**
-     * Net worked minutes between timeIn and timeOut, subtracting any overlap with the
-     * schedule's unpaid break window (e.g. 12:00–13:00).
-     *
-     * Pre-shift time (clock-in before schedule start) IS included so that "Total"
-     * displays the true worked duration. The schedule-based regular/OT split is
-     * handled by {@see TimeSegmentationService}.
-     *
-     * Example: 06:00–20:00 with schedule 08:00–17:00, break 12:00–13:00 → 840 raw − 60 break = 780 net (13 h).
-     * Night shift (22:00–06:00): timeOut before timeIn on same date is treated as next day.
+     * Net worked minutes between timeIn and timeOut, subtracting overlap with unpaid breaks.
+     * Delegates to ScheduleComputationService for multi-break support.
      */
     public static function getNetWorkedMinutes(
         Carbon $timeIn,
@@ -358,47 +286,20 @@ class AttendanceStatusService
         string $dateKey,
         ?string $tz = null
     ): int {
-        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
-        $out = $timeOut->copy();
-        $in = trim((string) ($daySchedule['in'] ?? ''));
-        $schedOut = trim((string) ($daySchedule['out'] ?? ''));
-        $isNightShift = $schedOut !== '' && $in !== '' && $schedOut <= $in;
-        if ($isNightShift && $out->lessThanOrEqualTo($timeIn)) {
-            $out = $out->copy()->addDay();
-        }
-        $effectiveIn = $timeIn->copy();
-        $rawMinutes = max(0, (int) $effectiveIn->diffInMinutes($out));
-
-        $breakStart = trim((string) ($daySchedule['break_start'] ?? ''));
-        $breakEnd = trim((string) ($daySchedule['break_end'] ?? ''));
-
-        if ($breakStart === '' || $breakEnd === '' ||
-            ! preg_match('/^\d{1,2}:\d{2}/', $breakStart) ||
-            ! preg_match('/^\d{1,2}:\d{2}/', $breakEnd)) {
-            return $rawMinutes;
-        }
-
-        $breakStartC = Carbon::parse($dateKey.' '.substr($breakStart, 0, 5), $tz);
-        $breakEndC = Carbon::parse($dateKey.' '.substr($breakEnd, 0, 5), $tz);
-
-        if ($breakEndC->lessThanOrEqualTo($breakStartC)) {
-            $breakEndC->addDay();
-        }
-
-        $overlapStart = $effectiveIn->greaterThan($breakStartC) ? $effectiveIn->copy() : $breakStartC->copy();
-        $overlapEnd = $out->lessThan($breakEndC) ? $out->copy() : $breakEndC->copy();
-
-        if ($overlapEnd->greaterThan($overlapStart)) {
-            return max(0, $rawMinutes - (int) $overlapStart->diffInMinutes($overlapEnd));
-        }
-
-        return $rawMinutes;
+        return app(ScheduleComputationService::class)->netWorkedMinutes(
+            $timeIn,
+            $timeOut,
+            $daySchedule,
+            $dateKey,
+            $tz,
+            false,
+        );
     }
 
     /**
      * Schedule-clipped net worked minutes: clips clock-in to schedule start so
      * pre-shift time does not count toward the regular hour requirement.
-     * Used only for undertime calculation.
+     * Delegates to ScheduleComputationService for multi-break support.
      */
     public static function getScheduleClippedNetWorkedMinutes(
         Carbon $timeIn,
@@ -407,45 +308,14 @@ class AttendanceStatusService
         string $dateKey,
         ?string $tz = null
     ): int {
-        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
-        $out = $timeOut->copy();
-        $in = trim((string) ($daySchedule['in'] ?? ''));
-        $schedOut = trim((string) ($daySchedule['out'] ?? ''));
-        $isNightShift = $schedOut !== '' && $in !== '' && $schedOut <= $in;
-        if ($isNightShift && $out->lessThanOrEqualTo($timeIn)) {
-            $out = $out->copy()->addDay();
-        }
-        $effectiveIn = $timeIn->copy();
-        $schedStart = self::getScheduledStartForDate($dateKey, $daySchedule, $tz);
-        if ($schedStart !== null && $effectiveIn->lessThan($schedStart)) {
-            $effectiveIn = $schedStart->copy();
-        }
-        $rawMinutes = max(0, (int) $effectiveIn->diffInMinutes($out));
-
-        $breakStart = trim((string) ($daySchedule['break_start'] ?? ''));
-        $breakEnd = trim((string) ($daySchedule['break_end'] ?? ''));
-
-        if ($breakStart === '' || $breakEnd === '' ||
-            ! preg_match('/^\d{1,2}:\d{2}/', $breakStart) ||
-            ! preg_match('/^\d{1,2}:\d{2}/', $breakEnd)) {
-            return $rawMinutes;
-        }
-
-        $breakStartC = Carbon::parse($dateKey.' '.substr($breakStart, 0, 5), $tz);
-        $breakEndC = Carbon::parse($dateKey.' '.substr($breakEnd, 0, 5), $tz);
-
-        if ($breakEndC->lessThanOrEqualTo($breakStartC)) {
-            $breakEndC->addDay();
-        }
-
-        $overlapStart = $effectiveIn->greaterThan($breakStartC) ? $effectiveIn->copy() : $breakStartC->copy();
-        $overlapEnd = $out->lessThan($breakEndC) ? $out->copy() : $breakEndC->copy();
-
-        if ($overlapEnd->greaterThan($overlapStart)) {
-            return max(0, $rawMinutes - (int) $overlapStart->diffInMinutes($overlapEnd));
-        }
-
-        return $rawMinutes;
+        return app(ScheduleComputationService::class)->netWorkedMinutes(
+            $timeIn,
+            $timeOut,
+            $daySchedule,
+            $dateKey,
+            $tz,
+            true,
+        );
     }
 
     /**

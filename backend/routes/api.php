@@ -370,6 +370,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:manage-schedules|schedule.manage')->patch('/admin/schedules/{id}', [ScheduleController::class, 'update']);
         Route::middleware('permission:manage-schedules|schedule.manage')->delete('/admin/schedules/{id}', [ScheduleController::class, 'destroy']);
         Route::middleware('permission:manage-schedules|schedule.assign')->post('/admin/schedules/{id}/assign', [ScheduleController::class, 'assign']);
+        Route::middleware('permission:manage-schedules|schedule.view')->post('/admin/schedules/{id}/preview', [ScheduleController::class, 'preview']);
         Route::middleware('permission:approve-schedule|manage-schedules')->get('/admin/schedule-requests', [ScheduleRequestController::class, 'index']);
         Route::middleware('permission:approve-schedule|manage-schedules')->get('/admin/schedule-requests/{id}', [ScheduleRequestController::class, 'show']);
         Route::middleware('permission:approve-schedule|manage-schedules')->post('/admin/schedule-requests/{id}/approve', [ScheduleRequestController::class, 'approve']);

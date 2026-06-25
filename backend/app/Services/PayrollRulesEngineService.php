@@ -61,19 +61,45 @@ class PayrollRulesEngineService
         if (! $ws) {
             return null;
         }
-        $restDays = $ws->rest_days ?? [];
+
+        $restDays = is_array($ws->rest_days) ? $ws->rest_days : [];
+
+        $breaks = [];
+        foreach ($ws->getAllBreaks() as $b) {
+            $breaks[] = [
+                'start' => $b['start'],
+                'end' => $b['end'],
+                'is_paid' => $b['is_paid'] ?? false,
+            ];
+        }
+
         $dayConfig = [];
+
         foreach (self::DAY_KEYS as $key) {
             if (in_array($key, $restDays, true)) {
                 $dayConfig[$key] = null;
 
                 continue;
             }
+
             $dayConfig[$key] = [
                 'in' => $ws->time_in,
                 'out' => $ws->time_out,
                 'break_start' => $ws->break_start,
                 'break_end' => $ws->break_end,
+                'breaks' => $breaks,
+                'work_blocks' => $ws->getWorkBlocks(),
+                'shift_type' => $ws->shift_type ?? 'fixed',
+                'crosses_midnight' => (bool) ($ws->crosses_midnight ?? false),
+                'expected_paid_minutes' => $ws->expected_paid_minutes,
+                'half_day_threshold_minutes' => $ws->effective_half_day_threshold,
+                'grace_period_minutes' => $ws->grace_period_minutes,
+                'early_timein_minutes' => $ws->early_timein_minutes ?? 60,
+                'late_allowance_minutes' => $ws->late_allowance_minutes,
+                'early_timeout_minutes' => $ws->early_timeout_minutes,
+                'overtime_buffer_minutes' => $ws->overtime_buffer_minutes ?? 15,
+                'rest_days' => $restDays,
+                'flexible_required_minutes' => $ws->flexible_required_minutes,
             ];
         }
 

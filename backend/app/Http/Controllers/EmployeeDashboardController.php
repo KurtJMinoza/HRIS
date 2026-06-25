@@ -7,6 +7,7 @@ use App\Models\AttendanceLog;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Services\AttendanceCacheService;
+use App\Services\AttendanceDailySummaryService;
 use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusResolver;
 use App\Services\AttendanceStatusService;
@@ -38,6 +39,7 @@ class EmployeeDashboardController extends Controller
         private readonly OtDetectionService $otDetectionService,
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly PayrollComputationService $payrollComputation,
+        private readonly AttendanceDailySummaryService $dailySummary,
     ) {}
 
     /**
@@ -55,7 +57,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::summaryKey($employeeId, $todayDate);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 5) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 6) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             Log::debug('[EmployeeDashboard] summary cache HIT', [
@@ -176,7 +178,7 @@ class EmployeeDashboardController extends Controller
             'upcoming_payroll' => $upcomingBatch,
             'latest_payslip' => $latestPayslipSummary,
             'meta' => [
-                'schema_version' => 5,
+                'schema_version' => 6,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -234,7 +236,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 8) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 10) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -329,7 +331,7 @@ class EmployeeDashboardController extends Controller
 
         $bulkFetchMs = (int) round((microtime(true) - $bulkFetchStart) * 1000);
 
-        // Build days array for month
+        // Build days array for month via AttendanceDailySummaryService (single source of truth)
         $days = [];
         $metrics = $this->zeroMetrics();
         $extraMetrics = [
@@ -349,93 +351,35 @@ class EmployeeDashboardController extends Controller
 
         while ($cursor->lessThanOrEqualTo($to)) {
             $dateKey = $cursor->toDateString();
-            $dayKey = self::DAY_KEYS[(int) $cursor->format('w')];
-            $isToday = $dateKey === $todayDate;
-            $isFuture = $cursor->greaterThan($todayNow->copy()->startOfDay());
-            $daySchedule = $scheduleAssigned && isset($effectiveSchedule[$dayKey]) ? $effectiveSchedule[$dayKey] : null;
-            $isRestDay = $this->attendanceRollup->isScheduledRestDay($effectiveSchedule, $daySchedule);
             $holidayOnDate = $holidayMap[$dateKey] ?? null;
             $leaveOnDate = $leaveByDate[$dateKey] ?? null;
-
             $dayLogs = isset($logs[$dateKey]) ? $logs[$dateKey]->all() : null;
-
             $correctionCollection = $corrections->get($dateKey);
             $correction = $correctionCollection?->first();
-
-            [$effectiveTimeIn, $effectiveTimeOut, $hasTimeIn, $hasTimeOut] = $this->resolveDisplayClockTimes($dayLogs, $correction);
-
             $otRecords = $overtimesByDate->get($dateKey)?->all() ?? [];
-            $approvedOtRecords = array_values(array_filter($otRecords, fn ($o) => $o->status === Overtime::STATUS_APPROVED));
-            $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
-            $rawOtMinutes = 0;
-            if (
-                $effectiveTimeIn instanceof Carbon
-                && $effectiveTimeOut instanceof Carbon
-                && is_array($daySchedule)
-                && ! empty($daySchedule['in'])
-                && ! empty($daySchedule['out'])
-                && ! $isRestDay
-            ) {
-                $rawOtMinutes = AttendanceStatusService::computeRawOvertimeBreakdown(
-                    $dateKey,
-                    $daySchedule,
-                    $effectiveTimeIn,
-                    $effectiveTimeOut,
-                    $attendanceTz
-                )['total_minutes'];
-            }
-            $actualRenderedOtHours = $rawOtMinutes > 0 ? round($rawOtMinutes / 60, 2) : 0.0;
-            $payableOtMinutes = $approvedOtHours > 0
-                ? $this->overtimePayroll->resolvePayableOtMinutes($rawOtMinutes, (int) round($approvedOtHours * 60))
-                : 0;
-            $payableOtHours = round($payableOtMinutes / 60, 2);
-            $overtimeContext = [
-                'approved_ot_hours' => $approvedOtHours,
-                'payable_ot_hours' => $payableOtHours,
-            ];
 
-            $resolved = $this->statusResolver->resolve(
+            $summary = $this->dailySummary->computeForDate(
+                user: $user,
                 dateKey: $dateKey,
                 todayDate: $todayDate,
                 nowTz: $todayNow,
                 effectiveSchedule: $effectiveSchedule,
-                daySchedule: $daySchedule,
-                dayLogs: $dayLogs,
+                preloadedLogs: $dayLogs,
                 correction: $correction,
-                holiday: $holidayOnDate,
                 leave: $leaveOnDate,
-                isRestDay: $isRestDay,
-                isFuture: $isFuture,
-                overtimeContext: $overtimeContext,
+                holiday: $holidayOnDate,
+                otRecords: $otRecords,
             );
 
-            $status = $resolved['status'];
-            $effectiveWorkedMinutes = $resolved['effective_worked_minutes'];
-            if ($hasTimeIn && $hasTimeOut && $effectiveTimeIn && $effectiveTimeOut && is_array($daySchedule)) {
-                $in = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
-                $out = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
-                if ($out->greaterThan($in)) {
-                    $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                        $in,
-                        $out,
-                        $daySchedule,
-                        $dateKey,
-                        $attendanceTz
-                    );
-                }
-            }
-
-            $dayLateMinutes = (int) ($resolved['late_minutes'] ?? 0);
-            $dayLateLabel = $resolved['late_label'] ?? null;
-            $dayUndertimeMinutes = (int) ($resolved['undertime_minutes'] ?? 0);
-            $rawOtMinutes = (int) ($resolved['overtime_minutes'] ?? $rawOtMinutes);
-            $rawPreOtSegment = null;
-            $rawPostOtSegment = null;
+            $status = $summary['status'];
+            $dayLateMinutes = (int) ($summary['late_minutes'] ?? 0);
+            $dayUndertimeMinutes = (int) ($summary['undertime_minutes'] ?? 0);
+            $effectiveWorkedMinutes = $summary['worked_minutes'];
 
             if (
                 $dayLateMinutes > 0
                 && ! in_array($status, ['holiday', 'leave', 'rest', 'upcoming', 'absent'], true)
-                && ! $isRestDay
+                && ! ($summary['is_rest_day'] ?? false)
             ) {
                 $extraMetrics['late_minutes'] += $dayLateMinutes;
             }
@@ -444,7 +388,7 @@ class EmployeeDashboardController extends Controller
                 $dayUndertimeMinutes > 0
                 && $status === AttendanceStatusResolver::STATUS_UNDERTIME
                 && ! in_array($status, ['holiday', 'leave', 'rest', 'upcoming', 'absent'], true)
-                && ! $isRestDay
+                && ! ($summary['is_rest_day'] ?? false)
             ) {
                 $extraMetrics['undertime_count']++;
             }
@@ -453,40 +397,7 @@ class EmployeeDashboardController extends Controller
                 $extraMetrics['total_worked_minutes'] += $effectiveWorkedMinutes;
             }
 
-            if ($rawOtMinutes > 0 && $effectiveTimeIn instanceof Carbon && $effectiveTimeOut instanceof Carbon && is_array($daySchedule) && ! empty($daySchedule['in']) && ! empty($daySchedule['out']) && ! $isRestDay) {
-                $inCarbon = $effectiveTimeIn;
-                $outCarbon = $effectiveTimeOut;
-                $otBreakdown = AttendanceStatusService::computeRawOvertimeBreakdown($dateKey, $daySchedule, $inCarbon, $outCarbon, $attendanceTz);
-                $scheduledStartForOt = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $attendanceTz);
-                $scheduledEndForOt = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $attendanceTz);
-
-                if ($scheduledStartForOt && $otBreakdown['pre_minutes'] > 0) {
-                    $rawPreOtSegment = [
-                        'kind' => 'pre_shift',
-                        'start' => $this->formatTimeInAttendanceTz($inCarbon),
-                        'end' => $this->formatTimeInAttendanceTz($scheduledStartForOt),
-                        'minutes' => $otBreakdown['pre_minutes'],
-                        'hours' => round($otBreakdown['pre_minutes'] / 60, 2),
-                    ];
-                }
-
-                if ($scheduledEndForOt && $otBreakdown['post_minutes'] > 0) {
-                    $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
-                        ? (int) $daySchedule['overtime_buffer_minutes']
-                        : (int) config('attendance.overtime_buffer_minutes', 15);
-                    $postShiftOtStart = $scheduledEndForOt->copy()->addMinutes($overtimeBuffer);
-                    $rawPostOtSegment = [
-                        'kind' => 'post_shift',
-                        'start' => $this->formatTimeInAttendanceTz($postShiftOtStart),
-                        'end' => $this->formatTimeInAttendanceTz($outCarbon),
-                        'minutes' => $otBreakdown['post_minutes'],
-                        'hours' => round($otBreakdown['post_minutes'] / 60, 2),
-                    ];
-                }
-            }
-
-            // Count for absent categories (rest days never count as absent)
-            if ($status === 'absent' && ! $isRestDay) {
+            if ($status === 'absent' && ! ($summary['is_rest_day'] ?? false)) {
                 if ($holidayOnDate) {
                     $absentCounts['holiday']++;
                 } elseif ($leaveOnDate) {
@@ -494,25 +405,6 @@ class EmployeeDashboardController extends Controller
                 } else {
                     $absentCounts['absent']++;
                 }
-            }
-
-            $unapprovedOtHours = ($approvedOtHours > 0.0001 || $actualRenderedOtHours > 0.0001)
-                ? abs(round($actualRenderedOtHours - $approvedOtHours, 2))
-                : 0.0;
-            if ($actualRenderedOtHours <= 0.0001 && $approvedOtHours > 0) {
-                $unapprovedOtHours = 0.0;
-            }
-
-            $payrollImpactHours = null;
-            if (! $isFuture && ($hasTimeIn || $hasTimeOut || $leaveOnDate !== null)) {
-                $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
-                    $user,
-                    $dateKey,
-                    $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : null,
-                    $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : null,
-                    $attendanceTz
-                );
-                $payrollImpactHours = round($payrollImpactMinutes / 60, 2);
             }
 
             if (in_array($status, ['present', 'present_with_ot', 'late'], true)) {
@@ -530,41 +422,11 @@ class EmployeeDashboardController extends Controller
                 $absentCounts['holiday']++;
             }
 
-            $days[] = [
-                'date' => $dateKey,
-                'status' => in_array($status, ['rest', 'rest_day', 'no_schedule_rest'], true) ? 'rest' : $status,
-                'status_label' => $resolved['status_label'] ?? AttendanceStatusResolver::statusLabel($status),
-                'status_code' => $resolved['status_code'] ?? $status,
-                'display_badge' => $resolved['display_badge'] ?? AttendanceStatusResolver::statusLabel($status),
-                'is_rest_day' => $isRestDay || $status === 'rest',
-                'schedule_label' => ($isRestDay || $status === 'rest') ? AttendanceStatusResolver::REST_DAY_LABEL : null,
+            $days[] = array_merge($summary, [
+                'schedule_label' => ($summary['is_rest_day'] ?? false) ? AttendanceStatusResolver::REST_DAY_LABEL : null,
                 'holiday_name' => $holidayOnDate['name'] ?? null,
                 'holiday_type' => $holidayOnDate['type'] ?? null,
-                'schedule_in' => is_array($daySchedule) ? ($daySchedule['in'] ?? null) : null,
-                'schedule_out' => is_array($daySchedule) ? ($daySchedule['out'] ?? null) : null,
-                'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
-                'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
-                'formatted_time_in' => $this->formatTimeForDisplay($effectiveTimeIn),
-                'formatted_time_out' => $this->formatTimeForDisplay($effectiveTimeOut),
-                'total_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
-                'total_rendered_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
-                'payroll_impact_hours' => $payrollImpactHours,
-                'late_minutes' => $dayLateMinutes,
-                'late_label' => $dayLateLabel,
-                'undertime_minutes' => $dayUndertimeMinutes,
-                'overtime_minutes' => $rawOtMinutes > 0 ? $rawOtMinutes : null,
-                'raw_overtime_minutes' => $rawOtMinutes > 0 ? $rawOtMinutes : null,
-                'raw_overtime_hours' => $rawOtMinutes > 0 ? round($rawOtMinutes / 60, 2) : null,
-                'raw_pre_ot' => $rawPreOtSegment,
-                'raw_post_ot' => $rawPostOtSegment,
-                'presence_label' => $resolved['presence_label'],
-                'presence_issue' => $resolved['presence_issue'],
-                'approved_overtime_hours' => $approvedOtHours > 0 ? round($approvedOtHours, 2) : null,
-                'actual_rendered_overtime_hours' => ($rawOtMinutes > 0 || $approvedOtHours > 0) ? $actualRenderedOtHours : null,
-                'rendered_overtime_hours' => ($rawOtMinutes > 0 || $approvedOtHours > 0) ? $actualRenderedOtHours : null,
-                'payable_overtime_hours' => $payableOtHours > 0 ? $payableOtHours : null,
-                'unapproved_overtime_hours' => $unapprovedOtHours > 0.0001 ? round($unapprovedOtHours, 2) : null,
-            ];
+            ]);
 
             $cursor->addDay();
         }
@@ -606,7 +468,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 8,
+                'schema_version' => 10,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -1104,7 +966,17 @@ class EmployeeDashboardController extends Controller
             return null;
         }
 
-        $restDays = $schedule->rest_days ?? [];
+        $restDays = is_array($schedule->rest_days) ? $schedule->rest_days : [];
+
+        $breaks = [];
+        foreach ($schedule->getAllBreaks() as $b) {
+            $breaks[] = [
+                'start' => $b['start'],
+                'end' => $b['end'],
+                'is_paid' => $b['is_paid'] ?? false,
+            ];
+        }
+
         $baseDayConfig = [];
 
         foreach (self::DAY_KEYS as $dayKey) {
@@ -1118,11 +990,19 @@ class EmployeeDashboardController extends Controller
                 'out' => $schedule->time_out,
                 'break_start' => $schedule->break_start,
                 'break_end' => $schedule->break_end,
+                'breaks' => $breaks,
+                'work_blocks' => $schedule->getWorkBlocks(),
+                'shift_type' => $schedule->shift_type ?? 'fixed',
+                'crosses_midnight' => (bool) ($schedule->crosses_midnight ?? false),
+                'expected_paid_minutes' => $schedule->expected_paid_minutes,
+                'half_day_threshold_minutes' => $schedule->effective_half_day_threshold,
                 'grace_period_minutes' => $schedule->grace_period_minutes,
                 'early_timein_minutes' => $schedule->early_timein_minutes ?? 60,
                 'late_allowance_minutes' => $schedule->late_allowance_minutes,
                 'early_timeout_minutes' => $schedule->early_timeout_minutes,
                 'overtime_buffer_minutes' => $schedule->overtime_buffer_minutes ?? 15,
+                'rest_days' => $restDays,
+                'flexible_required_minutes' => $schedule->flexible_required_minutes,
             ];
         }
 

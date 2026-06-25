@@ -1,12 +1,22 @@
 /**
- * Client-side schedule math for previews (PH: 8h day, ND window 22:00–06:00, weekly rest).
- * Not a substitute for payroll engine — for admin UX warnings only.
+ * Client-side schedule math for previews.
+ * Supports: fixed, flexible, split, overnight, rotating, compressed shifts;
+ * multiple breaks (paid/unpaid); dynamic half-day thresholds.
  */
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
+const SHIFT_TYPES = [
+  { value: 'fixed', label: 'Fixed Shift' },
+  { value: 'flexible', label: 'Flexible Shift' },
+  { value: 'split', label: 'Split Shift' },
+  { value: 'overnight', label: 'Overnight Shift' },
+  { value: 'rotating', label: 'Rotating Shift' },
+  { value: 'compressed', label: 'Compressed Work Week' },
+]
+
 /** @param {string} hhmm - "HH:mm" or "H:mm" */
-export function minutesFromMidnight(hhmm) {
+function minutesFromMidnight(hhmm) {
   if (!hhmm || typeof hhmm !== 'string') return 0
   const [h, m] = hhmm.trim().slice(0, 5).split(':').map((x) => parseInt(x, 10))
   if (Number.isNaN(h) || Number.isNaN(m)) return 0
@@ -14,7 +24,7 @@ export function minutesFromMidnight(hhmm) {
 }
 
 /** @returns {string} "HH:mm" */
-export function minutesToHhMm(total) {
+function minutesToHhMm(total) {
   let t = ((total % 1440) + 1440) % 1440
   const h = Math.floor(t / 60)
   const m = t % 60
@@ -23,28 +33,81 @@ export function minutesToHhMm(total) {
 
 /**
  * Net working minutes for one shift (handles night span).
- * @param {string|null|undefined} breakStart
- * @param {string|null|undefined} breakEnd
+ * Supports multiple breaks via breaks array.
  */
-export function netShiftMinutes(timeIn, timeOut, breakStart, breakEnd) {
+function netShiftMinutes(timeIn, timeOut, breakStart, breakEnd, breaks) {
   const a = minutesFromMidnight(timeIn)
   const b = minutesFromMidnight(timeOut)
   let span = b - a
   if (span <= 0) span += 24 * 60
 
-  let br = 0
-  if (breakStart && breakEnd) {
+  let totalBreak = 0
+
+  if (Array.isArray(breaks) && breaks.length > 0) {
+    for (const br of breaks) {
+      if (br.is_paid) continue
+      const bs = minutesFromMidnight(br.start || br.break_start)
+      const be = minutesFromMidnight(br.end || br.break_end)
+      let bspan = be - bs
+      if (bspan < 0) bspan += 24 * 60
+      totalBreak += Math.max(0, Math.min(bspan, span))
+    }
+  } else if (breakStart && breakEnd) {
     const bs = minutesFromMidnight(breakStart)
     const be = minutesFromMidnight(breakEnd)
     let bspan = be - bs
     if (bspan < 0) bspan += 24 * 60
-    br = Math.max(0, Math.min(bspan, span))
+    totalBreak = Math.max(0, Math.min(bspan, span))
   }
-  return Math.max(0, span - br)
+
+  return Math.max(0, span - totalBreak)
+}
+
+/**
+ * Compute paid minutes for a schedule (supports explicit override, split shift blocks).
+ */
+function computePaidMinutes(schedule) {
+  if (schedule.expected_paid_minutes && Number(schedule.expected_paid_minutes) > 0) {
+    return Number(schedule.expected_paid_minutes)
+  }
+
+  if (schedule.shift_type === 'split' && Array.isArray(schedule.work_blocks) && schedule.work_blocks.length > 0) {
+    let total = 0
+    for (const block of schedule.work_blocks) {
+      const s = minutesFromMidnight(block.start)
+      const e = minutesFromMidnight(block.end)
+      let dur = e - s
+      if (dur <= 0) dur += 24 * 60
+      total += dur
+    }
+    return total
+  }
+
+  if (schedule.shift_type === 'flexible' && schedule.flexible_required_minutes) {
+    return Number(schedule.flexible_required_minutes)
+  }
+
+  return netShiftMinutes(
+    schedule.time_in,
+    schedule.time_out,
+    schedule.break_start,
+    schedule.break_end,
+    schedule.breaks
+  )
+}
+
+/**
+ * Half-day threshold: explicit, or paid_minutes / 2
+ */
+function halfDayThresholdMinutes(schedule) {
+  if (schedule.half_day_threshold_minutes && Number(schedule.half_day_threshold_minutes) > 0) {
+    return Number(schedule.half_day_threshold_minutes)
+  }
+  return Math.floor(computePaidMinutes(schedule) / 2)
 }
 
 /** ND window 22:00–06:00 (crosses midnight). Returns overlap minutes with [time_in, time_out). */
-export function ndOverlapMinutes(timeIn, timeOut) {
+function ndOverlapMinutes(timeIn, timeOut) {
   const ND_START = 22 * 60
   const ND_END = 6 * 60
   const a = minutesFromMidnight(timeIn)
@@ -68,23 +131,15 @@ export function ndOverlapMinutes(timeIn, timeOut) {
   return part1 + part2
 }
 
-/**
- * @param {{ time_in: string, time_out: string, break_start?: string|null, break_end?: string|null, rest_days?: string[] }}
- */
-export function weeklyScheduledHours(schedule) {
+function weeklyScheduledHours(schedule) {
   const rest = new Set(Array.isArray(schedule.rest_days) ? schedule.rest_days : [])
   const workDays = DAY_KEYS.filter((d) => !rest.has(d))
   if (workDays.length === 0) return 0
-  const perDay = netShiftMinutes(
-    schedule.time_in,
-    schedule.time_out,
-    schedule.break_start,
-    schedule.break_end
-  )
+  const perDay = computePaidMinutes(schedule)
   return (perDay / 60) * workDays.length
 }
 
-export function weeklyNdHours(schedule) {
+function weeklyNdHours(schedule) {
   const rest = new Set(Array.isArray(schedule.rest_days) ? schedule.rest_days : [])
   const workDays = DAY_KEYS.filter((d) => !rest.has(d))
   if (workDays.length === 0) return 0
@@ -93,17 +148,51 @@ export function weeklyNdHours(schedule) {
 }
 
 /** @returns {'low'|'medium'|'high'} */
-export function otRiskLevel(schedule) {
+function otRiskLevel(schedule) {
   const wh = weeklyScheduledHours(schedule)
-  const daily = netShiftMinutes(schedule.time_in, schedule.time_out, schedule.break_start, schedule.break_end) / 60
+  const daily = computePaidMinutes(schedule) / 60
   if (wh > 48 || daily > 10) return 'high'
   if (wh > 44 || daily > 9) return 'medium'
   return 'low'
 }
 
-export function hasWeeklyRestDay(schedule) {
+function hasWeeklyRestDay(schedule) {
   const rest = Array.isArray(schedule.rest_days) ? schedule.rest_days : []
   return rest.length >= 1
 }
 
-export { DAY_KEYS }
+/**
+ * Format paid minutes as human-readable string: "8h 0m" or "7h 30m"
+ */
+function formatPaidHours(minutes) {
+  if (!minutes || minutes <= 0) return '0h'
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
+
+/**
+ * Detect if shift crosses midnight based on time_in and time_out.
+ */
+function detectCrossesMidnight(timeIn, timeOut) {
+  if (!timeIn || !timeOut) return false
+  return minutesFromMidnight(timeOut) <= minutesFromMidnight(timeIn)
+}
+
+export {
+  DAY_KEYS,
+  SHIFT_TYPES,
+  minutesFromMidnight,
+  minutesToHhMm,
+  netShiftMinutes,
+  computePaidMinutes,
+  halfDayThresholdMinutes,
+  ndOverlapMinutes,
+  weeklyScheduledHours,
+  weeklyNdHours,
+  otRiskLevel,
+  hasWeeklyRestDay,
+  formatPaidHours,
+  detectCrossesMidnight,
+}
