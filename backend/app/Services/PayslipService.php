@@ -1394,21 +1394,28 @@ class PayslipService
 
     /**
      * Copy the draft payslip snapshot exactly and lock summary totals before status promotion.
+     *
+     * @param  bool  $trustDraftSnapshot  When true (queued batch finalize), reuse the admin-reviewed
+     *                                   draft snapshot instead of rerunning live payroll computation.
      */
-    public function freezePayslipSnapshotForFinalization(Payslip $payslip): Payslip
+    public function freezePayslipSnapshotForFinalization(Payslip $payslip, bool $trustDraftSnapshot = false): Payslip
     {
         if (! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
-            $employee = $payslip->relationLoaded('employee') && $payslip->employee instanceof User
-                ? $payslip->employee
-                : User::query()->find((int) $payslip->user_id);
+            if ($trustDraftSnapshot) {
+                $payslip = $this->ensureDraftPayrollLinesSynced($payslip);
+            } else {
+                $employee = $payslip->relationLoaded('employee') && $payslip->employee instanceof User
+                    ? $payslip->employee
+                    : User::query()->find((int) $payslip->user_id);
 
-            if ($employee instanceof User) {
-                $snapshotRaw = $payslip->snapshot ?? [];
-                $summary = is_array($snapshotRaw['summary'] ?? null) ? $snapshotRaw['summary'] : [];
-                if ($this->isConsultantSnapshot(is_array($snapshotRaw) ? $snapshotRaw : [], $summary)) {
-                    $payslip = $this->refreshConsultantDraftPayslipSnapshot($payslip, $employee);
-                } else {
-                    $payslip = $this->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                if ($employee instanceof User) {
+                    $snapshotRaw = $payslip->snapshot ?? [];
+                    $summary = is_array($snapshotRaw['summary'] ?? null) ? $snapshotRaw['summary'] : [];
+                    if ($this->isConsultantSnapshot(is_array($snapshotRaw) ? $snapshotRaw : [], $summary)) {
+                        $payslip = $this->refreshConsultantDraftPayslipSnapshot($payslip, $employee);
+                    } else {
+                        $payslip = $this->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                    }
                 }
             }
         }

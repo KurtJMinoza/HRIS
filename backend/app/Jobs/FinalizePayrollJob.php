@@ -137,7 +137,9 @@ class FinalizePayrollJob implements ShouldQueue
                     ->onConnection('redis')
                     ->onQueue('payslip-pdf');
             }
-            ReportsCacheService::invalidate();
+            dispatch(static function (): void {
+                ReportsCacheService::invalidate();
+            })->onConnection('redis')->onQueue('default');
 
             Log::info('FinalizePayrollJob completed', [
                 'batch_run_id' => $this->batchRunId,

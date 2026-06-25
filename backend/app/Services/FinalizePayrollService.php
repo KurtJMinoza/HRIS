@@ -2178,7 +2178,7 @@ class FinalizePayrollService
             $departmentId,
             $singleEmployeeId,
             $existingBatchRunId
-        )->orderByDesc('id')->get()->unique('user_id')->keyBy(fn (Payslip $p) => (int) $p->user_id);
+        )->with('employee')->orderByDesc('id')->get()->unique('user_id')->keyBy(fn (Payslip $p) => (int) $p->user_id);
         $timings['load_employees_ms'] = round((microtime(true) - $t0) * 1000, 2);
 
         $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
@@ -2224,11 +2224,8 @@ class FinalizePayrollService
                         throw new \RuntimeException('Missing draft payslip for user_id='.(int) $user->id);
                     }
 
-                    if ($this->isConsultantEmployee($user)) {
-                        $payslip = $this->payslipService->refreshConsultantDraftPayslipSnapshot($payslip, $user);
-                    } else {
-                        $payslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $user);
-                    }
+                    // ponytail: fast path trusts admin-reviewed draft snapshots; live recompute runs at draft generation only.
+                    $payslip = $this->assertDraftPayslipLinesArePersisted($payslip);
 
                     $snapshotRaw = $payslip->snapshot;
                     $snapshot = is_array($snapshotRaw)
@@ -2242,7 +2239,6 @@ class FinalizePayrollService
                         throw new \RuntimeException('Draft payslip snapshot is missing summary data for user_id='.(int) $user->id);
                     }
 
-                    $payslip = $this->assertDraftPayslipLinesArePersisted($payslip);
                     $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
                     $snapshot = $this->snapshotArrayFromPayslip($payslip);
                     $draftDeductionCatalogByUser[(int) $user->id] = $this->payslipService->payrollDeductionLineCatalog($snapshot);
@@ -2252,7 +2248,7 @@ class FinalizePayrollService
                     $totals['net'] += $draftMetrics['net_pay'];
                     $payslipIds[] = (int) $payslip->id;
 
-                    $this->payslipService->freezePayslipSnapshotForFinalization($payslip);
+                    $this->payslipService->freezePayslipSnapshotForFinalization($payslip, trustDraftSnapshot: true);
                 }
 
                 $payrollModule = $this->normalizePayrollModule((string) ($lockedRun->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
