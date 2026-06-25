@@ -74,6 +74,9 @@ class GeneratePayrollBatchJob implements ShouldQueue
             'queue' => $this->queue,
             'queue_timeout_seconds' => $this->timeout,
         ]);
+        if (app()->runningInConsole()) {
+            fwrite(STDOUT, 'GeneratePayrollBatchJob started batch_run_id='.$this->batchRunId.PHP_EOL);
+        }
 
         $run = PayrollBatchRun::query()->find($this->batchRunId);
         if (! $run) {
@@ -193,6 +196,10 @@ class GeneratePayrollBatchJob implements ShouldQueue
                 'elapsed_ms' => $sectionTimings['total_job_ms'] ?? round((microtime(true) - $jobStartedAt) * 1000, 2),
                 'peak_memory_mb' => round(memory_get_peak_usage(true) / 1048576, 2),
             ]);
+            if (app()->runningInConsole()) {
+                $elapsedMs = $sectionTimings['total_job_ms'] ?? round((microtime(true) - $jobStartedAt) * 1000, 2);
+                fwrite(STDOUT, 'GeneratePayrollBatchJob completed batch_run_id='.(int) $run->id.' payslip_count='.count($ids).' elapsed_ms='.$elapsedMs.PHP_EOL);
+            }
         } catch (Throwable $e) {
             report($e);
             Log::error('GeneratePayrollBatchJob failed', [

@@ -1145,6 +1145,18 @@ class PayslipService
             return $payslip;
         }
 
+        $persist = app(PayrollLinePersistService::class);
+        if ($persist->tablesReady()) {
+            $persistedLineCount = $this->draftPayrollLineRowCount($payslip);
+            if ($persistedLineCount > 0) {
+                $snapshotLineCount = (int) ($this->frozenPayslipLineMetrics($payslip)['line_count'] ?? 0);
+                // ponytail: draft generation already synced lines; skip delete+reinsert per employee at finalize.
+                if ($snapshotLineCount === 0 || $persistedLineCount >= $snapshotLineCount) {
+                    return $payslip->fresh() ?? $payslip;
+                }
+            }
+        }
+
         $this->syncPayslipSummaryFromLines($payslip, $save);
         $fresh = $payslip->fresh() ?? $payslip;
 
@@ -1402,7 +1414,7 @@ class PayslipService
     {
         if (! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
             if ($trustDraftSnapshot) {
-                $payslip = $this->ensureDraftPayrollLinesSynced($payslip);
+                // ponytail: assertDraftPayslipLinesArePersisted already synced lines when needed.
             } else {
                 $employee = $payslip->relationLoaded('employee') && $payslip->employee instanceof User
                     ? $payslip->employee
@@ -1430,14 +1442,26 @@ class PayslipService
                 ? $snapshotRaw
                 : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
             if (is_array($snapshotForExemption)) {
-                $snapshotForExemption = $this->applyGovernmentExemptionToPayslipSnapshot(
-                    $snapshotForExemption,
-                    $employee,
-                    ! empty($periodInput['from_date']) ? Carbon::parse((string) $periodInput['from_date']) : ($payslip->pay_period_start ?? now()),
-                    ! empty($periodInput['to_date']) ? Carbon::parse((string) $periodInput['to_date']) : ($payslip->pay_period_end ?? now()),
-                    (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
-                );
-                $payslip->forceFill(['snapshot' => $snapshotForExemption]);
+                $summaryForExemption = is_array($snapshotForExemption['summary'] ?? null)
+                    ? $snapshotForExemption['summary']
+                    : [];
+                $existingExemption = is_array($summaryForExemption['government_deduction_exemption'] ?? null)
+                    ? $summaryForExemption['government_deduction_exemption']
+                    : null;
+                $skipExemptionRefresh = $trustDraftSnapshot
+                    && is_array($existingExemption)
+                    && array_key_exists('active_for_period', $existingExemption);
+
+                if (! $skipExemptionRefresh) {
+                    $snapshotForExemption = $this->applyGovernmentExemptionToPayslipSnapshot(
+                        $snapshotForExemption,
+                        $employee,
+                        ! empty($periodInput['from_date']) ? Carbon::parse((string) $periodInput['from_date']) : ($payslip->pay_period_start ?? now()),
+                        ! empty($periodInput['to_date']) ? Carbon::parse((string) $periodInput['to_date']) : ($payslip->pay_period_end ?? now()),
+                        (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
+                    );
+                    $payslip->forceFill(['snapshot' => $snapshotForExemption]);
+                }
             }
         }
 
@@ -1470,7 +1494,7 @@ class PayslipService
         ]);
         $payslip->save();
 
-        return $payslip->fresh() ?? $payslip;
+        return $trustDraftSnapshot ? $payslip : ($payslip->fresh() ?? $payslip);
     }
 
     /**

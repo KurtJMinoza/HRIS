@@ -2181,6 +2181,12 @@ class FinalizePayrollService
         )->with('employee')->orderByDesc('id')->get()->unique('user_id')->keyBy(fn (Payslip $p) => (int) $p->user_id);
         $timings['load_employees_ms'] = round((microtime(true) - $t0) * 1000, 2);
 
+        $employeeTotal = $employees->count();
+        $this->emitPayrollQueueProgress('Finalize payroll: freezing draft snapshots', [
+            'batch_run_id' => $existingBatchRunId,
+            'employee_count' => $employeeTotal,
+        ]);
+
         $totals = ['gross' => 0.0, 'ded' => 0.0, 'net' => 0.0];
         $payslipIds = [];
         $draftMetricsByUser = [];
@@ -2201,6 +2207,7 @@ class FinalizePayrollService
                 $adminUserId,
                 $existingBatchRunId,
                 $employeeIds,
+                $employeeTotal,
                 $batchKey,
                 $periodInput,
                 $fromDate,
@@ -2218,10 +2225,18 @@ class FinalizePayrollService
                 $this->payslipService->clearBlockingPayrollPeriodLinksForUsers($employeeIds);
                 $this->assertFinalizeModuleGuards($lockedRun);
                 $this->payslipService->cleanupStaleBatchModulePayslips($lockedRun);
-                foreach ($employees as $user) {
+                foreach ($employees as $employeeIndex => $user) {
                     $payslip = $draftPayslips->get((int) $user->id);
                     if (! $payslip instanceof Payslip) {
                         throw new \RuntimeException('Missing draft payslip for user_id='.(int) $user->id);
+                    }
+
+                    if ($employeeIndex > 0 && $employeeIndex % 25 === 0) {
+                        $this->emitPayrollQueueProgress('Finalize payroll: freezing draft snapshots', [
+                            'batch_run_id' => $existingBatchRunId,
+                            'processed' => $employeeIndex,
+                            'total' => $employeeTotal,
+                        ]);
                     }
 
                     // ponytail: fast path trusts admin-reviewed draft snapshots; live recompute runs at draft generation only.
@@ -2385,6 +2400,12 @@ class FinalizePayrollService
         $run = $run->fresh();
         $this->markOvertimePaidForBatch($run, $employees, $periodStart, $periodEnd, $companyId);
 
+        $this->emitPayrollQueueProgress('Finalize payroll: draft snapshot fast path completed', [
+            'batch_run_id' => (int) $run->id,
+            'payslips_finalized_count' => count($payslipIds),
+            'total_ms' => $timings['total_ms'] ?? null,
+        ]);
+
         Log::info('Payroll FINALIZED (draft snapshot fast path)', [
             'batch_run_id' => (int) $run->id,
             'batch_key' => $batchKey,
@@ -2417,6 +2438,13 @@ class FinalizePayrollService
      */
     private function assertDraftPayslipLinesArePersisted(Payslip $payslip): Payslip
     {
+        $metrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
+        $snapshotLineCount = (int) ($metrics['line_count'] ?? 0);
+        $persistedLineCount = $this->payslipService->draftPayrollLineRowCount($payslip);
+        if ($snapshotLineCount > 0 && $persistedLineCount >= $snapshotLineCount) {
+            return $payslip;
+        }
+
         $payslip = $this->payslipService->ensureDraftPayrollLinesSynced($payslip);
         $payslip = $payslip->fresh() ?? $payslip;
         $metrics = $this->payslipService->frozenPayslipLineMetrics($payslip);
@@ -2554,8 +2582,20 @@ class FinalizePayrollService
 
             throw new \RuntimeException('Finalization failed: finalized payroll does not match draft payroll.');
         }
+    }
 
-        Log::info('Payroll finalize validation passed: finalized lines match draft snapshot', $context);
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function emitPayrollQueueProgress(string $message, array $context = []): void
+    {
+        Log::info($message, $context);
+        if (! app()->runningInConsole()) {
+            return;
+        }
+
+        $suffix = $context === [] ? '' : ' '.json_encode($context, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        fwrite(STDOUT, $message.$suffix.PHP_EOL);
     }
 
     /**

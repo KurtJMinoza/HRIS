@@ -73,6 +73,9 @@ class FinalizePayrollJob implements ShouldQueue
             'actor_user_id' => $this->actorUserId,
             'queue_timeout_seconds' => $this->timeout,
         ]);
+        if (app()->runningInConsole()) {
+            fwrite(STDOUT, 'FinalizePayrollJob started batch_run_id='.$this->batchRunId.PHP_EOL);
+        }
 
         $run = PayrollBatchRun::query()->find($this->batchRunId);
         if (! $run) {
@@ -149,6 +152,11 @@ class FinalizePayrollJob implements ShouldQueue
                 'total_elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
                 'peak_memory_mb' => round(memory_get_peak_usage(true) / 1048576, 2),
             ]);
+            if (app()->runningInConsole()) {
+                $coreMs = round((microtime(true) - $finalizeStartedAt) * 1000, 2);
+                $totalMs = round((microtime(true) - $jobStartedAt) * 1000, 2);
+                fwrite(STDOUT, 'FinalizePayrollJob completed batch_run_id='.$this->batchRunId.' finalize_core_ms='.$coreMs.' total_elapsed_ms='.$totalMs.PHP_EOL);
+            }
         } catch (Throwable $e) {
             report($e);
             Log::error('FinalizePayrollJob failed', [
