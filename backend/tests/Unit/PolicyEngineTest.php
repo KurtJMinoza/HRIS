@@ -455,6 +455,39 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(576.92, $result['regular_pay']);
     }
 
+    public function test_compute_day_payroll_truncates_seconds_before_segmentation(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => null,
+            'tue' => ['in' => '12:00:00', 'out' => '21:00:00', 'break_start' => '17:00:00', 'break_end' => '18:00:00'],
+            'wed' => null,
+            'thu' => null,
+            'fri' => null,
+            'sat' => null,
+        ];
+        $user = User::factory()->create(['company_id' => null, 'daily_rate' => 615.38]);
+        $dateKey = '2026-06-16';
+
+        $result = app(PayrollComputationService::class)->computeDayPayroll(
+            $user,
+            $dateKey,
+            Carbon::parse("{$dateKey} 12:14:03", 'Asia/Manila'),
+            Carbon::parse("{$dateKey} 21:02:00", 'Asia/Manila'),
+            $effectiveSchedule,
+            615.38,
+            'Asia/Manila'
+        );
+
+        // Must match H:i punches (12:14–21:02); raw seconds would truncate gross span to 527 min.
+        $this->assertSame(466, $result['segmented_regular_minutes']);
+        $this->assertSame(468, $result['worked_minutes']);
+    }
+
     public function test_approved_ot_hours_use_approved_basis_by_default(): void
     {
         if (! $this->tablesExist()) {

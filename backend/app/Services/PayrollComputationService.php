@@ -809,8 +809,8 @@ class PayrollComputationService
             ]);
         }
 
-        $timeInTz = $timeIn->copy()->timezone($tz);
-        $timeOutTz = $timeOut->copy()->timezone($tz);
+        $timeInTz = $timeIn->copy()->timezone($tz)->second(0);
+        $timeOutTz = $timeOut->copy()->timezone($tz)->second(0);
 
         // Phase 4: Time Segmentation with ND Regular vs ND OT split (net of meal break when schedule has break)
         $seg = $this->timeSegmentation->segment($timeInTz, $timeOutTz, $tz, $daySchedule, $dateKey, $ndStartHour, $ndEndHour);
