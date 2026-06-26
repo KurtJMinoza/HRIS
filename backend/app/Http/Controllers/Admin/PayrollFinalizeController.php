@@ -46,6 +46,7 @@ class PayrollFinalizeController extends Controller
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
             'refresh_token' => ['nullable', 'string', 'max:120'],
+            'payroll_batch_run_id' => ['nullable', 'integer', 'exists:payroll_batch_runs,id'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'search' => ['nullable', 'string', 'max:120'],
@@ -72,6 +73,7 @@ class PayrollFinalizeController extends Controller
             'is_final_pay' => $v['is_final_pay'] ?? false,
             'password_protect' => (bool) ($v['password_protect'] ?? false),
             'refresh_token' => $v['refresh_token'] ?? null,
+            'payroll_batch_run_id' => isset($v['payroll_batch_run_id']) ? (int) $v['payroll_batch_run_id'] : null,
         ];
 
         // Reference date normalization is handled inside FinalizePayrollService (scope-safe).

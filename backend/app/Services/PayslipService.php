@@ -5241,7 +5241,9 @@ class PayslipService
         }
 
         if ($keepCancelledRun) {
+            \Illuminate\Support\Facades\Cache::forget('laravel-queue-overlap:generate-payroll-batch-'.(int) $run->id);
             $this->updateBatchRunProgress($run, [
+                'batch_key' => $run->voidedBatchKey(),
                 'status' => PayrollBatchRun::STATUS_VOIDED,
                 'voided_at' => now(),
                 'void_reason' => 'Cancelled during draft payroll generation.',

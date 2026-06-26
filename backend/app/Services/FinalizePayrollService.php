@@ -888,39 +888,25 @@ class FinalizePayrollService
             $periodEnd->toDateString(),
             $pi['pay_cycle_id'] ?? null
         );
-        $run = PayrollBatchRun::query()->where('batch_key', $batchKey)->first();
+
+        $pinnedId = isset($periodInput['payroll_batch_run_id']) ? (int) $periodInput['payroll_batch_run_id'] : 0;
+        if ($pinnedId > 0) {
+            $pinned = PayrollBatchRun::query()->find($pinnedId);
+            if ($pinned instanceof PayrollBatchRun && (string) $pinned->status !== PayrollBatchRun::STATUS_VOIDED) {
+                return $pinned->toProgressSnapshot($batchKey);
+            }
+        }
+
+        $run = PayrollBatchRun::query()
+            ->where('batch_key', $batchKey)
+            ->where('status', '!=', PayrollBatchRun::STATUS_VOIDED)
+            ->orderByDesc('id')
+            ->first();
         if ($run === null) {
             return null;
         }
-        $total = max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0));
-        $processed = max(0, (int) ($run->processed_employees ?? 0));
-        $failed = max(0, (int) ($run->failed_employees ?? 0));
-        if (in_array((string) $run->status, [PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_FINALIZED], true)) {
-            $processed = max($processed, $total, (int) ($run->employee_count ?? 0));
-            $total = max($total, $processed);
-        }
 
-        return [
-            'payroll_batch_run_id' => (int) $run->id,
-            'batch_key' => $batchKey,
-            'status' => (string) $run->status,
-            'progress_status' => match ((string) $run->status) {
-                PayrollBatchRun::STATUS_QUEUED => 'pending',
-                PayrollBatchRun::STATUS_PROCESSING => 'processing',
-                PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_FINALIZED => 'completed',
-                PayrollBatchRun::STATUS_FAILED => 'failed',
-                default => 'pending',
-            },
-            'total_employees' => $total,
-            'processed_employees' => $processed,
-            'failed_employees' => $failed,
-            'progress_percent' => $total > 0 ? min(100, (int) round(($processed / $total) * 100)) : 0,
-            'finalized_at' => $run->finalized_at?->toIso8601String(),
-            'finalized_by_user_id' => $run->finalized_by_user_id ? (int) $run->finalized_by_user_id : null,
-            'error_message' => $run->error_message,
-            'pay_period_start' => $run->pay_period_start?->toDateString(),
-            'pay_period_end' => $run->pay_period_end?->toDateString(),
-        ];
+        return $run->toProgressSnapshot($batchKey);
     }
 
     /**

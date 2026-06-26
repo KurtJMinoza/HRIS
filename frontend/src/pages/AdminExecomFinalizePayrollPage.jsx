@@ -254,6 +254,7 @@ export default function AdminExecomFinalizePayrollPage() {
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
   const pollRef = useRef(null)
+  const draftToastShownRef = useRef(false)
   const [searchParams] = useSearchParams()
   const initialBatchId = searchParams.get('batch_run_id')
   const [batches, setBatches] = useState([])
@@ -278,6 +279,60 @@ export default function AdminExecomFinalizePayrollPage() {
   const pageSize = 12
 
   const selectedId = useMemo(() => Number(selectedBatchId || 0), [selectedBatchId])
+  const batchStatus = String(selectedBatch?.status || '').toLowerCase()
+  const draftProcessing = batchStatus === 'queued' || batchStatus === 'processing'
+  const draftReady = batchStatus === 'draft'
+  const draftFailed = batchStatus === 'failed'
+  const finalized = batchStatus === 'finalized'
+  const voided = batchStatus === 'voided'
+  const processing = draftProcessing || finalizing
+  const failed = draftFailed
+  const draft = draftReady
+
+  useEffect(() => {
+    draftToastShownRef.current = false
+  }, [selectedId])
+
+  useEffect(() => {
+    if (draftToastShownRef.current || finalizing) return
+    if (draftProcessing || loading) return
+    if (draftFailed) {
+      draftToastShownRef.current = true
+      toast({
+        title: 'EXECOM payroll draft generation failed',
+        description: String(selectedBatch?.error_message || 'Check queue-payroll logs and try generating again.'),
+        variant: 'error',
+      })
+      return
+    }
+    if (!draftReady) return
+    draftToastShownRef.current = true
+    toast({
+      title: 'EXECOM payroll draft generated successfully.',
+      description: 'Fixed Basic Pay rows are ready for review.',
+    })
+  }, [draftReady, draftFailed, draftProcessing, finalizing, loading, selectedBatch?.error_message, toast])
+
+  useEffect(() => {
+    if (!draftProcessing || finalizing || !selectedId) return undefined
+    const timer = window.setInterval(async () => {
+      if (document.hidden) return
+      try {
+        const status = await getExecomPayrollBatchStatus(selectedId)
+        setSelectedBatch(status)
+        const nextStatus = String(status?.status || '').toLowerCase()
+        if (nextStatus === 'draft' || nextStatus === 'failed') {
+          const list = await getExecomPayrollBatchPayslips(selectedId, { per_page: 100 })
+          const rows = Array.isArray(list.payslips?.data) ? list.payslips.data : Array.isArray(list.data) ? list.data : []
+          setPayslips(rows)
+        }
+      } catch {
+        // Ignore transient polling errors.
+      }
+    }, 3000)
+
+    return () => window.clearInterval(timer)
+  }, [draftProcessing, finalizing, selectedId])
 
   async function loadBatches() {
     const data = await getExecomPayrollBatches({ per_page: 50 })
@@ -422,11 +477,6 @@ export default function AdminExecomFinalizePayrollPage() {
     }
   }
 
-  const finalized = String(selectedBatch?.status || '').toLowerCase() === 'finalized'
-  const draft = String(selectedBatch?.status || '').toLowerCase() === 'draft'
-  const failed = String(selectedBatch?.status || '').toLowerCase() === 'failed'
-  const voided = String(selectedBatch?.status || '').toLowerCase() === 'voided'
-  const processing = ['queued', 'processing'].includes(String(selectedBatch?.status || '').toLowerCase())
   const canRetryOrFinalize = draft || failed
   const canDeleteOrVoid = selectedId && !processing && !voided
 

@@ -95,10 +95,34 @@ class ExecomPayrollController extends Controller
 
         $existing = PayrollBatchRun::query()
             ->whereIn('batch_key', [$batchKey, $scopeBatchKey, $legacyScopeBatchKey])
+            ->where('status', '!=', PayrollBatchRun::STATUS_VOIDED)
             ->orderByDesc('id')
             ->first();
         if ($existing instanceof PayrollBatchRun && (string) $existing->status === PayrollBatchRun::STATUS_FINALIZED) {
             abort(422, 'This EXECOM payroll period is already finalized. Void the finalized batch before generating a new draft.');
+        }
+        if ($existing instanceof PayrollBatchRun
+            && $existing->isActiveBackgroundGeneration()
+            && ! $existing->isStaleBackgroundGeneration()) {
+            $isProcessing = (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING;
+
+            return response()->json([
+                'message' => $isProcessing
+                    ? 'EXECOM payroll draft is already processing.'
+                    : 'EXECOM payroll draft generation is already queued.',
+                'queued' => true,
+                'payroll_batch_run_id' => (int) $existing->id,
+                'status' => (string) $existing->status,
+                'progress_status' => $isProcessing ? 'processing' : 'pending',
+                'pay_period_start' => $from->toDateString(),
+                'pay_period_end' => $to->toDateString(),
+                'employee_count' => max((int) ($existing->employee_count ?? 0), (int) ($existing->total_employees ?? 0)),
+                'total_employees' => max((int) ($existing->total_employees ?? 0), (int) ($existing->employee_count ?? 0)),
+                'processed_employees' => (int) ($existing->processed_employees ?? 0),
+                'generated_count' => (int) ($existing->processed_employees ?? 0),
+                'skipped_count' => 0,
+                'failed_count' => (int) ($existing->failed_employees ?? 0),
+            ], 202);
         }
 
         $run = PayrollBatchRun::query()->updateOrCreate(

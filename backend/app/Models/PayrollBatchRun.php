@@ -190,4 +190,69 @@ class PayrollBatchRun extends Model
             $query->whereNull($column);
         }
     }
+
+    public function isActiveBackgroundGeneration(): bool
+    {
+        return in_array((string) $this->status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true);
+    }
+
+    /** ponytail: grace window only; tune via job timeout if workers get slower. */
+    public function isStaleBackgroundGeneration(int $jobTimeoutSeconds = 300): bool
+    {
+        if (! $this->isActiveBackgroundGeneration()) {
+            return false;
+        }
+
+        $staleBefore = now()->subSeconds($jobTimeoutSeconds + 120);
+        $anchor = $this->started_at ?? $this->queued_at;
+
+        return $anchor === null || $anchor->lt($staleBefore);
+    }
+
+    public function voidedBatchKey(): string
+    {
+        $original = (string) $this->batch_key;
+        if (str_contains($original, ':voided:')) {
+            return $original;
+        }
+
+        return $original.':voided:'.$this->id;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function toProgressSnapshot(?string $batchKey = null): array
+    {
+        $total = max((int) ($this->total_employees ?? 0), (int) ($this->employee_count ?? 0));
+        $processed = max(0, (int) ($this->processed_employees ?? 0));
+        $failed = max(0, (int) ($this->failed_employees ?? 0));
+        if (in_array((string) $this->status, [self::STATUS_DRAFT, self::STATUS_FINALIZED], true)) {
+            $processed = max($processed, $total, (int) ($this->employee_count ?? 0));
+            $total = max($total, $processed);
+        }
+
+        return [
+            'payroll_batch_run_id' => (int) $this->id,
+            'batch_key' => $batchKey ?? (string) $this->batch_key,
+            'status' => (string) $this->status,
+            'progress_status' => match ((string) $this->status) {
+                self::STATUS_QUEUED => 'pending',
+                self::STATUS_PROCESSING => 'processing',
+                self::STATUS_DRAFT, self::STATUS_FINALIZED => 'completed',
+                self::STATUS_VOIDED => 'voided',
+                self::STATUS_FAILED => 'failed',
+                default => 'pending',
+            },
+            'total_employees' => $total,
+            'processed_employees' => $processed,
+            'failed_employees' => $failed,
+            'progress_percent' => $total > 0 ? min(100, (int) round(($processed / $total) * 100)) : 0,
+            'finalized_at' => $this->finalized_at?->toIso8601String(),
+            'finalized_by_user_id' => $this->finalized_by_user_id ? (int) $this->finalized_by_user_id : null,
+            'error_message' => $this->error_message,
+            'pay_period_start' => $this->pay_period_start?->toDateString(),
+            'pay_period_end' => $this->pay_period_end?->toDateString(),
+        ];
+    }
 }

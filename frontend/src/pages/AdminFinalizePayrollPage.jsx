@@ -100,6 +100,7 @@ function initials(name) {
 
 function parsePayload(sp) {
   const employeeRaw = sp.get('employee_id')
+  const batchRunRaw = sp.get('batch_run_id')
   return {
     company_id: sp.get('company_id') ? Number(sp.get('company_id')) : null,
     branch_id: sp.get('branch_id') ? Number(sp.get('branch_id')) : null,
@@ -110,6 +111,7 @@ function parsePayload(sp) {
     pay_cycle_id: sp.get('pay_cycle_id') ? Number(sp.get('pay_cycle_id')) : null,
     reference_date: sp.get('reference_date') || null,
     payroll_period_id: sp.get('payroll_period_id') ? Number(sp.get('payroll_period_id')) : null,
+    payroll_batch_run_id: batchRunRaw && String(batchRunRaw).trim() ? Number(batchRunRaw) : null,
     use_company_default: sp.get('use_company_default') === 'true',
     password_protect: sp.get('password_protect') === 'true',
     is_final_pay: false,
@@ -225,6 +227,7 @@ export default function AdminFinalizePayrollPage() {
         p: effectivePayload.pay_cycle_id,
         r: effectivePayload.reference_date,
         pp: effectivePayload.payroll_period_id,
+        br: effectivePayload.payroll_batch_run_id,
         ucd: effectivePayload.use_company_default,
         pwd: effectivePayload.password_protect,
       }),
@@ -238,6 +241,7 @@ export default function AdminFinalizePayrollPage() {
       effectivePayload.pay_cycle_id,
       effectivePayload.reference_date,
       effectivePayload.payroll_period_id,
+      effectivePayload.payroll_batch_run_id,
       effectivePayload.use_company_default,
       effectivePayload.password_protect,
     ],
@@ -364,6 +368,7 @@ export default function AdminFinalizePayrollPage() {
         p: effectivePayload.pay_cycle_id,
         r: effectivePayload.reference_date,
         pp: effectivePayload.payroll_period_id,
+        br: effectivePayload.payroll_batch_run_id,
         ucd: effectivePayload.use_company_default,
         pwd: effectivePayload.password_protect,
         rt: refreshToken,
@@ -378,6 +383,7 @@ export default function AdminFinalizePayrollPage() {
       effectivePayload.pay_cycle_id,
       effectivePayload.reference_date,
       effectivePayload.payroll_period_id,
+      effectivePayload.payroll_batch_run_id,
       effectivePayload.use_company_default,
       effectivePayload.password_protect,
       refreshToken,
@@ -462,6 +468,7 @@ export default function AdminFinalizePayrollPage() {
   const batchRunStatus = String(batchRun?.status || '').toLowerCase()
   const draftProcessing = batchRunStatus === 'queued' || batchRunStatus === 'processing'
   const draftReady = batchRunStatus === 'draft'
+  const draftFailed = batchRunStatus === 'failed'
   const canDeleteDraftPayroll = isAdmin && permissionSet.has('payslip.generate')
   const canDeleteCurrentDraftPayroll =
     canDeleteDraftPayroll &&
@@ -478,15 +485,52 @@ export default function AdminFinalizePayrollPage() {
 
   useEffect(() => {
     if (draftToastShownRef.current || periodFinalized || finalizing) return
-    if (!draftReady || draftProcessing) return
-    if (loading) return
+    if (draftProcessing || loading) return
+    if (draftFailed) {
+      draftToastShownRef.current = true
+      toastRef.current({
+        title: 'Payroll draft generation failed',
+        description: String(batchRun?.error_message || 'Check queue-payroll logs and try generating again.'),
+        variant: 'destructive',
+      })
+      return
+    }
+    if (!draftReady) return
     draftToastShownRef.current = true
     toastRef.current({
       title: 'Payroll draft generated successfully.',
       description: 'Employee salary rows are ready for review.',
     })
     setRefreshToken(String(Date.now()))
-  }, [draftReady, draftProcessing, periodFinalized, finalizing, loading])
+  }, [draftReady, draftFailed, draftProcessing, periodFinalized, finalizing, loading, batchRun?.error_message])
+
+  const pinnedBatchRunId = Number(effectivePayload.payroll_batch_run_id || 0)
+  useEffect(() => {
+    if (!pinnedBatchRunId || periodFinalized || finalizing) return undefined
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const status = await adminFinalizePayrollStatus(pinnedBatchRunId)
+        if (cancelled) return
+        const s = String(status?.status || '').toLowerCase()
+        if (['queued', 'processing', 'draft', 'failed'].includes(s)) {
+          setRefreshToken(String(Date.now()))
+        }
+      } catch {
+        // Ignore transient status polling errors.
+      }
+    }
+    poll()
+    const timer = window.setInterval(() => {
+      if (document.hidden) return
+      poll()
+    }, 2500)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [pinnedBatchRunId, periodFinalized, finalizing])
 
   useEffect(() => {
     if (!draftProcessing || periodFinalized || finalizing) return undefined

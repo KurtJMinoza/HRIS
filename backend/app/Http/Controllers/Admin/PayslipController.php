@@ -656,17 +656,26 @@ class PayslipController extends Controller
             $periodInput['pay_cycle_id'] ?? null
         );
 
-        $existing = PayrollBatchRun::query()->where('batch_key', $batchKey)->first();
+        $existing = PayrollBatchRun::query()
+            ->where('batch_key', $batchKey)
+            ->where('status', '!=', PayrollBatchRun::STATUS_VOIDED)
+            ->first();
         if ($existing && (string) $existing->status === PayrollBatchRun::STATUS_FINALIZED) {
             abort(422, 'This payroll period is already finalized for the selected scope.');
         }
-        if ($existing && (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING) {
+        if ($existing instanceof PayrollBatchRun
+            && $existing->isActiveBackgroundGeneration()
+            && ! $existing->isStaleBackgroundGeneration()) {
+            $isProcessing = (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING;
+
             return response()->json([
-                'message' => 'Payroll draft is already processing.',
+                'message' => $isProcessing
+                    ? 'Payroll draft is already processing.'
+                    : 'Payroll draft generation is already queued.',
                 'queued' => true,
                 'payroll_batch_run_id' => (int) $existing->id,
                 'status' => (string) $existing->status,
-                'progress_status' => 'processing',
+                'progress_status' => $isProcessing ? 'processing' : 'pending',
                 'pay_period_start' => $periodStart->toDateString(),
                 'pay_period_end' => $periodEnd->toDateString(),
                 'employee_count' => max((int) ($existing->employee_count ?? 0), (int) ($existing->total_employees ?? 0)),
