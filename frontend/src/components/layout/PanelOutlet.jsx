@@ -6,7 +6,7 @@ import { DataTableRouteFallback } from '@/components/skeletons/RoutePageFallback
 /** Force sibling lazy routes (e.g. Organization modules) to remount on every navigation. */
 export function PanelOutlet() {
   const location = useLocation()
-  const routeKey = `${location.pathname}${location.search}${location.key}`
+  const routeKey = `${location.pathname}:${location.key}`
 
   return (
     <RouteErrorBoundary>

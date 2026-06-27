@@ -53,8 +53,12 @@ import {
 import { formatScheduleLabel12h } from '@/lib/timeFormat'
 import { isRosterStaffMember } from '@/lib/rosterStaff'
 
-const ACCEPT_IMAGE = 'image/jpeg,image/jpg,image/png,image/gif,image/webp'
-const MAX_FILE_MB = 2
+import {
+  PROFILE_PHOTO_ACCEPT,
+  PROFILE_PHOTO_HINT,
+  PROFILE_PHOTO_MAX_MB,
+  validateProfilePhotoFile,
+} from '@/lib/profilePhotoUpload'
 const PROFILE_EXTRAS_KEY_PREFIX = 'employee-profile-extras:'
 
 function extrasKey(userId) {
@@ -484,8 +488,9 @@ export default function Profile() {
     const file = e.target?.files?.[0]
     e.target.value = ''
     if (!file) return
-    if (file.size > MAX_FILE_MB * 1024 * 1024) {
-      setPhotoError(`Image must be under ${MAX_FILE_MB} MB.`)
+    const validationError = validateProfilePhotoFile(file, PROFILE_PHOTO_MAX_MB)
+    if (validationError) {
+      setPhotoError(validationError)
       return
     }
     setPhotoError('')
@@ -918,7 +923,7 @@ export default function Profile() {
                   <User className="size-5" />
                   Profile picture
                 </CardTitle>
-                <CardDescription>Upload a photo (JPEG, PNG, GIF or WebP, max {MAX_FILE_MB} MB).</CardDescription>
+                <CardDescription>{PROFILE_PHOTO_HINT}</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col items-start gap-4">
                 <div className="relative">
@@ -938,7 +943,7 @@ export default function Profile() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept={ACCEPT_IMAGE}
+                    accept={PROFILE_PHOTO_ACCEPT}
                     className="sr-only"
                     onChange={handlePhotoSelect}
                     disabled={photoLoading}

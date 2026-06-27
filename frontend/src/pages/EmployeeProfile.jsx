@@ -80,6 +80,13 @@ import {
 } from '@/api'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
+import {
+  PROFILE_PHOTO_ACCEPT,
+  PROFILE_PHOTO_HINT,
+  PROFILE_PHOTO_MAX_MB,
+  shouldSkipProfilePhotoCrop,
+  validateProfilePhotoFile,
+} from '@/lib/profilePhotoUpload'
 import { validateEmail, validatePassword, validateConfirmPassword, validatePhone, validateUsername, sanitizeEmail, sanitizePassword } from '@/validation'
 import ESignatureCard from '@/components/ESignatureCard'
 import SignaturePadDialog from '@/components/SignaturePadDialog'
@@ -188,9 +195,6 @@ function expiryMeta(dateStr) {
   if (diffDays <= 30) return { label: `⚠ Expires in ${diffDays} day${diffDays === 1 ? '' : 's'}`, cls: 'text-amber-800' }
   return { label: formatDate(raw), cls: 'text-muted-foreground' }
 }
-
-const ACCEPT_IMAGE = 'image/jpeg,image/jpg,image/png'
-const MAX_FILE_MB = 2
 
 function composeHomeAddress(parts) {
   const values = [
@@ -2349,31 +2353,12 @@ export default function EmployeeProfile() {
     }
   }
 
-  function handlePhotoSelect(e) {
-    if (!canEditPhoto) return
-    const file = e.target?.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    const type = String(file.type || '').toLowerCase()
-    if (type !== 'image/jpeg' && type !== 'image/png') {
-      setPhotoError('Only JPG, JPEG, and PNG images are allowed.')
-      return
-    }
-    if (file.size > MAX_FILE_MB * 1024 * 1024) {
-      setPhotoError(`Image must be under ${MAX_FILE_MB} MB.`)
-      return
-    }
-    setPhotoError('')
-    setPendingPhotoFile(file)
-    setCropOpen(true)
-  }
-
-  async function handleCroppedPhotoConfirm(croppedFile) {
+  async function uploadProfilePhotoFile(file) {
     if (!canEditPhoto) return
     setPhotoError('')
     setPhotoLoading(true)
     try {
-      const data = await uploadProfilePhoto(croppedFile)
+      const data = await uploadProfilePhoto(file)
       if (data?.user) mergeAuthUser(data.user)
     } catch (err) {
       setPhotoError(err?.message || 'Failed to upload photo')
@@ -2381,6 +2366,29 @@ export default function EmployeeProfile() {
       setPhotoLoading(false)
       setPendingPhotoFile(null)
     }
+  }
+
+  function handlePhotoSelect(e) {
+    if (!canEditPhoto) return
+    const file = e.target?.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const validationError = validateProfilePhotoFile(file, PROFILE_PHOTO_MAX_MB)
+    if (validationError) {
+      setPhotoError(validationError)
+      return
+    }
+    setPhotoError('')
+    if (shouldSkipProfilePhotoCrop(file)) {
+      void uploadProfilePhotoFile(file)
+      return
+    }
+    setPendingPhotoFile(file)
+    setCropOpen(true)
+  }
+
+  async function handleCroppedPhotoConfirm(croppedFile) {
+    await uploadProfilePhotoFile(croppedFile)
   }
 
   async function handleRemovePhoto() {
@@ -2533,7 +2541,7 @@ export default function EmployeeProfile() {
           <input
             ref={photoInputRef}
             type="file"
-            accept={ACCEPT_IMAGE}
+            accept={PROFILE_PHOTO_ACCEPT}
             className="hidden"
             onChange={handlePhotoSelect}
             disabled={photoLoading}
@@ -2634,6 +2642,9 @@ export default function EmployeeProfile() {
             )}
           </div>
           {photoError && <p className="mt-3 text-sm text-destructive">{photoError}</p>}
+          {canEditPhoto && !photoError ? (
+            <p className="mt-3 text-xs text-muted-foreground">{PROFILE_PHOTO_HINT}</p>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -2646,7 +2657,7 @@ export default function EmployeeProfile() {
         file={pendingPhotoFile}
         title="Crop profile picture"
         description="Crop and zoom to fit the circular avatar."
-        maxBytes={MAX_FILE_MB * 1024 * 1024}
+        maxBytes={PROFILE_PHOTO_MAX_MB * 1024 * 1024}
         onConfirm={handleCroppedPhotoConfirm}
       />
 

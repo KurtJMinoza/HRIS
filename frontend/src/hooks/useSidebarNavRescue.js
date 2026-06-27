@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { clearBlockingOverlays, dispatchDismissOverlays } from '@/lib/radixModalLock'
+import { clearBlockingOverlays, dispatchDismissOverlays, forceClearBlockingOverlays } from '@/lib/radixModalLock'
 
 /**
  * Clicks on the sidebar can land on a stale full-screen Radix overlay (fixed inset-0 on body)
@@ -19,7 +19,7 @@ export function useSidebarNavRescue(sidebarSelector = '[data-hr-sidebar]') {
       const { clientX: x, clientY: y } = e
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return
 
-      clearBlockingOverlays()
+      forceClearBlockingOverlays()
       dispatchDismissOverlays()
 
       const navEl = document.elementFromPoint(x, y)?.closest('[data-hr-sidebar-nav]')

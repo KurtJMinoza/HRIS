@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { pdf } from '@react-pdf/renderer'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Calendar,
   CalendarDays,
@@ -17,6 +17,7 @@ import {
   Download,
 } from 'lucide-react'
 import { exportRowsToXlsx } from '@/lib/excelExport'
+import { navigateAfterOverlayDismiss } from '@/lib/radixModalLock'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import AttendanceCorrections from '@/pages/AttendanceCorrections'
@@ -125,6 +126,7 @@ function paginationWindow(current, last) {
 
 export default function AdminAttendance() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const hrBase = useHrBasePath()
   const [searchParams, setSearchParams] = useSearchParams()
   const correctionsTabActive = searchParams.get('tab') === 'corrections'
@@ -1378,6 +1380,7 @@ export default function AdminAttendance() {
             ? buildAdminCorrectionHref(detailRow, hrPanelPath(hrBase, 'attendance'))
             : `${hrPanelPath(hrBase, 'attendance')}?tab=corrections&file=1`
         }
+        onCorrectionNavigate={(href) => navigateAfterOverlayDismiss(navigate, href)}
       />
 
     </div>

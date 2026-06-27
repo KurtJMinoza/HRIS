@@ -24,24 +24,26 @@ export function resetRadixModalLock() {
   })
 }
 
-/** Remove portal overlays/content that block sidebar clicks after route changes. */
+/** ponytail: do not .remove() Radix portal nodes — races dialog/sheet close and causes removeChild errors. */
+export function clearStaleOverlays() {
+  // Intentionally empty; resetRadixModalLock() handles scroll-lock cleanup.
+}
+
+/** Clear scroll lock and drop stale closed overlays (safe during React unmount). */
 export function clearBlockingOverlays() {
   if (typeof document === 'undefined') return
   resetRadixModalLock()
+  clearStaleOverlays()
+}
 
+/** Sidebar rescue: strip open overlays blocking nav clicks (call before navigate). */
+export function forceClearBlockingOverlays() {
+  if (typeof document === 'undefined') return
+  resetRadixModalLock()
+  clearStaleOverlays()
   document.querySelectorAll(
-    [
-      '[data-slot="sheet-overlay"]',
-      '[data-slot="dialog-overlay"]',
-      '[data-slot="sheet-content"][data-state="closed"]',
-      '[data-slot="dialog-content"][data-state="closed"]',
-    ].join(','),
+    '[data-slot="sheet-overlay"], [data-slot="dialog-overlay"], [data-slot="sheet-content"], [data-slot="dialog-content"]',
   ).forEach((el) => {
-    el.remove()
-  })
-
-  // Stale open overlays after unmount mid-dialog — navigation should win over trapped focus
-  document.querySelectorAll('[data-slot="sheet-overlay"], [data-slot="dialog-overlay"]').forEach((el) => {
     el.remove()
   })
 }
@@ -55,9 +57,18 @@ export function dispatchDismissOverlays() {
 /** Run reset after Radix DismissableLayer cleanup on route transitions. */
 export function scheduleRadixModalLockReset() {
   if (typeof window === 'undefined') return
-  clearBlockingOverlays()
+  resetRadixModalLock()
   window.requestAnimationFrame(() => {
-    clearBlockingOverlays()
-    window.requestAnimationFrame(clearBlockingOverlays)
+    clearStaleOverlays()
+    window.requestAnimationFrame(clearStaleOverlays)
+  })
+}
+
+/** Close overlays then navigate — avoids removeChild races when leaving a dialog/sheet. */
+export function navigateAfterOverlayDismiss(navigate, to, options) {
+  dispatchDismissOverlays()
+  resetRadixModalLock()
+  queueMicrotask(() => {
+    navigate(to, options)
   })
 }

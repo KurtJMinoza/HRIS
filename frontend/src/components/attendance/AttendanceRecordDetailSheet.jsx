@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom'
 import {
   Paperclip,
   FileText,
@@ -95,6 +94,7 @@ export function AttendanceRecordDetailSheet({
   employeeInitials,
   profileSrc,
   correctionsHref,
+  onCorrectionNavigate,
   showPayrollColumns,
 }) {
   if (!row) return null
@@ -284,11 +284,17 @@ export function AttendanceRecordDetailSheet({
 
               <div className="flex flex-wrap gap-2">
                 {correctionsHref ? (
-                  <Button variant="outline" size="sm" className="gap-1.5" asChild>
-                    <Link to={correctionsHref}>
-                      <FileText className="size-3.5" aria-hidden />
-                      {shouldOfferCorrection(row) ? 'File correction' : 'Attendance corrections'}
-                    </Link>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => {
+                      onOpenChange?.(false)
+                      onCorrectionNavigate?.(correctionsHref)
+                    }}
+                  >
+                    <FileText className="size-3.5" aria-hidden />
+                    {shouldOfferCorrection(row) ? 'File correction' : 'Attendance corrections'}
                   </Button>
                 ) : null}
               </div>

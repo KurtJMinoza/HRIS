@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Calendar,
   CalendarDays,
@@ -21,6 +21,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { exportRowsToXlsx } from '@/lib/excelExport'
+import { navigateAfterOverlayDismiss } from '@/lib/radixModalLock'
 import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRecordsDataTable'
 import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceRecordDetailSheet'
 import {
@@ -229,6 +230,7 @@ function filterEmployeeAttendanceRows(list, scopeSegment, debouncedSearchQuery, 
 }
 
 export default function EmployeeAttendance() {
+  const navigate = useNavigate()
   const [rows, setRows] = useState([])
   const [attSummary, setAttSummary] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -1051,6 +1053,7 @@ export default function EmployeeAttendance() {
             ? buildEmployeeCorrectionHref(detailRow)
             : '/employee/correction-requests?file=1'
         }
+        onCorrectionNavigate={(href) => navigateAfterOverlayDismiss(navigate, href)}
       />
 
       <Dialog open={modalOpen} onOpenChange={(open) => { setModalOpen(open); if (!open) setError(null); }}>

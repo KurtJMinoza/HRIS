@@ -1014,7 +1014,7 @@ class EmployeeController extends Controller
             'working_schedule_id' => ['nullable', 'integer', 'exists:working_schedules,id'],
             'daily_rate' => ['nullable', 'numeric', 'min:0'],
             'monthly_rate' => ['nullable', 'numeric', 'min:0'],
-            'profile_photo' => ['nullable', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:2048'],
+            'profile_photo' => ['nullable', 'file', 'mimes:jpeg,jpg,png,gif,webp', 'max:2048'],
             'signature_data_url' => ['nullable', 'string'],
         ], [
             'phone_number.regex' => 'The phone number must be in Philippine mobile format (e.g. +63 912 345 6789 or 09123456789).',
@@ -1945,7 +1945,7 @@ class EmployeeController extends Controller
     {
         $employee = $this->loadScopedEmployee($request, $id, true);
         $request->validate([
-            'photo' => ['required', 'image', 'mimes:jpeg,jpg,png,gif,webp', 'max:2048'],
+            'photo' => ['required', 'file', 'mimes:jpeg,jpg,png,gif,webp', 'max:2048'],
         ]);
 
         if ($employee->profile_image) {

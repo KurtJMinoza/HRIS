@@ -2,6 +2,7 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState } from
 import { motion as Motion } from 'framer-motion'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { exportRowsToXlsx } from '@/lib/excelExport'
+import { resetRadixModalLock } from '@/lib/radixModalLock'
 import {
   Loader2,
   RefreshCw,
@@ -639,12 +640,14 @@ export default function AttendanceCorrections() {
     if (employeeId && canSeeAll) setFileEmployeeId(employeeId)
     setFileOpen(true)
 
-    const next = new URLSearchParams(searchParams)
-    next.delete('file')
-    next.delete('date')
-    next.delete('issue')
-    next.delete('employee_id')
-    setSearchParams(next, { replace: true })
+    queueMicrotask(() => {
+      const next = new URLSearchParams(searchParams)
+      next.delete('file')
+      next.delete('date')
+      next.delete('issue')
+      next.delete('employee_id')
+      setSearchParams(next, { replace: true })
+    })
   }, [searchParams, setSearchParams, canSeeAll])
 
   const searchInputRef = useRef(null)
@@ -1172,6 +1175,11 @@ export default function AttendanceCorrections() {
     else if (next === 'missing_out') setFileTimeIn('')
   }
 
+  const handleFileOpenChange = useCallback((open) => {
+    setFileOpen(open)
+    if (!open) resetRadixModalLock()
+  }, [])
+
   function handleFileForMyself() {
     if (!selfEmployeeId) {
       toast({
@@ -1367,12 +1375,14 @@ export default function AttendanceCorrections() {
           : 'Your correction request is pending approval.',
         variant: 'success',
       })
-      setFileOpen(false)
-      await loadMine()
-      if (canSeeAll) {
-        await loadAll()
-        void loadAllCounts()
-      }
+      handleFileOpenChange(false)
+      window.requestAnimationFrame(() => {
+        void loadMine()
+        if (canSeeAll) {
+          void loadAll()
+          void loadAllCounts()
+        }
+      })
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -1476,6 +1486,7 @@ export default function AttendanceCorrections() {
   const cellPad = tableDensity === 'compact' ? 'p-1.5!' : 'px-1.5! py-2.5!'
 
   return (
+    <>
     <Motion.div
       className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
       initial={{ opacity: 0, y: 10 }}
@@ -2075,6 +2086,7 @@ export default function AttendanceCorrections() {
           )}
         </CardContent>
       </Card>
+    </Motion.div>
 
       <Dialog
         open={viewOpen}
@@ -2411,7 +2423,7 @@ export default function AttendanceCorrections() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={fileOpen} onOpenChange={setFileOpen}>
+      <Dialog open={fileOpen} onOpenChange={handleFileOpenChange}>
         <DialogContent
           showCloseButton
           closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
@@ -2473,7 +2485,7 @@ export default function AttendanceCorrections() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="file-issue" className="text-sm font-bold text-foreground">Issue type *</Label>
-                <Select value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
+                <Select modal={false} value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
                   <SelectTrigger id="file-issue" className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm">
                     <SelectValue />
                   </SelectTrigger>
@@ -2491,22 +2503,14 @@ export default function AttendanceCorrections() {
                 loading={attendanceDetailLoading}
                 error={attendanceDetailError}
               />
-              <Motion.div
-                layout
+              <div
                 className={cn(
                   'grid gap-4',
                   showFileTimeIn && showFileTimeOut ? 'grid-cols-1 @sm:grid-cols-2' : 'grid-cols-1'
                 )}
-                transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
               >
                 {showFileTimeIn && (
-                  <Motion.div
-                    key="file-time-in"
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="space-y-2"
-                  >
+                  <div key="file-time-in" className="space-y-2">
                     <Label htmlFor="file-time-in" className="text-sm font-bold text-foreground">Actual clock in time *</Label>
                     <Input
                       id="file-time-in"
@@ -2517,16 +2521,10 @@ export default function AttendanceCorrections() {
                       onChange={(e) => setFileTimeIn(e.target.value)}
                     />
                     <p className="text-xs text-muted-foreground">Enter the actual time you clocked in.</p>
-                  </Motion.div>
+                  </div>
                 )}
                 {showFileTimeOut && (
-                  <Motion.div
-                    key="file-time-out"
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="space-y-2"
-                  >
+                  <div key="file-time-out" className="space-y-2">
                     <Label htmlFor="file-time-out" className="text-sm font-bold text-foreground">Actual clock out time *</Label>
                     <Input
                       id="file-time-out"
@@ -2537,9 +2535,9 @@ export default function AttendanceCorrections() {
                       onChange={(e) => setFileTimeOut(e.target.value)}
                     />
                     <p className="text-xs text-muted-foreground">Enter the actual time you clocked out.</p>
-                  </Motion.div>
+                  </div>
                 )}
-              </Motion.div>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="file-remarks" className="text-sm font-bold text-foreground">Remarks *</Label>
                 <Textarea
@@ -2555,7 +2553,7 @@ export default function AttendanceCorrections() {
             </div>
           </div>
           <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-3 border-t border-border bg-muted/15 px-7 py-5 sm:flex-row sm:justify-end">
-            <Button type="button" variant="outline" className="h-12 rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted" onClick={() => setFileOpen(false)}>
+            <Button type="button" variant="outline" className="h-12 rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted" onClick={() => handleFileOpenChange(false)}>
               Cancel
             </Button>
             <Button type="button" className="h-12 gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-7 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700" onClick={submitFile} disabled={submitting}>
@@ -2585,6 +2583,6 @@ export default function AttendanceCorrections() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Motion.div>
+    </>
   )
 }

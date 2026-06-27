@@ -1,4 +1,4 @@
-import { createElement, useEffect, useState, useMemo, useRef } from 'react'
+import { createElement, useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion as Motion } from 'framer-motion'
@@ -81,6 +81,7 @@ import {
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
+import { resetRadixModalLock } from '@/lib/radixModalLock'
 
 const ISSUE_KIND_OPTIONS = [
   { value: 'missing_in', label: 'Missing Clock In' },
@@ -608,11 +609,13 @@ export default function EmployeeCorrectionRequests() {
     }
     setFileOpen(true)
 
-    const next = new URLSearchParams(searchParams)
-    next.delete('file')
-    next.delete('date')
-    next.delete('issue')
-    setSearchParams(next, { replace: true })
+    queueMicrotask(() => {
+      const next = new URLSearchParams(searchParams)
+      next.delete('file')
+      next.delete('date')
+      next.delete('issue')
+      setSearchParams(next, { replace: true })
+    })
   }, [searchParams, setSearchParams])
 
   useEffect(() => {
@@ -794,6 +797,11 @@ export default function EmployeeCorrectionRequests() {
     setFileOpen(true)
   }
 
+  const handleFileOpenChange = useCallback((open) => {
+    setFileOpen(open)
+    if (!open) resetRadixModalLock()
+  }, [])
+
   function handleFileIssueKindChange(next) {
     setFileIssueKind(next)
     if (next === 'missing_in') setFileTimeOut('')
@@ -851,8 +859,10 @@ export default function EmployeeCorrectionRequests() {
         description: 'Your correction request is pending approval.',
         variant: 'success',
       })
-      setFileOpen(false)
-      await queryClient.invalidateQueries({ queryKey: ['employee-presence-filings'] })
+      handleFileOpenChange(false)
+      window.requestAnimationFrame(() => {
+        void queryClient.invalidateQueries({ queryKey: ['employee-presence-filings'] })
+      })
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -880,6 +890,7 @@ export default function EmployeeCorrectionRequests() {
   }
 
   return (
+    <>
     <Motion.div
       className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
       initial={{ opacity: 0, y: 10 }}
@@ -1267,8 +1278,9 @@ export default function EmployeeCorrectionRequests() {
         </CardContent>
       </Card>
     </div>
+    </Motion.div>
 
-      <Dialog open={fileOpen} onOpenChange={setFileOpen}>
+      <Dialog open={fileOpen} onOpenChange={handleFileOpenChange}>
         <DialogContent
           showCloseButton
           closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
@@ -1312,7 +1324,7 @@ export default function EmployeeCorrectionRequests() {
                 <Label htmlFor="emp-corr-issue" className="text-sm font-bold text-foreground">
                   Issue type <span className="text-destructive">*</span>
                 </Label>
-                <Select value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
+                <Select modal={false} value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
                   <SelectTrigger
                     id="emp-corr-issue"
                     className="h-[3.25rem] w-full rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
@@ -1339,22 +1351,14 @@ export default function EmployeeCorrectionRequests() {
                 loading={attendanceDetailLoading}
                 error={attendanceDetailError}
               />
-              <Motion.div
-                layout
+              <div
                 className={cn(
                   'grid gap-4',
                   showFileTimeIn && showFileTimeOut ? 'grid-cols-1 @sm:grid-cols-2' : 'grid-cols-1'
                 )}
-                transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
               >
                 {showFileTimeIn && (
-                  <Motion.div
-                    key="emp-corr-time-in"
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="space-y-2"
-                  >
+                  <div key="emp-corr-time-in" className="space-y-2">
                     <Label htmlFor="emp-corr-time-in" className="text-sm font-bold text-foreground">
                       Actual clock in time <span className="text-destructive">*</span>
                     </Label>
@@ -1369,16 +1373,10 @@ export default function EmployeeCorrectionRequests() {
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       Enter the actual time you clocked in.
                     </p>
-                  </Motion.div>
+                  </div>
                 )}
                 {showFileTimeOut && (
-                  <Motion.div
-                    key="emp-corr-time-out"
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="space-y-2"
-                  >
+                  <div key="emp-corr-time-out" className="space-y-2">
                     <Label htmlFor="emp-corr-time-out" className="text-sm font-bold text-foreground">
                       Actual clock out time <span className="text-destructive">*</span>
                     </Label>
@@ -1393,9 +1391,9 @@ export default function EmployeeCorrectionRequests() {
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       Enter the actual time you clocked out.
                     </p>
-                  </Motion.div>
+                  </div>
                 )}
-              </Motion.div>
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="emp-corr-remarks" className="text-sm font-bold text-foreground">
                   Remarks <span className="text-destructive">*</span>
@@ -1426,7 +1424,7 @@ export default function EmployeeCorrectionRequests() {
               type="button"
               variant="outline"
               className="h-12 rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted"
-              onClick={() => setFileOpen(false)}
+              onClick={() => handleFileOpenChange(false)}
               disabled={fileSubmitting}
             >
               Cancel
@@ -1618,6 +1616,6 @@ export default function EmployeeCorrectionRequests() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Motion.div>
+    </>
   )
 }

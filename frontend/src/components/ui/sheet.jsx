@@ -1,14 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { motion } from "framer-motion"
 import { XIcon } from "lucide-react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
-
-const SHEET_DURATION = 0.25
-const SHEET_EASE = [0.23, 1, 0.32, 1]
 
 function Sheet({
   ...props
@@ -78,14 +74,9 @@ function SheetContent({
           className
         )}
         {...props}>
-        <motion.div
-          initial={{ opacity: 0.6 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: SHEET_DURATION, ease: SHEET_EASE }}
-          className="relative flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden"
-        >
+        <div className="relative flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden">
           {children}
-        </motion.div>
+        </div>
         {showCloseButton && (
           <SheetPrimitive.Close
             className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">

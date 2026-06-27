@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
 import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -29,6 +29,8 @@ import {
   isIncompleteAttendanceRecord,
   shouldOfferCorrection,
 } from '@/components/attendance/attendanceRecordUtils'
+import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { navigateAfterOverlayDismiss } from '@/lib/radixModalLock'
 
 const DEFAULT_CALENDAR_VALUE = null
 
@@ -977,6 +979,20 @@ export default function EmployeeDashboard() {
     }
     return { date_iso: iso, status: null }
   }, [selectedDay, days, statusByDate, isRestDay, summary?.today])
+
+  const dismissOverlays = useCallback(() => {
+    setSelectedDay(null)
+    setOtDetailsOpen(false)
+    setFaceAttendanceOpen(false)
+  }, [])
+  useDismissOnRouteChange(dismissOverlays)
+
+  const handleFileCorrection = useCallback(() => {
+    if (!selectedDayDetails) return
+    const to = buildEmployeeCorrectionHref(selectedDayDetails)
+    setSelectedDay(null)
+    navigateAfterOverlayDismiss(navigate, to)
+  }, [navigate, selectedDayDetails])
 
   const hasLeaveActivity = useMemo(() => {
     if (loading) return true
@@ -2227,9 +2243,6 @@ export default function EmployeeDashboard() {
           className="w-[calc(100vw-1rem)] max-w-md rounded-2xl border-border sm:max-w-md"
           innerClassName="gap-0 p-0 pr-0"
           closeButtonClassName="right-4 top-4 bg-card/95"
-          onPointerDown={(event) => {
-            if (event.target === event.currentTarget) setSelectedDay(null)
-          }}
         >
           {selectedDayDetails && (
             <>
@@ -2369,11 +2382,9 @@ export default function EmployeeDashboard() {
                     </div>
                     {shouldOfferCorrection(selectedDayDetails) ? (
                       <div className="pt-2">
-                        <Button variant="outline" className="w-full gap-2" asChild>
-                          <Link to={buildEmployeeCorrectionHref(selectedDayDetails)} onClick={() => setSelectedDay(null)}>
-                            <FileText className="size-4" aria-hidden />
-                            File correction
-                          </Link>
+                        <Button variant="outline" className="w-full gap-2" type="button" onClick={handleFileCorrection}>
+                          <FileText className="size-4" aria-hidden />
+                          File correction
                         </Button>
                       </div>
                     ) : null}

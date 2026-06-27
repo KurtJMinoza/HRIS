@@ -22,6 +22,13 @@ import { ImageCropDialog } from '@/components/ImageCropDialog'
 import { Autocomplete } from '@react-google-maps/api'
 import { mapPlaceToAddressFields } from '@/lib/googlePlaces'
 import { useGoogleMapsLoader } from '@/hooks/useGoogleMapsLoader'
+import {
+  PROFILE_PHOTO_ACCEPT,
+  PROFILE_PHOTO_HINT,
+  PROFILE_PHOTO_MAX_MB,
+  shouldSkipProfilePhotoCrop,
+  validateProfilePhotoFile,
+} from '@/lib/profilePhotoUpload'
 import mammoth from 'mammoth'
 import ESignatureCard from '@/components/ESignatureCard'
 import SignaturePadDialog from '@/components/SignaturePadDialog'
@@ -3373,30 +3380,11 @@ export default function AdminEmployeeProfile() {
     photoInputRef.current?.click()
   }
 
-  async function handlePhotoSelected(event) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!canEditProfilePhoto || !file || !employee?.id) return
-    const type = String(file.type || '').toLowerCase()
-    if (type !== 'image/jpeg' && type !== 'image/png') {
-      toast.error('Only JPG, JPEG, and PNG images are allowed.')
-      return
-    }
-    const maxBytes = 2 * 1024 * 1024
-    if (file.size > maxBytes) {
-      toast.error('Image must be under 2 MB.')
-      return
-    }
-    setPendingPhotoFile(file)
-    setPhotoCropOpen(true)
-  }
-
-  async function handleCroppedPhotoConfirm(croppedFile) {
-    if (!canEditProfilePhoto) return
-    if (!employee?.id) return
+  async function uploadEmployeePhotoFile(file) {
+    if (!canEditProfilePhoto || !employee?.id) return
     setPhotoSaving(true)
     try {
-      const data = await uploadEmployeePhoto(employee.id, croppedFile)
+      const data = await uploadEmployeePhoto(employee.id, file)
       if (data?.employee) setEmployee(data.employee)
       if (isOwnProfile && data?.employee && typeof setUser === 'function') {
         const e = data.employee
@@ -3419,6 +3407,27 @@ export default function AdminEmployeeProfile() {
       setPhotoSaving(false)
       setPendingPhotoFile(null)
     }
+  }
+
+  async function handlePhotoSelected(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!canEditProfilePhoto || !file || !employee?.id) return
+    const validationError = validateProfilePhotoFile(file, PROFILE_PHOTO_MAX_MB)
+    if (validationError) {
+      toast.error(validationError)
+      return
+    }
+    if (shouldSkipProfilePhotoCrop(file)) {
+      await uploadEmployeePhotoFile(file)
+      return
+    }
+    setPendingPhotoFile(file)
+    setPhotoCropOpen(true)
+  }
+
+  async function handleCroppedPhotoConfirm(croppedFile) {
+    await uploadEmployeePhotoFile(croppedFile)
   }
 
   async function handleRemovePhoto() {
@@ -4212,7 +4221,7 @@ export default function AdminEmployeeProfile() {
           <input
             ref={photoInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/jpg"
+            accept={PROFILE_PHOTO_ACCEPT}
             className="hidden"
             onChange={handlePhotoSelected}
           />
@@ -4220,7 +4229,7 @@ export default function AdminEmployeeProfile() {
             {/* Avatar with camera overlay */}
             <div className="relative shrink-0">
               <Avatar className="size-28 rounded-2xl ring-4 ring-border/20 dark:ring-white/8">
-                <AvatarImage src={profileImageUrl(employee.profile_image)} alt={employee.name} />
+                <AvatarImage src={profileImageUrl(employee.profile_image)} alt={employee.name} className="object-cover" />
                 <AvatarFallback className="rounded-2xl text-xl font-bold">{initials(employee.name)}</AvatarFallback>
               </Avatar>
               <button
@@ -4281,6 +4290,9 @@ export default function AdminEmployeeProfile() {
                 </div>
 
                 {/* QR / Schedule / Face access status dots */}
+                {canEditProfilePhoto ? (
+                  <p className="mt-2 text-xs text-muted-foreground">{PROFILE_PHOTO_HINT}</p>
+                ) : null}
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <span className={`size-1.5 rounded-full ${employee.has_qr ? 'bg-teal-500' : 'bg-slate-500'}`} />
@@ -7878,7 +7890,7 @@ export default function AdminEmployeeProfile() {
         file={pendingPhotoFile}
         title="Crop profile picture"
         description="Crop and zoom to fit the circular avatar."
-        maxBytes={2 * 1024 * 1024}
+        maxBytes={PROFILE_PHOTO_MAX_MB * 1024 * 1024}
         onConfirm={handleCroppedPhotoConfirm}
       />
 
