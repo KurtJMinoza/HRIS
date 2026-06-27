@@ -605,25 +605,74 @@ class PresenceFilingController extends Controller
         $validated = $request->validate([
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
-            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'skip_summary' => ['nullable', 'boolean'],
         ]);
-        $perPage = (int) ($validated['per_page'] ?? 25);
+        $perPage = (int) ($validated['per_page'] ?? 50);
+        $perPage = in_array($perPage, [10, 25, 50, 100], true) ? $perPage : 50;
+        $page = max(1, (int) ($validated['page'] ?? 1));
+
+        $cacheKey = $this->employeePresenceFilingsListCacheKey($user, $request, $perPage, $page);
+        $cacheHit = false;
+        try {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                $cacheHit = true;
+                RequestPerformanceLogger::finish($perf, $request, count($cached['presence_filings'] ?? []), [
+                    'scope' => 'employee',
+                    'per_page' => $perPage,
+                    'total' => $cached['pagination']['total'] ?? null,
+                    'cache' => 'hit',
+                    'cache_hit' => true,
+                ]);
+
+                return response()->json($cached);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('employee.presence_filings.list.cache_read_failed', [
+                'user_id' => (int) $user->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
 
         $tz = $this->presenceFilingService->attendanceTimezone();
         $q = AttendanceCorrection::query()
+            ->select([
+                'id',
+                'user_id',
+                'date',
+                'time_in',
+                'time_out',
+                'remarks',
+                'issue_kind',
+                'approved',
+                'approved_by',
+                'approved_at',
+                'pending_approval',
+                'status',
+                'final_approved_by',
+                'filed_at',
+                'filed_by',
+                'rejected_at',
+                'rejected_by',
+                'rejection_note',
+                'approval_stage',
+                'first_approver_id',
+                'first_approved_at',
+                'second_approver_id',
+                'second_approved_at',
+                'is_incomplete_record',
+                'attendance_logs_synced_at',
+                'attendance_logs_synced_by',
+                'created_at',
+                'updated_at',
+            ])
             ->where('user_id', $user->id)
             ->where(function ($sub) {
                 $sub->whereNotNull('filed_at')->orWhereNotNull('reason_code');
             })
-            ->with([
-                'user',
-                'filedBy',
-                'firstApprover',
-                'secondApprover',
-                'attendanceLogsSyncedBy',
-                'rejectedBy',
-            ])
-            ->orderByDesc('date')
+            ->orderByDesc('filed_at')
             ->orderByDesc('id');
 
         if (! empty($validated['from_date'])) {
@@ -633,18 +682,35 @@ class PresenceFilingController extends Controller
             $q->whereDate('date', '<=', $validated['to_date']);
         }
 
-        $summary = $this->presenceFilingStatusCounts(clone $q);
+        $includeSummary = ! $request->boolean('skip_summary');
+        $summary = $includeSummary ? $this->presenceFilingStatusCounts(clone $q) : null;
 
-        $paginator = $q->paginate($perPage)->withQueryString();
-        $items = $paginator->getCollection()->map(fn (AttendanceCorrection $c) => $this->correctionFormatter->format($c, $tz, includeEmployee: true, actor: $user, includeDisplayFields: true));
+        $paginator = $q->paginate($perPage, ['*'], 'page', $page)->withQueryString();
+        $pageIds = $paginator->getCollection()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
+        $finalApprovedIds = $this->finalApprovedAttendanceCorrectionIds($pageIds);
+        $empRole = $this->hrRoleResolver->resolveForApprovalSubject($user);
+
+        $items = $paginator->getCollection()->map(
+            fn (AttendanceCorrection $c) => $this->employeeCorrectionListRow(
+                $c,
+                $user,
+                $tz,
+                $empRole,
+                $currentApprovals[(int) $c->id] ?? null,
+                isset($finalApprovedIds[(int) $c->id]),
+            )
+        );
 
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
             'scope' => 'employee',
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
+            'cache' => $cacheHit ? 'hit' : 'miss',
+            'cache_hit' => $cacheHit,
         ]);
 
-        return response()->json([
+        $payload = [
             'presence_filings' => $items->values(),
             'pagination' => [
                 'current_page' => $paginator->currentPage(),
@@ -653,7 +719,18 @@ class PresenceFilingController extends Controller
                 'last_page' => $paginator->lastPage(),
             ],
             'summary' => $summary,
-        ]);
+        ];
+
+        try {
+            Cache::put($cacheKey, $payload, now()->addSeconds(45));
+        } catch (\Throwable $e) {
+            Log::warning('employee.presence_filings.list.cache_write_failed', [
+                'user_id' => (int) $user->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json($payload);
     }
 
     public function showMine(Request $request, int $id): JsonResponse
@@ -1200,6 +1277,81 @@ class PresenceFilingController extends Controller
             'actor_can_reject' => $canApprove,
             'can_approve' => $canApprove,
             'can_reject' => $canApprove,
+        ];
+    }
+
+    private function employeePresenceFilingsListCacheKey(User $user, Request $request, int $perPage, int $page): string
+    {
+        $filters = array_filter([
+            'from_date' => $request->query('from_date'),
+            'to_date' => $request->query('to_date'),
+            'skip_summary' => $request->query('skip_summary'),
+            'page' => $page,
+            'per_page' => $perPage,
+        ], static fn ($value): bool => $value !== null && $value !== '');
+
+        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':v'.AttendanceCorrectionModuleCache::version();
+    }
+
+    /**
+     * Lightweight list row for employee correction history (detail loaded via showMine).
+     */
+    private function employeeCorrectionListRow(
+        AttendanceCorrection $c,
+        User $employee,
+        string $tz,
+        HrRole $empRole,
+        ?OrgApprovalRecord $currentApproval,
+        bool $hrApprovedByWorkflow = false,
+    ): array {
+        $status = $this->correctionStatusService->resolvedStatus($c);
+        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $hrApprovedByWorkflow) {
+            $status = AttendanceCorrectionStatusService::STATUS_APPROVED;
+        }
+        $displayStatus = $this->correctionStatusService->displayStatusLabel($c);
+        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $currentApproval) {
+            $displayStatus = 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval';
+        }
+
+        $issueType = $this->normalizeIssueKind($c);
+        $timeInIso = $c->time_in?->copy()->setTimezone($tz)->toIso8601String();
+        $timeOutIso = $c->time_out?->copy()->setTimezone($tz)->toIso8601String();
+        $canDelete = $c->pending_approval && ! $c->approved && ! $c->rejected_at
+            && ((int) $employee->id === (int) $c->user_id || (int) $employee->id === (int) $c->filed_by);
+
+        return [
+            'id' => (int) $c->id,
+            'user_id' => (int) $c->user_id,
+            'date' => $c->date?->toDateString(),
+            'day_name' => $c->date?->copy()->timezone($tz)->format('l'),
+            'issue_type' => $issueType,
+            'issue_kind' => $c->issue_kind,
+            'time_in' => $timeInIso,
+            'time_out' => $timeOutIso,
+            'requested_time_in' => $timeInIso,
+            'requested_time_out' => $timeOutIso,
+            'remarks' => $c->remarks,
+            'reason_code' => $c->reason_code,
+            'status' => $status,
+            'display_status' => $displayStatus,
+            'pending_approval' => (bool) $c->pending_approval,
+            'approved' => (bool) $c->approved,
+            'filed_at' => $c->filed_at?->toIso8601String(),
+            'last_updated' => $c->updated_at?->toIso8601String(),
+            'rejection_note' => $c->rejection_note,
+            'rejected_at' => $c->rejected_at?->toIso8601String(),
+            'is_incomplete_record' => (bool) $c->is_incomplete_record,
+            'attendance_logs_synced_at' => $c->attendance_logs_synced_at?->toIso8601String(),
+            'employee_name' => $employee->display_name,
+            'requested_by_name' => $employee->display_name,
+            'employee_profile_image_url' => $employee->profile_image_url,
+            'requested_by_profile_image_url' => $employee->profile_image_url,
+            'employee_position' => $employee->position,
+            'employee_hr_role' => $empRole->value,
+            'employee_role_label' => $empRole->badgeLabel(),
+            'requested_by_hr_role' => $empRole->value,
+            'requested_by_role_label' => $empRole->badgeLabel(),
+            'actor_can_delete' => $canDelete,
         ];
     }
 

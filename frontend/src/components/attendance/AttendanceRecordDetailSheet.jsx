@@ -6,7 +6,6 @@ import {
   LogIn,
   LogOut,
   GitBranch,
-  ExternalLink,
 } from 'lucide-react'
 import {
   Sheet,
@@ -31,6 +30,7 @@ import {
   employeeTypeReasonLabel,
   resolveAdminStatusLabel,
   resolveEmployeeStatusLabel,
+  shouldOfferCorrection,
   tableApprovedOtHours,
   tableActualRenderedOtHours,
   tablePayableOtHours,
@@ -283,14 +283,14 @@ export function AttendanceRecordDetailSheet({
               <Separator />
 
               <div className="flex flex-wrap gap-2">
-                {correctionsHref && (
+                {correctionsHref ? (
                   <Button variant="outline" size="sm" className="gap-1.5" asChild>
                     <Link to={correctionsHref}>
-                      <ExternalLink className="size-3.5" aria-hidden />
-                      Open corrections
+                      <FileText className="size-3.5" aria-hidden />
+                      {shouldOfferCorrection(row) ? 'File correction' : 'Attendance corrections'}
                     </Link>
                   </Button>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

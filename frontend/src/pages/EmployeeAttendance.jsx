@@ -31,6 +31,7 @@ import {
   employeeActivityLine,
   attendanceRecordRef,
   formatDayName,
+  buildEmployeeCorrectionHref,
 } from '@/components/attendance/attendanceRecordUtils'
 import {
   DropdownMenu,
@@ -1045,7 +1046,11 @@ export default function EmployeeAttendance() {
         employeeName={viewerName}
         employeeInitials={viewerInitials}
         profileSrc={viewerUser?.profile_image}
-        correctionsHref="/employee/correction-requests"
+        correctionsHref={
+          detailRow
+            ? buildEmployeeCorrectionHref(detailRow)
+            : '/employee/correction-requests?file=1'
+        }
       />
 
       <Dialog open={modalOpen} onOpenChange={(open) => { setModalOpen(open); if (!open) setError(null); }}>

@@ -6779,6 +6779,7 @@ export async function getMyPresenceFilings(params = {}) {
   if (params.to_date) q.set('to_date', params.to_date)
   if (params.page) q.set('page', String(params.page))
   if (params.per_page) q.set('per_page', String(params.per_page))
+  if (params.skip_summary != null) q.set('skip_summary', params.skip_summary ? '1' : '0')
   const path = `/employee/presence-filings${q.toString() ? `?${q}` : ''}`
   const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : undefined)
   const data = await res.json().catch(() => ({}))

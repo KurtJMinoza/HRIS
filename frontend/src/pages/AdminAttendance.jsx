@@ -37,6 +37,7 @@ import {
   tablePayableOtHours,
   tableOtHoursHrs,
   displayAttendanceTime,
+  buildAdminCorrectionHref,
 } from '@/components/attendance/attendanceRecordUtils'
 import {
   DropdownMenu,
@@ -1372,7 +1373,11 @@ export default function AdminAttendance() {
         row={detailRow}
         profileImageUrl={profileImageUrl}
         showPayrollColumns={showPayrollAttendanceColumns}
-        correctionsHref={`${hrPanelPath(hrBase, 'attendance')}?tab=corrections`}
+        correctionsHref={
+          detailRow
+            ? buildAdminCorrectionHref(detailRow, hrPanelPath(hrBase, 'attendance'))
+            : `${hrPanelPath(hrBase, 'attendance')}?tab=corrections&file=1`
+        }
       />
 
     </div>

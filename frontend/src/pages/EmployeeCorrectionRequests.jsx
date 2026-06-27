@@ -1,4 +1,6 @@
-import { createElement, useEffect, useState, useCallback, useMemo } from 'react'
+import { createElement, useEffect, useState, useMemo, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion as Motion } from 'framer-motion'
 import {
   Loader2,
@@ -36,6 +38,7 @@ import {
   deleteMyPresenceFiling,
   getMyPresenceFilingAttendanceDetail,
   getMyPresenceFilings,
+  getMyPresenceFilingDetail,
   submitPresenceFiling,
 } from '@/api'
 import { Input } from '@/components/ui/input'
@@ -540,8 +543,10 @@ function CorrectionHistoryTimeline({ history }) {
 
 export default function EmployeeCorrectionRequests() {
   const { toast } = useToast()
-  const [items, setItems] = useState([])
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const handledFileDeepLinkRef = useRef(false)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [selected, setSelected] = useState(null)
 
@@ -565,8 +570,50 @@ export default function EmployeeCorrectionRequests() {
   const [sortKey, setSortKey] = useState('filed_at')
   const [sortDir, setSortDir] = useState('desc')
 
+  const filingsQuery = useQuery({
+    queryKey: ['employee-presence-filings'],
+    queryFn: ({ signal }) => getMyPresenceFilings({ per_page: 50, signal }),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  })
+
+  const items = Array.isArray(filingsQuery.data?.presence_filings) ? filingsQuery.data.presence_filings : []
+  const listSummary = filingsQuery.data?.summary
+  const loading = filingsQuery.isLoading && !filingsQuery.data
+  const refreshing = filingsQuery.isFetching && !filingsQuery.isLoading
+
+  async function refreshList() {
+    await filingsQuery.refetch()
+  }
+
+  useEffect(() => {
+    if (filingsQuery.isError && filingsQuery.error) {
+      toast({ title: 'Failed to load', description: filingsQuery.error.message, variant: 'error' })
+    }
+  }, [filingsQuery.isError, filingsQuery.error, toast])
+
   const showFileTimeIn = fileIssueKind === 'missing_in' || fileIssueKind === 'both'
   const showFileTimeOut = fileIssueKind === 'missing_out' || fileIssueKind === 'both'
+
+  useEffect(() => {
+    if (handledFileDeepLinkRef.current) return
+    if (searchParams.get('file') !== '1') return
+    handledFileDeepLinkRef.current = true
+
+    const date = searchParams.get('date')
+    const issue = searchParams.get('issue')
+    if (date) setFileDate(date)
+    if (issue === 'missing_in' || issue === 'missing_out' || issue === 'both') {
+      setFileIssueKind(issue)
+    }
+    setFileOpen(true)
+
+    const next = new URLSearchParams(searchParams)
+    next.delete('file')
+    next.delete('date')
+    next.delete('issue')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     if (!fileOpen || !fileDate || !fileIssueKind) {
@@ -597,22 +644,24 @@ export default function EmployeeCorrectionRequests() {
     }
   }, [fileOpen, fileDate, fileIssueKind])
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await getMyPresenceFilings()
-      setItems(Array.isArray(res?.presence_filings) ? res.presence_filings : [])
-    } catch (e) {
-      toast({ title: 'Failed to load', description: e.message, variant: 'error' })
-      setItems([])
-    } finally {
-      setLoading(false)
+  const requestStats = useMemo(() => {
+    if (listSummary) {
+      return {
+        total: listSummary.total ?? 0,
+        pending: listSummary.pending ?? 0,
+        approved: listSummary.approved ?? 0,
+        rejected: listSummary.rejected ?? 0,
+      }
     }
-  }, [toast])
-
-  useEffect(() => {
-    load()
-  }, [load])
+    const out = { total: items.length, pending: 0, approved: 0, rejected: 0 }
+    for (const item of items) {
+      const key = reviewStatusKey(item)
+      if (key === 'rejected') out.rejected += 1
+      else if (key === 'hr_approved') out.approved += 1
+      else out.pending += 1
+    }
+    return out
+  }, [listSummary, items])
 
   const filteredSorted = useMemo(() => {
     let list = [...items]
@@ -694,17 +743,6 @@ export default function EmployeeCorrectionRequests() {
     return list
   }, [items, listSearch, statusFilter, fromDate, toDate, sortKey, sortDir])
 
-  const requestStats = useMemo(() => {
-    const out = { total: items.length, pending: 0, approved: 0, rejected: 0 }
-    for (const item of items) {
-      const key = reviewStatusKey(item)
-      if (key === 'rejected') out.rejected += 1
-      else if (key === 'hr_approved') out.approved += 1
-      else out.pending += 1
-    }
-    return out
-  }, [items])
-
   const hasActiveFilters = Boolean(listSearch.trim() || statusFilter !== 'all' || fromDate || toDate)
 
   function toggleSort(key) {
@@ -731,9 +769,18 @@ export default function EmployeeCorrectionRequests() {
     )
   }
 
-  function openDetail(row) {
+  async function openDetail(row) {
     setSelected(row)
     setDetailOpen(true)
+    setDetailLoading(true)
+    try {
+      const res = await getMyPresenceFilingDetail(row.id)
+      if (res?.presence_filing) setSelected(res.presence_filing)
+    } catch (e) {
+      toast({ title: 'Could not load details', description: e.message, variant: 'error' })
+    } finally {
+      setDetailLoading(false)
+    }
   }
 
   function openFileDialog() {
@@ -805,7 +852,7 @@ export default function EmployeeCorrectionRequests() {
         variant: 'success',
       })
       setFileOpen(false)
-      await load()
+      await queryClient.invalidateQueries({ queryKey: ['employee-presence-filings'] })
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -824,7 +871,7 @@ export default function EmployeeCorrectionRequests() {
         setDetailOpen(false)
         setSelected(null)
       }
-      await load()
+      await queryClient.invalidateQueries({ queryKey: ['employee-presence-filings'] })
     } catch (e) {
       toast({ title: 'Failed', description: e.message, variant: 'error' })
     } finally {
@@ -858,10 +905,10 @@ export default function EmployeeCorrectionRequests() {
               type="button"
               variant="outline"
               className="h-12 flex-1 gap-2 rounded-xl border-border bg-background px-5 text-base font-semibold text-foreground shadow-sm hover:bg-muted @lg:flex-initial"
-              onClick={() => load()}
-              disabled={loading}
+              onClick={() => void refreshList()}
+              disabled={loading || refreshing}
             >
-            {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            {loading || refreshing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Refresh
           </Button>
             <Button
@@ -1433,6 +1480,13 @@ export default function EmployeeCorrectionRequests() {
               </div>
 
               <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-7 py-6 text-sm dark:bg-card">
+                {detailLoading ? (
+                  <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
+                    <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
+                    <p className="text-sm font-medium text-foreground">Loading request details…</p>
+                  </div>
+                ) : (
+                  <>
                 <CorrectionDetailSection icon={CalendarDays} title="Summary">
                   <dl className="grid grid-cols-[minmax(0,12.5rem)_1fr] gap-x-4 gap-y-4 text-sm">
                     <dt className="text-muted-foreground">Attendance date</dt>
@@ -1502,6 +1556,8 @@ export default function EmployeeCorrectionRequests() {
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selected.rejection_note}</p>
                   </section>
                 ) : null}
+                  </>
+                )}
               </div>
 
               <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-7 py-5 dark:border-white/10">

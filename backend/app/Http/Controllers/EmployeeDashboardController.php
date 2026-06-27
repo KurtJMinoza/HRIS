@@ -766,7 +766,10 @@ class EmployeeDashboardController extends Controller
         return [
             'date' => $todayDate,
             'status' => $status,
-            'status_label' => $labelMap[$status] ?? ($status === '—' && $isRestDay ? AttendanceStatusResolver::REST_DAY_LABEL : $status),
+            'status_label' => $resolved['presence_label']
+                ?? ($labelMap[$status] ?? ($status === '—' && $isRestDay ? AttendanceStatusResolver::REST_DAY_LABEL : $status)),
+            'presence_label' => $resolved['presence_label'] ?? null,
+            'presence_issue' => $resolved['presence_issue'] ?? null,
             'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
             'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
             'formatted_time_in' => $this->formatTimeForDisplay($effectiveTimeIn),

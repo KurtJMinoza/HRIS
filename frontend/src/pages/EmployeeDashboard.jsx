@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info } from 'lucide-react'
+import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,12 @@ import {
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'
+import {
+  buildEmployeeCorrectionHref,
+  calendarIncompleteBadge,
+  isIncompleteAttendanceRecord,
+  shouldOfferCorrection,
+} from '@/components/attendance/attendanceRecordUtils'
 
 const DEFAULT_CALENDAR_VALUE = null
 
@@ -293,6 +299,14 @@ function getCalendarDayVisual(record, dateKey, ctx) {
       badge: 'Rest Day',
       tileClass: `${baseGridCell} ${tint.slate}`,
       badgeClass: `${L.ink} ${L.slate}`,
+    }
+  }
+
+  if (isIncompleteAttendanceRecord(record)) {
+    return {
+      badge: calendarIncompleteBadge(record),
+      tileClass: `${baseGridCell} ${tint.amber}`,
+      badgeClass: `${L.ink} ${L.amber}`,
     }
   }
 
@@ -708,6 +722,8 @@ export default function EmployeeDashboard() {
     const lateLabel = t?.late_label
 
     if (!status) return '—'
+    if (t.presence_issue === 'incomplete_pair' && t.presence_label) return t.presence_label
+    if (t.presence_issue === 'correction_pending' && t.presence_label) return t.presence_label
     if (status === 'leave') return 'On leave'
     if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') return 'Rest Day'
     if (status === 'late') return timeIn && !timeOut ? 'Working' : (lateLabel || 'Late')
@@ -1214,7 +1230,9 @@ export default function EmployeeDashboard() {
     }
   }, [summary, scheduleAssigned, isRestDay])
 
-  function getDisplayStatus(status, dateKey, lateLabel, lateMinutes, statusLabel = null) {
+  function getDisplayStatus(status, dateKey, lateLabel, lateMinutes, statusLabel = null, presenceLabel = null, presenceIssue = null) {
+    if (presenceIssue === 'incomplete_pair' && presenceLabel) return presenceLabel
+    if (presenceIssue === 'correction_pending' && presenceLabel) return presenceLabel
     if (statusLabel) return statusLabel
     if (!dateKey) return status
     const todayKey = formatLocalDateKey(new Date())
@@ -1247,7 +1265,15 @@ export default function EmployeeDashboard() {
   function tileTooltipLines(record, dateKey) {
     if (!record) return []
     const lines = []
-    const label = getDisplayStatus(record.status, dateKey, record.late_label, record.late_minutes, record.status_label) || '—'
+    const label = getDisplayStatus(
+      record.status,
+      dateKey,
+      record.late_label,
+      record.late_minutes,
+      record.status_label,
+      record.presence_label,
+      record.presence_issue,
+    ) || '—'
     lines.push(label)
     const timeIn = record.formatted_time_in || record.time_in
     const timeOut = record.formatted_time_out || record.time_out
@@ -2224,6 +2250,8 @@ export default function EmployeeDashboard() {
                           selectedDayDetails.late_label,
                           selectedDayDetails.late_minutes,
                           selectedDayDetails.status_label || selectedDayDetails.display_badge,
+                          selectedDayDetails.presence_label,
+                          selectedDayDetails.presence_issue,
                         ) || '—'}
                       </p>
                     )}
@@ -2339,6 +2367,16 @@ export default function EmployeeDashboard() {
                         </p>
                       )}
                     </div>
+                    {shouldOfferCorrection(selectedDayDetails) ? (
+                      <div className="pt-2">
+                        <Button variant="outline" className="w-full gap-2" asChild>
+                          <Link to={buildEmployeeCorrectionHref(selectedDayDetails)} onClick={() => setSelectedDay(null)}>
+                            <FileText className="size-4" aria-hidden />
+                            File correction
+                          </Link>
+                        </Button>
+                      </div>
+                    ) : null}
                   </>
                 )}
               </div>

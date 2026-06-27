@@ -551,6 +551,7 @@ export default function AttendanceCorrections() {
   const deepLinkedRequestId = parseReviewRequestId(deepLinkedRequestIdRaw)
   const deepLinkedStatus = searchParams.get('status')
   const handledDeepLinkRef = useRef(null)
+  const handledFileDeepLinkRef = useRef(false)
   const detailAbortRef = useRef(null)
   const detailFetchIdRef = useRef(0)
 
@@ -622,6 +623,29 @@ export default function AttendanceCorrections() {
   const [attendanceDetailError, setAttendanceDetailError] = useState('')
   const showFileTimeIn = fileIssueKind === 'missing_in' || fileIssueKind === 'both'
   const showFileTimeOut = fileIssueKind === 'missing_out' || fileIssueKind === 'both'
+
+  useEffect(() => {
+    if (handledFileDeepLinkRef.current) return
+    if (searchParams.get('file') !== '1') return
+    handledFileDeepLinkRef.current = true
+
+    const date = searchParams.get('date')
+    const issue = searchParams.get('issue')
+    const employeeId = searchParams.get('employee_id')
+    if (date) setFileDate(date)
+    if (issue === 'missing_in' || issue === 'missing_out' || issue === 'both') {
+      setFileIssueKind(issue)
+    }
+    if (employeeId && canSeeAll) setFileEmployeeId(employeeId)
+    setFileOpen(true)
+
+    const next = new URLSearchParams(searchParams)
+    next.delete('file')
+    next.delete('date')
+    next.delete('issue')
+    next.delete('employee_id')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams, canSeeAll])
 
   const searchInputRef = useRef(null)
   const [tableDensity, setTableDensity] = useState('comfortable')

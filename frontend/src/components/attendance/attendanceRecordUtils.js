@@ -353,10 +353,66 @@ export function employeeTypeReasonLabel(row) {
   return 'Regular'
 }
 
+export function isIncompleteAttendanceRecord(row) {
+  if (!row) return false
+  if (row.status === 'incomplete') return true
+  if (row.presence_issue === 'incomplete_pair') return true
+  if (row.status === 'clocked_in') return false
+  const hasIn = Boolean(row.time_in || row.formatted_time_in)
+  const hasOut = Boolean(row.time_out || row.formatted_time_out)
+  return hasIn !== hasOut
+}
+
+export function inferCorrectionIssueKind(row) {
+  const hasIn = Boolean(row?.time_in || row?.formatted_time_in)
+  const hasOut = Boolean(row?.time_out || row?.formatted_time_out)
+  if (!hasIn && hasOut) return 'missing_in'
+  if (hasIn && !hasOut) return 'missing_out'
+  return 'both'
+}
+
+export function calendarIncompleteBadge(record) {
+  if (!record) return 'Incomplete'
+  const hasIn = Boolean(record.time_in || record.formatted_time_in)
+  const hasOut = Boolean(record.time_out || record.formatted_time_out)
+  if (hasIn && !hasOut) return 'Missing out'
+  if (!hasIn && hasOut) return 'Missing in'
+  return 'Incomplete'
+}
+
+export function buildEmployeeCorrectionHref(row, basePath = '/employee/correction-requests') {
+  const date = String(row?.date || '').slice(0, 10)
+  if (!date) return `${basePath}?file=1`
+  const params = new URLSearchParams({ file: '1', date, issue: inferCorrectionIssueKind(row) })
+  return `${basePath}?${params.toString()}`
+}
+
+export function buildAdminCorrectionHref(row, attendanceBasePath) {
+  const date = String(row?.date || '').slice(0, 10)
+  const params = new URLSearchParams({ tab: 'corrections', file: '1' })
+  if (date) params.set('date', date)
+  params.set('issue', inferCorrectionIssueKind(row))
+  if (row?.employee_id != null) params.set('employee_id', String(row.employee_id))
+  return `${attendanceBasePath}?${params.toString()}`
+}
+
+export function shouldOfferCorrection(row) {
+  if (!row?.date) return false
+  if (['leave', 'holiday', 'rest', 'upcoming'].includes(row.status)) return false
+  if (row.is_rest_day) return false
+  if (row.presence_issue === 'correction_pending') return false
+  if (row.presence_filing?.status === 'pending' || row.presence_filing?.status === 'approved') return false
+  if (row.has_correction && row.correction_approved !== false) return false
+  return isIncompleteAttendanceRecord(row)
+}
+
 export function resolveAdminStatusLabel(row) {
   const rawStatus = row.status || ''
   if (rawStatus === 'holiday') return row.holiday_name || 'Holiday'
   if (rawStatus === 'rest' || row.is_rest_day) return 'Rest Day'
+  if (row.presence_label && (row.presence_issue === 'incomplete_pair' || row.presence_issue === 'correction_pending')) {
+    return row.presence_label
+  }
   if (rawStatus === 'late') return row.late_label || 'Late'
   if (rawStatus === 'undertime') {
     return row.is_approved_undertime ? 'Undertime (Approved)' : 'Undertime (Unfiled)'
@@ -382,6 +438,7 @@ export function resolveEmployeeStatusLabel(row) {
     return 'Leave'
   }
   if (row.presence_label) return row.presence_label
+  if (isIncompleteAttendanceRecord(row)) return calendarIncompleteBadge(row)
   if (row.status === EMPTY_PLACEHOLDER) return EMPTY_PLACEHOLDER
   if (row.status === 'upcoming') return 'Upcoming'
   if (row.status === 'late' && row.late_label) return row.late_label
@@ -397,6 +454,7 @@ export function resolveEmployeeStatusLabel(row) {
 
 export function isPendingAttentionRow(row) {
   if (row.status === 'incomplete') return true
+  if (row.presence_issue === 'incomplete_pair') return true
   if (row.presence_issue === 'correction_pending') return true
   if (row.has_correction && row.correction_approved === false && row.correction_id) return true
   return false
@@ -404,6 +462,7 @@ export function isPendingAttentionRow(row) {
 
 export function isPendingEmployeeRow(row) {
   if (row.status === 'incomplete') return true
+  if (row.presence_issue === 'incomplete_pair') return true
   if (row.presence_issue === 'correction_pending') return true
   if (row.presence_filing?.status === 'pending') return true
   return false
