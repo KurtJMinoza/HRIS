@@ -32,6 +32,8 @@ import {
   normalizeLeaderUserId,
 } from '@/lib/employeeSearch'
 import { useToast } from '@/components/ui/use-toast'
+import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { cn } from '@/lib/utils'
 import {
   ADMIN_FORM_DIALOG_DESC_CLASS,
@@ -275,6 +277,15 @@ export default function AdminBranches() {
   const [branchEmployeesLoading, setBranchEmployeesLoading] = useState(false)
   const [branchEmployeesSearch, setBranchEmployeesSearch] = useState('')
 
+  const dismissOverlays = useCallback(() => {
+    setCreateOpen(false)
+    setEditOpen(false)
+    setDeleteConfirm(null)
+    setEmployeesBranch(null)
+  }, [])
+
+  useDismissOnRouteChange(dismissOverlays)
+
   // Sync URL param when filter changes
   useEffect(() => {
     if (companyFilter) {
@@ -288,34 +299,28 @@ export default function AdminBranches() {
     setPage(1)
   }, [companyFilter])
 
-  const fetchBranches = useCallback(async () => {
+  const fetchBranches = useCallback(async ({ signal, isStale } = {}) => {
     try {
       const params = companyFilter ? { company_id: companyFilter } : {}
+      if (signal) params.signal = signal
       const data = await getBranches(params)
+      if (isStale?.()) return
       setBranches(data.branches || [])
     } catch (e) {
+      if (isStale?.() || e?.name === 'AbortError') return
       setBranches([])
       toast({ title: 'Failed to load branches', description: e?.message || 'Please try again.', variant: 'error' })
     } finally {
-      setLoading(false)
+      if (!isStale?.()) setLoading(false)
     }
   }, [companyFilter, toast])
 
-  const fetchCompanies = useCallback(async () => {
+  const fetchAreas = useCallback(async (signal) => {
     try {
-      const data = await getCompanies()
-      setCompanies(data.companies || [])
-    } catch (e) {
-      setCompanies([])
-      toast({ title: 'Failed to load companies', description: e.message, variant: 'error' })
-    }
-  }, [toast])
-
-  const fetchAreas = useCallback(async () => {
-    try {
-      const data = await getAreas()
+      const data = await getAreas(signal ? { signal } : {})
       setAreas(data.areas || [])
-    } catch {
+    } catch (e) {
+      if (e?.name === 'AbortError') return
       setAreas([])
     }
   }, [])
@@ -330,17 +335,33 @@ export default function AdminBranches() {
     }
   }, [])
 
-  // Companies list (for filter dropdown) - load once when ready
-  useEffect(() => {
-    void fetchCompanies()
-    void fetchAreas()
-  }, [fetchAreas, fetchCompanies])
-
-  // Branches - refetch whenever company filter changes (includes initial mount)
-  useEffect(() => {
+  // Initial list: branches + company filter options in parallel (areas deferred until modal)
+  useOrgModuleLoad(async ({ signal, isStale }) => {
     setLoading(true)
-    void fetchBranches()
-  }, [fetchBranches])
+    try {
+      const branchParams = companyFilter ? { company_id: companyFilter, signal } : { signal }
+      const [branchRes, companyRes] = await Promise.all([
+        getBranches(branchParams),
+        getCompanies({ signal }),
+      ])
+      if (isStale()) return
+      setBranches(branchRes.branches || [])
+      setCompanies(companyRes.companies || [])
+    } catch (e) {
+      if (isStale() || e?.name === 'AbortError') return
+      setBranches([])
+      toast({ title: 'Failed to load branches', description: e?.message || 'Please try again.', variant: 'error' })
+    } finally {
+      if (!isStale()) setLoading(false)
+    }
+  }, [companyFilter, toast])
+
+  useEffect(() => {
+    if (!createOpen && !editOpen) return
+    const ac = new AbortController()
+    void fetchAreas(ac.signal)
+    return () => ac.abort()
+  }, [createOpen, editOpen, fetchAreas])
 
   // Fetch employees when modal opens; refetch when company changes (filter by assignable_to_company_id)
   const managerCompanyId = createOpen ? createCompanyId : editOpen ? editCompanyId : ''

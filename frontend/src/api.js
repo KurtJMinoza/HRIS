@@ -877,20 +877,25 @@ function clearCachesAfterAdminEmployeeDataChange(employeeId) {
   }
 }
 
-async function cachedAuthenticatedGetJson(path, { ttlMs = 0, timeoutMs } = {}) {
+async function cachedAuthenticatedGetJson(path, { ttlMs = 0, timeoutMs, signal } = {}) {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError')
+  }
+
   const cacheKey = path
   const now = Date.now()
   const cached = GET_CACHE.get(cacheKey)
-  if (cached && cached.expiresAt > now) {
+  if (cached && cached.expiresAt > now && !signal) {
     return cached.data
   }
 
   const inFlight = GET_IN_FLIGHT.get(cacheKey)
-  if (inFlight) return inFlight
+  if (inFlight && !signal) return inFlight
 
   const requestPromise = (async () => {
     const res = await authenticatedFetch(path, {
       ...(timeoutMs != null ? { timeoutMs } : {}),
+      ...(signal ? { signal } : {}),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -4074,7 +4079,10 @@ export async function getDepartments(params = {}) {
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/departments${query.toString() ? `?${query.toString()}` : ''}`
-  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
+  return cachedAuthenticatedGetJson(path, {
+    ttlMs: params.fresh ? 0 : 5 * 60 * 1000,
+    signal: params.signal,
+  })
 }
 
 /**
@@ -6088,7 +6096,10 @@ export async function submitPublicRecruitmentExam(token, answers = []) {
 export async function getDivisions(params = {}) {
   const suffix = orgQuery(params, ['company_id', 'branch_id', 'department_id', 'status', 'search'])
   const path = `/admin/divisions${suffix ? `?${suffix}` : ''}`
-  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
+  return cachedAuthenticatedGetJson(path, {
+    ttlMs: params.fresh ? 0 : 5 * 60 * 1000,
+    signal: params.signal,
+  })
 }
 
 export async function createDivision(payload) {
@@ -6144,7 +6155,10 @@ export async function unassignEmployeesFromDivision(divisionId, employeeIds) {
 export async function getSectionsOrUnits(params = {}) {
   const suffix = orgQuery(params, ['company_id', 'branch_id', 'department_id', 'division_id', 'status', 'search'])
   const path = `/admin/sections-or-units${suffix ? `?${suffix}` : ''}`
-  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
+  return cachedAuthenticatedGetJson(path, {
+    ttlMs: params.fresh ? 0 : 5 * 60 * 1000,
+    signal: params.signal,
+  })
 }
 
 export async function createSectionOrUnit(payload) {
@@ -6223,7 +6237,10 @@ export function companyLogoUrl(company) {
 
 export async function getCompanies(params = {}) {
   const path = params.fresh ? `/admin/companies?_ts=${Date.now()}` : '/admin/companies'
-  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
+  return cachedAuthenticatedGetJson(path, {
+    ttlMs: params.fresh ? 0 : 5 * 60 * 1000,
+    signal: params.signal,
+  })
 }
 
 export async function createCompany(payload) {
@@ -6340,7 +6357,10 @@ export async function getBranches(params = {}) {
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/branches${query.toString() ? `?${query.toString()}` : ''}`
-  return cachedAuthenticatedGetJson(path, { ttlMs: params.fresh ? 0 : 5 * 60 * 1000 })
+  return cachedAuthenticatedGetJson(path, {
+    ttlMs: params.fresh ? 0 : 5 * 60 * 1000,
+    signal: params.signal,
+  })
 }
 
 export async function createBranch(payload) {
@@ -7789,7 +7809,9 @@ export async function getAreas(params = {}) {
     if (value !== undefined && value !== null && String(value) !== '') query.set(key, String(value))
   })
   const suffix = query.toString() ? `?${query.toString()}` : ''
-  const res = await authenticatedFetch(`/admin/areas${suffix}`)
+  const res = await authenticatedFetch(`/admin/areas${suffix}`, {
+    ...(params.signal ? { signal: params.signal } : {}),
+  })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load areas')
   return data

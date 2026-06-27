@@ -10,6 +10,7 @@ use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\OrganizationLeadershipAssignmentService;
 use App\Services\OrganizationLeadershipService;
+use App\Support\BranchEmployeeCounts;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -121,11 +122,14 @@ class CompanyController extends Controller
     public function branches(int $id): JsonResponse
     {
         $company = Company::findOrFail($id);
+        $employeeCounts = BranchEmployeeCounts::subquery();
         $branches = $company->branches()
+            ->select('branches.*')
             ->with('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->withCount('departments')
-            ->withTotalEmployeesCount()
-            ->orderBy('name')
+            ->leftJoinSub($employeeCounts, 'employee_counts', 'employee_counts.branch_id', '=', 'branches.id')
+            ->addSelect(DB::raw('COALESCE(employee_counts.employees_count, 0) as employees_count'))
+            ->orderBy('branches.name')
             ->get()
             ->map(fn ($b) => [
                 'id' => $b->id,

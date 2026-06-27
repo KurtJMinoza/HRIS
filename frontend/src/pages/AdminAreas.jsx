@@ -14,6 +14,8 @@ import {
   ADMIN_FORM_DIALOG_TITLE_CLASS,
 } from '@/lib/adminFormDialogStyles'
 import { companyLogoUrl, createArea, deleteArea, getAreaBranches, getAreas, getBranches, getCompanies, profileImageUrl, updateArea } from '@/api'
+import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
@@ -52,27 +54,44 @@ export default function AdminAreas() {
   const leadershipRef = useRef(null)
   const branchAssignmentsLoadingRef = useRef(false)
 
-  const load = useCallback(async () => {
+  const dismissOverlays = useCallback(() => {
+    setDialogOpen(false)
+    setEditing(null)
+    setDeactivateTarget(null)
+  }, [])
+
+  useDismissOnRouteChange(dismissOverlays)
+
+  const reloadAreas = useCallback(async () => {
+    const [areaRes, companyRes, branchRes] = await Promise.all([
+      getAreas(companyFilter ? { company_id: companyFilter } : {}),
+      getCompanies(),
+      getBranches({ fresh: true }),
+    ])
+    setAreas(areaRes.areas || [])
+    setCompanies(companyRes.companies || [])
+    setBranches(branchRes.branches || [])
+  }, [companyFilter])
+
+  useOrgModuleLoad(async ({ signal, isStale }) => {
     setLoading(true)
     try {
       const [areaRes, companyRes, branchRes] = await Promise.all([
-        getAreas(companyFilter ? { company_id: companyFilter } : {}),
-        getCompanies(),
-        getBranches({ fresh: true }),
+        getAreas(companyFilter ? { company_id: companyFilter, signal } : { signal }),
+        getCompanies({ signal }),
+        getBranches({ fresh: true, signal }),
       ])
+      if (isStale()) return
       setAreas(areaRes.areas || [])
       setCompanies(companyRes.companies || [])
       setBranches(branchRes.branches || [])
     } catch (error) {
+      if (isStale() || error?.name === 'AbortError') return
       toast({ title: 'Failed to load areas', description: error.message, variant: 'error' })
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
   }, [companyFilter, toast])
-
-  useEffect(() => {
-    void load()
-  }, [load])
 
   const filteredAreas = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -208,7 +227,7 @@ export default function AdminAreas() {
           current.map((row) => (row.id === savedArea.id ? { ...row, ...savedArea } : row)),
         )
       } else {
-        await load()
+        await reloadAreas()
       }
       if (wasEdit) {
         setDialogOpen(false)
@@ -255,7 +274,7 @@ export default function AdminAreas() {
       const response = await deleteArea(deactivateTarget.id)
       const wasInactive = deactivateTarget.status === 'inactive'
       setDeactivateTarget(null)
-      await load()
+      await reloadAreas()
       toast({ title: wasInactive ? 'Area deleted' : 'Area deactivated', description: response.message, variant: 'success' })
     } catch (error) {
       toast({ title: 'Failed to update area', description: error.message, variant: 'error' })

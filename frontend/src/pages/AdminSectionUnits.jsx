@@ -28,6 +28,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { getSectionsOrUnits, createSectionOrUnit, updateSectionOrUnit, deleteSectionOrUnit, assignEmployeesToSectionOrUnit, unassignEmployeesFromSectionOrUnit, getEmployees, getSectionOrUnitEmployees, getBranches, getCompanies, getDepartments, getDivisions, companyLogoUrl, departmentLogoUrl, profileImageUrl } from '@/api'
 import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
+import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
 import { isRosterStaffMember } from '@/lib/rosterStaff'
@@ -191,6 +193,17 @@ export default function AdminSectionUnits() {
   const [createBranchPickerOpen, setCreateBranchPickerOpen] = useState(false)
   const [createDepartmentPickerOpen, setCreateDepartmentPickerOpen] = useState(false)
   const [createDivisionPickerOpen, setCreateDivisionPickerOpen] = useState(false)
+
+  const dismissOverlays = useCallback(() => {
+    setCreateOpen(false)
+    setEditOpen(false)
+    setHeadOpen(false)
+    setAssignOpen(false)
+    setPreviewOpen(false)
+    setDeleteConfirmSection(null)
+  }, [])
+
+  useDismissOnRouteChange(dismissOverlays)
 
   const sortedCompaniesForPicker = useMemo(
     () =>
@@ -376,19 +389,37 @@ export default function AdminSectionUnits() {
     }
   }, [syncSectionEmployeeCount])
 
-  // Run branches + sections + companies + departments in parallel on mount; employees deferred until modal
-  useEffect(() => {
+  // Load org lists on mount and when filters change
+  useOrgModuleLoad(async ({ signal, isStale }) => {
     setLoading(true)
-    Promise.all([fetchSectionUnits(), fetchBranches(), fetchCompanies(), fetchDepartmentsList(), fetchOrgDivisions()])
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- intentional one-time mount fetch
-
-  // Re-fetch sections when filters change (after initial mount)
-  const _sectionsFirstRender = useState(true)
-  useEffect(() => {
-    if (_sectionsFirstRender[0]) { _sectionsFirstRender[0] = false; return }
-    setLoading(true)
-    fetchSectionUnits()
-  }, [branchFilter, companyFilter, departmentFilter, divisionFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    setError(null)
+    try {
+      const sectionParams = { fresh: true, signal }
+      if (companyFilter) sectionParams.company_id = companyFilter
+      if (branchFilter) sectionParams.branch_id = branchFilter
+      if (departmentFilter) sectionParams.department_id = departmentFilter
+      if (divisionFilter) sectionParams.division_id = divisionFilter
+      const [sectionData, branchData, companyData, deptData, divData] = await Promise.all([
+        getSectionsOrUnits(sectionParams),
+        getBranches({ fresh: true, signal }),
+        getCompanies({ signal }),
+        getDepartments({ signal }),
+        getDivisions({ signal }),
+      ])
+      if (isStale()) return
+      setSectionUnits(sectionData.sections_or_units || [])
+      setBranches(branchData.branches || [])
+      setCompanies(companyData.companies || [])
+      setDepartments(deptData.departments || [])
+      setOrgDivisions(divData.divisions || [])
+    } catch (e) {
+      if (isStale() || e?.name === 'AbortError') return
+      setError(e.message)
+      setSectionUnits([])
+    } finally {
+      if (!isStale()) setLoading(false)
+    }
+  }, [branchFilter, companyFilter, departmentFilter, divisionFilter])
 
   useEffect(() => {
     const params = {}

@@ -28,6 +28,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { getDepartments, createDepartment, updateDepartment, deleteDepartment, assignEmployeesToDepartment, unassignEmployeesFromDepartment, getEmployees, getDepartmentEmployees, getBranches, getCompanies, getDivisions, companyLogoUrl, departmentLogoUrl, profileImageUrl } from '@/api'
 import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
+import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
 import { isRosterStaffMember } from '@/lib/rosterStaff'
@@ -183,6 +185,18 @@ export default function AdminDepartments() {
   const [createDescription, setCreateDescription] = useState('')
   const [createBranchPickerOpen, setCreateBranchPickerOpen] = useState(false)
 
+  const dismissOverlays = useCallback(() => {
+    setCreateOpen(false)
+    setEditOpen(false)
+    setViewEmployeesOpen(false)
+    setHeadOpen(false)
+    setAssignOpen(false)
+    setPreviewOpen(false)
+    setDeleteConfirmDept(null)
+  }, [])
+
+  useDismissOnRouteChange(dismissOverlays)
+
   const sortedBranchesForPicker = useMemo(
     () =>
       [...branches].sort((a, b) => {
@@ -274,19 +288,36 @@ export default function AdminDepartments() {
     }
   }, [syncDepartmentEmployeeCount])
 
-  // Run branches + departments + companies in parallel on mount; employees deferred until modal
-  useEffect(() => {
+  // Load org lists on mount and when filters change
+  useOrgModuleLoad(async ({ signal, isStale }) => {
     setLoading(true)
-    Promise.all([fetchDepartments(), fetchDivisions(), fetchBranches(), fetchCompanies()])
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- intentional one-time mount fetch
-
-  // Re-fetch departments when filters change (after initial mount)
-  const _deptsFirstRender = useState(true)
-  useEffect(() => {
-    if (_deptsFirstRender[0]) { _deptsFirstRender[0] = false; return }
-    setLoading(true)
-    fetchDepartments()
-  }, [branchFilter, companyFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+    setError(null)
+    try {
+      const deptParams = { fresh: true, signal }
+      if (branchFilter) deptParams.branch_id = branchFilter
+      if (companyFilter) deptParams.company_id = companyFilter
+      const divParams = { signal }
+      if (branchFilter) divParams.branch_id = branchFilter
+      if (companyFilter) divParams.company_id = companyFilter
+      const [deptData, divData, branchData, companyData] = await Promise.all([
+        getDepartments(deptParams),
+        getDivisions(divParams),
+        getBranches({ fresh: true, signal }),
+        getCompanies({ signal }),
+      ])
+      if (isStale()) return
+      setDepartments(deptData.departments || [])
+      setDivisions(divData.divisions || [])
+      setBranches(branchData.branches || [])
+      setCompanies(companyData.companies || [])
+    } catch (e) {
+      if (isStale() || e?.name === 'AbortError') return
+      setError(e.message)
+      setDepartments([])
+    } finally {
+      if (!isStale()) setLoading(false)
+    }
+  }, [branchFilter, companyFilter])
 
   useEffect(() => {
     const params = {}

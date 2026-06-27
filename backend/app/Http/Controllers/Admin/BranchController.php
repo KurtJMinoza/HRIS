@@ -10,9 +10,11 @@ use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\OrganizationLeadershipAssignmentService;
 use App\Services\OrganizationLeadershipService;
+use App\Support\BranchEmployeeCounts;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class BranchController extends Controller
@@ -30,21 +32,25 @@ class BranchController extends Controller
     {
         $lite = $request->boolean('lite');
 
-        $query = Branch::with(['company:id,name,logo', 'area:id,area_name,company_id'])
+        $query = Branch::query()
+            ->select('branches.*')
+            ->with(['company:id,name,logo', 'area:id,area_name,company_id'])
             ->with('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->withCount('departments');
 
         if (! $lite) {
-            $query->withTotalEmployeesCount();
+            $employeeCounts = BranchEmployeeCounts::subquery();
+            $query->leftJoinSub($employeeCounts, 'employee_counts', 'employee_counts.branch_id', '=', 'branches.id')
+                ->addSelect(DB::raw('COALESCE(employee_counts.employees_count, 0) as employees_count'));
         }
 
         if ($request->filled('company_id')) {
-            $query->where('company_id', $request->input('company_id'));
+            $query->where('branches.company_id', $request->input('company_id'));
         }
 
         $this->dataScopeService->restrictBranchQuery($request->user(), $query);
 
-        $branches = $query->orderBy('name')->get()->map(fn (Branch $b) => $this->branchResponse($b));
+        $branches = $query->orderBy('branches.name')->get()->map(fn (Branch $b) => $this->branchResponse($b, $lite));
 
         return response()->json(['branches' => $branches]);
     }
@@ -200,10 +206,17 @@ class BranchController extends Controller
             }
         }
 
-        $refreshed = Branch::with(['company:id,name,logo', 'area:id,area_name,company_id', 'branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image'])
+        $refreshed = Branch::query()
+            ->select('branches.*')
+            ->with(['company:id,name,logo', 'area:id,area_name,company_id', 'branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image'])
             ->withCount('departments')
-            ->withTotalEmployeesCount()
-            ->findOrFail($branch->id);
+            ->tap(function ($q) use ($branch) {
+                $employeeCounts = BranchEmployeeCounts::subquery();
+                $q->leftJoinSub($employeeCounts, 'employee_counts', 'employee_counts.branch_id', '=', 'branches.id')
+                    ->addSelect(DB::raw('COALESCE(employee_counts.employees_count, 0) as employees_count'))
+                    ->where('branches.id', $branch->id);
+            })
+            ->firstOrFail();
 
         return response()->json([
             'message' => 'Branch updated successfully.',
@@ -268,7 +281,7 @@ class BranchController extends Controller
         }
     }
 
-    private function branchResponse(Branch $b): array
+    private function branchResponse(Branch $b, bool $lite = false): array
     {
         $logoUrl = $this->companyLogoUrl($b->company?->logo);
 
@@ -285,10 +298,10 @@ class BranchController extends Controller
             'branch_manager_id' => $b->branch_manager_id,
             'branch_manager_name' => $b->branchManager?->display_name,
             'branch_manager_profile_image' => $this->companyLogoUrl($b->branchManager?->profile_image),
-            'departments_count' => $b->departments_count ?? $b->departments()->count(),
-            'employees_count' => array_key_exists('employees_count', $b->getAttributes())
-                ? (int) $b->employees_count
-                : null,
+            'departments_count' => (int) ($b->departments_count ?? 0),
+            'employees_count' => $lite
+                ? null
+                : (int) ($b->employees_count ?? 0),
             'created_at' => $b->created_at?->toIso8601String(),
         ];
     }

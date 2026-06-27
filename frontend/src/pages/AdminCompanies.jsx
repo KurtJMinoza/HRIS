@@ -56,7 +56,10 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { isAdminHrUser, hrPanelPath } from '@/lib/hrRoutes'
+import { orgModulePath } from '@/lib/orgRoutes'
 import { useToast } from '@/components/ui/use-toast'
+import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { Skeleton } from '@/components/ui/skeleton'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { RoleBadge } from '@/components/RoleBadge'
@@ -625,7 +628,10 @@ function CompanyHeadOverview({
       : null
 
   const link = (segment, query = {}) => {
-    const path = hrPanelPath(basePath, segment)
+    const orgSegments = new Set(['companies', 'areas', 'branches', 'divisions', 'departments', 'sections', 'sections-units'])
+    const path = orgSegments.has(segment)
+      ? orgModulePath(basePath, segment === 'sections-units' ? 'sections' : segment)
+      : hrPanelPath(basePath, segment)
     const qs = new URLSearchParams(query)
     const q = qs.toString()
     return q ? `${path}?${q}` : path
@@ -1274,6 +1280,19 @@ export default function AdminCompanies() {
   const [sortCol, setSortCol] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
 
+  const dismissOverlays = useCallback(() => {
+    setCreateOpen(false)
+    setHeadOpen(false)
+    setDeleteConfirmCompany(null)
+    setEditLogoOpen(false)
+    setEditNameOpen(false)
+    setEditDetailsOpen(false)
+    setDetailOpen(false)
+    setDetailCompany(null)
+  }, [])
+
+  useDismissOnRouteChange(dismissOverlays)
+
   const fetchCardStacks = useCallback(async () => {
     try {
       const [branchesRes, departmentsRes] = await Promise.all([
@@ -1342,10 +1361,67 @@ export default function AdminCompanies() {
     }
   }, [canViewCompaniesModule, fetchCardStacks, isCompanyHead])
 
-  useEffect(() => {
+  useOrgModuleLoad(async ({ signal, isStale }) => {
     if (authLoading) return
-    void fetchCompanies()
-  }, [fetchCompanies, authLoading])
+    setError(null)
+    if (!canViewCompaniesModule) {
+      if (isStale()) return
+      setDashStats(null)
+      setDashStatsPrev(null)
+      setWeeklyOverview([])
+      setCompanies([])
+      setAllBranches([])
+      setAllDepartments([])
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    try {
+      const companiesRes = await getCompanies({ signal })
+      if (isStale()) return
+      setCompanies(Array.isArray(companiesRes?.companies) ? companiesRes.companies : [])
+    } catch (e) {
+      if (isStale() || e?.name === 'AbortError') return
+      setError(e.message)
+      setCompanies([])
+      setAllBranches([])
+      setAllDepartments([])
+      setDashStats(null)
+      setDashStatsPrev(null)
+      setWeeklyOverview([])
+    } finally {
+      if (!isStale()) setLoading(false)
+    }
+
+    if (isStale()) return
+    void fetchCardStacks()
+
+    if (isCompanyHead) {
+      void Promise.all([
+        getAdminDashboardSummary().catch(() => null),
+        getAdminDashboardCharts().catch(() => null),
+      ])
+        .then(([summary, charts]) => {
+          if (isStale()) return
+          const dashRes = summary ? { ...summary, ...(charts ?? {}) } : null
+          if (dashRes) {
+            setDashStats(dashRes.stats ?? null)
+            setDashStatsPrev(dashRes.stats_prev ?? null)
+            setWeeklyOverview(Array.isArray(dashRes.weekly_overview) ? dashRes.weekly_overview : [])
+          }
+        })
+        .catch(() => {
+          if (isStale()) return
+          setDashStats(null)
+          setDashStatsPrev(null)
+          setWeeklyOverview([])
+        })
+    } else if (!isStale()) {
+      setDashStats(null)
+      setDashStatsPrev(null)
+      setWeeklyOverview([])
+    }
+  }, [authLoading, canViewCompaniesModule, fetchCardStacks, isCompanyHead])
 
   // Load detail tab data when sheet opens or tab changes
   useEffect(() => {

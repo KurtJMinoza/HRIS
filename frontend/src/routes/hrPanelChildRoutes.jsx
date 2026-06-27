@@ -41,6 +41,7 @@ const AdminBranches = lazy(() => import('@/pages/AdminBranches'))
 const AdminDepartments = lazy(() => import('@/pages/AdminDepartments'))
 const AdminDivisions = lazy(() => import('@/pages/AdminDivisions'))
 const AdminSectionUnits = lazy(() => import('@/pages/AdminSectionUnits'))
+const OrganizationsLayout = lazy(() => import('@/layouts/OrganizationsLayout').then((m) => ({ default: m.OrganizationsLayout })))
 const AdminLeave = lazy(() => import('@/pages/AdminLeave'))
 const AdminHoliday = lazy(() => import('@/pages/AdminHoliday'))
 const AdminOvertime = lazy(() => import('@/pages/AdminOvertime'))
@@ -86,12 +87,25 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-ep5" path="employees/employee-profile/documents" element={<ToEmployeesRedirect />} />,
   <Route key="hr-ep6" path="employees/employee-profile/emergency-contacts" element={<ToEmployeesRedirect />} />,
   <Route key="hr-ep7" path="employees/employee-profile/skills" element={<ToEmployeesRedirect />} />,
-  <Route key="hr-co" path="companies" element={withSuspense(<AdminCompanies />, <DataTableRouteFallback titleWidth="w-64" />)} />,
-  <Route key="hr-ar" path="areas" element={withSuspense(<AdminAreas />, <DataTableRouteFallback titleWidth="w-64" />)} />,
-  <Route key="hr-br" path="branches" element={withSuspense(<AdminBranches />, <DataTableRouteFallback titleWidth="w-64" />)} />,
-  <Route key="hr-de" path="departments" element={withSuspense(<AdminDepartments />, <DataTableRouteFallback titleWidth="w-64" />)} />,
-  <Route key="hr-di" path="divisions" element={withSuspense(<AdminDivisions />, <DataTableRouteFallback titleWidth="w-64" />)} />,
-  <Route key="hr-su" path="sections-units" element={withSuspense(<AdminSectionUnits />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route
+    key="hr-org"
+    path="organizations"
+    element={withSuspense(<OrganizationsLayout />, <DataTableRouteFallback titleWidth="w-64" />)}
+  >
+    <Route index element={<Navigate to="companies" replace />} />
+    <Route path="companies" element={withSuspense(<AdminCompanies />, <DataTableRouteFallback titleWidth="w-64" />)} />
+    <Route path="areas" element={withSuspense(<AdminAreas />, <DataTableRouteFallback titleWidth="w-64" />)} />
+    <Route path="branches" element={withSuspense(<AdminBranches />, <DataTableRouteFallback titleWidth="w-64" />)} />
+    <Route path="divisions" element={withSuspense(<AdminDivisions />, <DataTableRouteFallback titleWidth="w-64" />)} />
+    <Route path="departments" element={withSuspense(<AdminDepartments />, <DataTableRouteFallback titleWidth="w-64" />)} />
+    <Route path="sections" element={withSuspense(<AdminSectionUnits />, <DataTableRouteFallback titleWidth="w-64" />)} />
+  </Route>,
+  <Route key="hr-co-legacy" path="companies" element={<Navigate to="../organizations/companies" replace />} />,
+  <Route key="hr-ar-legacy" path="areas" element={<Navigate to="../organizations/areas" replace />} />,
+  <Route key="hr-br-legacy" path="branches" element={<Navigate to="../organizations/branches" replace />} />,
+  <Route key="hr-de-legacy" path="departments" element={<Navigate to="../organizations/departments" replace />} />,
+  <Route key="hr-di-legacy" path="divisions" element={<Navigate to="../organizations/divisions" replace />} />,
+  <Route key="hr-su-legacy" path="sections-units" element={<Navigate to="../organizations/sections" replace />} />,
   <Route key="hr-le" path="leave" element={withSuspense(<AdminLeave />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ho" path="holiday" element={withSuspense(<AdminHoliday />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ov" path="overtime" element={withSuspense(<AdminOvertime />, <DataTableRouteFallback titleWidth="w-64" />)} />,

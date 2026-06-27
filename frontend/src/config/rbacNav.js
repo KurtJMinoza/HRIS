@@ -19,6 +19,12 @@ const pathToPermissions = {
   '/admin/recruitment': ['recruitment.view'],
   '/admin/regularization': ['can_view_employee_module'],
   '/admin/users-permissions': ['users.view'],
+  '/admin/organizations/companies': ['org.company.view'],
+  '/admin/organizations/areas': ['area.view'],
+  '/admin/organizations/branches': ['org.branch.view'],
+  '/admin/organizations/departments': ['org.department.view'],
+  '/admin/organizations/divisions': ['org.division.view'],
+  '/admin/organizations/sections': ['org.section_unit.view'],
   '/admin/companies': ['org.company.view'],
   '/admin/areas': ['area.view'],
   '/admin/branches': ['org.branch.view'],
@@ -161,17 +167,17 @@ export function buildManagerNav(user, basePath) {
       if (!to) continue
       const mappedTo = to.replace(/^\/admin/, prefix)
       const hr = String(user?.hr_role || '').trim()
-      if (mappedTo === `${prefix}/companies` && (hr === 'area_head' || hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
+      if (mappedTo === `${prefix}/organizations/companies` && (hr === 'area_head' || hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
         continue
       }
-      if (mappedTo === `${prefix}/areas` && (hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
+      if (mappedTo === `${prefix}/organizations/areas` && (hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
         continue
       }
       if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrUser(user)) continue
       const need = permissionsForPath(normalizePathForPermission(mappedTo))
       if (!canSee(user, [need])) continue
       const navItem = { ...item, to: mappedTo }
-      if (mappedTo === `${prefix}/companies` && String(user?.hr_role || '').trim() === 'company_head') {
+      if (mappedTo === `${prefix}/organizations/companies` && String(user?.hr_role || '').trim() === 'company_head') {
         navItem.label = 'My Company'
       }
       if (mappedTo === `${prefix}/employees`) {

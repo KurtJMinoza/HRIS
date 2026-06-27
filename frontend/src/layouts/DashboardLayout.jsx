@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react'
 import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   Sheet,
@@ -24,6 +24,9 @@ import { getEmployees, prefetchLeaveRequestReview } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { formatEmployeeName } from '@/lib/employeeSort'
 import { markLoginSplashShown } from '@/lib/loginSplash'
+import { dispatchDismissOverlays, scheduleRadixModalLockReset } from '@/lib/radixModalLock'
+import { prefetchOrgModule } from '@/lib/orgModuleNav'
+import { useSidebarNavRescue } from '@/hooks/useSidebarNavRescue'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { UserAccountMenuContent } from '@/components/layout/UserAccountMenuContent'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
@@ -197,6 +200,7 @@ function SidebarContent({
   initials,
   onLogout,
   onNavClick,
+  onNavIntent,
   collapsed,
   onToggleCollapse,
   pathname,
@@ -221,6 +225,10 @@ function SidebarContent({
     return next
   }, [navItems, pathname])
 
+  const handleNavIntent = useCallback((to) => {
+    onNavIntent?.(to)
+  }, [onNavIntent])
+
   function renderItem(item, depth = 0, parentKey = '') {
     const key = getItemKey(item, parentKey)
     const children = Array.isArray(item?.children) ? item.children : []
@@ -237,13 +245,18 @@ function SidebarContent({
         <Link
           key={key}
           to={to}
+          data-hr-sidebar-nav=""
+          data-hr-sidebar-href={to}
           className={cn(
             'relative mx-auto flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all duration-200',
             active
               ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
           )}
-          onClick={onNavClick}
+          onClick={() => {
+            handleNavIntent(to)
+            onNavClick?.()
+          }}
           title={item.label}
         >
           {item.icon && <item.icon className="size-5 shrink-0" />}
@@ -296,6 +309,8 @@ function SidebarContent({
         key={key}
         to={item.to}
         end={item.end}
+        data-hr-sidebar-nav=""
+        data-hr-sidebar-href={item.to}
         className={({ isActive }) =>
           cn(
             'flex items-start gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-all duration-200',
@@ -304,7 +319,11 @@ function SidebarContent({
               : 'border-l-2 border-transparent text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
           )
         }
-        onClick={onNavClick}
+        onClick={() => {
+          handleNavIntent(item.to)
+          onNavClick?.()
+        }}
+        onMouseEnter={() => prefetchOrgModule(item.to)}
         style={depth > 0 ? { paddingLeft: `${12 + depth * 16}px` } : undefined}
       >
         {item.icon ? <item.icon className="mt-0.5 size-4 shrink-0" /> : <span className="mt-0.5 inline-block size-4 shrink-0" />}
@@ -461,6 +480,18 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   const location = useLocation()
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  useSidebarNavRescue()
+
+  const handleSidebarNavIntent = useCallback((to) => {
+    dispatchDismissOverlays()
+    scheduleRadixModalLockReset()
+    prefetchOrgModule(to)
+  }, [])
+
+  useLayoutEffect(() => {
+    dispatchDismissOverlays()
+    scheduleRadixModalLockReset()
+  }, [location.pathname])
   const [sheetOpen, setSheetOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -680,6 +711,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     <div className="flex min-h-screen flex-col bg-white dark:bg-background md:flex-row">
       {/* Desktop sidebar – collapsible, no border */}
       <aside
+        data-hr-sidebar=""
         className={cn(
           'hidden flex-col border-r border-sidebar-border/70 bg-sidebar text-sidebar-foreground shadow-[4px_0_24px_-18px_rgba(15,23,42,0.18)] transition-[width] duration-200 ease-in-out dark:border-sidebar-border/50 dark:shadow-[4px_0_36px_-18px_rgba(0,0,0,0.5)] md:flex',
           sidebarCollapsed ? 'w-16' : 'w-64'
@@ -694,6 +726,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           initials={initials}
           onLogout={handleLogout}
           onNavClick={() => {}}
+          onNavIntent={handleSidebarNavIntent}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
           pathname={location.pathname}
@@ -722,7 +755,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               <Menu className="size-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-72 max-w-[85vw] p-0">
+          <SheetContent side="left" className="w-72 max-w-[85vw] p-0" data-hr-sidebar="">
             <SheetHeader className="sr-only">
               <SheetTitle>Menu</SheetTitle>
             </SheetHeader>
@@ -735,6 +768,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
               initials={initials}
               onLogout={handleLogout}
               onNavClick={() => setSheetOpen(false)}
+              onNavIntent={handleSidebarNavIntent}
               pathname={location.pathname}
               moduleCounts={notificationModuleCounts}
             />
