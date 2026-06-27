@@ -176,7 +176,7 @@ function AttendanceDetailNotice({ detail, loading, error }) {
     <div className={cn('rounded-xl border px-4 py-3 text-sm shadow-sm', toneClass)}>
       <p className="text-xs font-black uppercase tracking-[0.14em] opacity-80">Attendance detail</p>
       <p className="mt-2 font-bold leading-relaxed">{detail.message}</p>
-      <dl className="mt-3 grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed">
+      <dl className="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-xs sm:grid-cols-[minmax(0,7.5rem)_1fr] sm:gap-y-1.5">
         <dt className="font-semibold opacity-80">Clock In</dt>
         <dd>{formatAttendanceDetailTime(detail.clock_in)}</dd>
         <dt className="font-semibold opacity-80">Clock Out</dt>
@@ -236,6 +236,21 @@ function humanStepStatus(status) {
 const brandCardClass =
   'rounded-2xl border border-border bg-card text-card-foreground shadow-sm dark:shadow-[0_18px_50px_-36px_rgba(0,0,0,0.45)]'
 
+const corrModalShellClass =
+  'flex max-h-[min(100dvh,100vh)] w-[calc(100vw-0.75rem)] max-w-[40rem] flex-col overflow-hidden rounded-xl border border-border bg-card p-0 text-card-foreground shadow-lg scheme-light sm:max-h-[92vh] sm:w-[calc(100vw-2rem)] sm:rounded-2xl sm:shadow-[0_28px_80px_-38px_rgba(15,23,42,0.9)] dark:scheme-dark'
+const corrModalInnerClass = 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 sm:pr-14'
+const corrModalHeaderPad = 'shrink-0 border-b border-border bg-card px-4 pb-4 pt-4 text-left sm:px-7 sm:pb-5 sm:pt-7'
+const corrModalBodyPad =
+  'min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-4 py-4 sm:space-y-6 sm:px-7 sm:py-6'
+const corrModalFooterClass =
+  'mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border bg-muted/15 px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5'
+const corrFormFieldClass =
+  'h-11 w-full rounded-xl border-input bg-background px-3 text-base text-foreground shadow-sm sm:h-[3.25rem] sm:px-4'
+const corrDetailDlClass =
+  'grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-[minmax(0,9.5rem)_1fr] sm:gap-y-4'
+const corrDetailDtClass =
+  'text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case'
+
 /** Stat icon rings use `--chart-*` / `--destructive` from `index.css` @theme inline. */
 function RequestStatCard({ icon, value, label, hint, tone = 'orange' }) {
   const tones = {
@@ -264,12 +279,12 @@ function RequestStatCard({ icon, value, label, hint, tone = 'orange' }) {
 
   return (
     <Card className={cn(brandCardClass, 'overflow-hidden')}>
-      <CardContent className="flex items-center gap-5 p-5 @md:p-6">
-        <div className={cn('flex size-16 shrink-0 items-center justify-center rounded-full ring-1', t.shell)}>
-          {createElement(icon, { className: 'size-7', 'aria-hidden': true })}
+      <CardContent className="flex items-center gap-3 p-4 @sm:gap-5 @sm:p-5 @md:p-6">
+        <div className={cn('flex size-12 shrink-0 items-center justify-center rounded-full ring-1 @md:size-16', t.shell)}>
+          {createElement(icon, { className: 'size-6 @md:size-7', 'aria-hidden': true })}
         </div>
         <div className="min-w-0">
-          <p className={cn('text-3xl font-extrabold leading-none tabular-nums tracking-tight', t.value)}>
+          <p className={cn('text-2xl font-extrabold leading-none tabular-nums tracking-tight @sm:text-3xl', t.value)}>
             {value}
           </p>
           <p className="mt-2 text-base font-semibold text-foreground">{label}</p>
@@ -367,23 +382,25 @@ function ApprovalTimeline({ steps }) {
 function AttendanceTimesBlock({ timeIn, timeOut }) {
   const inLabel = formatTimeOnly(timeIn)
   const outLabel = formatTimeOnly(timeOut)
+  const rowClass = 'flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:py-2'
+  const valueClass = 'flex items-center justify-between gap-3 sm:justify-end sm:gap-4'
   return (
     <div className="divide-y divide-border/70 dark:divide-white/10">
-      <div className="flex min-h-14 items-center justify-between gap-4 py-2">
-        <p className="text-[15px] font-bold text-foreground">Time In</p>
-        <div className="flex items-center gap-4">
-          <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">{inLabel}</p>
-          <div className="flex size-10 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
-            <LogIn className="size-5" aria-hidden />
+      <div className={rowClass}>
+        <p className="text-sm font-bold text-foreground sm:text-[15px]">Time In</p>
+        <div className={valueClass}>
+          <p className="font-mono text-lg font-black tabular-nums tracking-tight text-foreground sm:text-xl">{inLabel}</p>
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25 sm:size-10">
+            <LogIn className="size-4 sm:size-5" aria-hidden />
           </div>
         </div>
       </div>
-      <div className="flex min-h-14 items-center justify-between gap-4 py-4">
-        <p className="text-[15px] font-bold text-foreground">Time Out</p>
-        <div className="flex items-center gap-4">
-          <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">{outLabel}</p>
-          <div className="flex size-10 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
-            <LogOut className="size-5" aria-hidden />
+      <div className={cn(rowClass, 'sm:py-4')}>
+        <p className="text-sm font-bold text-foreground sm:text-[15px]">Time Out</p>
+        <div className={valueClass}>
+          <p className="font-mono text-lg font-black tabular-nums tracking-tight text-foreground sm:text-xl">{outLabel}</p>
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25 sm:size-10">
+            <LogOut className="size-4 sm:size-5" aria-hidden />
           </div>
         </div>
       </div>
@@ -395,7 +412,7 @@ function CorrectionDetailSection({ icon: Icon, title, children, className }) {
   return (
     <section
       className={cn(
-        'rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
+        'rounded-xl border border-border/70 bg-card p-4 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] sm:p-5 dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
         className
       )}
     >
@@ -892,7 +909,7 @@ export default function EmployeeCorrectionRequests() {
   return (
     <>
     <Motion.div
-      className="min-h-[calc(100vh-6rem)] min-w-0 max-w-full overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6"
+      className="min-h-[calc(100dvh-6rem)] min-w-0 max-w-full overflow-x-hidden px-2 py-3 @sm:px-0 @sm:py-6"
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
@@ -904,10 +921,10 @@ export default function EmployeeCorrectionRequests() {
             <p className="text-sm font-extrabold uppercase tracking-[0.14em] text-chart-5">
               My Requests
             </p>
-            <h1 className="text-3xl font-extrabold tracking-tight text-foreground @md:text-4xl">
+            <h1 className="text-2xl font-extrabold tracking-tight text-foreground @sm:text-3xl @md:text-4xl">
               My Correction Requests
             </h1>
-            <p className="text-base leading-relaxed text-muted-foreground">
+            <p className="text-sm leading-relaxed text-muted-foreground @sm:text-base">
               Track all your attendance correction requests and their approval status.
           </p>
         </div>
@@ -966,11 +983,11 @@ export default function EmployeeCorrectionRequests() {
 
         {/* Main card */}
         <Card className={cn(brandCardClass, 'overflow-hidden')}>
-          <CardHeader className="border-b border-border bg-card px-6 py-6">
-            <CardTitle className="text-xl font-semibold tracking-tight text-foreground">
+          <CardHeader className="border-b border-border bg-card px-4 py-4 sm:px-6 sm:py-6">
+            <CardTitle className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
               Your filings
             </CardTitle>
-            <CardDescription className="text-base text-muted-foreground">
+            <CardDescription className="text-sm text-muted-foreground sm:text-base">
               Each row is one request. Open a row to see the full approval timeline and remarks.
           </CardDescription>
         </CardHeader>
@@ -1024,54 +1041,55 @@ export default function EmployeeCorrectionRequests() {
               </div>
             ) : (
               <AnimatedSection staggerChildren={0.03} duration={0.4}>
-                <div className="flex flex-col gap-4 border-b border-border bg-muted/10 px-4 py-5 @lg:flex-row @lg:items-center @lg:justify-between @sm:px-6">
+                <div className="flex flex-col gap-4 border-b border-border bg-muted/10 px-3 py-4 @sm:px-6 @lg:flex-row @lg:items-center @lg:justify-between">
                   <div className="min-w-0 flex-1">
-                    <div className="relative max-w-2xl">
+                    <div className="relative w-full max-w-2xl">
                       <Search
-                        className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground"
+                        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground sm:left-4 sm:size-5"
                         aria-hidden
                       />
                       <Input
                         type="search"
                         value={listSearch}
                         onChange={(e) => setListSearch(e.target.value)}
-                        placeholder="Search employee, date, status, issue type, remarks..."
-                        className="h-12 rounded-xl border-input bg-background pl-12 pr-4 text-base text-foreground shadow-sm"
+                        placeholder="Search date, status, issue, remarks…"
+                        className="h-11 rounded-xl border-input bg-background pl-10 pr-3 text-sm text-foreground shadow-sm sm:h-12 sm:pl-12 sm:pr-4 sm:text-base"
                         aria-label="Search correction requests"
                       />
                     </div>
-                    <p className="mt-3 text-sm text-muted-foreground">
+                    <p className="mt-2 text-xs text-muted-foreground sm:mt-3 sm:text-sm">
                       Showing{' '}
                       <span className="font-bold tabular-nums text-foreground">
                         {filteredSorted.length}
                       </span>
                       {filteredSorted.length === 1 ? ' request' : ' requests'}
-                      {hasActiveFilters ? ' - filtered' : ''}. Use column headers to sort.
+                      {hasActiveFilters ? ' · filtered' : ''}
+                      <span className="hidden lg:inline"> · Use column headers to sort</span>
                     </p>
                   </div>
-                  <div className="grid gap-3 @sm:grid-cols-[10rem_10rem_12rem] @lg:shrink-0">
-                    <div className="relative">
+                  <div className="grid w-full grid-cols-1 gap-3 @sm:grid-cols-2 @lg:w-auto @lg:shrink-0 @lg:grid-cols-[10rem_10rem_12rem]">
+                    <div className="relative min-w-0">
                       <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         type="date"
                         value={fromDate}
                         onChange={(e) => setFromDate(e.target.value)}
-                        className="h-12 rounded-xl border-input bg-background pl-9 text-sm font-semibold text-foreground shadow-sm scheme-light dark:scheme-dark"
+                        className="h-11 w-full rounded-xl border-input bg-background pl-9 text-sm font-semibold text-foreground shadow-sm scheme-light sm:h-12 dark:scheme-dark"
                         aria-label="Filter from date"
                       />
                     </div>
-                    <div className="relative">
+                    <div className="relative min-w-0">
                       <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         type="date"
                         value={toDate}
                         onChange={(e) => setToDate(e.target.value)}
-                        className="h-12 rounded-xl border-input bg-background pl-9 text-sm font-semibold text-foreground shadow-sm scheme-light dark:scheme-dark"
+                        className="h-11 w-full rounded-xl border-input bg-background pl-9 text-sm font-semibold text-foreground shadow-sm scheme-light sm:h-12 dark:scheme-dark"
                         aria-label="Filter to date"
                       />
                     </div>
                     <Select value={statusFilter} onValueChange={setStatusFilter}>
-                      <SelectTrigger className="h-12 rounded-xl border-input bg-background text-sm font-semibold text-foreground shadow-sm">
+                      <SelectTrigger className="h-11 w-full rounded-xl border-input bg-background text-sm font-semibold text-foreground shadow-sm sm:h-12 @sm:col-span-2 @lg:col-span-1">
                         <SelectValue placeholder="All status" />
                       </SelectTrigger>
                       <SelectContent className="border-border bg-popover text-popover-foreground">
@@ -1082,12 +1100,31 @@ export default function EmployeeCorrectionRequests() {
                         <SelectItem value="rejected">Rejected</SelectItem>
                       </SelectContent>
                     </Select>
+                    <div className="@sm:col-span-2 @lg:hidden">
+                      <Select
+                        value={sortKey}
+                        onValueChange={(value) => {
+                          setSortKey(value)
+                          setSortDir('desc')
+                        }}
+                      >
+                        <SelectTrigger className="h-11 w-full rounded-xl border-input bg-background text-sm font-semibold text-foreground shadow-sm sm:h-12" aria-label="Sort requests">
+                          <SelectValue placeholder="Sort by" />
+                        </SelectTrigger>
+                        <SelectContent className="border-border bg-popover text-popover-foreground">
+                          <SelectItem value="filed_at">Date filed</SelectItem>
+                          <SelectItem value="date">Attendance date</SelectItem>
+                          <SelectItem value="review_status">Status</SelectItem>
+                          <SelectItem value="issue_type">Issue type</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
 
-                {/* Desktop / tablet table; optional detail columns are shown only when there is room. */}
-                <div className="hidden w-full min-w-0 overflow-hidden border-t border-border bg-card lg:block">
-                  <Table className="w-full min-w-0 table-fixed text-[12px]">
+                {/* Desktop: scrollable table on large screens */}
+                <div className="hidden w-full min-w-0 overflow-x-auto border-t border-border bg-card lg:block">
+                  <Table className="w-full min-w-[920px] text-[12px]">
                     <TableHeader className="[&_tr]:border-b-0">
                       <TableRow className="border-0 bg-muted/30">
                         <TableHead className="w-[14%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
@@ -1200,8 +1237,8 @@ export default function EmployeeCorrectionRequests() {
                   </Table>
                 </div>
 
-                {/* Mobile + tablet: card layout (full table from lg) */}
-                <div className="space-y-4 p-4 @sm:px-6 lg:hidden">
+                {/* Mobile + tablet: card layout (table from lg) */}
+                <div className="space-y-3 p-3 @sm:space-y-4 @sm:p-4 @sm:px-6 lg:hidden">
                   {filteredSorted.map((row) => {
                     const tIn = row.requested_time_in ?? row.time_in
                     const tOut = row.requested_time_out ?? row.time_out
@@ -1210,7 +1247,7 @@ export default function EmployeeCorrectionRequests() {
                       <button
                         type="button"
                         onClick={() => openDetail(row)}
-                        className="w-full rounded-2xl border border-border bg-card p-4 text-left text-card-foreground shadow-sm transition hover:border-primary/25 hover:bg-muted/20 hover:shadow-md active:scale-[0.99]"
+                        className="w-full rounded-xl border border-border bg-card p-3 text-left text-card-foreground shadow-sm transition active:scale-[0.99] @sm:rounded-2xl @sm:p-4 hover:border-primary/25 hover:bg-muted/20 hover:shadow-md"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -1283,17 +1320,17 @@ export default function EmployeeCorrectionRequests() {
       <Dialog open={fileOpen} onOpenChange={handleFileOpenChange}>
         <DialogContent
           showCloseButton
-          closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
-          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
-          className="max-h-[92vh] flex flex-col overflow-hidden rounded-3xl border border-border bg-card p-0 text-card-foreground shadow-[0_28px_80px_-38px_rgba(15,23,42,0.9)] scheme-light sm:max-w-[40rem] dark:shadow-[0_28px_80px_-38px_rgba(0,0,0,0.55)] dark:scheme-dark"
+          closeButtonClassName="right-3 top-3 border-border bg-card/95 text-foreground shadow-sm hover:bg-muted sm:right-4 sm:top-4"
+          innerClassName={corrModalInnerClass}
+          className={corrModalShellClass}
         >
-          <DialogHeader className="shrink-0 border-b border-border bg-card px-7 pb-5 pt-7 text-left">
-            <div className="flex items-start gap-4 pr-2">
-              <div className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border">
-                <FileText className="size-8 text-primary" aria-hidden />
+          <DialogHeader className={corrModalHeaderPad}>
+            <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:gap-4 sm:pr-2">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border sm:size-16">
+                <FileText className="size-6 text-primary sm:size-8" aria-hidden />
               </div>
-              <div className="min-w-0 pt-1">
-                <DialogTitle className="text-2xl font-extrabold tracking-tight text-foreground">
+              <div className="min-w-0 pt-0 sm:pt-1">
+                <DialogTitle className="text-xl font-extrabold tracking-tight text-foreground sm:text-2xl">
                   File correction request
                 </DialogTitle>
                 <DialogDescription className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
@@ -1303,7 +1340,7 @@ export default function EmployeeCorrectionRequests() {
               </div>
             </div>
           </DialogHeader>
-          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain bg-card px-7 py-6">
+          <div className={corrModalBodyPad}>
             <div className="space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="emp-corr-date" className="text-sm font-bold text-foreground">
@@ -1314,7 +1351,7 @@ export default function EmployeeCorrectionRequests() {
                   type="date"
                   value={fileDate}
                   onChange={(e) => setFileDate(e.target.value)}
-                  className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
+                  className={corrFormFieldClass}
                 />
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   Select the date of the attendance record you want to correct.
@@ -1327,7 +1364,7 @@ export default function EmployeeCorrectionRequests() {
                 <Select modal={false} value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
                   <SelectTrigger
                     id="emp-corr-issue"
-                    className="h-[3.25rem] w-full rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
+                    className={cn(corrFormFieldClass, 'w-full')}
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <Clock className="size-5 shrink-0 text-primary" aria-hidden />
@@ -1366,7 +1403,7 @@ export default function EmployeeCorrectionRequests() {
                       id="emp-corr-time-in"
                       type="time"
                       step={60}
-                      className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
+                      className={corrFormFieldClass}
                       value={fileTimeIn}
                       onChange={(e) => setFileTimeIn(e.target.value)}
                     />
@@ -1384,7 +1421,7 @@ export default function EmployeeCorrectionRequests() {
                       id="emp-corr-time-out"
                       type="time"
                       step={60}
-                      className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
+                      className={corrFormFieldClass}
                       value={fileTimeOut}
                       onChange={(e) => setFileTimeOut(e.target.value)}
                     />
@@ -1405,10 +1442,10 @@ export default function EmployeeCorrectionRequests() {
                   rows={5}
                   maxLength={500}
                   placeholder="Explain what needs to be corrected and why..."
-                  className="min-h-[8.5rem] resize-y rounded-xl border-input bg-background p-4 pb-9 text-base text-foreground shadow-sm placeholder:text-muted-foreground"
+                  className="min-h-[7rem] w-full resize-y rounded-xl border-input bg-background p-3 pb-8 text-base text-foreground shadow-sm placeholder:text-muted-foreground sm:min-h-[8.5rem] sm:p-4 sm:pb-9"
                   required
                 />
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     Provide details to help your approver understand the request.
                   </p>
@@ -1419,11 +1456,11 @@ export default function EmployeeCorrectionRequests() {
               </div>
             </div>
           </div>
-          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-3 border-t border-border bg-muted/15 px-7 py-5 sm:flex-row sm:justify-end">
+          <DialogFooter className={corrModalFooterClass}>
             <Button
               type="button"
               variant="outline"
-              className="h-12 rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted"
+              className="h-11 w-full rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted sm:h-12 sm:w-auto"
               onClick={() => handleFileOpenChange(false)}
               disabled={fileSubmitting}
             >
@@ -1431,7 +1468,7 @@ export default function EmployeeCorrectionRequests() {
             </Button>
             <Button
               type="button"
-              className="h-12 gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-7 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700"
+              className="h-11 w-full gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-7 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700 sm:h-12 sm:w-auto"
               onClick={submitFile}
               disabled={fileSubmitting}
             >
@@ -1452,9 +1489,9 @@ export default function EmployeeCorrectionRequests() {
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent
           showCloseButton
-          closeButtonClassName="right-4 top-4 size-10 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted dark:border-white/10 dark:bg-card"
-          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
-          className="max-h-[92vh] max-w-[min(100vw-1rem,38rem)] flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light dark:border-white/10 dark:bg-card dark:scheme-dark"
+          closeButtonClassName="right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10 dark:border-white/10 dark:bg-card"
+          innerClassName={corrModalInnerClass}
+          className={cn(corrModalShellClass, 'max-w-[min(100vw-0.75rem,38rem)]')}
         >
           <DialogHeader className="sr-only">
             <DialogTitle>Correction request details</DialogTitle>
@@ -1462,11 +1499,11 @@ export default function EmployeeCorrectionRequests() {
           </DialogHeader>
           {selected && (
             <>
-              <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">
-                <div className="space-y-5">
-                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-brand">Correction request</p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
+              <div className="shrink-0 border-b border-border/70 bg-card px-4 pb-5 pt-5 text-left dark:border-white/10 sm:px-7 sm:pb-7 sm:pt-8">
+                <div className="space-y-4 sm:space-y-5">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px] sm:tracking-[0.22em]">Correction request</p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                    <span className="font-mono text-2xl font-black leading-none tracking-tight text-foreground sm:text-4xl">
                       #{selected.id}
                     </span>
                     <EmployeeStatusPill displayStatus={selected.display_status} status={selected.status} />
@@ -1477,7 +1514,7 @@ export default function EmployeeCorrectionRequests() {
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-7 py-6 text-sm dark:bg-card">
+              <div className={cn(corrModalBodyPad, 'text-sm dark:bg-card')}>
                 {detailLoading ? (
                   <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
                     <Loader2 className="size-8 animate-spin text-primary" aria-hidden />
@@ -1486,12 +1523,12 @@ export default function EmployeeCorrectionRequests() {
                 ) : (
                   <>
                 <CorrectionDetailSection icon={CalendarDays} title="Summary">
-                  <dl className="grid grid-cols-[minmax(0,12.5rem)_1fr] gap-x-4 gap-y-4 text-sm">
-                    <dt className="text-muted-foreground">Attendance date</dt>
+                  <dl className={corrDetailDlClass}>
+                    <dt className={corrDetailDtClass}>Attendance date</dt>
                     <dd className="font-bold tabular-nums text-foreground">{formatDetailDate(selected.date)}</dd>
-                    <dt className="text-muted-foreground">Day</dt>
+                    <dt className={corrDetailDtClass}>Day</dt>
                     <dd className="font-bold text-foreground">{formatDayName(selected.date, selected.day_name)}</dd>
-                    <dt className="text-muted-foreground">Issue type</dt>
+                    <dt className={corrDetailDtClass}>Issue type</dt>
                     <dd>
                       <Badge
                         variant="outline"
@@ -1500,18 +1537,18 @@ export default function EmployeeCorrectionRequests() {
                         {issueLabel(selected.issue_type)}
                       </Badge>
                     </dd>
-                    <dt className="text-muted-foreground">Requested time start</dt>
+                    <dt className={corrDetailDtClass}>Requested time start</dt>
                     <dd className="font-mono font-bold tabular-nums text-foreground">
                       {formatTimeOnly(selected.requested_time_in ?? selected.time_in)}
                     </dd>
-                    <dt className="text-muted-foreground">Requested time end</dt>
+                    <dt className={corrDetailDtClass}>Requested time end</dt>
                     <dd className="font-mono font-bold tabular-nums text-foreground">
                       {formatTimeOnly(selected.requested_time_out ?? selected.time_out)}
                     </dd>
-                    <dt className="text-muted-foreground">Filed</dt>
-                    <dd className="tabular-nums text-foreground">{formatDateTime(selected.filed_at)}</dd>
-                    <dt className="text-muted-foreground">Last updated</dt>
-                    <dd className="tabular-nums text-foreground">{formatDateTime(selected.last_updated)}</dd>
+                    <dt className={corrDetailDtClass}>Filed</dt>
+                    <dd className="break-words tabular-nums text-foreground">{formatDateTime(selected.filed_at)}</dd>
+                    <dt className={corrDetailDtClass}>Last updated</dt>
+                    <dd className="break-words tabular-nums text-foreground">{formatDateTime(selected.last_updated)}</dd>
                   </dl>
                 </CorrectionDetailSection>
 
@@ -1558,12 +1595,12 @@ export default function EmployeeCorrectionRequests() {
                 )}
               </div>
 
-              <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-7 py-5 dark:border-white/10">
+              <div className="mt-auto flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-card px-4 py-4 dark:border-white/10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-7 sm:py-5">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="gap-2 rounded-lg border-border bg-card text-foreground hover:bg-muted dark:border-white/10 dark:bg-card"
+                  className="w-full gap-2 rounded-lg border-border bg-card text-foreground hover:bg-muted sm:w-auto dark:border-white/10 dark:bg-card"
                   onClick={() => {
                     toast({ title: 'Print', description: 'Use Ctrl+P (or Cmd+P) while this window is open.' })
                     window.print()
@@ -1572,12 +1609,12 @@ export default function EmployeeCorrectionRequests() {
                   <Printer className="size-4" />
                   Print
                 </Button>
-                <div className="flex flex-wrap justify-end gap-2">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
                   {selected.actor_can_delete ? (
                     <Button
                       type="button"
                       variant="destructive"
-                      className="gap-2 rounded-lg"
+                      className="w-full gap-2 rounded-lg sm:w-auto"
                       onClick={() => setDeleteDialog({ open: true, item: selected })}
                     >
                       <Trash2 className="size-4" />
@@ -1587,7 +1624,7 @@ export default function EmployeeCorrectionRequests() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="min-w-24 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand dark:border-brand/55 dark:bg-card"
+                    className="w-full min-w-0 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand sm:min-w-24 sm:w-auto dark:border-brand/55 dark:bg-card"
                     onClick={() => setDetailOpen(false)}
                   >
                     Close
@@ -1600,16 +1637,16 @@ export default function EmployeeCorrectionRequests() {
       </Dialog>
 
       <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, item: null })}>
-        <DialogContent className="max-w-md rounded-2xl border-border bg-card">
+        <DialogContent className="w-[calc(100vw-1.25rem)] max-w-md rounded-xl border-border bg-card sm:rounded-2xl">
           <DialogHeader>
             <DialogTitle>Delete correction request</DialogTitle>
             <DialogDescription>Are you sure you want to delete this request?</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteDialog({ open: false, item: null })} disabled={deleteSubmitting}>
+          <DialogFooter className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setDeleteDialog({ open: false, item: null })} disabled={deleteSubmitting}>
               Cancel
             </Button>
-            <Button type="button" variant="destructive" onClick={submitDelete} disabled={deleteSubmitting}>
+            <Button type="button" variant="destructive" className="w-full sm:w-auto" onClick={submitDelete} disabled={deleteSubmitting}>
               {deleteSubmitting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
               Delete
             </Button>
