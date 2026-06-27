@@ -369,14 +369,19 @@ export default function AdminAttendance() {
     return co || String(e?.company_name ?? '').trim() || ''
   }
 
+  const rosterForCompany = useMemo(() => {
+    if (!showCompanyFilter || companyFilter === 'all') return rosterEmployees
+    return rosterEmployees.filter((e) => rosterCompanyName(e) === companyFilter)
+  }, [rosterEmployees, showCompanyFilter, companyFilter])
+
   const departmentsFromRoster = useMemo(() => {
     const set = new Set()
-    rosterEmployees.forEach((e) => {
+    rosterForCompany.forEach((e) => {
       const d = rosterDepartmentName(e)
       if (d) set.add(d)
     })
     return Array.from(set).sort()
-  }, [rosterEmployees])
+  }, [rosterForCompany])
 
   const departmentFilterOptions = useMemo(() => {
     if (attendanceScope?.kind === 'department' || attendanceScope?.kind === 'branch') {
@@ -406,13 +411,17 @@ export default function AdminAttendance() {
 
   const employees = useMemo(() => {
     const map = new Map()
-    rosterEmployees.forEach((e) => {
+    const source =
+      department !== 'all'
+        ? rosterForCompany.filter((e) => rosterDepartmentName(e) === department)
+        : rosterForCompany
+    source.forEach((e) => {
       if (e?.id != null && e?.name) {
         map.set(e.id, e.name)
       }
     })
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]))
-  }, [rosterEmployees])
+  }, [rosterForCompany, department])
 
   const periodLabel =
     fromDate && toDate && fromDate !== toDate ? `${fromDate} to ${toDate}` : fromDate || ''
@@ -1028,7 +1037,11 @@ export default function AdminAttendance() {
               <FilterField label="Company">
                 <FilterSelect
                   value={companyFilter}
-                  onChange={(e) => setCompanyFilter(e.target.value)}
+                  onChange={(e) => {
+                    setCompanyFilter(e.target.value)
+                    setDepartment('all')
+                    setEmployeeId('all')
+                  }}
                   loading={rosterFiltersLoading}
                   loadingLabel="Loading companies…"
                   placeholder="All companies"
@@ -1057,7 +1070,10 @@ export default function AdminAttendance() {
             <FilterField label="Department">
               <FilterSelect
                 value={department}
-                onChange={(e) => setDepartment(e.target.value)}
+                onChange={(e) => {
+                  setDepartment(e.target.value)
+                  setEmployeeId('all')
+                }}
                 disabled={departmentFilterDisabled}
                 loading={rosterFiltersLoading}
                 loadingLabel="Loading departments…"

@@ -105,7 +105,7 @@ export function FilterSelect({
       </SelectTrigger>
       <SelectContent
         className={cn(
-          'max-h-64 overflow-hidden rounded-xl border border-border/55 bg-card/95 p-1 shadow-lg shadow-black/6 ring-1 ring-black/5 dark:border-border/50 dark:bg-card/90 dark:ring-white/5',
+          'max-h-64 overflow-y-auto overscroll-contain rounded-xl border border-border/55 bg-card/95 p-1 shadow-lg shadow-black/6 ring-1 ring-black/5 dark:border-border/50 dark:bg-card/90 dark:ring-white/5',
           contentClassName,
         )}
       >

@@ -179,6 +179,14 @@ function calendarStatusBadge(record, fallback) {
   return record.display_badge || record.status_label || fallback
 }
 
+function calendarLateBadge(record) {
+  const lateM = typeof record?.late_minutes === 'number' ? record.late_minutes : 0
+  const lateLbl = String(record?.late_label || '').trim()
+  if (lateLbl && !/^present$/i.test(lateLbl)) return lateLbl
+  if (lateM > 0) return `${lateM} min late`
+  return 'Late'
+}
+
 function holidayTypeDisplay(type) {
   const key = String(type || '').toLowerCase()
   if (key === 'regular') return 'Regular Holiday'
@@ -292,7 +300,7 @@ function getCalendarDayVisual(record, dateKey, ctx) {
     const isLate = lateM > 0 || /^late$/i.test(lateLbl)
     if (isLate) {
       return {
-        badge: 'Late',
+        badge: calendarLateBadge(record),
         tileClass: `${baseGridCell} ${tint.amber}`,
         badgeClass: `${L.ink} ${L.amber}`,
       }
@@ -306,7 +314,7 @@ function getCalendarDayVisual(record, dateKey, ctx) {
 
   if (status === 'late') {
     return {
-      badge: 'Late',
+      badge: calendarLateBadge(record),
       tileClass: `${baseGridCell} ${tint.amber}`,
       badgeClass: `${L.ink} ${L.amber}`,
     }
@@ -1221,12 +1229,15 @@ export default function EmployeeDashboard() {
     }
     if (status === 'clocked_in') {
       const lm = typeof lateMinutes === 'number' ? lateMinutes : 0
-      if (lm > 0) return lateLabel || 'Late'
+      if (lm > 0) return lateLabel || `${lm} min late`
       return lateLabel || 'Present'
     }
     if (status === 'present') return 'Present'
     if (status === 'present_with_ot') return 'Present with OT'
-    if (status === 'late') return lateLabel || 'Late'
+    if (status === 'late') {
+      const lm = typeof lateMinutes === 'number' ? lateMinutes : 0
+      return lateLabel || (lm > 0 ? `${lm} min late` : 'Late')
+    }
     if (status === 'halfday') return 'Half Day'
     if (status === 'undertime') return 'Undertime'
     if (status === 'incomplete') return 'Incomplete'
