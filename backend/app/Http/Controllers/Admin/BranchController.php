@@ -28,10 +28,15 @@ class BranchController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $lite = $request->boolean('lite');
+
         $query = Branch::with(['company:id,name,logo', 'area:id,area_name,company_id'])
             ->with('branchManager:id,name,first_name,middle_name,last_name,suffix,profile_image')
-            ->withCount('departments')
-            ->withTotalEmployeesCount();
+            ->withCount('departments');
+
+        if (! $lite) {
+            $query->withTotalEmployeesCount();
+        }
 
         if ($request->filled('company_id')) {
             $query->where('company_id', $request->input('company_id'));
@@ -281,7 +286,9 @@ class BranchController extends Controller
             'branch_manager_name' => $b->branchManager?->display_name,
             'branch_manager_profile_image' => $this->companyLogoUrl($b->branchManager?->profile_image),
             'departments_count' => $b->departments_count ?? $b->departments()->count(),
-            'employees_count' => $b->employees_count ?? $b->employees()->count(),
+            'employees_count' => array_key_exists('employees_count', $b->getAttributes())
+                ? (int) $b->employees_count
+                : null,
             'created_at' => $b->created_at?->toIso8601String(),
         ];
     }

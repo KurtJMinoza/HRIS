@@ -4069,6 +4069,7 @@ export async function removeEmployeePhoto(id) {
 
 export async function getDepartments(params = {}) {
   const query = new URLSearchParams()
+  if (params.lite) query.set('lite', '1')
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.fresh) query.set('_ts', String(Date.now()))
@@ -6335,6 +6336,7 @@ export async function getCompanyBranches(companyId) {
 
 export async function getBranches(params = {}) {
   const query = new URLSearchParams()
+  if (params.lite) query.set('lite', '1')
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/branches${query.toString() ? `?${query.toString()}` : ''}`

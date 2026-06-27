@@ -45,43 +45,13 @@ class CompanyController extends Controller
             abort(403, 'The Company module is not available for your role.');
         }
 
-        // total_employees: count employees via company_id, branch, or department (employees may be assigned to branch/dept without direct company_id).
-        // Exclude users who are Company Head of another company — they belong to that company only.
-        $totalEmployeesSub = DB::table('users')
-            ->whereIn('users.role', User::ROSTER_ELIGIBLE_ROLES)
-            ->where('users.is_system_user', false)
-            ->where('users.is_hidden', false)
-            ->where('users.exclude_from_reports', false)
-            ->where('users.exclude_from_payroll', false)
-            ->where('users.exclude_from_attendance', false)
-            ->where(function ($q) {
-                $q->whereColumn('users.company_id', 'companies.id')
-                    ->orWhereExists(function ($sub) {
-                        $sub->select(DB::raw(1))
-                            ->from('branches')
-                            ->whereColumn('branches.id', 'users.branch_id')
-                            ->whereColumn('branches.company_id', 'companies.id');
-                    })
-                    ->orWhereExists(function ($sub) {
-                        $sub->select(DB::raw(1))
-                            ->from('departments')
-                            ->join('branches', 'departments.branch_id', '=', 'branches.id')
-                            ->whereColumn('departments.id', 'users.department_id')
-                            ->whereColumn('branches.company_id', 'companies.id');
-                    });
-            })
-            ->whereNotExists(function ($sub) {
-                $sub->select(DB::raw(1))
-                    ->from('companies as head_co')
-                    ->whereColumn('head_co.company_head_id', 'users.id')
-                    ->whereColumn('head_co.id', '!=', 'companies.id');
-            })
-            ->selectRaw('COUNT(*)');
+        $employeeCounts = $this->companyEmployeeCountsSubquery();
 
         $companiesQuery = Company::query()
             ->select('companies.*')
-            ->selectSub($totalEmployeesSub, 'total_employees')
-            ->with('companyHead:id,name,first_name,middle_name,last_name,suffix')
+            ->leftJoinSub($employeeCounts, 'employee_counts', 'employee_counts.company_id', '=', 'companies.id')
+            ->addSelect(DB::raw('COALESCE(employee_counts.total_employees, 0) as total_employees'))
+            ->with('companyHead:id,name,first_name,middle_name,last_name,suffix,profile_image,email')
             ->withCount(['areas', 'branches', 'departments as departments_count'])
             ->orderBy('name');
 
@@ -333,6 +303,32 @@ class CompanyController extends Controller
         return response()->json(['message' => 'Company deleted successfully.']);
     }
 
+    /**
+     * One grouped pass over roster users — avoids a correlated COUNT subquery per company row.
+     */
+    private function companyEmployeeCountsSubquery(): \Illuminate\Database\Query\Builder
+    {
+        return DB::table('users as u')
+            ->leftJoin('branches as ub', 'ub.id', '=', 'u.branch_id')
+            ->leftJoin('departments as ud', 'ud.id', '=', 'u.department_id')
+            ->leftJoin('branches as dpb', 'dpb.id', '=', 'ud.branch_id')
+            ->whereIn('u.role', User::ROSTER_ELIGIBLE_ROLES)
+            ->where('u.is_system_user', false)
+            ->where('u.is_hidden', false)
+            ->where('u.exclude_from_reports', false)
+            ->where('u.exclude_from_payroll', false)
+            ->where('u.exclude_from_attendance', false)
+            ->whereNotNull(DB::raw('coalesce(u.company_id, ub.company_id, dpb.company_id)'))
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('companies as head_co')
+                    ->whereColumn('head_co.company_head_id', 'u.id')
+                    ->whereColumn('head_co.id', '!=', DB::raw('coalesce(u.company_id, ub.company_id, dpb.company_id)'));
+            })
+            ->groupBy(DB::raw('coalesce(u.company_id, ub.company_id, dpb.company_id)'))
+            ->selectRaw('coalesce(u.company_id, ub.company_id, dpb.company_id) as company_id, count(*) as total_employees');
+    }
+
     private function companyResponse(Company $c): array
     {
         return [
@@ -342,6 +338,8 @@ class CompanyController extends Controller
             'logo_url' => $this->publicMediaUrl($c->logo),
             'company_head_id' => $c->company_head_id,
             'company_head_name' => $c->companyHead?->display_name,
+            'company_head_profile_image' => $c->companyHead?->profile_image,
+            'company_head_email' => $c->companyHead?->email,
             'phone' => $c->phone,
             'email' => $c->email,
             'tin' => $c->tin,

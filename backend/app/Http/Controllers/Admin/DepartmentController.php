@@ -41,11 +41,16 @@ class DepartmentController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $lite = $request->boolean('lite');
+
         $query = Department::with('departmentHead:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->with('branch:id,name,company_id')
             ->with('branch.company:id,name,logo')
-            ->with('division:id,name,company_id,branch_id')
-            ->withCount('employees');
+            ->with('division:id,name,company_id,branch_id');
+
+        if (! $lite) {
+            $query->withCount('employees');
+        }
 
         if ($request->filled('branch_id')) {
             $query->where('branch_id', $request->input('branch_id'));
@@ -412,7 +417,9 @@ class DepartmentController extends Controller
             'description' => $d->description,
             'logo' => $companyLogo,
             'logo_url' => $logoUrl,
-            'total_employees' => $d->employees_count ?? $d->employees()->count(),
+            'total_employees' => array_key_exists('employees_count', $d->getAttributes())
+                ? (int) $d->employees_count
+                : ($d->employees_count ?? $d->employees()->count()),
             'department_head_id' => $d->department_head_id,
             'department_head_name' => $d->departmentHead?->display_name,
             'department_head_profile_image' => $d->departmentHead?->profile_image_url ?? null,

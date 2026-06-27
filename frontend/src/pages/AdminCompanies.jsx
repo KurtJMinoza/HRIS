@@ -62,7 +62,6 @@ import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { RoleBadge } from '@/components/RoleBadge'
 import { cn } from '@/lib/utils'
 import { compareEmployeesByLastName } from '@/lib/employeeSort'
-import { isRosterStaffMember } from '@/lib/rosterStaff'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
   ADMIN_FORM_DIALOG_DESC_CLASS,
@@ -223,28 +222,7 @@ function OrgStatCell({
   )
 }
 
-/** Build overlapping avatar items for employees under a company (direct company_id or branch in company). */
-function buildEmployeeStackItems(companyId, employees, branches) {
-  const cid = Number(companyId)
-  const branchIds = new Set(
-    (branches || []).filter((b) => Number(b.company_id) === cid).map((b) => Number(b.id))
-  )
-  const list = (employees || []).filter((e) => {
-    if (e.role !== 'employee') return false
-    if (Number(e.company_id) === cid) return true
-    if (e.branch_id != null && branchIds.has(Number(e.branch_id))) return true
-    return false
-  })
-  list.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' }))
-  return list.slice(0, 32).map((e) => ({
-    key: `e-${e.id}`,
-    src: profileImageUrl(e.profile_image),
-    initials: initials(e.name),
-    name: e.name || '',
-    fallbackClassName: 'bg-emerald-600/15 text-emerald-900 dark:bg-emerald-500/20 dark:text-emerald-100',
-  }))
-}
-
+/** Build overlapping avatar items for branches under a company. */
 function buildBranchStackItems(companyId, branches) {
   const list = (branches || [])
     .filter((b) => Number(b.company_id) === Number(companyId))
@@ -594,7 +572,6 @@ function CompanyHeadOverview({
   error,
   basePath,
   allBranches,
-  allEmployees,
   dashStats,
   dashStatsPrev,
   weeklyOverview,
@@ -616,10 +593,6 @@ function CompanyHeadOverview({
   const branches = useMemo(
     () => (allBranches || []).filter((b) => String(b.company_id) === String(company?.id)),
     [allBranches, company?.id]
-  )
-  const headEmp = useMemo(
-    () => allEmployees.find((e) => String(e.id) === String(company?.company_head_id)),
-    [allEmployees, company?.company_head_id]
   )
 
   useEffect(() => {
@@ -1019,18 +992,20 @@ function CompanyHeadOverview({
                 <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Company head</p>
                 <div className="mt-3 flex items-center gap-3">
                   <Avatar className="size-11 border border-border/60 shadow-sm">
-                    <AvatarImage src={profileImageUrl(headEmp?.profile_image)} alt="" />
+                    <AvatarImage src={profileImageUrl(company.company_head_profile_image)} alt="" />
                     <AvatarFallback className="bg-emerald-600/15 text-sm font-bold text-emerald-900 dark:bg-emerald-500/25 dark:text-emerald-100">
-                      {initials(company.company_head_name || headEmp?.name || '?')}
+                      {initials(company.company_head_name || '?')}
                     </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-foreground">
-                      {company.company_head_name || headEmp?.name || (
+                      {company.company_head_name || (
                         <span className="italic font-normal text-muted-foreground">Not assigned</span>
                       )}
                     </p>
-                    {headEmp?.email && <p className="truncate text-xs text-muted-foreground">{headEmp.email}</p>}
+                    {company.company_head_email ? (
+                      <p className="truncate text-xs text-muted-foreground">{company.company_head_email}</p>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -1224,7 +1199,6 @@ export default function AdminCompanies() {
   const basePath = useHrBasePath()
   const navigate = useNavigate()
   const [companies, setCompanies] = useState([])
-  const [allEmployees, setAllEmployees] = useState([])
   const [allBranches, setAllBranches] = useState([])
   const [allDepartments, setAllDepartments] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1300,6 +1274,19 @@ export default function AdminCompanies() {
   const [sortCol, setSortCol] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
 
+  const fetchCardStacks = useCallback(async () => {
+    try {
+      const [branchesRes, departmentsRes] = await Promise.all([
+        getBranches({ lite: true }).catch(() => ({ branches: [] })),
+        getDepartments({ lite: true }).catch(() => ({ departments: [] })),
+      ])
+      setAllBranches(Array.isArray(branchesRes?.branches) ? branchesRes.branches : [])
+      setAllDepartments(Array.isArray(departmentsRes?.departments) ? departmentsRes.departments : [])
+    } catch {
+      // Card avatar stacks are optional enrichment; counts still render from companies payload.
+    }
+  }, [])
+
   const fetchCompanies = useCallback(async () => {
     setError(null)
     if (!canViewCompaniesModule) {
@@ -1307,7 +1294,6 @@ export default function AdminCompanies() {
       setDashStatsPrev(null)
       setWeeklyOverview([])
       setCompanies([])
-      setAllEmployees([])
       setAllBranches([])
       setAllDepartments([])
       setLoading(false)
@@ -1315,44 +1301,11 @@ export default function AdminCompanies() {
     }
     setLoading(true)
     try {
-      const promises = [
-        getCompanies(),
-        getEmployees({ for_leadership_assignment: true, per_page: 'all' }).catch(() => ({ employees: [] })),
-        getBranches().catch(() => ({ branches: [] })),
-        getDepartments().catch(() => ({ departments: [] })),
-      ]
-      if (isCompanyHead) {
-        promises.push(
-          Promise.all([
-            getAdminDashboardSummary().catch(() => null),
-            getAdminDashboardCharts().catch(() => null),
-          ]).then(([summary, charts]) => (summary ? { ...summary, ...(charts ?? {}) } : null))
-        )
-      }
-      const results = await Promise.all(promises)
-      const companiesRes = results[0]
-      const employeesRes = results[1]
-      const branchesRes = results[2]
-      const departmentsRes = results[3]
-      const dashRes = isCompanyHead ? results[4] : null
-
+      const companiesRes = await getCompanies()
       setCompanies(Array.isArray(companiesRes?.companies) ? companiesRes.companies : [])
-      setAllEmployees(employeesRes?.employees ?? [])
-      setAllBranches(Array.isArray(branchesRes?.branches) ? branchesRes.branches : [])
-      setAllDepartments(Array.isArray(departmentsRes?.departments) ? departmentsRes.departments : [])
-      if (isCompanyHead && dashRes) {
-        setDashStats(dashRes.stats ?? null)
-        setDashStatsPrev(dashRes.stats_prev ?? null)
-        setWeeklyOverview(Array.isArray(dashRes.weekly_overview) ? dashRes.weekly_overview : [])
-      } else {
-        setDashStats(null)
-        setDashStatsPrev(null)
-        setWeeklyOverview([])
-      }
     } catch (e) {
       setError(e.message)
       setCompanies([])
-      setAllEmployees([])
       setAllBranches([])
       setAllDepartments([])
       setDashStats(null)
@@ -1361,7 +1314,33 @@ export default function AdminCompanies() {
     } finally {
       setLoading(false)
     }
-  }, [canViewCompaniesModule, isCompanyHead])
+
+    void fetchCardStacks()
+
+    if (isCompanyHead) {
+      void Promise.all([
+        getAdminDashboardSummary().catch(() => null),
+        getAdminDashboardCharts().catch(() => null),
+      ])
+        .then(([summary, charts]) => {
+          const dashRes = summary ? { ...summary, ...(charts ?? {}) } : null
+          if (dashRes) {
+            setDashStats(dashRes.stats ?? null)
+            setDashStatsPrev(dashRes.stats_prev ?? null)
+            setWeeklyOverview(Array.isArray(dashRes.weekly_overview) ? dashRes.weekly_overview : [])
+          }
+        })
+        .catch(() => {
+          setDashStats(null)
+          setDashStatsPrev(null)
+          setWeeklyOverview([])
+        })
+    } else {
+      setDashStats(null)
+      setDashStatsPrev(null)
+      setWeeklyOverview([])
+    }
+  }, [canViewCompaniesModule, fetchCardStacks, isCompanyHead])
 
   useEffect(() => {
     if (authLoading) return
@@ -1685,7 +1664,6 @@ export default function AdminCompanies() {
   }
 
   // All employees eligible for the Company Head picker (all roles=employee; conflict detection done inside the dialog)
-  const assignableEmployees = useMemo(() => allEmployees.filter((e) => isRosterStaffMember(e)), [allEmployees])
 
   // Employees tab: grouped by role (Company Head → Branch Heads → Department Heads → Employees)
   const groupedEmployees = useMemo(() => {
@@ -1764,7 +1742,6 @@ export default function AdminCompanies() {
         error={error}
         basePath={basePath}
         allBranches={allBranches}
-        allEmployees={allEmployees}
         dashStats={dashStats}
         dashStatsPrev={dashStatsPrev}
         weeklyOverview={weeklyOverview}
@@ -1834,10 +1811,8 @@ export default function AdminCompanies() {
             <div className="grid gap-5 @lg:grid-cols-2 @2xl:grid-cols-3">
               {sortedCompanies.map((company, idx) => {
                 const companyInitials = initials(company.name)
-                const headEmp = allEmployees.find((e) => String(e.id) === String(company.company_head_id))
                 const branchStackItems = buildBranchStackItems(company.id, allBranches)
                 const departmentStackItems = buildDepartmentStackItems(company.id, allDepartments)
-                const employeeStackItems = buildEmployeeStackItems(company.id, allEmployees, allBranches)
                 return (
                   <Card
                     key={company.id}
@@ -1904,7 +1879,7 @@ export default function AdminCompanies() {
                         {company.company_head_name ? (
                           <div className="flex items-center gap-3">
                             <Avatar className="size-11 shrink-0 rounded-full border-2 border-background shadow-sm ring-1 ring-border/60 dark:ring-white/10">
-                              <AvatarImage src={profileImageUrl(headEmp?.profile_image)} className="object-cover" />
+                              <AvatarImage src={profileImageUrl(company.company_head_profile_image)} className="object-cover" />
                               <AvatarFallback className="bg-brand/10 text-xs font-bold text-brand dark:bg-brand/15">{initials(company.company_head_name)}</AvatarFallback>
                             </Avatar>
                             <div className="min-w-0 flex-1">
@@ -1939,7 +1914,6 @@ export default function AdminCompanies() {
                         </button>
                         <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(company, 'employees') }} className="px-3 py-3 text-center hover:bg-muted/35">
                           <p className="text-2xl font-black tabular-nums text-brand">{Number(company.total_employees) || 0}</p>
-                          <OrgProfileStack items={employeeStackItems} max={3} className="mt-1" />
                           <p className="text-[10px] font-bold uppercase text-muted-foreground">Employees</p>
                         </button>
                       </div>
@@ -2288,7 +2262,6 @@ export default function AdminCompanies() {
                     ref={editDetailsLeadershipRef}
                     legacyType="company"
                     legacyId={editDetailsCompany.id}
-                    employeeOptions={allEmployees}
                     canManage
                   />
                 </div>
@@ -2573,17 +2546,6 @@ export default function AdminCompanies() {
                 </span>
               </TabsTrigger>
             </TabsList>
-
-            {detailCompany?.id ? (
-              <div className="border-b border-border/60 px-6 py-4">
-                <LeadershipPositionsSection
-                  legacyType="company"
-                  legacyId={detailCompany.id}
-                  employeeOptions={allEmployees}
-                  canManage
-                />
-              </div>
-            ) : null}
 
             {/* Branches tab */}
             <TabsContent value="branches" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
