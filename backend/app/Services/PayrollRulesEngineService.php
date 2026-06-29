@@ -187,6 +187,10 @@ class PayrollRulesEngineService
             return 'special';
         }
 
+        if (in_array($raw, ['special_working', 'special_working_day', 'company', 'company_event'], true)) {
+            return null;
+        }
+
         $map = config('payroll.holiday_types', [
             'regular' => 'regular',
             'special' => 'special',
@@ -218,21 +222,7 @@ class PayrollRulesEngineService
             return null;
         }
 
-        $raw = strtolower(trim($holiday['type'] ?? ''));
-        if ($raw === '') {
-            return 'special';
-        }
-
-        $map = config('payroll.holiday_types', [
-            'regular' => 'regular',
-            'special' => 'special',
-            'special_non_working' => 'special',
-            'special_working' => 'special',
-            'double' => 'double',
-            'company' => 'special',
-        ]);
-
-        return $map[$raw] ?? 'special';
+        return $this->holidayTypeFromHolidayRow($holiday);
     }
 
     /**
@@ -246,21 +236,7 @@ class PayrollRulesEngineService
             return null;
         }
 
-        $raw = strtolower(trim($holiday['type'] ?? ''));
-        if ($raw === '') {
-            return 'special';
-        }
-
-        $map = config('payroll.holiday_types', [
-            'regular' => 'regular',
-            'special' => 'special',
-            'special_non_working' => 'special',
-            'special_working' => 'special',
-            'double' => 'double',
-            'company' => 'special',
-        ]);
-
-        return $map[$raw] ?? 'special';
+        return $this->holidayTypeFromHolidayRow($holiday);
     }
 
     /**

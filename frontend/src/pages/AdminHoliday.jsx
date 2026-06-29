@@ -741,10 +741,12 @@ export default function AdminHoliday({ mode = 'admin' }) {
     return list.sort((a, b) => a.date.localeCompare(b.date))
   }, [allHolidays, holidaySearch, typeFilter, yearFilter, dateFrom, dateTo])
 
-  const activeFilteredHolidays = useMemo(
+  const displayHolidays = useMemo(
     () => filteredHolidays.filter((h) => (h.status || 'active') === 'active'),
     [filteredHolidays]
   )
+
+  const activeFilteredHolidays = displayHolidays
 
   const holidaysInViewMonth = useMemo(() => {
     return allHolidays.filter((h) => {
@@ -826,21 +828,31 @@ export default function AdminHoliday({ mode = 'admin' }) {
       toast.error('Permission denied', { description: 'You do not have permission to delete holidays.' })
       return
     }
+    let removed = false
     try {
       if (typeof holidayOrId === 'number') {
-        await deleteAdminHoliday(holidayOrId)
+        const result = await deleteAdminHoliday(holidayOrId)
+        removed = Boolean(result?.removed || result?.deactivated)
       } else if (Array.isArray(holidayOrId?.holidays) && holidayOrId.holidays.length > 1) {
-        await Promise.all(holidayOrId.holidays.map((entry) => (
-          entry?.id ? deleteAdminHoliday(entry.id) : createAdminHoliday(holidayOverridePayload(entry, { status: 'inactive' }))
-        )))
+        await Promise.all(holidayOrId.holidays.map(async (entry) => {
+          if (entry?.id) {
+            const result = await deleteAdminHoliday(entry.id)
+            if (result?.removed || result?.deactivated) removed = true
+            return
+          }
+          removed = true
+          return createAdminHoliday(holidayOverridePayload(entry, { status: 'inactive' }))
+        }))
       } else if (holidayOrId?.id) {
-        await deleteAdminHoliday(holidayOrId.id)
+        const result = await deleteAdminHoliday(holidayOrId.id)
+        removed = Boolean(result?.removed || result?.deactivated)
       } else if (holidayOrId) {
+        removed = true
         await createAdminHoliday(holidayOverridePayload(holidayOrId, { status: 'inactive' }))
       }
       await refetchHolidays({ silent: true })
       setSelectedCell(null)
-      toast.success('Holiday deleted successfully')
+      toast.success(removed ? 'Holiday removed from calendar' : 'Holiday deleted successfully')
     } catch (err) {
       const msg = err.message || 'Failed to delete holiday'
       toast.error('Failed to delete holiday', { description: msg })
@@ -1235,14 +1247,14 @@ export default function AdminHoliday({ mode = 'admin' }) {
                     </tr>
                   </thead>
                   <tbody className="bg-card">
-                    {filteredHolidays.length === 0 ? (
+                    {displayHolidays.length === 0 ? (
                       <tr>
                         <td colSpan={4} className="py-12 text-center text-sm text-muted-foreground">
                           No holidays match your filters.
                         </td>
                       </tr>
                     ) : (
-                      filteredHolidays.map((h, rowIdx) => (
+                      displayHolidays.map((h, rowIdx) => (
                         <tr
                           key={h.id || `${h.date}-${h.name}-${h.scope}-${rowIdx}`}
                           className={cn(
@@ -1278,12 +1290,12 @@ export default function AdminHoliday({ mode = 'admin' }) {
                 </div>
 
                 <div className="space-y-3 bg-card px-3 pb-4 @sm:px-4 md:hidden md:pb-6">
-                  {filteredHolidays.length === 0 ? (
+                  {displayHolidays.length === 0 ? (
                     <div className="flex min-h-[200px] flex-col items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/15 px-6 py-12 text-center">
                       <p className="text-sm font-medium text-muted-foreground">No holidays match your filters.</p>
                     </div>
                   ) : (
-                    filteredHolidays.map((h, rowIdx) => (
+                    displayHolidays.map((h, rowIdx) => (
                       <HolidayListMobileCard
                         key={h.id || `${h.date}-${h.name}-${h.scope}-${rowIdx}`}
                         holiday={h}
@@ -1638,7 +1650,9 @@ export default function AdminHoliday({ mode = 'admin' }) {
                     <h2 className="text-sm font-bold leading-snug text-foreground">
                       {new Date(selectedCell.dateStr).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
                     </h2>
-                    <p className="text-[11px] text-muted-foreground">No holiday on this date</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      No holiday on this date
+                    </p>
                   </div>
                 </div>
                 <button
@@ -1650,7 +1664,7 @@ export default function AdminHoliday({ mode = 'admin' }) {
                   <X className="size-4" />
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 space-y-3">
                 <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 py-5 dark:border-border/50 dark:bg-muted/15">
                   <p className="mb-3 px-2 text-center text-xs text-muted-foreground">
                     {canCreateHoliday ? 'Add a holiday on this date' : 'No holiday on this date'}

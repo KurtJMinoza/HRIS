@@ -8,6 +8,7 @@ use App\Models\Company;
 use App\Models\Policy;
 use App\Models\PolicyMultiplier;
 use App\Models\PolicyNdSetting;
+use App\Services\HolidayPayPolicyService;
 use App\Services\HolidayPolicyCache;
 use App\Services\AttendanceCacheService;
 use App\Services\EmployeeDashboardCacheService;
@@ -21,6 +22,7 @@ class PayPolicyController extends Controller
 {
     public function __construct(
         private readonly PolicyResolverService $policyResolver,
+        private readonly HolidayPayPolicyService $holidayPayPolicy,
     ) {}
 
     /**
@@ -101,7 +103,7 @@ class PayPolicyController extends Controller
             'version' => 1,
             'version_label' => $validated['version_label'] ?? null,
             'priority_order_json' => $validated['priority_order_json'] ?? null,
-            'holiday_policy' => array_replace_recursive(
+            'holiday_policy' => $this->mergeHolidayPolicyForStorage(
                 Policy::DEFAULT_HOLIDAY_POLICY,
                 (array) ($validated['holiday_policy'] ?? [])
             ),
@@ -155,7 +157,7 @@ class PayPolicyController extends Controller
         $policy->save();
 
         if (isset($validated['holiday_policy'])) {
-            $policy->holiday_policy = array_replace_recursive(
+            $policy->holiday_policy = $this->mergeHolidayPolicyForStorage(
                 $policy->resolvedHolidayPolicy(),
                 $validated['holiday_policy']
             );
@@ -367,24 +369,23 @@ class PayPolicyController extends Controller
             'holiday_policy.unworked_special_multiplier' => ['sometimes', 'numeric', 'min:1'],
             'holiday_policy.replace_regular_with_leave_credits' => ['prohibited'],
             'holiday_policy.force_leave_credits' => ['prohibited'],
-            'holiday_policy.successive_regular_holidays' => ['sometimes', 'boolean'],
             'holiday_policy.attendance' => ['sometimes', 'array'],
             'holiday_policy.attendance.require_previous_workday_presence' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.paid_leave_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.skip_rest_days' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.skip_company_non_working_days' => ['sometimes', 'boolean'],
-            'holiday_policy.attendance.unpaid_absence_disqualifies' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage' => ['sometimes', 'array'],
-            'holiday_policy.coverage.rank_and_file' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.probationary' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.regular' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.managerial' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.consultants' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.contractual' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.fixed_term' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.government' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.field_personnel' => ['sometimes', 'boolean'],
-            'holiday_policy.coverage.micro_retail_service' => ['sometimes', 'boolean'],
+            'holiday_policy.eligibility' => ['sometimes', 'array'],
+            'holiday_policy.regular_unworked' => ['sometimes', 'array'],
+            'holiday_policy.regular_unworked.unworked_pay_policy' => ['sometimes', 'string', 'in:no_work_no_pay,covered_employees,selected_employment_types,all_employees'],
+            'holiday_policy.regular_unworked.eligible_employment_types' => ['sometimes', 'array'],
+            'holiday_policy.special_unworked' => ['sometimes', 'array'],
+            'holiday_policy.special_unworked.unworked_pay_policy' => ['sometimes', 'string', 'in:no_work_no_pay,covered_employees,selected_employment_types,all_employees'],
+            'holiday_policy.special_unworked.eligible_employment_types' => ['sometimes', 'array'],
+            'holiday_policy.non_statutory' => ['sometimes', 'array'],
+            'holiday_policy.non_statutory.special_working' => ['sometimes', 'array'],
+            'holiday_policy.non_statutory.special_working.pay_as_ordinary_day' => ['sometimes', 'boolean'],
+            'holiday_policy.non_statutory.company' => ['sometimes', 'array'],
+            'holiday_policy.non_statutory.company.pay_as_ordinary_day' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -396,24 +397,10 @@ class PayPolicyController extends Controller
         if (array_key_exists('pay_unworked_regular', $holidayPolicy) && ! $holidayPolicy['pay_unworked_regular']) {
             $errors['holiday_policy.pay_unworked_regular'] = ['This configuration is below the minimum standard required by DOLE.'];
         }
-        if (array_key_exists('successive_regular_holidays', $holidayPolicy) && ! $holidayPolicy['successive_regular_holidays']) {
-            $errors['holiday_policy.successive_regular_holidays'] = ['DOLE successive regular holiday rules must remain enabled.'];
-        }
         foreach (['paid_leave_qualifies', 'skip_rest_days', 'skip_company_non_working_days'] as $mandatory) {
             if (array_key_exists($mandatory, (array) ($holidayPolicy['attendance'] ?? []))
                 && ! $holidayPolicy['attendance'][$mandatory]) {
                 $errors['holiday_policy.attendance.'.$mandatory] = ['This DOLE attendance qualification rule must remain enabled.'];
-            }
-        }
-        foreach (['rank_and_file', 'probationary', 'regular'] as $mandatory) {
-            if (array_key_exists($mandatory, (array) ($holidayPolicy['coverage'] ?? []))
-                && ! $holidayPolicy['coverage'][$mandatory]) {
-                $errors['holiday_policy.coverage.'.$mandatory] = ['This mandatory employee coverage cannot be disabled.'];
-            }
-        }
-        foreach (['government', 'field_personnel', 'micro_retail_service'] as $excluded) {
-            if (($holidayPolicy['coverage'][$excluded] ?? false) === true) {
-                $errors['holiday_policy.coverage.'.$excluded] = ['This statutory exemption is read-only.'];
             }
         }
 
@@ -440,6 +427,60 @@ class PayPolicyController extends Controller
         if ($errors !== []) {
             throw ValidationException::withMessages($errors);
         }
+    }
+
+    /** @param  array<string, mixed>  $base */
+    private function mergeHolidayPolicyForStorage(array $base, array $incoming): array
+    {
+        $merged = array_replace_recursive($base, $incoming);
+
+        foreach (['regular_unworked', 'special_unworked'] as $block) {
+            if (! isset($incoming[$block]) || ! is_array($incoming[$block])) {
+                continue;
+            }
+
+            $merged[$block] = array_replace_recursive(
+                Policy::DEFAULT_HOLIDAY_POLICY[$block] ?? [],
+                $incoming[$block]
+            );
+
+            if (array_key_exists('eligible_employment_types', $incoming[$block])) {
+                $merged[$block]['eligible_employment_types'] = array_values(
+                    (array) $incoming[$block]['eligible_employment_types']
+                );
+            }
+        }
+
+        if (isset($incoming['non_statutory']) && is_array($incoming['non_statutory'])) {
+            $merged['non_statutory'] = array_replace_recursive(
+                Policy::DEFAULT_HOLIDAY_POLICY['non_statutory'] ?? [],
+                $incoming['non_statutory']
+            );
+        }
+
+        if (isset($incoming['attendance']) && is_array($incoming['attendance'])) {
+            $merged['attendance'] = array_replace_recursive(
+                Policy::DEFAULT_HOLIDAY_POLICY['attendance'] ?? [],
+                $incoming['attendance']
+            );
+        }
+
+        $specialPolicy = (string) ($merged['special_unworked']['unworked_pay_policy'] ?? 'no_work_no_pay');
+        $merged['pay_unworked_regular'] = true;
+        $merged['pay_unworked_special'] = $specialPolicy !== 'no_work_no_pay';
+        $merged['eligibility'] = array_replace_recursive(
+            Policy::DEFAULT_HOLIDAY_POLICY['eligibility'] ?? [],
+            (array) ($merged['eligibility'] ?? [])
+        );
+        $merged['eligibility']['pay_unworked_regular'] = true;
+        $merged['eligibility']['company_may_pay_unworked_special'] = $merged['pay_unworked_special'];
+        $merged['eligibility']['special_no_work_no_pay'] = ! $merged['pay_unworked_special'];
+
+        foreach (['paid_leave_qualifies', 'skip_rest_days', 'skip_company_non_working_days'] as $mandatory) {
+            $merged['attendance'][$mandatory] = true;
+        }
+
+        return $merged;
     }
 
     private function invalidateHolidayPolicy(Policy $policy): void

@@ -29,6 +29,8 @@ return [
     */
     'audit_excessive_ot_hours' => (float) env('PAYROLL_AUDIT_EXCESSIVE_OT_HOURS', 8),
 
+    'debug_holiday_eligibility' => filter_var(env('PAYROLL_DEBUG_HOLIDAY_ELIGIBILITY', false), FILTER_VALIDATE_BOOL),
+
     /*
     |--------------------------------------------------------------------------
     | Night Differential (ND) Window

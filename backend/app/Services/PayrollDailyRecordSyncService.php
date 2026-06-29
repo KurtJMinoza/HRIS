@@ -66,8 +66,10 @@ class PayrollDailyRecordSyncService
             $tz
         );
 
-        // Skip non-worked days unless paid leave (no punch) produced compensable pay.
-        if ($dayResult['total_pay'] <= 0 && $dayResult['worked_minutes'] <= 0) {
+        // Skip non-worked days unless paid leave or policy-qualified unworked holiday pay.
+        $holidayEligible = (bool) (($dayResult['conditions']['holiday_eligible'] ?? false));
+        $holidayPremium = (float) ($dayResult['holiday_premium_pay'] ?? 0);
+        if ($dayResult['total_pay'] <= 0 && $dayResult['worked_minutes'] <= 0 && ! ($holidayEligible && $holidayPremium > 0)) {
             return;
         }
 
