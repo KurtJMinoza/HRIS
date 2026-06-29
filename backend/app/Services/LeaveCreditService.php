@@ -41,6 +41,8 @@ class LeaveCreditService
     /** Keep aligned with {@see config('cache.profile_ttl_minutes')} (max 5m) to limit cache churn. */
     private const SUMMARY_CACHE_TTL_MINUTES = 5;
 
+    public function __construct(private readonly HolidayService $holidayService) {}
+
     private static function summaryCacheKey(int $userId): string
     {
         return "leave:balance:{$userId}:summary:v1";
@@ -176,10 +178,10 @@ class LeaveCreditService
         $startStr = $startDate instanceof Carbon ? $startDate->toDateString() : (string) $startDate;
         $endStr = $endDate instanceof Carbon ? $endDate->toDateString() : (string) $endDate;
         if ($t === 'half_day') {
-            return LeaveScheduleSupport::isWorkingDay($user, $startStr) ? 1 : 0;
+            return in_array($startStr, $this->billableWorkingDatesForUser($user, $startStr, $startStr), true) ? 1 : 0;
         }
 
-        return LeaveScheduleSupport::countWorkingDaysInclusive($user, $startStr, $endStr);
+        return count($this->billableWorkingDatesForUser($user, $startStr, $endStr));
     }
 
     public function billableCreditDaysFromFields(string $type, $startDate, $endDate): int
@@ -799,7 +801,7 @@ class LeaveCreditService
             return false;
         }
 
-        $ordered = LeaveScheduleSupport::listWorkingDateStringsInRangeOrdered(
+        $ordered = $this->billableWorkingDatesForUser(
             $user,
             $leave->start_date->toDateString(),
             $leave->end_date->toDateString()
@@ -810,6 +812,30 @@ class LeaveCreditService
         }
 
         return $idx < $paidSlots;
+    }
+
+    /**
+     * Scheduled working dates that may consume leave credits. Regular, double,
+     * special non-working, and company holidays are excluded so leave never
+     * replaces holiday pay. Special working days remain billable workdays.
+     *
+     * @return list<string>
+     */
+    private function billableWorkingDatesForUser(User $user, string $startDate, string $endDate): array
+    {
+        return array_values(array_filter(
+            LeaveScheduleSupport::listWorkingDateStringsInRangeOrdered($user, $startDate, $endDate),
+            function (string $dateKey) use ($user): bool {
+                $holiday = $this->holidayService->resolveHolidayForPayroll($user, $dateKey);
+                if ($holiday === null) {
+                    return true;
+                }
+
+                $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($holiday['type'] ?? ''))));
+
+                return in_array($type, ['special_working', 'special_working_day'], true);
+            }
+        ));
     }
 
     /**

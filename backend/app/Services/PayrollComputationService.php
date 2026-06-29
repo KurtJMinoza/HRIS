@@ -61,6 +61,7 @@ class PayrollComputationService
         private readonly AttendanceSessionService $attendanceSession,
         private readonly HolidayCalendarService $holidayCalendar,
         private readonly HolidayService $holidayService,
+        private readonly HolidayEligibilityService $holidayEligibility,
         private readonly PolicyResolverService $policyResolver,
         private readonly DataScopeService $dataScopeService,
         private readonly DeductionScheduleService $deductionScheduleService,
@@ -640,6 +641,17 @@ class PayrollComputationService
         $resolvedHolidayType = $holiday ? $this->rulesEngine->holidayTypeFromHolidayRow($holiday) : null;
         $ruleCode = $this->rulesEngine->resolveRuleCode($isRestDay, $resolvedHolidayType);
         $multipliers = $this->rulesEngine->getMultipliersForRule($ruleCode, $policy);
+        $holidayPolicy = $holiday !== null
+            ? $this->holidayEligibility->policyFor($policy, $companyId)
+            : [];
+        $holidayQualification = $holiday !== null
+            ? $this->holidayEligibility->evaluate($user, $holiday, $dateKey, $timeIn !== null && $timeOut !== null, $holidayPolicy)
+            : null;
+        if ($holiday !== null && $holidayQualification !== null && ! $holidayQualification['eligible'] && $timeIn && $timeOut) {
+            // Covered payroll math remains centralized here; an excluded category receives
+            // ordinary rates instead of a parallel holiday calculation.
+            $multipliers = $this->rulesEngine->getMultipliersForRule('ORD', $policy);
+        }
         $first8 = $multipliers['first_8'];
         $otMult = $multipliers['ot'];
         $ndBase = $multipliers['nd_base'] ?? $first8;
@@ -662,6 +674,11 @@ class PayrollComputationService
             'first_8' => $first8,
             'ot' => $otMult,
             'nd_base' => $ndBase,
+            'holiday_eligible' => $holidayQualification['eligible'] ?? null,
+            'holiday_attendance_requirement_met' => $holidayQualification['attendance_requirement_met'] ?? null,
+            'holiday_attendance_rule_applied' => $holidayQualification['rule'] ?? null,
+            'holiday_employee_category' => $holidayQualification['category'] ?? null,
+            'holiday_eligibility_reason' => $holidayQualification['reason'] ?? null,
         ];
 
         $breakdown = [];
@@ -683,7 +700,35 @@ class PayrollComputationService
             $regularNightMinutes = 0;
 
             $holidayPremiumPayForLeave = 0.0;
-            if ($status === 'leave') {
+            $unworkedHolidayApplied = false;
+            if ($holiday !== null && ($holidayQualification['eligible'] ?? false)) {
+                $unworkedMultiplier = $this->holidayEligibility->unworkedMultiplier($holiday, $holidayPolicy);
+                if ($unworkedMultiplier > 0) {
+                    $holidayPremiumPayForLeave = round($dailyRate * $unworkedMultiplier, 2);
+                    $totalPay = $holidayPremiumPayForLeave;
+                    $status = 'holiday';
+                    $unworkedHolidayApplied = true;
+                    $breakdown[] = [
+                        'component' => 'holiday_premium',
+                        'minutes' => $requiredMinutes > 0 ? $requiredMinutes : 480,
+                        'rate' => $hourlyRate,
+                        'multiplier' => $unworkedMultiplier,
+                        'premium_multiplier' => $unworkedMultiplier,
+                        'holiday_name' => $holiday['name'] ?? null,
+                        'holiday_type' => $holiday['type'] ?? null,
+                        'amount' => $holidayPremiumPayForLeave,
+                        'worked' => false,
+                        'attendance_rule_applied' => $holidayQualification['rule'] ?? null,
+                    ];
+                }
+            }
+
+            $nonWorkingHolidayType = $holiday !== null
+                ? $this->holidayEligibility->normalizeHolidayType($holiday['type'] ?? null)
+                : null;
+            if (! $unworkedHolidayApplied
+                && $status === 'leave'
+                && ! in_array($nonWorkingHolidayType, ['regular', 'double', 'special'], true)) {
                 $leave = $this->approvedPrimaryLeaveForDate($user, $dateKey);
                 $leaveCredits = app(LeaveCreditService::class);
                 if ($leave && $leaveCredits->consumesCredits((string) $leave->type) && ! $isRestDay) {
@@ -949,15 +994,12 @@ class PayrollComputationService
         // OTPay = approved OT minutes only × HWR × ot (rendered OT without approval does not earn OT premium)
         // NDPay = ND_regular_paid × (HWR × nd_base × premium) + ND_ot × (HWR × ot × premium), scaled with OT premium gate
         //
-        // Statutory/special holiday premium (first_8 > 1): only when the employee is treated as present for a full
-        // scheduled shift, or paid leave applies (handled in the no-punch branch above). Partial/absent days pay
-        // regular minutes at ordinary 1.0× — no holiday_premium line — matches Daily Computation / payslip "(absent)".
+        // Worked holiday minutes receive the applicable holiday rate even for a partial shift.
+        // Unworked entitlement is handled in the no-punch branch above.
         $isStatutoryHolidayRate = $holiday !== null && $first8 > 1.00001;
-        $scheduleToleranceMin = 3;
-        $meetsFullScheduledPresence = $requiredMinutes <= 0
-            ? $paidReg > 0
-            : $paidReg >= max(0, $requiredMinutes - $scheduleToleranceMin);
-        $qualifiesStatutoryHolidayPremium = $isStatutoryHolidayRate && $meetsFullScheduledPresence;
+        $qualifiesStatutoryHolidayPremium = $isStatutoryHolidayRate
+            && $paidReg > 0
+            && ($holidayQualification['eligible'] ?? true);
         $payFirst8Multiplier = $qualifiesStatutoryHolidayPremium ? $first8 : 1.0;
 
         $first8Pay = ($paidReg / 60.0) * $hourlyRate * $payFirst8Multiplier;

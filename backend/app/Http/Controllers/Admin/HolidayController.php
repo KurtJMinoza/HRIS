@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
+use App\Services\PolicyResolverService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\PhPayrollReference;
 use App\Support\TextSanitizer;
@@ -29,6 +30,7 @@ class HolidayController extends Controller
         private readonly HolidayCalendarService $holidayCalendar,
         private readonly HolidayService $holidayService,
         private readonly HolidayScopeResolver $holidayScopeResolver,
+        private readonly PolicyResolverService $policyResolver,
         private readonly Holiday $holiday,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
     ) {}
@@ -40,15 +42,17 @@ class HolidayController extends Controller
     {
         $year = (int) $request->get('year', now()->year);
         $year = max(2020, min(2030, $year));
+        $companyId = $request->filled('company_id') ? max(1, (int) $request->input('company_id')) : null;
 
         $holidays = $this->holidayCalendar->holidaysForYear($year);
 
-        $holidays = array_map(function (array $row) {
+        $holidays = array_map(function (array $row) use ($companyId) {
             $type = strtolower((string) ($row['type'] ?? 'special'));
 
             return array_merge($row, [
                 'payroll_hints' => PhPayrollReference::hintsForHolidayType($type),
                 'impact' => $this->holidayImpact($row),
+                'holiday_policy' => $this->holidayPolicySnapshot($row, $companyId),
             ]);
         }, $holidays);
 
@@ -100,9 +104,43 @@ class HolidayController extends Controller
             'holidays' => array_map(fn (array $row) => array_merge($row, [
                 'payroll_hints' => PhPayrollReference::hintsForHolidayType(strtolower((string) ($row['type'] ?? 'special'))),
                 'impact' => $this->holidayImpact($row),
+                'holiday_policy' => $this->holidayPolicySnapshot(
+                    $row,
+                    $employee->getEffectiveCompanyId(),
+                    $employee->branch_id !== null ? (int) $employee->branch_id : null
+                ),
             ]), $rows),
             'summary' => $summary,
         ]);
+    }
+
+    /** @return array<string, mixed> */
+    private function holidayPolicySnapshot(array $holiday, ?int $companyId, ?int $branchId = null): array
+    {
+        $dateKey = (string) ($holiday['date'] ?? now()->toDateString());
+        $policy = $this->policyResolver->getActivePolicy($companyId, $branchId, $dateKey);
+        $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($holiday['type'] ?? 'special'))));
+        $ruleCode = match ($type) {
+            'regular', 'regular_holiday' => 'RH',
+            'double', 'double_holiday' => 'DH',
+            'special_working', 'special_working_day' => 'SH',
+            default => 'SH',
+        };
+        $multipliers = $this->policyResolver->getMultipliersForRule($policy, $ruleCode);
+        $settings = $policy?->resolvedHolidayPolicy() ?? \App\Models\Policy::DEFAULT_HOLIDAY_POLICY;
+
+        return [
+            'source' => 'payroll_policy_settings',
+            'policy_id' => $policy?->id,
+            'policy_name' => $policy?->name ?? 'DOLE Global Default',
+            'scope' => $policy?->company_id !== null ? 'company_override' : 'global_default',
+            'pay_unworked_regular' => true,
+            'pay_unworked_special' => (bool) ($settings['pay_unworked_special'] ?? false),
+            'unworked_special_multiplier' => max(1.0, (float) ($settings['unworked_special_multiplier'] ?? 1.0)),
+            'worked_multiplier' => (float) $multipliers['first_8'],
+            'ot_multiplier' => (float) $multipliers['ot'],
+            'nd_addon_multiplier' => max(0.10, (float) ($multipliers['nd_addon'] ?? 0.10)),
+        ];
     }
 
     public function store(Request $request): JsonResponse

@@ -22,6 +22,7 @@ import {
   Star,
   CalendarHeart,
   Layers2,
+  Scale,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -63,6 +64,8 @@ import {
 } from '@/api'
 import { useToast } from '@/components/ui/use-toast'
 import { PayrollLogisticsPolicyShell } from '@/components/payroll/PayrollLogisticsPolicyShell'
+import { HolidayPayPolicyCard } from '@/components/payroll/HolidayPayPolicyCard'
+import { normalizeHolidayPayPolicy } from '@/lib/holidayPayPolicy'
 
 const CONDITION_LABELS = {
   ORD: 'Ordinary Day',
@@ -73,6 +76,17 @@ const CONDITION_LABELS = {
   SHRD: 'Special Holiday + Rest Day',
   DH: 'Double Holiday',
   DHRD: 'Double Holiday + Rest Day',
+}
+
+const CONDITION_DEFAULTS = {
+  ORD: { first8_multiplier: 1, ot_multiplier: 1.25, nd_addon_multiplier: 0.1 },
+  RD: { first8_multiplier: 1.3, ot_multiplier: 1.69, nd_addon_multiplier: 0.1 },
+  RH: { first8_multiplier: 2, ot_multiplier: 2.6, nd_addon_multiplier: 0.1 },
+  RHRD: { first8_multiplier: 2.6, ot_multiplier: 3.38, nd_addon_multiplier: 0.1 },
+  SH: { first8_multiplier: 1.3, ot_multiplier: 1.69, nd_addon_multiplier: 0.1 },
+  SHRD: { first8_multiplier: 1.5, ot_multiplier: 1.95, nd_addon_multiplier: 0.1 },
+  DH: { first8_multiplier: 3, ot_multiplier: 3.9, nd_addon_multiplier: 0.1 },
+  DHRD: { first8_multiplier: 3, ot_multiplier: 3.9, nd_addon_multiplier: 0.1 },
 }
 
 /** Lucide icons for each PH rule card (replaces emoji for a consistent admin UI). */
@@ -184,7 +198,7 @@ const GROUP_MATRIX_META = {
  */
 /** Grid layout avoids horizontal scroll; 2×2 on small screens, single row from sm+. */
 const POLICY_CONFIG_TAB_LIST_CLASS =
-  'grid w-full grid-cols-2 gap-1.5 rounded-xl border border-border/35 bg-muted/45 p-2 shadow-inner dark:border-border/40 dark:bg-muted/20 @sm:grid-cols-4 @sm:gap-2'
+  'grid w-full grid-cols-2 gap-1.5 rounded-xl border border-border/35 bg-muted/45 p-2 shadow-inner dark:border-border/40 dark:bg-muted/20 @sm:grid-cols-3 @sm:gap-2 @lg:grid-cols-5'
 
 const POLICY_CONFIG_TAB_TRIGGER_CLASS = cn(
   'relative flex h-auto min-h-0 w-full min-w-0 items-center justify-center gap-2 rounded-lg border-0 px-3 py-2.5 text-sm font-medium transition-all @sm:px-5 @sm:py-3 @md:px-6',
@@ -406,23 +420,27 @@ function normalizePayPolicyPayload(raw, conditionLabels) {
   const byKey = new Map(multRows.map((m) => [m.condition_key, m]))
   const multipliers = keys.map((k) => {
     const row = byKey.get(k)
+    const defaults = CONDITION_DEFAULTS[k]
     if (row) {
       return {
         ...row,
-        first8_multiplier: row.first8_multiplier ?? 1,
-        ot_multiplier: row.ot_multiplier ?? 1.25,
-        nd_addon_multiplier: row.nd_addon_multiplier ?? 0.1,
+        first8_multiplier: row.first8_multiplier ?? defaults.first8_multiplier,
+        ot_multiplier: row.ot_multiplier ?? defaults.ot_multiplier,
+        nd_addon_multiplier: row.nd_addon_multiplier ?? defaults.nd_addon_multiplier,
       }
     }
     return {
       condition_key: k,
-      first8_multiplier: 1,
-      ot_multiplier: 1.25,
-      nd_addon_multiplier: 0.1,
+      ...defaults,
     }
   })
   const ed = toEffectiveDateString(raw.effective_date)
-  return { ...raw, multipliers, effective_date: ed }
+  return {
+    ...raw,
+    multipliers,
+    effective_date: ed,
+    holiday_policy: normalizeHolidayPayPolicy(raw.holiday_policy),
+  }
 }
 
 /** Laravel paginator or plain array from GET /admin/payroll/policies */
@@ -631,6 +649,7 @@ export default function AdminPolicySettings() {
         status: policyDetail.status,
         version_label: policyDetail.version_label,
         priority_order_json: policyDetail.priority_order_json,
+        holiday_policy: normalizeHolidayPayPolicy(policyDetail.holiday_policy),
         multipliers,
         nd_settings: nd
           ? {
@@ -750,6 +769,22 @@ export default function AdminPolicySettings() {
       nd_setting: { ...nd, [field]: value },
       ndSetting: { ...nd, [field]: value },
     })
+    setDirty(true)
+  }
+
+  const updateHolidayPolicy = (path, value) => {
+    if (!policyDetail) return
+    const next = { ...normalizeHolidayPayPolicy(policyDetail.holiday_policy) }
+    let cursor = next
+    path.forEach((key, index) => {
+      if (index === path.length - 1) {
+        cursor[key] = value
+      } else {
+        cursor[key] = { ...(cursor[key] || {}) }
+        cursor = cursor[key]
+      }
+    })
+    setPolicyDetail({ ...policyDetail, holiday_policy: next })
     setDirty(true)
   }
 
@@ -1129,6 +1164,10 @@ export default function AdminPolicySettings() {
                       <Layers className="size-4 shrink-0" />
                       Multipliers
                     </TabsTrigger>
+                    <TabsTrigger value="holiday" className={POLICY_CONFIG_TAB_TRIGGER_CLASS}>
+                      <Scale className="size-4 shrink-0" />
+                      Holiday pay
+                    </TabsTrigger>
                     <TabsTrigger value="nd" className={POLICY_CONFIG_TAB_TRIGGER_CLASS}>
                       <Moon className="size-4 shrink-0" />
                       Night diff
@@ -1371,6 +1410,22 @@ export default function AdminPolicySettings() {
                           })}
                         </CardContent>
                       </Card>
+                    </Motion.div>
+                  </TabsContent>
+
+                  <TabsContent value="holiday" className="mt-0 outline-none">
+                    <Motion.div
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <HolidayPayPolicyCard
+                        policy={policyDetail.holiday_policy}
+                        multipliers={multipliers}
+                        companyId={policyDetail.company_id}
+                        onPolicyChange={updateHolidayPolicy}
+                        onMultiplierChange={updateMultiplier}
+                      />
                     </Motion.div>
                   </TabsContent>
 

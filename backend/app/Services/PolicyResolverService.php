@@ -205,6 +205,7 @@ class PolicyResolverService
             'rule_code' => $ruleCode,
             'multipliers' => $multipliers,
             'nd' => $ndConfig,
+            'holiday_policy' => $policy->resolvedHolidayPolicy(),
         ];
     }
 }

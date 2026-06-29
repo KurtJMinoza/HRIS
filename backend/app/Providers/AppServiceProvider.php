@@ -291,6 +291,7 @@ class AppServiceProvider extends ServiceProvider
             AttendanceCacheService::invalidate();
             AdminDashboardCache::flush();
             PayrollCacheInvalidator::clear('holiday_changed', ['holiday_id' => (int) $h->id]);
+            \App\Services\HolidayPolicyCache::forgetAll();
             if ($h->is_swap) {
                 $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
                 app(HolidayService::class)->flushCoverageForDate($dateKey);
@@ -303,6 +304,7 @@ class AppServiceProvider extends ServiceProvider
             AttendanceCacheService::invalidate();
             AdminDashboardCache::flush();
             PayrollCacheInvalidator::clear('holiday_deleted', ['holiday_id' => (int) $h->id]);
+            \App\Services\HolidayPolicyCache::forgetAll();
             if ($h->is_swap) {
                 $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
                 app(HolidayService::class)->flushCoverageForDate($dateKey);

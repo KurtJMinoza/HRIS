@@ -12,9 +12,11 @@ use App\Services\AttendanceStatusResolver;
 use App\Services\AttendanceStatusService;
 use App\Services\EmployeeDashboardCacheService;
 use App\Services\HolidayService;
+use App\Services\HolidayEligibilityService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
 use App\Services\PayrollComputationService;
+use App\Services\PolicyResolverService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -41,6 +43,8 @@ class EmployeeDashboardController extends Controller
         private readonly PayrollComputationService $payrollComputation,
         private readonly AttendanceDailySummaryService $dailySummary,
         private readonly HolidayService $holidayService,
+        private readonly HolidayEligibilityService $holidayEligibility,
+        private readonly PolicyResolverService $policyResolver,
     ) {}
 
     /**
@@ -238,7 +242,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 10) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 11) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -378,6 +382,29 @@ class EmployeeDashboardController extends Controller
             $dayLateMinutes = (int) ($summary['late_minutes'] ?? 0);
             $dayUndertimeMinutes = (int) ($summary['undertime_minutes'] ?? 0);
             $effectiveWorkedMinutes = $summary['worked_minutes'];
+            $holidayPayPolicy = null;
+            if ($holidayOnDate !== null) {
+                $activePolicy = $this->policyResolver->getActivePolicy(
+                    $user->getEffectiveCompanyId(),
+                    $user->branch_id !== null ? (int) $user->branch_id : null,
+                    $dateKey
+                );
+                $settings = $this->holidayEligibility->policyFor($activePolicy, $user->getEffectiveCompanyId());
+                $worked = (int) ($summary['worked_minutes'] ?? 0) > 0;
+                $qualification = $cursor->lessThanOrEqualTo($todayNow)
+                    ? $this->holidayEligibility->evaluate($user, $holidayOnDate, $dateKey, $worked, $settings)
+                    : null;
+                $holidayPayPolicy = [
+                    'source' => 'payroll_policy_settings',
+                    'policy_id' => $activePolicy?->id,
+                    'policy_name' => $activePolicy?->name ?? 'DOLE Global Default',
+                    'scope' => $activePolicy?->company_id !== null ? 'company_override' : 'global_default',
+                    'eligible' => $qualification['eligible'] ?? null,
+                    'attendance_rule_applied' => $qualification['rule'] ?? 'pending',
+                    'reason' => $qualification['reason'] ?? 'Eligibility is evaluated when the holiday date is reached.',
+                    'unworked_multiplier' => $this->holidayEligibility->unworkedMultiplier($holidayOnDate, $settings),
+                ];
+            }
 
             if (
                 $dayLateMinutes > 0
@@ -429,6 +456,7 @@ class EmployeeDashboardController extends Controller
                 'schedule_label' => ($summary['is_rest_day'] ?? false) ? AttendanceStatusResolver::REST_DAY_LABEL : null,
                 'holiday_name' => $holidayOnDate['name'] ?? null,
                 'holiday_type' => $holidayOnDate['type'] ?? null,
+                'holiday_pay_policy' => $holidayPayPolicy,
             ]);
 
             $cursor->addDay();
@@ -471,7 +499,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 10,
+                'schema_version' => 11,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,

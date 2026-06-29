@@ -35,6 +35,7 @@ class PremiumReportService
         private readonly TimeSegmentationService $timeSegmentation,
         private readonly AttendanceSessionService $attendanceSession,
         private readonly ScheduleRateService $scheduleRateService,
+        private readonly PolicyResolverService $policyResolver,
     ) {}
 
     public function getTimezone(): string
@@ -135,13 +136,14 @@ class PremiumReportService
     /**
      * Reusable premium context for one employee (avoid re-resolving rates/schedules per day).
      *
-     * @return array{effective_schedule: ?array, company_id: ?int, hourly_rate: float}
+     * @return array{effective_schedule: ?array, company_id: ?int, branch_id: ?int, hourly_rate: float}
      */
     public function premiumContextForEmployee(User $user): array
     {
         return [
             'effective_schedule' => $this->rulesEngine->resolveEffectiveSchedule($user),
             'company_id' => $user->getEffectiveCompanyId(),
+            'branch_id' => $user->branch_id !== null ? (int) $user->branch_id : null,
             'hourly_rate' => (float) $this->scheduleRateService->resolveHourlyRate($user),
         ];
     }
@@ -150,7 +152,7 @@ class PremiumReportService
      * Premium row for detailed reports using already-resolved clock times (matches session service order).
      * Avoids {@see AttendanceSessionService::getTimesForDate()} N+1 queries when the caller has times.
      *
-     * @param  array{effective_schedule: ?array, company_id: ?int, hourly_rate: float}  $context
+     * @param  array{effective_schedule: ?array, company_id: ?int, branch_id: ?int, hourly_rate: float}  $context
      * @return array|null null if no paired attendance times
      */
     public function computeDayPremiumFromResolvedTimes(
@@ -167,6 +169,7 @@ class PremiumReportService
 
         $effectiveSchedule = $context['effective_schedule'] ?? null;
         $companyId = $context['company_id'] ?? null;
+        $branchId = $context['branch_id'] ?? null;
         $hourlyRate = (float) ($context['hourly_rate'] ?? 0.0);
 
         return $this->buildDailyBreakdownFromTimes(
@@ -175,6 +178,7 @@ class PremiumReportService
             $timeOut instanceof Carbon ? $timeOut : Carbon::parse($timeOut),
             $effectiveSchedule,
             $companyId,
+            $branchId,
             $hourlyRate,
             $approvedOt,
             $tz
@@ -207,6 +211,7 @@ class PremiumReportService
             $timeOut,
             $effectiveSchedule,
             $companyId,
+            $user->branch_id !== null ? (int) $user->branch_id : null,
             $hourlyRate,
             $approvedOt,
             $tz
@@ -222,6 +227,7 @@ class PremiumReportService
         Carbon $timeOut,
         ?array $effectiveSchedule,
         ?int $companyId,
+        ?int $branchId,
         float $hourlyRate,
         ?Overtime $approvedOt,
         string $tz
@@ -235,11 +241,12 @@ class PremiumReportService
         $holidayType = $this->rulesEngine->getHolidayType($dateKey, $companyId);
         $isRestDay = $effectiveSchedule ? $this->rulesEngine->isRestDay($effectiveSchedule, $date) : false;
         $ruleCode = $this->rulesEngine->resolveRuleCode($isRestDay, $holidayType);
-        $multipliers = $this->rulesEngine->getMultipliersForRule($ruleCode);
+        $policy = $this->policyResolver->getActivePolicy($companyId, $branchId, $dateKey);
+        $multipliers = $this->rulesEngine->getMultipliersForRule($ruleCode, $policy);
         $base = (float) ($multipliers['first_8'] ?? 1.0);
         $otMult = (float) ($multipliers['ot'] ?? 1.25);
         $ndBase = (float) ($multipliers['nd_base'] ?? $base);
-        $ndPct = (float) config('payroll.nd_premium', 0.10);
+        $ndPct = (float) ($this->policyResolver->getNdConfig($policy)['premium_multiplier'] ?? config('payroll.nd_premium', 0.10));
 
         $segmentation = $this->timeSegmentation->segment($timeIn, $timeOut, $tz, $daySchedule, $dateKey);
         $regularHours = round($segmentation['regular_hours'], 2);
@@ -285,6 +292,8 @@ class PremiumReportService
         $totalPay = round($regularPay + $otPay + $ndPay, 2);
 
         $ruleLabels = self::RULE_LABELS[$ruleCode] ?? [null, null, null];
+        $ruleLabels[1] = number_format($base * 100, 0).'% of basic hourly rate';
+        $ruleLabels[2] = number_format($base, 2, '.', '');
 
         return [
             'date' => $dateKey,
