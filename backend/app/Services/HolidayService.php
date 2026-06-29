@@ -2,20 +2,17 @@
 
 namespace App\Services;
 
-use App\Models\Branch;
-use App\Models\Department;
 use App\Models\EmployeeOrganizationAssignment;
 use App\Models\Holiday;
-use App\Models\SectionUnit;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 
 class HolidayService
 {
     private const COVERAGE_CACHE_PREFIX = 'holiday_coverage:';
+
     private const COVERAGE_CACHE_TTL = 3600;
 
     /** @var array<string, array<string, mixed>|null> */
@@ -23,6 +20,7 @@ class HolidayService
 
     public function __construct(
         private readonly HolidayCalendarService $holidayCalendar,
+        private readonly HolidayScopeResolver $scopeResolver,
     ) {}
 
     public function flushRuntimeCaches(): void
@@ -76,8 +74,7 @@ class HolidayService
      */
     public function getSwapHolidaysForDate(string $dateKey): array
     {
-        $year = (int) substr($dateKey, 0, 4);
-        $cacheKey = self::COVERAGE_CACHE_PREFIX . 'swap_date:' . $dateKey;
+        $cacheKey = self::COVERAGE_CACHE_PREFIX.'swap_date:'.$dateKey;
 
         return Cache::remember($cacheKey, self::COVERAGE_CACHE_TTL, function () use ($dateKey) {
             return Holiday::query()
@@ -95,97 +92,11 @@ class HolidayService
      */
     public function holidayCoversEmployee(array $holiday, User $user): bool
     {
-        $coverageType = $holiday['coverage_type'] ?? null;
-        $coverageIds = $holiday['coverage_ids'] ?? [];
+        $date = isset($holiday['date']) && $holiday['date'] !== ''
+            ? Carbon::parse((string) $holiday['date'])
+            : now();
 
-        if (! is_array($coverageIds)) {
-            $coverageIds = [];
-        }
-
-        if ($coverageType === null || empty($coverageIds)) {
-            return $this->fallbackScopeCheck($holiday, $user);
-        }
-
-        $coverageIds = array_map('intval', $coverageIds);
-
-        return match ($coverageType) {
-            'company' => $this->employeeBelongsToCompanies($user, $coverageIds),
-            'branches' => $this->employeeBelongsToBranches($user, $coverageIds),
-            'divisions' => $this->employeeBelongsToDivisions($user, $coverageIds),
-            'departments' => $this->employeeBelongsToDepartments($user, $coverageIds),
-            'section_units' => $this->employeeBelongsToSectionUnits($user, $coverageIds),
-            'employees' => in_array((int) $user->id, $coverageIds, true),
-            default => false,
-        };
-    }
-
-    /**
-     * Fallback to the existing scope-based check when coverage_type/coverage_ids are not set.
-     */
-    private function fallbackScopeCheck(array $holiday, User $user): bool
-    {
-        $scope = strtolower($holiday['scope'] ?? 'nationwide');
-        $companyId = $user->getEffectiveCompanyId();
-        $branchId = $user->branch_id ? (int) $user->branch_id : null;
-        $divisionId = $user->division_id ? (int) $user->division_id : null;
-        $departmentId = $user->department_id ? (int) $user->department_id : null;
-        $sectionUnitId = $user->section_unit_id ? (int) $user->section_unit_id : null;
-
-        return match ($scope) {
-            'employee' => isset($holiday['employee_id']) && (int) $holiday['employee_id'] === (int) $user->id,
-            'section_unit' => isset($holiday['section_unit_id']) && $sectionUnitId !== null && (int) $holiday['section_unit_id'] === $sectionUnitId,
-            'department' => isset($holiday['department_id']) && $departmentId !== null && (int) $holiday['department_id'] === $departmentId,
-            'division' => isset($holiday['division_id']) && $divisionId !== null && (int) $holiday['division_id'] === $divisionId,
-            'branch' => isset($holiday['branch_id']) && $branchId !== null && (int) $holiday['branch_id'] === $branchId,
-            'company' => ! isset($holiday['company_id']) || ($companyId !== null && (int) $holiday['company_id'] === $companyId),
-            'nationwide', 'regional' => true,
-            default => true,
-        };
-    }
-
-    private function employeeBelongsToCompanies(User $user, array $companyIds): bool
-    {
-        $effectiveCompanyId = $user->getEffectiveCompanyId();
-        if ($effectiveCompanyId === null) {
-            return false;
-        }
-
-        return in_array((int) $effectiveCompanyId, $companyIds, true);
-    }
-
-    private function employeeBelongsToBranches(User $user, array $branchIds): bool
-    {
-        if ($user->branch_id !== null && in_array((int) $user->branch_id, $branchIds, true)) {
-            return true;
-        }
-
-        if ($user->department_id !== null) {
-            $dept = Department::query()->where('id', $user->department_id)->first(['branch_id']);
-            if ($dept && in_array((int) $dept->branch_id, $branchIds, true)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function employeeBelongsToDepartments(User $user, array $departmentIds): bool
-    {
-        if ($user->department_id !== null) {
-            return in_array((int) $user->department_id, $departmentIds, true);
-        }
-
-        return false;
-    }
-
-    private function employeeBelongsToDivisions(User $user, array $divisionIds): bool
-    {
-        return $user->division_id !== null && in_array((int) $user->division_id, $divisionIds, true);
-    }
-
-    private function employeeBelongsToSectionUnits(User $user, array $sectionUnitIds): bool
-    {
-        return $user->section_unit_id !== null && in_array((int) $user->section_unit_id, $sectionUnitIds, true);
+        return $this->scopeResolver->appliesRowToEmployee($holiday, $user, $date);
     }
 
     /**
@@ -193,32 +104,14 @@ class HolidayService
      */
     public function getEmployeesCoveredByHoliday(Holiday $holiday): Collection
     {
-        $coverageType = $holiday->coverage_type;
-        $coverageIds = $holiday->getCoverageIds();
+        $date = $holiday->date instanceof Carbon ? $holiday->date : Carbon::parse((string) $holiday->date);
 
-        if (empty($coverageIds) || $coverageType === null) {
-            return collect();
-        }
-
-        $query = User::query()
+        return User::query()
             ->where('is_active', true)
-            ->visibleEmployees();
-
-        return match ($coverageType) {
-            'company' => $query->where(function ($q) use ($coverageIds) {
-                $q->whereIn('company_id', $coverageIds)
-                    ->orWhereHas('companyHeadships', fn ($sub) => $sub->whereIn('id', $coverageIds))
-                    ->orWhereHas('branch', fn ($sub) => $sub->whereIn('company_id', $coverageIds))
-                    ->orWhereHas('departmentRelation.branch', fn ($sub) => $sub->whereIn('company_id', $coverageIds));
-            })->get(),
-            'branches' => $query->where(function ($q) use ($coverageIds) {
-                $q->whereIn('branch_id', $coverageIds)
-                    ->orWhereHas('departmentRelation', fn ($sub) => $sub->whereIn('branch_id', $coverageIds));
-            })->get(),
-            'departments' => $query->whereIn('department_id', $coverageIds)->get(),
-            'employees' => $query->whereIn('id', $coverageIds)->get(),
-            default => collect(),
-        };
+            ->visibleEmployees()
+            ->get()
+            ->filter(fn (User $employee): bool => $this->scopeResolver->appliesToEmployee($holiday, $employee, $date))
+            ->values();
     }
 
     /**
@@ -226,34 +119,7 @@ class HolidayService
      */
     public function countAffectedEmployees(Holiday $holiday): int
     {
-        $coverageType = $holiday->coverage_type;
-        $coverageIds = $holiday->getCoverageIds();
-
-        if (empty($coverageIds) || $coverageType === null) {
-            return 0;
-        }
-
-        $query = User::query()
-            ->where('is_active', true)
-            ->visibleEmployees();
-
-        return match ($coverageType) {
-            'company' => (clone $query)->where(function ($q) use ($coverageIds) {
-                $q->whereIn('company_id', $coverageIds)
-                    ->orWhereHas('companyHeadships', fn ($sub) => $sub->whereIn('id', $coverageIds))
-                    ->orWhereHas('branch', fn ($sub) => $sub->whereIn('company_id', $coverageIds))
-                    ->orWhereHas('departmentRelation.branch', fn ($sub) => $sub->whereIn('company_id', $coverageIds));
-            })->count(),
-            'branches' => (clone $query)->where(function ($q) use ($coverageIds) {
-                $q->whereIn('branch_id', $coverageIds)
-                    ->orWhereHas('departmentRelation', fn ($sub) => $sub->whereIn('branch_id', $coverageIds));
-            })->count(),
-            'divisions' => (clone $query)->whereIn('division_id', $coverageIds)->count(),
-            'departments' => (clone $query)->whereIn('department_id', $coverageIds)->count(),
-            'section_units' => (clone $query)->whereIn('section_unit_id', $coverageIds)->count(),
-            'employees' => (clone $query)->whereIn('id', $coverageIds)->count(),
-            default => 0,
-        };
+        return $this->getEmployeesCoveredByHoliday($holiday)->count();
     }
 
     /**
@@ -261,7 +127,6 @@ class HolidayService
      */
     public function flushCoverageCache(): void
     {
-        $pattern = self::COVERAGE_CACHE_PREFIX . '*';
         Cache::flush();
         $this->holidayCalendar->flushMergedYearCaches();
     }
@@ -271,7 +136,7 @@ class HolidayService
      */
     public function flushCoverageForDate(string $dateKey): void
     {
-        Cache::forget(self::COVERAGE_CACHE_PREFIX . 'swap_date:' . $dateKey);
+        Cache::forget(self::COVERAGE_CACHE_PREFIX.'swap_date:'.$dateKey);
     }
 
     /**
@@ -312,15 +177,7 @@ class HolidayService
             return $this->resolvedHolidayCache[$cacheKey] = $swap;
         }
 
-        return $this->resolvedHolidayCache[$cacheKey] = $this->holidayCalendar->holidayForDate(
-            $dateKey,
-            $companyId,
-            $branchId,
-            $departmentId,
-            (int) $user->id,
-            $divisionId,
-            $sectionUnitId
-        );
+        return $this->resolvedHolidayCache[$cacheKey] = $this->holidayCalendar->holidayForUserDate($user, $dateKey);
     }
 
     private function activeSectionContextForEmployee(User $user, string $dateKey, ?int $sectionUnitId): ?int

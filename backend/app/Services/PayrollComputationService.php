@@ -631,14 +631,7 @@ class PayrollComputationService
         $dayKey = $this->dayKeyForDate(Carbon::parse($dateKey, $tz));
         $daySchedule = $effectiveSchedule[$dayKey] ?? null;
         $isRestDay = $this->isRestDay($effectiveSchedule, Carbon::parse($dateKey, $tz));
-        $holiday = $this->getHolidayForUserDate($user, $dateKey)
-            ?? $this->getHolidayForDate(
-                $dateKey,
-                $user->getEffectiveCompanyId(),
-                $user->branch_id !== null ? (int) $user->branch_id : null,
-                $user->department_id !== null ? (int) $user->department_id : null,
-                (int) $user->id
-            );
+        $holiday = $this->getHolidayForUserDate($user, $dateKey);
 
         // Phase 2: Rules Engine – resolve rule code and multipliers (policy-aware)
         $companyId = $user->getEffectiveCompanyId();

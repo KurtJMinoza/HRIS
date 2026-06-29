@@ -83,7 +83,16 @@ class AdminDashboardCache
     public static function segmentVersion(int $companyId, string $segment): int
     {
         try {
-            return (int) Cache::get(self::versionKey($companyId, $segment), 1);
+            $companyVersion = (int) Cache::get(self::versionKey($companyId, $segment), 1);
+            if ($companyId <= 0) {
+                return max(1, $companyVersion);
+            }
+
+            // Company-specific keys also inherit the global epoch. This makes
+            // flush() invalidate every admin dashboard, including scoped admins.
+            $globalVersion = (int) Cache::get(self::versionKey(0, $segment), 1);
+
+            return max(1, $companyVersion + $globalVersion - 1);
         } catch (\Throwable) {
             return 1;
         }

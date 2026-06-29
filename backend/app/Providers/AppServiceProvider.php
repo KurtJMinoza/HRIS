@@ -11,28 +11,30 @@ use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
 use App\Models\EmployeeBenefit;
-use App\Models\LeaveRequest;
-use App\Models\Overtime;
-use App\Models\PayrollBatchRun;
-use App\Models\PayrollEmployee;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeEmergencyContact;
 use App\Models\EmployeeGovernmentId;
 use App\Models\Holiday;
+use App\Models\LeaveRequest;
+use App\Models\Overtime;
+use App\Models\PayrollBatchRun;
+use App\Models\PayrollEmployee;
 use App\Models\SectionUnit;
 use App\Models\Team;
 use App\Models\User;
 use App\Services\AttendanceCacheService;
 use App\Services\EmployeeDashboardCacheService;
 use App\Services\HolidayCalendarService;
+use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
 use App\Services\LegacyOrganizationMirrorService;
-use App\Support\EmployeeProfileCache;
 use App\Support\AdminDashboardCache;
+use App\Support\EmployeeProfileCache;
 use App\Support\HeadAssignmentEmployeeSearchCache;
+use App\Support\PayrollCacheInvalidator;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
@@ -44,9 +46,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->singleton(HolidayCalendarService::class, fn () => new HolidayCalendarService);
+        $this->app->singleton(HolidayScopeResolver::class);
+        $this->app->singleton(HolidayCalendarService::class, fn ($app) => new HolidayCalendarService(
+            $app->make(HolidayScopeResolver::class)
+        ));
         $this->app->singleton(HolidayService::class, fn ($app) => new HolidayService(
-            $app->make(HolidayCalendarService::class)
+            $app->make(HolidayCalendarService::class),
+            $app->make(HolidayScopeResolver::class),
         ));
         $this->app->bind(
             \App\Contracts\OrgUnitEmployeeCounter::class,
@@ -280,7 +286,11 @@ class AppServiceProvider extends ServiceProvider
 
         Holiday::saved(function (Holiday $h) {
             app(HolidayCalendarService::class)->flushMergedYearCaches();
+            app(HolidayService::class)->flushRuntimeCaches();
             EmployeeDashboardCacheService::invalidateAll();
+            AttendanceCacheService::invalidate();
+            AdminDashboardCache::flush();
+            PayrollCacheInvalidator::clear('holiday_changed', ['holiday_id' => (int) $h->id]);
             if ($h->is_swap) {
                 $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
                 app(HolidayService::class)->flushCoverageForDate($dateKey);
@@ -288,7 +298,11 @@ class AppServiceProvider extends ServiceProvider
         });
         Holiday::deleted(function (Holiday $h) {
             app(HolidayCalendarService::class)->flushMergedYearCaches();
+            app(HolidayService::class)->flushRuntimeCaches();
             EmployeeDashboardCacheService::invalidateAll();
+            AttendanceCacheService::invalidate();
+            AdminDashboardCache::flush();
+            PayrollCacheInvalidator::clear('holiday_deleted', ['holiday_id' => (int) $h->id]);
             if ($h->is_swap) {
                 $dateKey = $h->date instanceof \Carbon\Carbon ? $h->date->format('Y-m-d') : (string) $h->date;
                 app(HolidayService::class)->flushCoverageForDate($dateKey);
@@ -313,6 +327,10 @@ class AppServiceProvider extends ServiceProvider
         User::saved(function (User $user) use ($mirror): void {
             if ($user->wasChanged(['company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id', 'team_id', 'supervisor_id'])) {
                 $mirror()->sync($user);
+                app(HolidayService::class)->flushRuntimeCaches();
+                app(HolidayScopeResolver::class)->flushRuntimeCaches();
+                EmployeeDashboardCacheService::invalidate((int) $user->id);
+                AttendanceCacheService::invalidate((int) $user->id);
             }
         });
         Company::deleted(fn (Company $model) => $mirror()->deactivate($model));
@@ -321,5 +339,23 @@ class AppServiceProvider extends ServiceProvider
         Department::deleted(fn (Department $model) => $mirror()->deactivate($model));
         SectionUnit::deleted(fn (SectionUnit $model) => $mirror()->deactivate($model));
         Team::deleted(fn (Team $model) => $mirror()->deactivate($model));
+
+        $invalidateHolidayOrganization = function (): void {
+            app(HolidayScopeResolver::class)->flushRuntimeCaches();
+            app(HolidayCalendarService::class)->flushMergedYearCaches();
+            app(HolidayService::class)->flushRuntimeCaches();
+            EmployeeDashboardCacheService::invalidateAll();
+            AdminDashboardCache::flush();
+        };
+        Company::saved($invalidateHolidayOrganization);
+        Branch::saved($invalidateHolidayOrganization);
+        Division::saved($invalidateHolidayOrganization);
+        Department::saved($invalidateHolidayOrganization);
+        SectionUnit::saved($invalidateHolidayOrganization);
+        Company::deleted($invalidateHolidayOrganization);
+        Branch::deleted($invalidateHolidayOrganization);
+        Division::deleted($invalidateHolidayOrganization);
+        Department::deleted($invalidateHolidayOrganization);
+        SectionUnit::deleted($invalidateHolidayOrganization);
     }
 }

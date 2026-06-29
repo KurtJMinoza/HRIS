@@ -36,4 +36,21 @@ class AdminDashboardCacheTest extends TestCase
 
         $this->assertGreaterThan($before, $after);
     }
+
+    public function test_global_flush_invalidates_company_scoped_dashboard_keys(): void
+    {
+        Cache::flush();
+
+        $actor = \Mockery::mock(User::class)->makePartial();
+        $actor->id = 42;
+        $actor->company_id = 7;
+        $actor->role = User::ROLE_ADMIN;
+        $actor->shouldReceive('getEffectiveCompanyId')->andReturn(7);
+
+        $before = AdminDashboardCache::key($actor, 'summary', '2026-06-29');
+        AdminDashboardCache::flush();
+        $after = AdminDashboardCache::key($actor, 'summary', '2026-06-29');
+
+        $this->assertNotSame($before, $after);
+    }
 }

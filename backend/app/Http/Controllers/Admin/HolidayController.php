@@ -7,12 +7,12 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
-use App\Models\EmployeeOrganizationAssignment;
 use App\Models\Holiday;
 use App\Models\PayrollDailyRecord;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\HolidayCalendarService;
+use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\PhPayrollReference;
@@ -28,6 +28,7 @@ class HolidayController extends Controller
     public function __construct(
         private readonly HolidayCalendarService $holidayCalendar,
         private readonly HolidayService $holidayService,
+        private readonly HolidayScopeResolver $holidayScopeResolver,
         private readonly Holiday $holiday,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
     ) {}
@@ -308,39 +309,7 @@ class HolidayController extends Controller
             'employee_id' => null,
         ];
 
-        if ($valid['coverage_type'] === 'company' && count($coverageIds) === 1) {
-            $payload['company_id'] = $coverageIds[0];
-        } elseif ($valid['coverage_type'] === 'branches' && count($coverageIds) === 1) {
-            $branch = Branch::query()->find($coverageIds[0], ['id', 'company_id']);
-            $payload['branch_id'] = $coverageIds[0];
-            $payload['company_id'] = $branch?->company_id;
-        } elseif ($valid['coverage_type'] === 'divisions' && count($coverageIds) === 1) {
-            $division = Division::query()->find($coverageIds[0], ['id', 'company_id', 'branch_id']);
-            $payload['division_id'] = $coverageIds[0];
-            $payload['branch_id'] = $division?->branch_id;
-            $payload['company_id'] = $division?->company_id;
-        } elseif ($valid['coverage_type'] === 'departments' && count($coverageIds) === 1) {
-            $dept = Department::query()->with('branch:id,company_id')->find($coverageIds[0]);
-            $payload['department_id'] = $coverageIds[0];
-            $payload['division_id'] = $dept?->division_id;
-            $payload['branch_id'] = $dept?->branch_id;
-            $payload['company_id'] = $dept?->branch?->company_id;
-        } elseif ($valid['coverage_type'] === 'section_units' && count($coverageIds) === 1) {
-            $section = SectionUnit::query()->find($coverageIds[0], ['id', 'company_id', 'branch_id', 'division_id', 'department_id']);
-            $payload['section_unit_id'] = $coverageIds[0];
-            $payload['department_id'] = $section?->department_id;
-            $payload['division_id'] = $section?->division_id;
-            $payload['branch_id'] = $section?->branch_id;
-            $payload['company_id'] = $section?->company_id;
-        } elseif ($valid['coverage_type'] === 'employees' && count($coverageIds) === 1) {
-            $user = User::query()->find($coverageIds[0]);
-            $payload['employee_id'] = $coverageIds[0];
-            $payload['company_id'] = $user?->getEffectiveCompanyId();
-            $payload['branch_id'] = $user?->branch_id;
-            $payload['division_id'] = $user?->division_id;
-            $payload['department_id'] = $user?->department_id;
-            $payload['section_unit_id'] = $user?->section_unit_id;
-        }
+        $payload = array_merge($payload, $this->coverageTargetColumns($valid['coverage_type'], $coverageIds));
 
         $holiday = $this->holiday->newQuery()->create($payload);
         $this->holidayCalendar->flushMergedYearCaches();
@@ -358,6 +327,7 @@ class HolidayController extends Controller
     public function updateSwap(Request $request, int $id): JsonResponse
     {
         $holiday = $this->holiday->newQuery()->findOrFail($id);
+        $oldDateKey = $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date;
 
         $valid = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
@@ -400,15 +370,16 @@ class HolidayController extends Controller
             $updateData['status'] = $valid['status'];
         }
 
-        if (isset($valid['coverage_type']) && isset($valid['coverage_ids'])) {
+        if (isset($valid['coverage_type']) || isset($valid['coverage_ids'])) {
+            $coverageType = (string) ($valid['coverage_type'] ?? $holiday->coverage_type ?? '');
             $coverageIds = array_values(array_unique(array_filter(
-                array_map('intval', $valid['coverage_ids'])
+                array_map('intval', $valid['coverage_ids'] ?? $holiday->getCoverageIds())
             )));
-            $this->validateCoverageIds($valid['coverage_type'], $coverageIds);
+            $this->validateCoverageIds($coverageType, $coverageIds);
 
-            $updateData['coverage_type'] = $valid['coverage_type'];
+            $updateData['coverage_type'] = $coverageType;
             $updateData['coverage_ids'] = $coverageIds;
-            $updateData['scope'] = match ($valid['coverage_type']) {
+            $updateData['scope'] = match ($coverageType) {
                 'company' => 'company',
                 'branches' => 'branch',
                 'divisions' => 'division',
@@ -416,12 +387,14 @@ class HolidayController extends Controller
                 'section_units' => 'section_unit',
                 'employees' => 'employee',
             };
+            $updateData = array_merge($updateData, $this->coverageTargetColumns($coverageType, $coverageIds));
         }
 
         $holiday->update($updateData);
         $holiday->refresh();
 
         $this->holidayCalendar->flushMergedYearCaches();
+        $this->holidayService->flushCoverageForDate($oldDateKey);
         $this->holidayService->flushCoverageForDate(
             $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date
         );
@@ -570,46 +543,8 @@ class HolidayController extends Controller
     private function holidayAppliesToEmployee(array $row, User $employee): bool
     {
         $date = (string) ($row['date'] ?? '');
-        $sectionUnitId = $employee->section_unit_id !== null ? (int) $employee->section_unit_id : null;
 
-        if (
-            strtolower((string) ($row['scope'] ?? '')) === 'section_unit'
-            && isset($row['section_unit_id'])
-            && (int) $row['section_unit_id'] > 0
-            && $sectionUnitId !== (int) $row['section_unit_id']
-            && $this->employeeHasActiveSectionAssignment($employee, (int) $row['section_unit_id'], $date)
-        ) {
-            $sectionUnitId = (int) $row['section_unit_id'];
-        }
-
-        return $this->holidayCalendar->rowAppliesToTarget(
-            $row,
-            $employee->getEffectiveCompanyId() !== null ? (int) $employee->getEffectiveCompanyId() : null,
-            $employee->branch_id !== null ? (int) $employee->branch_id : null,
-            $employee->department_id !== null ? (int) $employee->department_id : null,
-            (int) $employee->id,
-            $employee->division_id !== null ? (int) $employee->division_id : null,
-            $sectionUnitId,
-        );
-    }
-
-    private function employeeHasActiveSectionAssignment(User $employee, int $sectionUnitId, string $date): bool
-    {
-        if ($date === '') {
-            return false;
-        }
-
-        return EmployeeOrganizationAssignment::query()
-            ->where('employee_id', (int) $employee->id)
-            ->where('section_unit_id', $sectionUnitId)
-            ->where('is_active', true)
-            ->where(function ($query) use ($date): void {
-                $query->whereNull('effective_from')->orWhereDate('effective_from', '<=', $date);
-            })
-            ->where(function ($query) use ($date): void {
-                $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $date);
-            })
-            ->exists();
+        return $date !== '' && $this->holidayScopeResolver->appliesRowToEmployee($row, $employee, Carbon::parse($date));
     }
 
     /**
@@ -845,8 +780,6 @@ class HolidayController extends Controller
     }
 
     /**
-     * @param  mixed  $ids
-     * @param  mixed  $fallback
      * @return list<int>
      */
     private function normalizedIdList(mixed $ids, mixed $fallback = null): array
@@ -1068,6 +1001,66 @@ class HolidayController extends Controller
             };
             abort(response()->json(['message' => "One or more selected {$entityName} were not found"], 422));
         }
+    }
+
+    /**
+     * Clear every legacy single-target column when coverage changes, then fill
+     * the authoritative path only when exactly one target was selected.
+     *
+     * @param  list<int>  $coverageIds
+     * @return array<string, int|null>
+     */
+    private function coverageTargetColumns(string $coverageType, array $coverageIds): array
+    {
+        $columns = [
+            'company_id' => null,
+            'branch_id' => null,
+            'division_id' => null,
+            'department_id' => null,
+            'section_unit_id' => null,
+            'employee_id' => null,
+        ];
+
+        if (count($coverageIds) !== 1) {
+            return $columns;
+        }
+
+        $id = $coverageIds[0];
+        if ($coverageType === 'company') {
+            $columns['company_id'] = $id;
+        } elseif ($coverageType === 'branches') {
+            $branch = Branch::query()->find($id, ['id', 'company_id']);
+            $columns['company_id'] = $branch?->company_id;
+            $columns['branch_id'] = $id;
+        } elseif ($coverageType === 'divisions') {
+            $division = Division::query()->find($id, ['id', 'company_id', 'branch_id']);
+            $columns['company_id'] = $division?->company_id;
+            $columns['branch_id'] = $division?->branch_id;
+            $columns['division_id'] = $id;
+        } elseif ($coverageType === 'departments') {
+            $department = Department::query()->with('branch:id,company_id')->find($id);
+            $columns['company_id'] = $department?->branch?->company_id;
+            $columns['branch_id'] = $department?->branch_id;
+            $columns['division_id'] = $department?->division_id;
+            $columns['department_id'] = $id;
+        } elseif ($coverageType === 'section_units') {
+            $section = SectionUnit::query()->find($id, ['id', 'company_id', 'branch_id', 'division_id', 'department_id']);
+            $columns['company_id'] = $section?->company_id;
+            $columns['branch_id'] = $section?->branch_id;
+            $columns['division_id'] = $section?->division_id;
+            $columns['department_id'] = $section?->department_id;
+            $columns['section_unit_id'] = $id;
+        } elseif ($coverageType === 'employees') {
+            $employee = User::query()->find($id);
+            $columns['company_id'] = $employee?->getEffectiveCompanyId();
+            $columns['branch_id'] = $employee?->branch_id;
+            $columns['division_id'] = $employee?->division_id;
+            $columns['department_id'] = $employee?->department_id;
+            $columns['section_unit_id'] = $employee?->section_unit_id;
+            $columns['employee_id'] = $id;
+        }
+
+        return $columns;
     }
 
     /**

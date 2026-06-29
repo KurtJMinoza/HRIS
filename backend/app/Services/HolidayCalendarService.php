@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Models\Holiday;
-use App\Support\TextSanitizer;
 use App\Models\User;
+use App\Support\TextSanitizer;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 
@@ -26,6 +26,10 @@ class HolidayCalendarService
 
     /** @var array<int, list<array<string, mixed>>> */
     private array $holidaysListByYear = [];
+
+    public function __construct(
+        private readonly HolidayScopeResolver $scopeResolver,
+    ) {}
 
     public function flushMergedYearCaches(): void
     {
@@ -366,6 +370,54 @@ class HolidayCalendarService
                 && $this->rowAppliesToTarget($row, $companyId, $branchId, $departmentId, $employeeId, $divisionId, $sectionUnitId)
         ));
 
+        return $this->bestActiveMatch($matches);
+    }
+
+    /**
+     * @return array{name: string, type: string, scope: string, description: ?string}|null
+     */
+    public function holidayForUserDate(User $user, string $dateKey): ?array
+    {
+        $year = (int) substr($dateKey, 0, 4);
+        if ($year < 2000) {
+            return null;
+        }
+
+        $date = Carbon::parse($dateKey);
+        $matches = array_values(array_filter(
+            $this->holidaysForYear($year),
+            fn (array $row): bool => ($row['date'] ?? null) === $dateKey
+                && $this->scopeResolver->appliesRowToEmployee($row, $user, $date)
+        ));
+
+        return $this->bestActiveMatch($matches);
+    }
+
+    public function rowAppliesToTarget(
+        array $row,
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?int $employeeId,
+        ?int $divisionId = null,
+        ?int $sectionUnitId = null
+    ): bool {
+        return $this->scopeResolver->appliesToContext($row, [
+            'company_id' => $companyId,
+            'branch_id' => $branchId,
+            'department_id' => $departmentId,
+            'employee_id' => $employeeId,
+            'division_id' => $divisionId,
+            'section_unit_id' => $sectionUnitId,
+        ]);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $matches
+     * @return array<string, mixed>|null
+     */
+    private function bestActiveMatch(array $matches): ?array
+    {
         usort($matches, function (array $a, array $b) {
             $scope = $this->scopePrecedence($b) <=> $this->scopePrecedence($a);
             if ($scope !== 0) {
@@ -379,6 +431,7 @@ class HolidayCalendarService
             $status = strtolower((string) ($row['status'] ?? 'active'));
             if ($status === 'active' || $status === '') {
                 return [
+                    'id' => $row['id'] ?? null,
                     'name' => (string) $row['name'],
                     'type' => (string) $row['type'],
                     'scope' => (string) ($row['scope'] ?? 'nationwide'),
@@ -391,6 +444,8 @@ class HolidayCalendarService
                     'department_id' => $row['department_id'] ?? null,
                     'section_unit_id' => $row['section_unit_id'] ?? null,
                     'employee_id' => $row['employee_id'] ?? null,
+                    'coverage_type' => $row['coverage_type'] ?? null,
+                    'coverage_ids' => $row['coverage_ids'] ?? [],
                     'description' => $row['description'] ?? null,
                 ];
             }
@@ -400,101 +455,6 @@ class HolidayCalendarService
         }
 
         return null;
-    }
-
-    /**
-     * @return array{name: string, type: string, scope: string, description: ?string}|null
-     */
-    public function holidayForUserDate(User $user, string $dateKey): ?array
-    {
-        return $this->holidayForDate(
-            $dateKey,
-            $user->getEffectiveCompanyId() !== null ? (int) $user->getEffectiveCompanyId() : null,
-            $user->branch_id !== null ? (int) $user->branch_id : null,
-            $user->department_id !== null ? (int) $user->department_id : null,
-            (int) $user->id,
-            $user->division_id !== null ? (int) $user->division_id : null,
-            $user->section_unit_id !== null ? (int) $user->section_unit_id : null
-        );
-    }
-
-    public function rowAppliesToTarget(
-        array $row,
-        ?int $companyId,
-        ?int $branchId,
-        ?int $departmentId,
-        ?int $employeeId,
-        ?int $divisionId = null,
-        ?int $sectionUnitId = null
-    ): bool {
-        $coverageType = $row['coverage_type'] ?? null;
-        $coverageIds = $row['coverage_ids'] ?? [];
-        if ($coverageType !== null && is_array($coverageIds) && ! empty($coverageIds)) {
-            return $this->coverageAppliesToTarget($coverageType, $coverageIds, $companyId, $branchId, $departmentId, $employeeId, $divisionId, $sectionUnitId);
-        }
-
-        $scope = strtolower((string) ($row['scope'] ?? 'nationwide'));
-        $rowCompany = isset($row['company_id']) ? (int) $row['company_id'] : 0;
-        $rowBranch = isset($row['branch_id']) ? (int) $row['branch_id'] : 0;
-        $rowDivision = isset($row['division_id']) ? (int) $row['division_id'] : 0;
-        $rowDepartment = isset($row['department_id']) ? (int) $row['department_id'] : 0;
-        $rowSectionUnit = isset($row['section_unit_id']) ? (int) $row['section_unit_id'] : 0;
-        $rowEmployee = isset($row['employee_id']) ? (int) $row['employee_id'] : 0;
-
-        return match ($scope) {
-            'employee' => $rowEmployee > 0 && $employeeId !== null && $rowEmployee === (int) $employeeId,
-            'section_unit' => $rowSectionUnit > 0
-                && $sectionUnitId !== null
-                && $rowSectionUnit === (int) $sectionUnitId
-                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId))
-                && ($rowBranch <= 0 || ($branchId !== null && $rowBranch === (int) $branchId))
-                && ($rowDivision <= 0 || ($divisionId !== null && $rowDivision === (int) $divisionId))
-                && ($rowDepartment <= 0 || ($departmentId !== null && $rowDepartment === (int) $departmentId)),
-            'department' => $rowDepartment > 0
-                && $departmentId !== null
-                && $rowDepartment === (int) $departmentId
-                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId))
-                && ($rowBranch <= 0 || ($branchId !== null && $rowBranch === (int) $branchId))
-                && ($rowDivision <= 0 || ($divisionId !== null && $rowDivision === (int) $divisionId)),
-            'division' => $rowDivision > 0
-                && $divisionId !== null
-                && $rowDivision === (int) $divisionId
-                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId))
-                && ($rowBranch <= 0 || ($branchId !== null && $rowBranch === (int) $branchId)),
-            'branch' => $rowBranch > 0
-                && $branchId !== null
-                && $rowBranch === (int) $branchId
-                && ($rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId)),
-            'company' => $rowCompany <= 0 || ($companyId !== null && $rowCompany === (int) $companyId),
-            'regional', 'nationwide' => true,
-            default => true,
-        };
-    }
-
-    /**
-     * Check if a coverage-based holiday applies to the given target IDs.
-     */
-    private function coverageAppliesToTarget(
-        string $coverageType,
-        array $coverageIds,
-        ?int $companyId,
-        ?int $branchId,
-        ?int $departmentId,
-        ?int $employeeId,
-        ?int $divisionId = null,
-        ?int $sectionUnitId = null
-    ): bool {
-        $coverageIds = array_map('intval', $coverageIds);
-
-        return match ($coverageType) {
-            'company' => $companyId !== null && in_array($companyId, $coverageIds, true),
-            'branches' => $branchId !== null && in_array($branchId, $coverageIds, true),
-            'divisions' => $divisionId !== null && in_array($divisionId, $coverageIds, true),
-            'departments' => $departmentId !== null && in_array($departmentId, $coverageIds, true),
-            'section_units' => $sectionUnitId !== null && in_array($sectionUnitId, $coverageIds, true),
-            'employees' => $employeeId !== null && in_array($employeeId, $coverageIds, true),
-            default => false,
-        };
     }
 
     private function scopePrecedence(array $row): int

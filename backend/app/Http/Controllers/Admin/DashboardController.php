@@ -1978,18 +1978,16 @@ class DashboardController extends Controller
     }
 
     /**
-     * Org scope for holiday visibility. Null = unrestricted (global HR admin).
+     * Org scope for holiday visibility. Administrators manage the shared holiday
+     * calendar, so their dashboard must show every configured holiday regardless
+     * of the administrator's optional employee organization assignment.
      *
      * @return array{company_ids: array<int, int>, branch_ids: array<int, int>, department_ids: array<int, int>}|null
      */
     private function resolveHolidayScopeContext(User $actor): ?array
     {
-        if ($actor->isAdmin() && ! $actor->hasScopedHrAdminAssignment()) {
+        if ($actor->isAdmin()) {
             return null;
-        }
-
-        if ($actor->isAdmin() && $actor->hasScopedHrAdminAssignment()) {
-            return $this->holidayScopeContextFromUserAssignment($actor);
         }
 
         $meta = $this->dataScopeService->getAttendanceScopeMeta($actor);
@@ -2213,6 +2211,12 @@ class DashboardController extends Controller
             }
         }
 
+        foreach ($divisionIds as $divisionId) {
+            if ($divisionId > 0 && $this->holidayCalendar->rowAppliesToTarget($row, null, null, null, null, $divisionId)) {
+                return true;
+            }
+        }
+
         foreach ($departmentIds as $departmentId) {
             if ($departmentId > 0 && $this->holidayCalendar->rowAppliesToTarget($row, null, null, $departmentId, null)) {
                 return true;
@@ -2224,41 +2228,13 @@ class DashboardController extends Controller
             }
         }
 
-        $rowCompanyId = isset($row['company_id']) ? (int) $row['company_id'] : 0;
-        $rowBranchId = isset($row['branch_id']) ? (int) $row['branch_id'] : 0;
-        $rowDivisionId = isset($row['division_id']) ? (int) $row['division_id'] : 0;
-        $rowDepartmentId = isset($row['department_id']) ? (int) $row['department_id'] : 0;
-        $rowSectionUnitId = isset($row['section_unit_id']) ? (int) $row['section_unit_id'] : 0;
-        if ($rowCompanyId > 0 && in_array($rowCompanyId, $companyIds, true)) {
-            return true;
-        }
-        if ($rowBranchId > 0 && in_array($rowBranchId, $branchIds, true)) {
-            return true;
-        }
-        if ($rowDivisionId > 0 && in_array($rowDivisionId, $divisionIds, true)) {
-            return true;
-        }
-        if ($rowDepartmentId > 0 && in_array($rowDepartmentId, $departmentIds, true)) {
-            return true;
-        }
-        if ($rowSectionUnitId > 0 && in_array($rowSectionUnitId, $sectionUnitIds, true)) {
-            return true;
-        }
-
         $coverageType = $row['coverage_type'] ?? null;
         $coverageIds = is_array($row['coverage_ids'] ?? null) ? $row['coverage_ids'] : [];
-        if (is_string($coverageType) && $coverageType !== '' && $coverageIds !== []) {
-            $coverageIds = array_map('intval', $coverageIds);
-
-            return match ($coverageType) {
-                'company' => (bool) array_intersect($coverageIds, $companyIds),
-                'branches' => (bool) array_intersect($coverageIds, $branchIds),
-                'divisions' => (bool) array_intersect($coverageIds, $divisionIds),
-                'departments' => (bool) array_intersect($coverageIds, $departmentIds),
-                'section_units' => (bool) array_intersect($coverageIds, $sectionUnitIds),
-                'employees' => $this->holidayCoverageIncludesScopedEmployee($coverageIds, $context),
-                default => false,
-            };
+        if ($coverageType === 'employees' && $coverageIds !== []) {
+            return $this->holidayCoverageIncludesScopedEmployee(array_map('intval', $coverageIds), $context);
+        }
+        if ($scope === 'employee' && ! empty($row['employee_id'])) {
+            return $this->holidayCoverageIncludesScopedEmployee([(int) $row['employee_id']], $context);
         }
 
         return false;

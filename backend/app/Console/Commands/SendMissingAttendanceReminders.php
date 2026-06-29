@@ -4,10 +4,10 @@ namespace App\Console\Commands;
 
 use App\Models\AttendanceEmailLog;
 use App\Models\AttendanceLog;
-use App\Models\Holiday;
 use App\Models\LeaveRequest;
 use App\Models\User;
 use App\Services\EmailNotificationService;
+use App\Services\HolidayService;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -19,7 +19,7 @@ class SendMissingAttendanceReminders extends Command
 
     protected $description = 'Send email reminders to employees who have not clocked in past their scheduled start time';
 
-    public function handle(EmailNotificationService $emailService): int
+    public function handle(EmailNotificationService $emailService, HolidayService $holidayService): int
     {
         $tz = config('attendance.timezone', 'Asia/Manila');
         $today = Carbon::now($tz)->toDateString();
@@ -31,21 +31,8 @@ class SendMissingAttendanceReminders extends Command
             return 0;
         }
 
-        $isHoliday = Holiday::query()
-            ->whereDate('date', $today)
-            ->where(function ($q): void {
-                $q->whereNull('scope')->orWhere('scope', 'national');
-            })
-            ->exists();
-
-        if ($isHoliday) {
-            $this->info('Today is a national holiday. Skipping.');
-
-            return 0;
-        }
-
         $employees = User::query()
-            ->select(['id', 'email', 'first_name', 'middle_name', 'last_name', 'suffix', 'name', 'working_schedule_id', 'schedule', 'branch_id'])
+            ->select(['id', 'email', 'first_name', 'middle_name', 'last_name', 'suffix', 'name', 'working_schedule_id', 'schedule', 'company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'])
             ->where('is_active', true)
             ->whereNotNull('email')
             ->get();
@@ -74,6 +61,10 @@ class SendMissingAttendanceReminders extends Command
 
         foreach ($employees as $employee) {
             if (in_array($employee->id, $skipIds, true)) {
+                continue;
+            }
+
+            if ($holidayService->getEffectiveHolidayForEmployee($employee, $today) !== null) {
                 continue;
             }
 

@@ -6,12 +6,12 @@ use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
-use App\Services\AttendanceCacheService;
 use App\Services\AttendanceDailySummaryService;
 use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusResolver;
 use App\Services\AttendanceStatusService;
 use App\Services\EmployeeDashboardCacheService;
+use App\Services\HolidayService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
 use App\Services\PayrollComputationService;
@@ -40,6 +40,7 @@ class EmployeeDashboardController extends Controller
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly PayrollComputationService $payrollComputation,
         private readonly AttendanceDailySummaryService $dailySummary,
+        private readonly HolidayService $holidayService,
     ) {}
 
     /**
@@ -68,6 +69,7 @@ class EmployeeDashboardController extends Controller
                 'cache_hit' => true,
                 'total_ms' => $cached['meta']['performance']['total_ms'],
             ]);
+
             return response()->json($cached);
         }
 
@@ -251,6 +253,7 @@ class EmployeeDashboardController extends Controller
                 'days_generated' => count($cachedDays),
                 'rest_day_count' => count(array_filter($cachedDays, fn ($d) => ! empty($d['is_rest_day']))),
             ]);
+
             return response()->json($cached);
         }
 
@@ -513,6 +516,7 @@ class EmployeeDashboardController extends Controller
         if (is_array($cached)) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
+
             return response()->json($cached);
         }
 
@@ -719,6 +723,8 @@ class EmployeeDashboardController extends Controller
             $payableOtHours = round($payableOtMinutesToday / 60, 2);
         }
 
+        $holiday = $user ? $this->holidayService->getEffectiveHolidayForEmployee($user, $todayDate) : null;
+
         $resolved = $this->statusResolver->resolve(
             dateKey: $todayDate,
             todayDate: $todayDate,
@@ -727,7 +733,7 @@ class EmployeeDashboardController extends Controller
             daySchedule: $daySchedule,
             dayLogs: $todayLogList,
             correction: $todayCorrection,
-            holiday: null,
+            holiday: $holiday,
             leave: $todayLeave,
             isRestDay: $isRestDay,
             isFuture: false,
@@ -788,38 +794,29 @@ class EmployeeDashboardController extends Controller
     private function loadMonthHolidays($user, int $year, int $month): array
     {
         try {
-            $holidayModel = new \App\Models\Holiday;
             $monthStart = sprintf('%04d-%02d-01', $year, $month);
-            $monthEnd = Carbon::parse($monthStart)->endOfMonth()->toDateString();
+            $cursor = Carbon::parse($monthStart)->startOfMonth();
+            $end = $cursor->copy()->endOfMonth();
+            $holidays = [];
 
-            $query = $holidayModel->whereBetween('date', [$monthStart, $monthEnd])
-                ->where('status', 'active');
-
-            if ($user->company_id) {
-                $query->where(function ($q) use ($user) {
-                    $q->whereNull('company_id')
-                        ->orWhere('company_id', $user->company_id);
-                    if ($user->branch_id) {
-                        $q->orWhereNull('branch_id')
-                            ->orWhere('branch_id', $user->branch_id);
-                    }
-                    if ($user->department_id) {
-                        $q->orWhereNull('department_id')
-                            ->orWhere('department_id', $user->department_id);
-                    }
-                });
+            while ($cursor->lessThanOrEqualTo($end)) {
+                $dateKey = $cursor->toDateString();
+                $holiday = $this->holidayService->getEffectiveHolidayForEmployee($user, $dateKey);
+                if ($holiday !== null) {
+                    $holidays[] = [
+                        'id' => $holiday['id'] ?? null,
+                        'date' => $dateKey,
+                        'name' => $holiday['name'],
+                        'type' => $holiday['type'],
+                    ];
+                }
+                $cursor->addDay();
             }
 
-            return $query->get(['id', 'date', 'name', 'type'])
-                ->map(fn ($h) => [
-                    'id' => $h->id,
-                    'date' => $h->date instanceof Carbon ? $h->date->toDateString() : (is_string($h->date) ? substr($h->date, 0, 10) : ''),
-                    'name' => $h->name,
-                    'type' => $h->type,
-                ])
-                ->toArray();
+            return $holidays;
         } catch (\Throwable $e) {
             Log::warning('Failed to load month holidays', ['error' => $e->getMessage()]);
+
             return [];
         }
     }
@@ -868,6 +865,7 @@ class EmployeeDashboardController extends Controller
         foreach ($otRecords as $ot) {
             $total += (float) ($ot->approved_ot_hours ?? $ot->computed_hours ?? 0);
         }
+
         return $total;
     }
 
@@ -985,6 +983,7 @@ class EmployeeDashboardController extends Controller
         foreach (self::DAY_KEYS as $dayKey) {
             if (in_array($dayKey, $restDays, true)) {
                 $baseDayConfig[$dayKey] = null;
+
                 continue;
             }
 

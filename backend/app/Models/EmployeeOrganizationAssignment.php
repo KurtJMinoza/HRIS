@@ -2,9 +2,13 @@
 
 namespace App\Models;
 
-use App\Services\EmployeeLevelResolver;
+use App\Services\AttendanceCacheService;
 use App\Services\BranchEmployeeResolver;
+use App\Services\EmployeeDashboardCacheService;
+use App\Services\EmployeeLevelResolver;
+use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
+use App\Support\PayrollCacheInvalidator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -44,6 +48,12 @@ class EmployeeOrganizationAssignment extends Model
         $flush = static function (self $assignment): void {
             try {
                 app(HolidayService::class)->flushRuntimeCaches();
+                app(HolidayScopeResolver::class)->flushRuntimeCaches();
+                AttendanceCacheService::invalidate((int) $assignment->employee_id);
+                EmployeeDashboardCacheService::invalidate((int) $assignment->employee_id);
+                PayrollCacheInvalidator::clear('employee_organization_assignment_changed', [
+                    'employee_id' => (int) $assignment->employee_id,
+                ]);
             } catch (\Throwable) {
                 // Cache invalidation should never block assignment maintenance.
             }
