@@ -221,4 +221,18 @@ return [
 
     'max_execution_time' => 30,
 
+    /*
+    |--------------------------------------------------------------------------
+    | RoadRunner
+    |--------------------------------------------------------------------------
+    |
+    | Use the Octane worker entrypoint directly so Windows does not route through
+    | Composer's .bat proxy (each worker spawn would flash cmd.exe).
+    |
+    */
+
+    'roadrunner' => [
+        'command' => 'vendor/laravel/octane/bin/roadrunner-worker',
+    ],
+
 ];
