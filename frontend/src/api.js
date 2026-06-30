@@ -1957,7 +1957,28 @@ function isPendingAttendanceCorrection(row) {
   return true
 }
 
+function isPendingOvertimeRow(row) {
+  if (!row || typeof row !== 'object') return false
+  return String(row.status || '').toLowerCase() === 'pending'
+}
+
+function resolvePendingOvertimeRequests(raw) {
+  const list = Array.isArray(raw?.pending_overtime_requests)
+    ? raw.pending_overtime_requests.filter(isPendingOvertimeRow)
+    : []
+  if (list.length > 0) {
+    return list
+  }
+  const single = isPendingOvertimeRow(raw?.pending_overtime_request) ? raw.pending_overtime_request : null
+  return single ? [single] : []
+}
+
 function normalizeDashboardData(raw) {
+  const pendingOvertimeRequest = isPendingOvertimeRow(raw?.pending_overtime_request)
+    ? raw.pending_overtime_request
+    : null
+  const pendingOvertimeRequests = resolvePendingOvertimeRequests(raw)
+
   return {
     stats: raw.stats ?? {},
     stats_prev: raw.stats_prev ?? {},
@@ -1982,10 +2003,8 @@ function normalizeDashboardData(raw) {
     expiring_contracts: Array.isArray(raw.expiring_contracts) ? raw.expiring_contracts : [],
     employment_settings: raw.employment_settings ?? null,
     pending_attendance_corrections: Number(raw.pending_attendance_corrections ?? 0) || 0,
-    pending_overtime_request:
-      String(raw.pending_overtime_request?.status || '').toLowerCase() === 'pending'
-        ? raw.pending_overtime_request
-        : null,
+    pending_overtime_request: pendingOvertimeRequest,
+    pending_overtime_requests: pendingOvertimeRequests,
     pending_attendance_correction_preview:
       isPendingAttendanceCorrection(raw.pending_attendance_correction_preview)
         ? raw.pending_attendance_correction_preview
@@ -2045,6 +2064,7 @@ function normalizeDashboardSegment(raw, segment) {
       pending_counts: merged.pending_counts,
       overtime_summary: merged.overtime_summary,
       pending_overtime_request: merged.pending_overtime_request,
+      pending_overtime_requests: merged.pending_overtime_requests,
       pending_attendance_corrections: merged.pending_attendance_corrections,
       pending_attendance_correction_preview: merged.pending_attendance_correction_preview,
       pending_attendance_correction_previews: merged.pending_attendance_correction_previews,
@@ -2070,6 +2090,10 @@ function normalizeDashboardSegment(raw, segment) {
     return { recent_activity: merged.recent_activity }
   }
   return merged
+}
+
+export function normalizeAdminDashboardRequestsData(raw) {
+  return normalizeDashboardSegment(raw ?? {}, 'requests')
 }
 
 export async function getAdminDashboardSummary(options = {}) {

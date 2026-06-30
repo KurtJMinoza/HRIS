@@ -334,6 +334,22 @@ class DashboardController extends Controller
                 ))
                 ->latest()
                 ->first();
+            $pendingOvertimeRequests = Overtime::query()
+                ->with('user:id,name,first_name,middle_name,last_name,suffix,employee_code,position,department,profile_image')
+                ->where('status', Overtime::STATUS_PENDING)
+                ->where('pending_approval', true)
+                ->tap(fn ($query) => $this->whereCurrentPendingApprovalForActor(
+                    $query,
+                    OrgApprovalWorkflowService::MODULE_OVERTIME,
+                    (int) $actor->id,
+                    'overtimes.id'
+                ))
+                ->latest()
+                ->limit(3)
+                ->get()
+                ->map(fn (Overtime $overtime) => $this->formatDashboardOvertimeRequest($overtime))
+                ->values()
+                ->all();
 
             $pendingCorrectionBundle = $this->pendingCorrectionsForDashboard($actor);
             $pendingAttendanceCorrections = $pendingCorrectionBundle['count'];
@@ -342,7 +358,8 @@ class DashboardController extends Controller
             $pendingAttendanceCorrectionRequests = $pendingCorrectionBundle['requests'];
             $todayLeaves = $this->todayLeaves(
                 Carbon::now(config('attendance.timezone', config('app.timezone', 'UTC')))->startOfDay(),
-                $this->scopedEmployeeIds($actor, true)
+                $this->scopedEmployeeIds($actor, true),
+                $actor,
             );
 
             return [
@@ -358,6 +375,7 @@ class DashboardController extends Controller
                     'rendered_ot_hours_today' => round($renderedOtTodayHours, 2),
                 ],
                 'pending_overtime_request' => $pendingOvertimeRequest ? $this->formatDashboardOvertimeRequest($pendingOvertimeRequest) : null,
+                'pending_overtime_requests' => $pendingOvertimeRequests,
                 'pending_attendance_corrections' => $pendingAttendanceCorrections,
                 'pending_attendance_correction_preview' => $pendingAttendanceCorrectionPreview,
                 'pending_attendance_correction_previews' => $pendingAttendanceCorrectionPreviews,
@@ -395,7 +413,7 @@ class DashboardController extends Controller
         $corrections = (clone $baseQuery)
             ->with(['user:id,name,first_name,middle_name,last_name,suffix,employee_code,position,department,profile_image'])
             ->orderByDesc('filed_at')
-            ->limit(5)
+            ->limit(3)
             ->get([
                 'id',
                 'user_id',
@@ -2702,14 +2720,23 @@ class DashboardController extends Controller
      * @param  array<int, int>  $scopedActiveUserIds
      * @return array<int, array<string, mixed>>
      */
-    private function todayLeaves(Carbon $today, array $scopedActiveUserIds): array
+    private function todayLeaves(Carbon $today, array $scopedActiveUserIds, ?User $actor = null): array
     {
         $dateKey = $today->toDateString();
         $upcomingEnd = $today->copy()->addDays(7)->toDateString();
         $query = LeaveRequest::query()
             ->where('status', LeaveRequest::STATUS_PENDING)
+            ->where('pending_approval', true)
             ->whereDate('start_date', '>=', $dateKey)
             ->whereDate('start_date', '<=', $upcomingEnd);
+        if ($actor instanceof User) {
+            $this->whereCurrentPendingApprovalForActor(
+                $query,
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+                (int) $actor->id,
+                'leave_requests.id'
+            );
+        }
         if ($scopedActiveUserIds !== []) {
             $query->whereIn('user_id', $scopedActiveUserIds);
         } else {
@@ -2717,7 +2744,7 @@ class DashboardController extends Controller
         }
         $rows = $query
             ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'department', 'department_id', 'position', 'profile_image')
+                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'employee_code', 'department', 'department_id', 'position', 'profile_image')
                     ->with(['departmentRelation:id,name']);
             }])
             ->orderBy('start_date')
@@ -2748,6 +2775,7 @@ class DashboardController extends Controller
                 'leave_request_id' => $leave->id,
                 'request_id' => $leave->id,
                 'user_id' => $user->id,
+                'employee_code' => $user->employee_code,
                 'employee_name' => $user->display_name ?: '—',
                 'employee_sort_key' => $user->employeeListingSortKey(),
                 'leave_type' => $leaveType,
@@ -2772,7 +2800,7 @@ class DashboardController extends Controller
             return strcmp((string) ($a['employee_sort_key'] ?? ''), (string) ($b['employee_sort_key'] ?? ''));
         });
 
-        return $items;
+        return array_slice($items, 0, 3);
     }
 
     /**

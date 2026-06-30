@@ -75,6 +75,7 @@ import {
   submitRegularizationRecommendation,
   approveRegularizationRecommendation,
   rejectRegularizationRecommendation,
+  normalizeAdminDashboardRequestsData,
 } from '@/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { RoleBadge } from '@/components/RoleBadge'
@@ -84,6 +85,7 @@ import { cn } from '@/lib/utils'
 import { DIALOG_CONTENT_CLASS } from '@/lib/fieldClasses'
 import { EMPTY_PLACEHOLDER, formatEmpty } from '@/lib/formatEmpty'
 import { OvertimeRequestsCard } from '@/components/dashboard/OvertimeRequestsCard'
+import { TodaysLeavesCard } from '@/components/dashboard/TodaysLeavesCard'
 import { AttendanceCorrectionsCard } from '@/components/dashboard/AttendanceCorrectionsCard'
 import { HR_PENDING_APPROVALS_CHANGED } from '@/lib/hrPendingApprovalsEvents'
 import {
@@ -265,6 +267,11 @@ function ChartTooltip({ active, payload, label, labelPrefix = '', valueSuffix = 
 const LOGS_PER_PAGE = 10
 const DASHBOARD_SNAPSHOT_KEY = 'admin-dashboard:last-snapshot:v1'
 
+function readDashboardRequestsSnapshot() {
+  const segment = dashboardSnapshotSegment(readDashboardSnapshot(), 'requests')
+  return segment ? normalizeAdminDashboardRequestsData(segment) : undefined
+}
+
 function readDashboardSnapshot() {
   if (typeof window === 'undefined') return null
   try {
@@ -318,6 +325,7 @@ function dashboardSnapshotSegment(snapshot, segment) {
       pending_counts: snapshot.pending_counts,
       overtime_summary: snapshot.overtime_summary,
       pending_overtime_request: snapshot.pending_overtime_request,
+      pending_overtime_requests: snapshot.pending_overtime_requests,
       pending_attendance_corrections: snapshot.pending_attendance_corrections,
       pending_attendance_correction_preview: snapshot.pending_attendance_correction_preview,
       pending_attendance_correction_previews: snapshot.pending_attendance_correction_previews,
@@ -710,7 +718,8 @@ export default function AdminDashboard() {
     queryKey: ['admin-dashboard', 'requests'],
     queryFn: ({ signal }) => getAdminDashboardRequests({ signal }),
     enabled: !authLoading,
-    initialData: () => dashboardSnapshotSegment(data, 'requests'),
+    initialData: readDashboardRequestsSnapshot,
+    placeholderData: (previousData) => previousData,
     staleTime: 30_000,
     refetchInterval: 30_000,
     refetchOnMount: 'always',
@@ -720,7 +729,7 @@ export default function AdminDashboard() {
     queryKey: ['admin-dashboard', 'pending-attendance-corrections'],
     queryFn: ({ signal }) => getAdminDashboardPendingAttendanceCorrections({ signal }),
     enabled: !authLoading && canApproveAttendanceCorrections,
-    initialData: () => dashboardSnapshotSegment(data, 'requests'),
+    initialData: readDashboardRequestsSnapshot,
     staleTime: 15_000,
     refetchInterval: 20_000,
     refetchOnMount: 'always',
@@ -816,14 +825,16 @@ export default function AdminDashboard() {
 
   const loading = authLoading
   const summaryLoading = summaryQuery.isLoading && !summaryQuery.data
-  const requestsLoading = requestsQuery.isLoading && !requestsQuery.data
-  const pendingOvertimeRequest =
-    String(data?.pending_overtime_request?.status || '').toLowerCase() === 'pending'
-      ? data.pending_overtime_request
-      : null
-  const overtimePendingCount = pendingOvertimeRequest
-    ? Number(data?.pending_counts?.overtime ?? 0) || 1
-    : 0
+  const requestsDashboard = requestsQuery.data
+  const requestsLoading = !requestsDashboard && (requestsQuery.isLoading || requestsQuery.isFetching)
+  const pendingOvertimeRequests = Array.isArray(requestsDashboard?.pending_overtime_requests)
+    ? requestsDashboard.pending_overtime_requests
+    : []
+  const pendingOvertimeRequest = pendingOvertimeRequests[0] ?? null
+  const overtimePendingCount = Math.max(
+    Number(requestsDashboard?.pending_counts?.overtime ?? 0) || 0,
+    pendingOvertimeRequests.length,
+  )
 
   const fetchDashboard = useCallback(async () => {
     await Promise.allSettled([
@@ -839,9 +850,11 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (mergedDashboardData && Object.keys(mergedDashboardData).length > 0) {
       setData((previous) => {
+        const requestsPayload = requestsQuery.data
         const nextData = {
           ...(previous ?? {}),
           ...mergedDashboardData,
+          ...(requestsPayload && typeof requestsPayload === 'object' ? requestsPayload : {}),
         }
         writeDashboardSnapshot(nextData)
         return nextData
@@ -859,6 +872,7 @@ export default function AdminDashboard() {
     }
   }, [
     mergedDashboardData,
+    requestsQuery.data,
     summaryQuery.error,
     requestsQuery.error,
     attendanceQuery.error,
@@ -1204,9 +1218,15 @@ export default function AdminDashboard() {
     0
   )
   const halfDaySummary = data?.half_day_summary ?? { am_today: 0, pm_today: 0, total_today: 0, total_workforce: 0 }
-  const todayLeaves = Array.isArray(data?.today_leaves)
-    ? data.today_leaves.filter((leave) => String(leave?.status || '').toLowerCase() === 'pending')
-    : []
+  const todayLeaves = Array.isArray(requestsDashboard?.today_leaves)
+    ? requestsDashboard.today_leaves.filter((leave) => String(leave?.status || '').toLowerCase() === 'pending')
+    : Array.isArray(data?.today_leaves)
+      ? data.today_leaves.filter((leave) => String(leave?.status || '').toLowerCase() === 'pending')
+      : []
+  const leavePendingCount = Math.max(
+    Number(requestsDashboard?.pending_counts?.leave ?? data?.pending_counts?.leave ?? 0) || 0,
+    todayLeaves.length,
+  )
   const cards = [
     {
       key: 'total_employees',
@@ -1307,8 +1327,7 @@ export default function AdminDashboard() {
       ? Number(pendingAttendanceCorrectionData?.pending_attendance_corrections ?? pendingAttendanceCorrectionPreviews.length) || pendingAttendanceCorrectionPreviews.length
       : 0
     : 0
-  const todayLeavesPreview = todayLeaves.slice(0, 5)
-  // Used by other dashboard sections; keep available for future copy changes.
+  const pendingLeaveRequest = todayLeaves[0] ?? null
   // eslint-disable-next-line no-unused-vars
   const autoRegularizationMonths = Number(data?.employment_settings?.auto_regularization_months || 6)
   // eslint-disable-next-line no-unused-vars
@@ -1712,7 +1731,7 @@ export default function AdminDashboard() {
 
       {/* -- Insight row: Today's Leaves - Half-Day Summary - Quick Actions -- */}
       <Motion.div
-        className="mt-4 grid items-stretch gap-3 @sm:grid-cols-2 @xl:grid-cols-3"
+        className="mt-4 grid w-full grid-cols-1 items-stretch gap-3 @md:grid-cols-3"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
@@ -1720,126 +1739,26 @@ export default function AdminDashboard() {
         transition={scrollRevealTransition}
       >
         {/* 1. Today's Leaves */}
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="self-stretch">
-          <Card className={cn(
-            'admin-dashboard-card h-[400px] max-h-[400px] min-h-[400px] gap-0 overflow-hidden py-0 transition-[transform,box-shadow] duration-300 hover:-translate-y-px @xl:h-[420px] @xl:max-h-[420px] @xl:min-h-[420px]',
-          )}>
-            <CardHeader className="px-4 pb-3 pt-4 @sm:px-5 @md:px-6 @md:pt-5">
-              <div className="flex flex-col gap-2.5 @sm:flex-row @sm:items-start @sm:justify-between @sm:gap-4">
-                <div className="min-w-0">
-                  <CardTitle className="mb-2.5 flex min-w-0 flex-wrap items-center gap-2 text-base font-extrabold leading-snug tracking-tight text-foreground">
-                    <CalendarDays className="size-4 shrink-0 text-brand" aria-hidden="true" />
-                    <span className="truncate">Today&apos;s Leaves</span>
-                  </CardTitle>
-                  <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
-                    {todayLeaves.length > 0
-                      ? `${todayLeaves.length} pending leave starting soon`
-                      : 'Shows pending leave starting within the next 7 days.'}
-                  </CardDescription>
-                </div>
-                {canViewLeave ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      'h-8 w-full shrink-0 rounded-md border-border/70 bg-background/70 px-3 @sm:mt-1 @sm:w-auto',
-                      'text-xs font-medium shadow-sm hover:bg-accent/55',
-                    )}
-                    onClick={() => navigate(hrPanelPath(hrBase, 'leave'))}
-                  >
-                    View All
-                    <ArrowRight className="ml-1.5 size-3.5 opacity-70" aria-hidden />
-                  </Button>
-                ) : null}
-              </div>
-            </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 pb-4 pt-0 pr-3 @sm:px-5 @sm:pr-4 @md:px-6">
-              {todayLeaves.length === 0 ? (
-                <div className="flex min-h-[172px] flex-col items-center justify-center rounded-lg border border-emerald-500/10 bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.14),rgba(16,185,129,0.04)_58%,transparent)] p-5 text-center dark:border-emerald-400/15">
-                  <span className="mb-4 flex size-9 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
-                    <ClipboardCheck className="size-5" aria-hidden />
-                  </span>
-                  <p className="text-sm font-semibold leading-[1.55] text-foreground">No leave activity for today.</p>
-                  <p className="mt-2 max-w-56 text-xs font-normal leading-[1.55] text-muted-foreground">
-                    Pending leave starting within 7 days will appear here.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2.5 @sm:space-y-3">
-                  {todayLeavesPreview.map((leave) => {
-                    const profileSrc = leave.profile_image_url || profileImageUrl(leave.profile_image) || undefined
-                    const secondary = [leave.department, leave.position].filter(Boolean).join(' / ') || 'Unassigned'
-                    return (
-                      <article
-                        key={`${leave.leave_request_id}-${leave.user_id}`}
-                        className="rounded-lg border border-border/70 bg-background/70 p-2.5 shadow-sm transition-[border-color,box-shadow,transform] duration-200 hover:border-brand/25 hover:shadow-md @sm:p-3"
-                      >
-                        <div className="flex items-start gap-3">
-                          <Avatar className="size-9 shrink-0 rounded-full border border-border/70 ring-2 ring-primary/10 @sm:size-10">
-                            <AvatarImage src={profileSrc} alt={leave.employee_name || 'Employee'} />
-                            <AvatarFallback>{(leave.employee_name || EMPTY_PLACEHOLDER).slice(0, 2).toUpperCase()}</AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <p className="wrap-break-word text-sm font-semibold leading-snug text-foreground">{formatEmpty(leave.employee_name)}</p>
-                            <p className="mt-0.5 wrap-break-word text-xs leading-snug text-muted-foreground">{secondary}</p>
-                            <div className="mt-2 flex flex-wrap items-center gap-1.5 @sm:gap-2">
-                              <span className="inline-flex items-center rounded-full border border-violet-500/35 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300">
-                                {leave.leave_type || 'Leave'}
-                              </span>
-                              <span className="text-[11px] font-medium text-muted-foreground">{leave.duration_label || 'Full day'}</span>
-                              {leave.start_date ? (
-                                <span className="text-[11px] font-medium text-muted-foreground">
-                                  {leave.start_date === leave.end_date ? leave.start_date : `${leave.start_date} - ${leave.end_date}`}
-                                </span>
-                              ) : null}
-                              <span
-                                className={cn(
-                                  'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                                  leave.status === 'pending'
-                                    ? 'border border-amber-400/40 bg-amber-500/15 text-amber-800 dark:text-amber-200'
-                                    : 'border border-emerald-400/40 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200',
-                                )}
-                              >
-                                {leave.status === 'pending' ? 'Pending' : 'Approved'}
-                              </span>
-                            </div>
-                            {leave.display_status ? (
-                              <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground" title={leave.display_status}>
-                                {leave.display_status}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                        {canViewLeave && (leave.leave_request_id != null || leave.request_id != null) ? (
-                          <div className="mt-3 border-t border-border/70 pt-3">
-                            <Button
-                              type="button"
-                              className="h-9 w-full rounded-lg bg-brand px-4 text-xs font-semibold text-brand-foreground shadow-[0_10px_20px_rgba(255,107,0,0.24)] hover:bg-brand-strong"
-                              onClick={() => {
-                                const rid = leave.leave_request_id ?? leave.request_id
-                                if (rid == null || rid === '') {
-                                  navigate(`${hrPanelPath(hrBase, 'leave')}?tab=all`)
-                                  return
-                                }
-                                navigate(
-                                  `${hrPanelPath(hrBase, 'leave')}?review_id=${encodeURIComponent(String(rid))}`,
-                                  { state: { leaveReviewSeed: leave } },
-                                )
-                              }}
-                            >
-                              <Send className="mr-2 size-4" aria-hidden />
-                              Review Request
-                            </Button>
-                          </div>
-                        ) : null}
-                      </article>
-                    )
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        <Motion.div variants={itemVariants} className="min-h-0 self-stretch">
+          <TodaysLeavesCard
+            loading={requestsLoading}
+            pendingCount={leavePendingCount}
+            request={pendingLeaveRequest}
+            requests={todayLeaves}
+            canViewLeave={canViewLeave}
+            onViewAll={() => navigate(hrPanelPath(hrBase, 'leave'))}
+            onReviewRequest={(leave) => {
+              const rid = leave?.leave_request_id ?? leave?.request_id
+              if (rid == null || rid === '') {
+                navigate(`${hrPanelPath(hrBase, 'leave')}?tab=all`)
+                return
+              }
+              navigate(
+                `${hrPanelPath(hrBase, 'leave')}?review_id=${encodeURIComponent(String(rid))}`,
+                { state: { leaveReviewSeed: leave } },
+              )
+            }}
+          />
         </Motion.div>
 
         {/* 2. Half-Day Summary - clickable drill-down */}
@@ -1986,11 +1905,12 @@ export default function AdminDashboard() {
         </Motion.div>
 
         {/* 3. Overtime Requests */}
-        <Motion.div variants={itemVariants} className="self-stretch">
+        <Motion.div variants={itemVariants} className="min-h-0 self-stretch">
           <OvertimeRequestsCard
             loading={requestsLoading}
             pendingCount={canViewOvertime ? overtimePendingCount : 0}
             request={pendingOvertimeRequest}
+            requests={canViewOvertime ? pendingOvertimeRequests : []}
             onViewAll={() => navigate(hrPanelPath(hrBase, 'overtime'))}
             onReviewRequest={(req) => {
               const rid = req?.overtime_request_id ?? req?.request_id ?? req?.id
@@ -3723,6 +3643,31 @@ export default function AdminDashboard() {
           box-shadow:
             0 1px 0 rgba(255, 255, 255, 0.04),
             0 22px 52px rgba(0, 0, 0, 0.38);
+        }
+        .dashboard-pending-scroll {
+          height: 0;
+          flex: 1 1 0%;
+          min-height: 0;
+     
+          overflow-y: scroll;
+          scrollbar-width: thin;
+          scrollbar-color: color-mix(in oklab, var(--brand) 55%, transparent) color-mix(in oklab, var(--muted) 35%, transparent);
+        }
+       
+        .admin-dashboard-pending-card {
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .dashboard-pending-scroll::-webkit-scrollbar {
+          width: 8px;
+        }
+        .dashboard-pending-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .dashboard-pending-scroll::-webkit-scrollbar-thumb {
+          border-radius: 9999px;
+          background: color-mix(in oklab, var(--brand) 45%, var(--muted));
         }
         .admin-birthday-dashboard {
           background:
