@@ -512,9 +512,6 @@ class EmployeeLeaveController extends Controller
         $date = Carbon::parse($validated['date'], $tz)->startOfDay();
         $dateKey = $date->toDateString();
 
-        LeaveFilingRules::assertLeaveStartsAfterToday($dateKey);
-        LeaveFilingRules::assertRangeHasNoCompletedAttendance((int) $user->id, $dateKey, $dateKey);
-
         $user = $this->refreshUserForScheduleCheck($user);
         if ($user->working_schedule_id === null) {
             throw ValidationException::withMessages([
@@ -719,13 +716,6 @@ class EmployeeLeaveController extends Controller
             // employees can file half-day leave more freely.
         }
 
-        // Earliest start is tomorrow; no leave on dates that already have completed DTR.
-        LeaveFilingRules::assertLeaveStartsAfterToday($validated['start_date']);
-        LeaveFilingRules::assertRangeHasNoCompletedAttendance(
-            (int) $user->id,
-            $validated['start_date'],
-            $validated['end_date']
-        );
         LeaveFilingRules::assertNoOverlappingPendingOrApprovedLeave(
             (int) $user->id,
             $validated['start_date'],

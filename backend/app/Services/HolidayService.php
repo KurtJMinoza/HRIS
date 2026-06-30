@@ -137,6 +137,7 @@ class HolidayService
     public function flushCoverageForDate(string $dateKey): void
     {
         Cache::forget(self::COVERAGE_CACHE_PREFIX.'swap_date:'.$dateKey);
+        Cache::forget(self::COVERAGE_CACHE_PREFIX.'moved_from:'.$dateKey);
     }
 
     /**
@@ -172,12 +173,45 @@ class HolidayService
             return $this->resolvedHolidayCache[$cacheKey];
         }
 
+        if ($this->isMovedHolidayOriginalDateForEmployee($user, $dateKey)) {
+            return $this->resolvedHolidayCache[$cacheKey] = null;
+        }
+
         $swap = $this->isSwapHolidayForEmployee($user, $dateKey);
         if ($swap) {
             return $this->resolvedHolidayCache[$cacheKey] = $swap;
         }
 
-        return $this->resolvedHolidayCache[$cacheKey] = $this->holidayCalendar->holidayForUserDate($user, $dateKey);
+        $holiday = $this->holidayCalendar->holidayForUserDate($user, $dateKey);
+        if ($holiday !== null && $this->isRelocatedHolidaySourceDate($user, $dateKey, $holiday)) {
+            return $this->resolvedHolidayCache[$cacheKey] = null;
+        }
+
+        return $this->resolvedHolidayCache[$cacheKey] = $holiday;
+    }
+
+    /**
+     * Suppress the original (or duplicate) calendar date when the same holiday is active elsewhere.
+     */
+    private function isRelocatedHolidaySourceDate(User $user, string $dateKey, array $calendarHoliday): bool
+    {
+        $name = trim((string) ($calendarHoliday['name'] ?? ''));
+        if ($name === '') {
+            return false;
+        }
+
+        $year = (int) substr($dateKey, 0, 4);
+
+        return Holiday::query()
+            ->where('status', 'active')
+            ->whereYear('date', $year)
+            ->where('name', $name)
+            ->whereDate('date', '!=', $dateKey)
+            ->get()
+            ->contains(fn (Holiday $holiday) => $this->holidayCoversEmployee(
+                $this->serializeForCoverage($holiday),
+                $user
+            ));
     }
 
     private function activeSectionContextForEmployee(User $user, string $dateKey, ?int $sectionUnitId): ?int
@@ -235,6 +269,37 @@ class HolidayService
     }
 
     /**
+     * True when $dateKey is the original calendar date of a moved holiday that now applies on another day.
+     */
+    public function isMovedHolidayOriginalDateForEmployee(User $user, string $dateKey): bool
+    {
+        foreach ($this->getMovedHolidaysFromOriginalDate($dateKey) as $holiday) {
+            if ($this->holidayCoversEmployee($holiday, $user)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function getMovedHolidaysFromOriginalDate(string $originalDateKey): array
+    {
+        $cacheKey = self::COVERAGE_CACHE_PREFIX.'moved_from:'.$originalDateKey;
+
+        return Cache::remember($cacheKey, self::COVERAGE_CACHE_TTL, function () use ($originalDateKey) {
+            return Holiday::query()
+                ->where('status', 'active')
+                ->whereNotNull('original_date')
+                ->whereDate('original_date', $originalDateKey)
+                ->whereDate('date', '!=', $originalDateKey)
+                ->get()
+                ->map(fn (Holiday $h) => $this->serializeForCoverage($h))
+                ->all();
+        });
+    }
+
+    /**
      * Check if employee is covered by any swap holiday in a pre-loaded set.
      */
     public function checkPreloadedSwapHoliday(array $swapHolidaysForDate, User $user): ?array
@@ -275,7 +340,7 @@ class HolidayService
             'employee_id' => $h->employee_id,
             'coverage_type' => $h->coverage_type,
             'coverage_ids' => $h->getCoverageIds(),
-            'is_swap' => true,
+            'is_swap' => (bool) ($h->is_swap ?? false),
             'original_date' => $h->original_date instanceof Carbon
                 ? $h->original_date->format('Y-m-d')
                 : ($h->original_date ? (string) $h->original_date : null),

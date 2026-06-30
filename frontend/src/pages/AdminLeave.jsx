@@ -100,7 +100,6 @@ import {
   parseLeaveReviewRequestId,
 } from '@/lib/leaveReviewDeepLink'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
-import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
@@ -234,9 +233,6 @@ export default function AdminLeave() {
   const [addSubmitting, setAddSubmitting] = useState(false)
   const addLeaveSubmitLock = useRef(false)
 
-  const minLeaveDate = useMemo(() => earliestLeaveStartYmd(), [addOpen])
-  const minEndDate =
-    addForm.start_date && addForm.start_date >= minLeaveDate ? addForm.start_date : minLeaveDate
   const calendarViewerProfile = useMemo(
     () => ({
       name: user?.display_name || user?.name || '',
@@ -434,7 +430,7 @@ export default function AdminLeave() {
       setAddRangeValidating(false)
       return
     }
-    if (addForm.start_date < minLeaveDate || addRangeEndYmd < addForm.start_date) {
+    if (addRangeEndYmd < addForm.start_date) {
       setAddRangeRestDay(null)
       setAddRangeValidating(false)
       return
@@ -473,7 +469,6 @@ export default function AdminLeave() {
     addForm.start_date,
     addRangeEndYmd,
     addForm.type,
-    minLeaveDate,
     showEmployeePicker,
     user?.id,
   ])
@@ -588,11 +583,6 @@ export default function AdminLeave() {
       return
     }
 
-    if (addForm.start_date < minLeaveDate) {
-      setError('Leave can only be filed for future dates. The earliest start date is tomorrow.')
-      addLeaveSubmitLock.current = false
-      return
-    }
     if (addForm.end_date < addForm.start_date) {
       setError('End date must be on or after the start date.')
       addLeaveSubmitLock.current = false
@@ -795,14 +785,6 @@ export default function AdminLeave() {
     setAddBypassRestDays(false)
     setAddRestDayBypassReason('')
     setAddRangeRestDay(null)
-  }
-
-  function handleCalendarInvalidDate() {
-    toast({
-      title: 'Date not available',
-      description: `Leave can be filed from ${minLeaveDate} onward.`,
-      variant: 'error',
-    })
   }
 
   const handledLeaveDeepLinkRef = useRef(null)
@@ -1053,6 +1035,10 @@ export default function AdminLeave() {
       }
       toast({ title: 'Leave deleted', variant: 'success' })
       setDeleteDialog({ open: false, leave: null })
+      if (detailLeave?.id && Number(detailLeave.id) === Number(deleteDialog.leave.id)) {
+        setDetailOpen(false)
+        setDetailLeave(null)
+      }
       if (tab === 'all') {
         await fetchLeaves()
       } else {
@@ -1520,13 +1506,12 @@ export default function AdminLeave() {
             <EmployeeLeaveCalendarView
               leaves={filteredActiveLeaveRequests}
               loading={activeLoading}
-              minLeaveDate={minLeaveDate}
               allowFileLeave={canApproveLeave}
               showEmployeeDetails
               viewerProfile={isMineTab ? calendarViewerProfile : null}
               onFileLeave={openFileLeaveWithDates}
               onOpenLeave={openDetailDialog}
-              onInvalidDate={handleCalendarInvalidDate}
+              onDeleteLeave={(leave) => setDeleteDialog({ open: true, leave })}
             />
           ) : activeLoading ? (
             <div className="min-h-[min(42vh,400px)] overflow-x-auto px-2 @sm:px-0">
@@ -2154,7 +2139,7 @@ export default function AdminLeave() {
                   {showEmployeePicker
                     ? 'Select an employee in your scope, then choose dates and leave type.'
                     : 'Choose your leave type and dates. This request is for your own leave only.'}{' '}
-                  The earliest start date is tomorrow. Dates with complete attendance and overlapping pending or approved leave cannot be used.
+                  Leave cannot overlap another pending or approved leave for the same dates.
                 </DialogDescription>
               </div>
               <LeaveModalCalendarArt />
@@ -2230,7 +2215,6 @@ export default function AdminLeave() {
                         id="add-start"
                         type="date"
                         required
-                        min={minLeaveDate}
                         value={addForm.start_date}
                         onChange={(e) => setAddForm((f) => ({ ...f, start_date: e.target.value }))}
                         className={cn(adminLeaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
@@ -2243,7 +2227,7 @@ export default function AdminLeave() {
                         type="date"
                         required
                         value={addForm.end_date}
-                        min={minEndDate}
+                        min={addForm.start_date || undefined}
                         onChange={(e) => setAddForm((f) => ({ ...f, end_date: e.target.value }))}
                         className={cn(adminLeaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
                       />
@@ -2583,6 +2567,11 @@ export default function AdminLeave() {
           const id = reviewRequestIdFromUrl || detailRequestIdRef.current
           if (id) loadReviewDetail(id, { isRetry: true })
         }}
+        onDelete={
+          detailLeave?.actor_can_delete
+            ? (leave) => setDeleteDialog({ open: true, leave })
+            : undefined
+        }
       />
 
       <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, leave: null })}>

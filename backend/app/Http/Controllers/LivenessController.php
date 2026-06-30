@@ -61,11 +61,28 @@ class LivenessController extends Controller
         ];
 
         // Include Cognito Identity Pool so frontend can configure Amplify (required for FaceLivenessDetector)
-        // Identity Pool MUST be in same region as Rekognition (us-east-1)
-        $identityPoolId = config('services.cognito.identity_pool_id');
-        if (! empty($identityPoolId)) {
+        // Identity Pool MUST be in same region as Rekognition (us-east-1 or us-east-2).
+        $identityPoolId = trim((string) config('services.cognito.identity_pool_id', ''));
+        if ($identityPoolId !== '') {
+            $poolRegion = RekognitionLivenessService::regionFromIdentityPoolId($identityPoolId);
+            if ($poolRegion !== null && ! in_array($poolRegion, RekognitionLivenessService::supportedLivenessRegions(), true)) {
+                Log::error('Face liveness: Cognito Identity Pool is in an unsupported region', [
+                    'identity_pool_id' => $identityPoolId,
+                    'pool_region' => $poolRegion,
+                    'rekognition_region' => $data['region'],
+                ]);
+
+                return response()->json([
+                    'message' => "Cognito Identity Pool must be in us-east-1 or us-east-2 (pool is {$poolRegion}). Create a new Identity Pool in US East (N. Virginia), enable guest access, and update COGNITO_IDENTITY_POOL_ID in .env.",
+                    'errors' => ['cognito' => ["Identity pool region {$poolRegion} is not supported for Face Liveness."]],
+                ], 503);
+            }
+
+            $cognitoRegion = $poolRegion ?? RekognitionLivenessService::resolveApiRegion(
+                config('services.cognito.region') ?? $data['region']
+            );
             $response['cognitoIdentityPoolId'] = $identityPoolId;
-            $response['cognitoRegion'] = config('services.cognito.region');
+            $response['cognitoRegion'] = $cognitoRegion;
             $response['cognitoId'] = $identityPoolId; // alias for frontend hasCognitoId check
         }
 

@@ -3292,8 +3292,11 @@ export async function getPayPolicies(params = {}) {
   return data
 }
 
-export async function getPayPolicy(id) {
-  const res = await authenticatedFetch(`/admin/payroll/policies/${id}`)
+export async function getPayPolicy(id, params = {}) {
+  const qs = new URLSearchParams()
+  if (params.year) qs.set('year', String(params.year))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/payroll/policies/${id}${suffix}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load policy')
   return data
@@ -3317,7 +3320,10 @@ export async function updatePayPolicy(id, payload) {
     body: JSON.stringify(payload),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to update policy')
+  if (!res.ok) {
+    const detail = firstValidationMessage(data)
+    throw new Error(detail || data.message || 'Failed to update policy')
+  }
   return data
 }
 
@@ -5080,6 +5086,13 @@ export async function deleteAdminHoliday(id) {
   const res = await authenticatedFetch(`/admin/holidays/${id}`, { method: 'DELETE' })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to delete holiday')
+  return data
+}
+
+export async function deactivateAdminHoliday(id) {
+  const res = await authenticatedFetch(`/admin/holidays/${id}/deactivate`, { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to deactivate holiday')
   return data
 }
 

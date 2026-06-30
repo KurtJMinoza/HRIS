@@ -15,31 +15,41 @@ class Policy extends Model
 
     /**
      * DOLE floor. Holiday premium rates themselves remain in policy_multipliers;
-     * this JSON only stores entitlement, attendance, succession, and coverage rules.
+     * this JSON only stores entitlement and attendance rules.
      */
     public const DEFAULT_HOLIDAY_POLICY = [
         'pay_unworked_regular' => true,
         'pay_unworked_special' => false,
         'unworked_special_multiplier' => 1.0,
-        'attendance' => [
-            'require_previous_workday_presence' => true,
+        'eligibility' => [
+            'pay_unworked_regular' => true,
+            'special_no_work_no_pay' => true,
+            'company_may_pay_unworked_special' => false,
             'paid_leave_qualifies' => true,
+            'require_previous_workday' => true,
+            'rest_day_uses_previous_workday' => true,
+        ],
+        'attendance' => [
+            'paid_leave_qualifies' => true,
+            'require_previous_workday_presence' => true,
             'skip_rest_days' => true,
             'skip_company_non_working_days' => true,
-            'unpaid_absence_disqualifies' => true,
         ],
-        'successive_regular_holidays' => true,
-        'coverage' => [
-            'rank_and_file' => true,
-            'probationary' => true,
-            'regular' => true,
-            'managerial' => false,
-            'consultants' => false,
-            'contractual' => false,
-            'fixed_term' => false,
-            'government' => false,
-            'field_personnel' => false,
-            'micro_retail_service' => false,
+        'regular_unworked' => [
+            'unworked_pay_policy' => 'covered_employees',
+            'eligible_employment_types' => [],
+        ],
+        'special_unworked' => [
+            'unworked_pay_policy' => 'no_work_no_pay',
+            'eligible_employment_types' => [],
+        ],
+        'non_statutory' => [
+            'special_working' => [
+                'pay_as_ordinary_day' => true,
+            ],
+            'company' => [
+                'pay_as_ordinary_day' => true,
+            ],
         ],
     ];
 
@@ -94,6 +104,11 @@ class Policy extends Model
     public function multipliers(): HasMany
     {
         return $this->hasMany(PolicyMultiplier::class);
+    }
+
+    public function holidayPaySettings(): HasMany
+    {
+        return $this->hasMany(HolidayPayPolicySetting::class);
     }
 
     public function ndSetting(): HasOne

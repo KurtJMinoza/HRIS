@@ -178,6 +178,17 @@ class RekognitionLivenessService
         return 'us-east-1';
     }
 
+    /** Region prefix from an Identity Pool id (e.g. us-east-1:uuid). */
+    public static function regionFromIdentityPoolId(string $identityPoolId): ?string
+    {
+        $identityPoolId = trim($identityPoolId);
+        if ($identityPoolId === '' || ! str_contains($identityPoolId, ':')) {
+            return null;
+        }
+
+        return explode(':', $identityPoolId, 2)[0] ?: null;
+    }
+
     /**
      * @param  array<string, mixed>  $config
      */
@@ -190,8 +201,8 @@ class RekognitionLivenessService
             'version' => 'latest',
             'region' => $region,
             'credentials' => [
-                'key' => $config['key'],
-                'secret' => $config['secret'],
+                'key' => trim((string) $config['key']),
+                'secret' => trim((string) $config['secret']),
             ],
             'http' => [
                 'connect_timeout' => $connectTimeout,

@@ -44,9 +44,8 @@ class HolidayController extends Controller
         $year = max(2020, min(2030, $year));
         $companyId = $request->filled('company_id') ? max(1, (int) $request->input('company_id')) : null;
 
-        $holidays = $this->holidayCalendar->holidaysForYear($year);
-
-        $holidays = array_map(function (array $row) use ($companyId) {
+        $holidays = $this->holidayCalendar->holidaysForYear($year)
+            ->map(function (array $row) use ($companyId) {
             $type = strtolower((string) ($row['type'] ?? 'special'));
 
             return array_merge($row, [
@@ -54,7 +53,9 @@ class HolidayController extends Controller
                 'impact' => $this->holidayImpact($row),
                 'holiday_policy' => $this->holidayPolicySnapshot($row, $companyId),
             ]);
-        }, $holidays);
+        })
+            ->values()
+            ->all();
 
         return response()->json([
             'holidays' => $holidays,
@@ -72,10 +73,10 @@ class HolidayController extends Controller
         $year = max(2020, min(2030, $year));
         $employee = $request->user();
 
-        $rows = array_values(array_filter(
-            $this->holidayCalendar->holidaysForYear($year),
-            fn (array $row) => $this->holidayAppliesToEmployee($row, $employee)
-        ));
+        $rows = $this->holidayCalendar->holidaysForYear($year)
+            ->filter(fn (array $row) => $this->holidayAppliesToEmployee($row, $employee))
+            ->values()
+            ->all();
 
         $rows = $this->dedupeEmployeeHolidayRows($rows);
 
@@ -149,7 +150,7 @@ class HolidayController extends Controller
         $payloads = $this->payloadsForWrite($valid);
 
         foreach ($payloads as $payload) {
-            if ($this->holidayExistsForScope($payload)) {
+            if (($payload['status'] ?? 'active') !== 'inactive' && $this->holidayExistsForScope($payload)) {
                 return response()->json(['message' => 'A holiday already exists on this date for one of the selected scopes'], 422);
             }
         }
@@ -164,9 +165,10 @@ class HolidayController extends Controller
 
         $holidays = [];
         foreach ($payloads as $payload) {
-            $holidays[] = $this->holiday->newQuery()->create($payload);
+            $holidays[] = $this->upsertHolidayRow($payload);
         }
         $this->holidayCalendar->flushMergedYearCaches();
+        $this->holidayService->flushRuntimeCaches();
 
         return response()->json([
             'holiday' => $this->holidayPayload($holidays[0]),
@@ -195,6 +197,7 @@ class HolidayController extends Controller
         $holiday->update($payload);
         $holiday->refresh();
         $this->holidayCalendar->flushMergedYearCaches();
+        $this->holidayService->flushRuntimeCaches();
 
         return response()->json([
             'holiday' => $this->holidayPayload($holiday),
@@ -210,6 +213,12 @@ class HolidayController extends Controller
 
         $targets = $this->scopeTargetsFromHoliday($holiday);
         $candidate = array_merge($targets, ['date' => $valid['date']]);
+        $this->deactivateConflictingHolidaysOnDate(
+            $targets,
+            $valid['date'],
+            $id,
+            (string) $holiday->name
+        );
         if ($this->holidayExistsForScope($candidate, $id)) {
             return response()->json(['message' => 'A holiday already exists on the swap date for this scope'], 422);
         }
@@ -220,9 +229,28 @@ class HolidayController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $holiday->update(['date' => $valid['date']]);
+        $oldDate = $holiday->date instanceof Carbon
+            ? $holiday->date->format('Y-m-d')
+            : (string) $holiday->date;
+        $newDate = $valid['date'];
+
+        if ($oldDate !== $newDate) {
+            $this->upsertInactiveHolidayStub($holiday, $oldDate, (int) $holiday->id);
+            $holiday->update([
+                'date' => $newDate,
+                'original_date' => $holiday->original_date ?? $oldDate,
+                'is_swap' => true,
+                'status' => 'active',
+            ]);
+            $this->holidayService->flushCoverageForDate($oldDate);
+            $this->holidayService->flushCoverageForDate($newDate);
+        } else {
+            $holiday->update(['date' => $newDate]);
+        }
+
         $holiday->refresh();
         $this->holidayCalendar->flushMergedYearCaches();
+        $this->holidayService->flushRuntimeCaches();
 
         return response()->json([
             'holiday' => $this->holidayPayload($holiday),
@@ -255,7 +283,11 @@ class HolidayController extends Controller
         $new = $this->normalizeSeededPayload(array_merge($valid, [
             'date' => $valid['new_date'],
             'status' => 'active',
+            'is_swap' => true,
+            'original_date' => $valid['date'],
         ]), $valid['new_date']);
+
+        $this->deactivateConflictingHolidaysOnDate($old, (string) $new['date'], null, (string) ($valid['name'] ?? ''));
 
         if ($this->holidayExistsForScope($new)) {
             return response()->json(['message' => 'A holiday already exists on the swap date for this scope'], 422);
@@ -268,21 +300,54 @@ class HolidayController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $this->holiday->newQuery()->firstOrCreate(
-            [
-                'date' => $old['date'],
-                'scope' => $old['scope'],
-                'company_id' => $old['company_id'] ?? null,
-                'branch_id' => $old['branch_id'] ?? null,
-                'division_id' => $old['division_id'] ?? null,
-                'department_id' => $old['department_id'] ?? null,
-                'section_unit_id' => $old['section_unit_id'] ?? null,
-                'employee_id' => $old['employee_id'] ?? null,
-            ],
-            $this->payloadForWrite($old)
-        );
-        $holiday = $this->holiday->newQuery()->create($this->payloadForWrite($new));
+        $existing = $this->holiday->newQuery()
+            ->where('date', $old['date'])
+            ->where('scope', $old['scope'])
+            ->where('company_id', $old['company_id'] ?? null)
+            ->where('branch_id', $old['branch_id'] ?? null)
+            ->where('division_id', $old['division_id'] ?? null)
+            ->where('department_id', $old['department_id'] ?? null)
+            ->where('section_unit_id', $old['section_unit_id'] ?? null)
+            ->where('employee_id', $old['employee_id'] ?? null)
+            ->where('status', 'active')
+            ->first();
+
+        if ($existing) {
+            $oldDate = (string) $old['date'];
+            $newDate = (string) $new['date'];
+            if ($oldDate !== $newDate) {
+                $this->upsertInactiveHolidayStub($existing, $oldDate, (int) $existing->id);
+                $existing->update([
+                    'date' => $newDate,
+                    'original_date' => $existing->original_date ?? $oldDate,
+                    'is_swap' => true,
+                    'status' => 'active',
+                ]);
+                $this->holidayService->flushCoverageForDate($oldDate);
+                $this->holidayService->flushCoverageForDate($newDate);
+            }
+            $holiday = $existing->refresh();
+        } else {
+            $this->holiday->newQuery()->updateOrCreate(
+                [
+                    'date' => $old['date'],
+                    'scope' => $old['scope'],
+                    'company_id' => $old['company_id'] ?? null,
+                    'branch_id' => $old['branch_id'] ?? null,
+                    'division_id' => $old['division_id'] ?? null,
+                    'department_id' => $old['department_id'] ?? null,
+                    'section_unit_id' => $old['section_unit_id'] ?? null,
+                    'employee_id' => $old['employee_id'] ?? null,
+                ],
+                $this->payloadForWrite($old)
+            );
+            $holiday = $this->holiday->newQuery()->create($this->payloadForWrite($new));
+            $this->holidayService->flushCoverageForDate($valid['date']);
+            $this->holidayService->flushCoverageForDate($valid['new_date']);
+        }
+
         $this->holidayCalendar->flushMergedYearCaches();
+        $this->holidayService->flushRuntimeCaches();
 
         return response()->json([
             'holiday' => $this->holidayPayload($holiday),
@@ -349,9 +414,15 @@ class HolidayController extends Controller
 
         $payload = array_merge($payload, $this->coverageTargetColumns($valid['coverage_type'], $coverageIds));
 
+        if (! empty($valid['original_date']) && $valid['original_date'] !== $valid['date']) {
+            $this->upsertInactiveHolidayStub($this->holiday->newInstance($payload), $valid['original_date']);
+            $this->holidayService->flushCoverageForDate($valid['original_date']);
+        }
+
         $holiday = $this->holiday->newQuery()->create($payload);
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushCoverageForDate($valid['date']);
+        $this->holidayService->flushRuntimeCaches();
 
         return response()->json([
             'holiday' => $this->holidayPayload($holiday),
@@ -446,19 +517,72 @@ class HolidayController extends Controller
     public function destroy(int $id): JsonResponse
     {
         $holiday = $this->holiday->newQuery()->findOrFail($id);
+        $dateKey = $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date;
+        $isInactive = strtolower((string) ($holiday->status ?? 'active')) === 'inactive';
 
-        try {
-            $this->assertHolidayDatesMutable([$holiday->date?->toDateString()], $this->scopeTargetsFromHoliday($holiday));
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+        if ($isInactive && $this->holidayCalendar->wouldSeededHolidayResurfaceOnDelete($holiday)) {
+            return response()->json([
+                'message' => 'Holiday is already removed from the calendar. Add it again to restore.',
+                'removed' => true,
+            ]);
         }
 
-        $dateKey = $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date;
+        if (! $isInactive) {
+            try {
+                $this->assertHolidayDatesMutable([$holiday->date?->toDateString()], $this->scopeTargetsFromHoliday($holiday));
+            } catch (\RuntimeException $e) {
+                $holiday->update(['status' => 'inactive']);
+                $this->holidayCalendar->flushMergedYearCaches();
+                $this->holidayService->flushCoverageForDate($dateKey);
+                $this->holidayService->flushRuntimeCaches();
+
+                return response()->json([
+                    'message' => 'Holiday removed from calendar',
+                    'removed' => true,
+                    'deactivated' => true,
+                    'holiday' => $this->holidayPayload($holiday->refresh()),
+                ]);
+            }
+
+            if ($this->holidayCalendar->wouldSeededHolidayResurfaceOnDelete($holiday)) {
+                $holiday->update([
+                    'status' => 'inactive',
+                    'is_swap' => false,
+                    'original_date' => null,
+                ]);
+                $this->holidayCalendar->flushMergedYearCaches();
+                $this->holidayService->flushCoverageForDate($dateKey);
+                $this->holidayService->flushRuntimeCaches();
+
+                return response()->json([
+                    'message' => 'Holiday removed from calendar',
+                    'removed' => true,
+                    'holiday' => $this->holidayPayload($holiday->refresh()),
+                ]);
+            }
+        }
+
         $holiday->delete();
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushCoverageForDate($dateKey);
+        $this->holidayService->flushRuntimeCaches();
 
         return response()->json(['message' => 'Holiday deleted']);
+    }
+
+    public function deactivate(int $id): JsonResponse
+    {
+        $holiday = $this->holiday->newQuery()->findOrFail($id);
+        $dateKey = $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date;
+        $holiday->update(['status' => 'inactive']);
+        $this->holidayCalendar->flushMergedYearCaches();
+        $this->holidayService->flushCoverageForDate($dateKey);
+        $this->holidayService->flushRuntimeCaches();
+
+        return response()->json([
+            'message' => 'Holiday deactivated',
+            'holiday' => $this->holidayPayload($holiday->refresh()),
+        ]);
     }
 
     /**
@@ -808,13 +932,75 @@ class HolidayController extends Controller
             ->where('division_id', $valid['division_id'] ?? null)
             ->where('department_id', $valid['department_id'] ?? null)
             ->where('section_unit_id', $valid['section_unit_id'] ?? null)
-            ->where('employee_id', $valid['employee_id'] ?? null);
+            ->where('employee_id', $valid['employee_id'] ?? null)
+            ->whereIn('status', ['active', 'draft']);
 
         if ($ignoreId !== null) {
             $query->where('id', '!=', $ignoreId);
         }
 
         return $query->exists();
+    }
+
+    /**
+     * @param  array<string, mixed>  $targets
+     */
+    private function deactivateConflictingHolidaysOnDate(
+        array $targets,
+        string $date,
+        ?int $ignoreId = null,
+        ?string $name = null
+    ): void {
+        $query = $this->holiday->newQuery()
+            ->where('date', $date)
+            ->where('scope', $targets['scope'] ?? 'nationwide')
+            ->where('company_id', $targets['company_id'] ?? null)
+            ->where('branch_id', $targets['branch_id'] ?? null)
+            ->where('division_id', $targets['division_id'] ?? null)
+            ->where('department_id', $targets['department_id'] ?? null)
+            ->where('section_unit_id', $targets['section_unit_id'] ?? null)
+            ->where('employee_id', $targets['employee_id'] ?? null)
+            ->whereIn('status', ['active', 'draft']);
+
+        if ($ignoreId !== null) {
+            $query->where('id', '!=', $ignoreId);
+        }
+        if ($name !== null && trim($name) !== '') {
+            $query->where('name', $name);
+        }
+
+        $ids = $query->pluck('id')->all();
+        if ($ids === []) {
+            return;
+        }
+
+        $this->holiday->newQuery()->whereIn('id', $ids)->update(['status' => 'inactive']);
+        $this->holidayService->flushCoverageForDate($date);
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    private function upsertHolidayRow(array $payload): Holiday
+    {
+        $keys = [
+            'date' => $payload['date'],
+            'scope' => $payload['scope'] ?? 'nationwide',
+            'company_id' => $payload['company_id'] ?? null,
+            'branch_id' => $payload['branch_id'] ?? null,
+            'division_id' => $payload['division_id'] ?? null,
+            'department_id' => $payload['department_id'] ?? null,
+            'section_unit_id' => $payload['section_unit_id'] ?? null,
+            'employee_id' => $payload['employee_id'] ?? null,
+        ];
+
+        $holiday = $this->holiday->newQuery()->updateOrCreate($keys, $payload);
+
+        // ponytail: drop orphan duplicates left by old swap/deactivate paths (no unique DB constraint).
+        $this->holiday->newQuery()
+            ->where($keys)
+            ->where('id', '!=', $holiday->id)
+            ->delete();
+
+        return $holiday;
     }
 
     /**
@@ -892,7 +1078,52 @@ class HolidayController extends Controller
             'regions' => ($valid['scope'] === 'regional') ? array_values($valid['regions'] ?? []) : null,
             'is_recurring' => (bool) ($valid['is_recurring'] ?? false),
             'status' => $valid['status'],
+            'is_swap' => (bool) ($valid['is_swap'] ?? false),
+            'original_date' => $valid['original_date'] ?? null,
         ];
+    }
+
+    private function upsertInactiveHolidayStub(Holiday $source, string $stubDate, ?int $ignoreId = null): void
+    {
+        $targets = $this->scopeTargetsFromHoliday($source);
+
+        $keys = [
+            'date' => $stubDate,
+            'scope' => $targets['scope'],
+            'company_id' => $targets['company_id'],
+            'branch_id' => $targets['branch_id'],
+            'division_id' => $targets['division_id'],
+            'department_id' => $targets['department_id'],
+            'section_unit_id' => $targets['section_unit_id'],
+            'employee_id' => $targets['employee_id'],
+        ];
+
+        $payload = [
+            'name' => $source->name,
+            'type' => $source->type,
+            'description' => $source->description,
+            'regions' => $source->regions,
+            'is_recurring' => false,
+            'status' => 'inactive',
+            'is_swap' => false,
+            'original_date' => null,
+            'coverage_type' => $source->coverage_type,
+            'coverage_ids' => $source->coverage_ids,
+        ];
+
+        $query = $this->holiday->newQuery()->where($keys);
+        if ($ignoreId !== null) {
+            $query->where('id', '!=', $ignoreId);
+        }
+
+        $stub = $query->first();
+        if ($stub) {
+            $stub->update($payload);
+
+            return;
+        }
+
+        $this->holiday->newQuery()->create(array_merge($keys, $payload));
     }
 
     /**

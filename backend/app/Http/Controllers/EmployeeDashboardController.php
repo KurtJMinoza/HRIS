@@ -389,10 +389,10 @@ class EmployeeDashboardController extends Controller
                     $user->branch_id !== null ? (int) $user->branch_id : null,
                     $dateKey
                 );
-                $settings = $this->holidayEligibility->policyFor($activePolicy, $user->getEffectiveCompanyId());
+                $settings = $this->holidayEligibility->resolveEffectivePolicy($activePolicy, $holidayOnDate, $user->getEffectiveCompanyId());
                 $worked = (int) ($summary['worked_minutes'] ?? 0) > 0;
                 $qualification = $cursor->lessThanOrEqualTo($todayNow)
-                    ? $this->holidayEligibility->evaluate($user, $holidayOnDate, $dateKey, $worked, $settings)
+                    ? $this->holidayEligibility->determineEligibility($user, $holidayOnDate, $dateKey, $worked, $activePolicy)
                     : null;
                 $holidayPayPolicy = [
                     'source' => 'payroll_policy_settings',
@@ -400,10 +400,18 @@ class EmployeeDashboardController extends Controller
                     'policy_name' => $activePolicy?->name ?? 'DOLE Global Default',
                     'scope' => $activePolicy?->company_id !== null ? 'company_override' : 'global_default',
                     'eligible' => $qualification['eligible'] ?? null,
+                    'employment_type' => $qualification['employment_type'] ?? null,
+                    'employment_type_match' => $qualification['employment_type_match'] ?? null,
                     'attendance_rule_applied' => $qualification['rule'] ?? 'pending',
                     'reason' => $qualification['reason'] ?? 'Eligibility is evaluated when the holiday date is reached.',
                     'unworked_multiplier' => $this->holidayEligibility->unworkedMultiplier($holidayOnDate, $settings),
                 ];
+                if ($holidayOnDate !== null && ($qualification['eligible'] ?? false) && ! $worked) {
+                    $summary['status'] = 'holiday';
+                    $summary['status_label'] = 'Unworked holiday pay';
+                    $summary['presence_label'] = 'Eligible for holiday pay';
+                    $summary['display_badge'] = 'Regular Holiday';
+                }
             }
 
             if (

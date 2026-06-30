@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Calendar, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { Calendar, ChevronLeft, ChevronRight, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
@@ -143,14 +143,16 @@ export function buildLeaveDateMap(leaves) {
   return map
 }
 
-function LeaveCalendarEntry({ leave, showEmployeeDetails, viewerProfile, onOpenLeave }) {
+function LeaveCalendarEntry({ leave, showEmployeeDetails, viewerProfile, onOpenLeave, onDeleteLeave }) {
   const status = normalizeLeaveStatus(leave.status)
   const meta = LEAVE_STATUS_META[status]
   const person = resolveLeavePerson(leave, viewerProfile)
   const displayStatus = leave.display_status || meta?.shortLabel || status
   const detailLine = leaveDurationLabel(leave)
+  const canDelete = Boolean(leave?.actor_can_delete && onDeleteLeave)
 
   return (
+    <div className="flex w-full min-w-0 items-stretch gap-0.5">
     <button
       type="button"
       onClick={(event) => {
@@ -158,7 +160,7 @@ function LeaveCalendarEntry({ leave, showEmployeeDetails, viewerProfile, onOpenL
         onOpenLeave?.(leave)
       }}
       className={cn(
-        'flex w-full min-w-0 items-start gap-1.5 rounded-lg border border-slate-200/90 bg-white/95 px-1.5 py-1 text-left shadow-sm transition-colors',
+        'flex min-w-0 flex-1 items-start gap-1.5 rounded-lg border border-slate-200/90 bg-white/95 px-1.5 py-1 text-left shadow-sm transition-colors',
         'hover:border-brand/35 hover:bg-brand/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/35 dark:border-white/10 dark:bg-slate-900/75 dark:hover:bg-brand/10 @sm:gap-2 @sm:px-2 @sm:py-1.5',
       )}
       title={`${person.name} — ${leaveTypeLabel(leave.type)} (${displayStatus})`}
@@ -193,6 +195,24 @@ function LeaveCalendarEntry({ leave, showEmployeeDetails, viewerProfile, onOpenL
         </span>
       </span>
     </button>
+    {canDelete ? (
+      <button
+        type="button"
+        aria-label={`Delete leave request #${leave.id}`}
+        title="Delete leave request"
+        className={cn(
+          'shrink-0 self-start rounded-md border border-destructive/25 p-1 text-destructive transition-colors',
+          'hover:border-destructive/45 hover:bg-destructive/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-destructive/35 @sm:p-1.5',
+        )}
+        onClick={(event) => {
+          event.stopPropagation()
+          onDeleteLeave?.(leave)
+        }}
+      >
+        <Trash2 className="size-3 @sm:size-3.5" aria-hidden />
+      </button>
+    ) : null}
+    </div>
   )
 }
 
@@ -206,6 +226,7 @@ function LeaveCalendarCell({
   showEmployeeDetails,
   viewerProfile,
   onOpenLeave,
+  onDeleteLeave,
   onSelect,
 }) {
   const { day, dateStr, isAdjacent, month: cellMonth } = cell
@@ -267,6 +288,7 @@ function LeaveCalendarCell({
               showEmployeeDetails={showEmployeeDetails}
               viewerProfile={viewerProfile}
               onOpenLeave={onOpenLeave}
+              onDeleteLeave={onDeleteLeave}
             />
           ))}
         </div>
@@ -312,6 +334,7 @@ export function EmployeeLeaveCalendarView({
   hintText,
   onFileLeave,
   onOpenLeave,
+  onDeleteLeave,
   onInvalidDate,
 }) {
   const now = new Date()
@@ -441,8 +464,8 @@ export function EmployeeLeaveCalendarView({
         <p className="text-[11px] leading-relaxed text-muted-foreground @sm:text-xs">
           {hintText ??
             (allowFileLeave
-              ? 'Tap an open day to file leave. Shift+click a second day to pre-fill a date range. Tap a leave card to view details.'
-              : 'Tap a leave card to view details.')}
+              ? 'Tap an open day to file leave. Shift+click a second day to pre-fill a date range. Tap a leave card to view details or delete when allowed.'
+              : 'Tap a leave card to view details or delete when allowed.')}
         </p>
       </div>
 
@@ -480,6 +503,7 @@ export function EmployeeLeaveCalendarView({
                   showEmployeeDetails={showEmployeeDetails}
                   viewerProfile={viewerProfile}
                   onOpenLeave={onOpenLeave}
+                  onDeleteLeave={onDeleteLeave}
                   onSelect={handleCellSelect}
                 />
               </div>

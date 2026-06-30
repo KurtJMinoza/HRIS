@@ -6,6 +6,7 @@ use App\Models\Holiday;
 use App\Models\User;
 use App\Support\TextSanitizer;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -92,13 +93,13 @@ class HolidayCalendarService
      * Admin-facing yearly list. Keeps multiple scoped rows on the same date so scoped
      * holidays can coexist.
      *
-     * @return list<array<string, mixed>>
+     * @return Collection<int, array<string, mixed>>
      */
-    public function holidaysForYear(int $year): array
+    public function holidaysForYear(int $year): Collection
     {
         $year = max(2020, min(2035, $year));
         if (isset($this->holidaysListByYear[$year])) {
-            return $this->holidaysListByYear[$year];
+            return collect($this->holidaysListByYear[$year]);
         }
 
         $rows = [];
@@ -136,10 +137,17 @@ class HolidayCalendarService
             ->get();
 
         $customRows = [];
+        $activeDatesByName = $this->activeHolidayDatesByNameForYear($year);
         foreach ($holidays as $holiday) {
             $row = $this->serializeHolidayRow($holiday);
-            $customRows[] = $row;
+            if ($this->shouldSuppressRelocatedHolidayRow($row, $activeDatesByName)) {
+                continue;
+            }
             $explicitKeys[] = $this->overrideKey($row);
+            if (strtolower((string) ($row['status'] ?? 'active')) === 'inactive') {
+                continue;
+            }
+            $customRows[] = $row;
         }
 
         foreach (array_values($this->seededFallbackForYear($year)) as $row) {
@@ -156,6 +164,11 @@ class HolidayCalendarService
             $rows[] = $row;
         }
 
+        $rows = array_values(array_filter(
+            $rows,
+            fn (array $row) => $this->shouldIncludeInCalendarDisplay($row, $activeDatesByName)
+        ));
+
         usort($rows, function (array $a, array $b) {
             $dateCompare = strcmp((string) ($a['date'] ?? ''), (string) ($b['date'] ?? ''));
             if ($dateCompare !== 0) {
@@ -167,7 +180,29 @@ class HolidayCalendarService
 
         $this->holidaysListByYear[$year] = $rows;
 
-        return $rows;
+        return collect($rows);
+    }
+
+    /**
+     * Hard-deleting a nationwide baseline holiday would resurrect the PH seeded calendar row.
+     */
+    public function wouldSeededHolidayResurfaceOnDelete(Holiday $holiday): bool
+    {
+        $date = $holiday->date instanceof Carbon
+            ? $holiday->date->format('Y-m-d')
+            : (string) $holiday->date;
+        $year = (int) substr($date, 0, 4);
+        $scope = strtolower((string) ($holiday->scope ?? 'nationwide'));
+        if ($scope !== 'nationwide') {
+            return false;
+        }
+
+        $baseline = $this->seededFallbackForYear($year)[$date] ?? null;
+        if ($baseline === null) {
+            return false;
+        }
+
+        return strcasecmp(trim((string) $holiday->name), (string) ($baseline['name'] ?? '')) === 0;
     }
 
     /**
@@ -194,8 +229,15 @@ class HolidayCalendarService
         ];
 
         $out = [];
+        $activeDatesByName = $this->activeHolidayDatesByNameForYear($year);
+
         foreach ($rows as $r) {
             $date = sprintf('%04d-%s', $year, $r['md']);
+            $datesForName = $activeDatesByName[$r['name']] ?? [];
+            if ($datesForName !== [] && ! in_array($date, $datesForName, true)) {
+                continue;
+            }
+
             $out[$date] = [
                 'date' => $date,
                 'name' => $r['name'],
@@ -220,6 +262,94 @@ class HolidayCalendarService
         }
 
         return $out;
+    }
+
+    /** @return array<string, list<string>> */
+    private function activeHolidayDatesByNameForYear(int $year): array
+    {
+        $map = [];
+        foreach (Holiday::query()
+            ->where('status', 'active')
+            ->whereYear('date', $year)
+            ->get(['name', 'date']) as $holiday) {
+            $name = trim((string) $holiday->name);
+            if ($name === '') {
+                continue;
+            }
+            $dateKey = $holiday->date instanceof Carbon
+                ? $holiday->date->format('Y-m-d')
+                : (string) $holiday->date;
+            $map[$name][] = $dateKey;
+        }
+
+        return $map;
+    }
+
+    /** @param  array<string, list<string>>  $activeDatesByName */
+    private function shouldSuppressRelocatedHolidayRow(array $row, array $activeDatesByName): bool
+    {
+        if (strtolower((string) ($row['status'] ?? 'active')) !== 'active') {
+            return false;
+        }
+
+        $name = trim((string) ($row['name'] ?? ''));
+        $date = (string) ($row['date'] ?? '');
+        if ($name === '' || $date === '') {
+            return false;
+        }
+
+        $dates = array_values(array_unique($activeDatesByName[$name] ?? []));
+        if (count($dates) < 2 || ! in_array($date, $dates, true)) {
+            return false;
+        }
+
+        $others = array_values(array_filter($dates, fn (string $candidate) => $candidate !== $date));
+        if ($others === []) {
+            return false;
+        }
+
+        $originalDate = (string) ($row['original_date'] ?? '');
+        if ($originalDate !== '' && $originalDate === $date) {
+            return true;
+        }
+
+        // ponytail: bad swap can leave two active rows — keep the later moved date only
+        return $date < max($others);
+    }
+
+    /**
+     * Calendar + list should only show active holidays on their effective observation date.
+     *
+     * @param  array<string, list<string>>  $activeDatesByName
+     */
+    private function shouldIncludeInCalendarDisplay(array $row, array $activeDatesByName): bool
+    {
+        if (strtolower((string) ($row['status'] ?? 'active')) !== 'active') {
+            return false;
+        }
+
+        if ($this->shouldSuppressRelocatedHolidayRow($row, $activeDatesByName)) {
+            return false;
+        }
+
+        $name = trim((string) ($row['name'] ?? ''));
+        $date = (string) ($row['date'] ?? '');
+        if ($name === '' || $date === '') {
+            return true;
+        }
+
+        $activeDates = array_values(array_unique($activeDatesByName[$name] ?? []));
+        if ($activeDates === [] || in_array($date, $activeDates, true)) {
+            return true;
+        }
+
+        $originalDate = (string) ($row['original_date'] ?? '');
+        if ($originalDate !== '' && $originalDate === $date) {
+            return false;
+        }
+
+        // PH baseline / ghost row while the same holiday is observed on another date.
+        return false;
     }
 
     /**
@@ -260,6 +390,10 @@ class HolidayCalendarService
             ->get();
 
         foreach ($templates as $h) {
+            if (strtolower((string) ($h->status ?? 'active')) === 'inactive') {
+                continue;
+            }
+
             $anchor = $h->date instanceof Carbon ? $h->date->copy() : Carbon::parse((string) $h->date);
             if ((int) $anchor->year === $year) {
                 continue;
@@ -364,11 +498,11 @@ class HolidayCalendarService
             return null;
         }
 
-        $matches = array_values(array_filter(
-            $this->holidaysForYear($year),
-            fn (array $row) => ($row['date'] ?? null) === $dateKey
-                && $this->rowAppliesToTarget($row, $companyId, $branchId, $departmentId, $employeeId, $divisionId, $sectionUnitId)
-        ));
+        $matches = $this->holidaysForYear($year)
+            ->filter(fn (array $row) => ($row['date'] ?? null) === $dateKey
+                && $this->rowAppliesToTarget($row, $companyId, $branchId, $departmentId, $employeeId, $divisionId, $sectionUnitId))
+            ->values()
+            ->all();
 
         return $this->bestActiveMatch($matches);
     }
@@ -384,11 +518,11 @@ class HolidayCalendarService
         }
 
         $date = Carbon::parse($dateKey);
-        $matches = array_values(array_filter(
-            $this->holidaysForYear($year),
-            fn (array $row): bool => ($row['date'] ?? null) === $dateKey
-                && $this->scopeResolver->appliesRowToEmployee($row, $user, $date)
-        ));
+        $matches = $this->holidaysForYear($year)
+            ->filter(fn (array $row): bool => ($row['date'] ?? null) === $dateKey
+                && $this->scopeResolver->appliesRowToEmployee($row, $user, $date))
+            ->values()
+            ->all();
 
         return $this->bestActiveMatch($matches);
     }

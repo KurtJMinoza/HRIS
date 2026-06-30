@@ -65,7 +65,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { PayrollLogisticsPolicyShell } from '@/components/payroll/PayrollLogisticsPolicyShell'
 import { HolidayPayPolicyCard } from '@/components/payroll/HolidayPayPolicyCard'
-import { normalizeHolidayPayPolicy } from '@/lib/holidayPayPolicy'
+import { normalizeHolidayPayPolicy, serializeHolidayPayPolicyForSave } from '@/lib/holidayPayPolicy'
 
 const CONDITION_LABELS = {
   ORD: 'Ordinary Day',
@@ -549,7 +549,7 @@ export default function AdminPolicySettings() {
     setLoadingPolicyDetail(true)
     if (!keepDetail) setPolicyDetail(null)
     try {
-      const p = await getPayPolicy(id)
+      const p = await getPayPolicy(id, { year: new Date().getFullYear() })
       if (reqId !== policyDetailReqIdRef.current) return
       setPolicyDetail(normalizePayPolicyPayload(p, CONDITION_LABELS))
     } catch (e) {
@@ -649,7 +649,7 @@ export default function AdminPolicySettings() {
         status: policyDetail.status,
         version_label: policyDetail.version_label,
         priority_order_json: policyDetail.priority_order_json,
-        holiday_policy: normalizeHolidayPayPolicy(policyDetail.holiday_policy),
+        holiday_policy: serializeHolidayPayPolicyForSave(policyDetail.holiday_policy),
         multipliers,
         nd_settings: nd
           ? {
@@ -665,7 +665,12 @@ export default function AdminPolicySettings() {
       setLastSaved(new Date())
       setDirty(false)
       toast({ title: 'Policy saved', variant: 'success' })
-      await fetchPolicyDetail(policyDetail.id, { keepDetail: true })
+      const saved = await getPayPolicy(policyDetail.id, { year: new Date().getFullYear() })
+      if (saved?.id) {
+        setPolicyDetail(normalizePayPolicyPayload(saved, CONDITION_LABELS))
+      } else {
+        await fetchPolicyDetail(policyDetail.id, { keepDetail: true })
+      }
       await fetchPreview()
     } catch (e) {
       toast({ title: 'Failed to save', description: e?.message, variant: 'error' })
@@ -773,18 +778,20 @@ export default function AdminPolicySettings() {
   }
 
   const updateHolidayPolicy = (path, value) => {
-    if (!policyDetail) return
-    const next = { ...normalizeHolidayPayPolicy(policyDetail.holiday_policy) }
-    let cursor = next
-    path.forEach((key, index) => {
-      if (index === path.length - 1) {
-        cursor[key] = value
-      } else {
-        cursor[key] = { ...(cursor[key] || {}) }
-        cursor = cursor[key]
-      }
+    setPolicyDetail((prev) => {
+      if (!prev) return prev
+      const next = { ...normalizeHolidayPayPolicy(prev.holiday_policy) }
+      let cursor = next
+      path.forEach((key, index) => {
+        if (index === path.length - 1) {
+          cursor[key] = value
+        } else {
+          cursor[key] = { ...(cursor[key] || {}) }
+          cursor = cursor[key]
+        }
+      })
+      return { ...prev, holiday_policy: normalizeHolidayPayPolicy(next) }
     })
-    setPolicyDetail({ ...policyDetail, holiday_policy: next })
     setDirty(true)
   }
 
@@ -1421,10 +1428,9 @@ export default function AdminPolicySettings() {
                     >
                       <HolidayPayPolicyCard
                         policy={policyDetail.holiday_policy}
-                        multipliers={multipliers}
                         companyId={policyDetail.company_id}
+                        branchId={policyDetail.branch_id}
                         onPolicyChange={updateHolidayPolicy}
-                        onMultiplierChange={updateMultiplier}
                       />
                     </Motion.div>
                   </TabsContent>

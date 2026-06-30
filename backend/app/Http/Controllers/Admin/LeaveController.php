@@ -336,12 +336,6 @@ class LeaveController extends Controller
         }
 
         try {
-            LeaveFilingRules::assertLeaveStartsAfterToday($validated['start_date']);
-            LeaveFilingRules::assertRangeHasNoCompletedAttendance(
-                (int) $validated['user_id'],
-                $validated['start_date'],
-                $validated['end_date']
-            );
             LeaveFilingRules::assertNoOverlappingPendingOrApprovedLeave(
                 (int) $validated['user_id'],
                 $validated['start_date'],

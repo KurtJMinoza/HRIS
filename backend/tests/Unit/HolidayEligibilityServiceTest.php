@@ -7,13 +7,16 @@ use App\Models\Policy;
 use App\Models\User;
 use App\Services\AttendanceSessionService;
 use App\Services\HolidayEligibilityService;
+use App\Services\HolidayPayPolicyService;
 use App\Services\HolidayPolicyCache;
 use App\Services\HolidayService;
 use App\Services\LeaveCreditService;
+use App\Services\PayrollRulesEngineService;
 use App\Services\PolicyResolverService;
 use Illuminate\Validation\ValidationException;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Support\FakeHolidayPayPolicyService;
 use Tests\TestCase;
 
 class HolidayEligibilityServiceTest extends TestCase
@@ -21,7 +24,7 @@ class HolidayEligibilityServiceTest extends TestCase
     public function test_regular_holiday_is_not_paid_after_unpaid_absence(): void
     {
         $service = $this->service();
-        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-12'), '2026-06-12', false, Policy::DEFAULT_HOLIDAY_POLICY);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-12'), '2026-06-12', false, null);
 
         $this->assertFalse($result['eligible']);
         $this->assertSame('unpaid_absence_previous_workday', $result['rule']);
@@ -30,7 +33,7 @@ class HolidayEligibilityServiceTest extends TestCase
     public function test_approved_paid_leave_before_regular_holiday_qualifies(): void
     {
         $service = $this->service(paidLeaveDates: ['2026-06-11']);
-        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-12'), '2026-06-12', false, Policy::DEFAULT_HOLIDAY_POLICY);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-12'), '2026-06-12', false, null);
 
         $this->assertTrue($result['eligible']);
         $this->assertSame('paid_leave_previous_workday', $result['rule']);
@@ -39,7 +42,7 @@ class HolidayEligibilityServiceTest extends TestCase
     public function test_rest_days_are_skipped_to_the_previous_working_day(): void
     {
         $service = $this->service(workedDates: ['2026-06-12']);
-        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-15'), '2026-06-15', false, Policy::DEFAULT_HOLIDAY_POLICY);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-15'), '2026-06-15', false, null);
 
         $this->assertTrue($result['eligible']);
         $this->assertSame('present_previous_workday', $result['rule']);
@@ -51,7 +54,7 @@ class HolidayEligibilityServiceTest extends TestCase
             workedDates: ['2026-04-01'],
             holidays: ['2026-04-02' => $this->regularHoliday('2026-04-02')]
         );
-        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-04-03'), '2026-04-03', false, Policy::DEFAULT_HOLIDAY_POLICY);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-04-03'), '2026-04-03', false, null);
 
         $this->assertTrue($result['eligible']);
         $this->assertSame('successive_holiday_chain', $result['rule']);
@@ -62,23 +65,30 @@ class HolidayEligibilityServiceTest extends TestCase
         $service = $this->service(workedDates: ['2026-08-20']);
         $holiday = ['date' => '2026-08-21', 'type' => 'special', 'name' => 'Special Day'];
 
-        $default = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, Policy::DEFAULT_HOLIDAY_POLICY);
+        $default = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, null);
         $this->assertFalse($default['eligible']);
         $this->assertSame(0.0, $service->unworkedMultiplier($holiday, Policy::DEFAULT_HOLIDAY_POLICY));
 
         $override = array_replace_recursive(Policy::DEFAULT_HOLIDAY_POLICY, [
-            'pay_unworked_special' => true,
+            'special_unworked' => [
+                'unworked_pay_policy' => 'all_employees',
+                'eligible_employment_types' => [],
+            ],
             'unworked_special_multiplier' => 1.30,
         ]);
-        $paid = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, $override);
+        $policyModel = new Policy(['holiday_policy' => $override]);
+        $paid = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, $policyModel);
         $this->assertTrue($paid['eligible']);
-        $this->assertSame(1.3, $service->unworkedMultiplier($holiday, $override));
+        $this->assertSame(1.3, $service->unworkedMultiplier($holiday, $service->resolveEffectivePolicy($policyModel, $holiday)));
     }
 
     #[DataProvider('belowMinimumRates')]
     public function test_policy_validation_rejects_holiday_rates_below_dole_minimum(string $code, string $field, float $value): void
     {
-        $controller = new PayPolicyController(Mockery::mock(PolicyResolverService::class));
+        $controller = new PayPolicyController(
+            Mockery::mock(PolicyResolverService::class),
+            Mockery::mock(HolidayPayPolicyService::class)
+        );
         $method = new \ReflectionMethod($controller, 'validateDoleMinimums');
 
         try {
@@ -125,16 +135,31 @@ class HolidayEligibilityServiceTest extends TestCase
         );
     }
 
-    private function service(array $workedDates = [], array $paidLeaveDates = [], array $holidays = []): FakeHolidayEligibilityService
+    private function service(array $workedDates = [], array $paidLeaveDates = [], array $holidays = []): HolidayEligibilityService
+    {
+        return new HolidayEligibilityService($this->payPolicyService($workedDates, $paidLeaveDates, $holidays));
+    }
+
+    private function payPolicyService(array $workedDates = [], array $paidLeaveDates = [], array $holidays = []): FakeHolidayPayPolicyService
     {
         $holidayService = Mockery::mock(HolidayService::class);
         $holidayService->shouldReceive('resolveHolidayForPayroll')
             ->andReturnUsing(fn (User $employee, string $dateKey) => $holidays[$dateKey] ?? null);
 
-        return new FakeHolidayEligibilityService(
+        $policyResolver = Mockery::mock(PolicyResolverService::class);
+        $policyResolver->shouldReceive('getActivePolicy')->andReturn(null);
+        $policyResolver->shouldReceive('getMultipliersForRule')->andReturn(['first_8' => 2.0, 'ot' => 2.6, 'nd_base' => 2.0, 'nd_addon' => 0.10]);
+
+        $rulesEngine = Mockery::mock(PayrollRulesEngineService::class);
+        $rulesEngine->shouldReceive('holidayTypeFromHolidayRow')->andReturn('regular');
+        $rulesEngine->shouldReceive('resolveRuleCode')->andReturn('RH');
+
+        return new FakeHolidayPayPolicyService(
             Mockery::mock(AttendanceSessionService::class),
             $holidayService,
             Mockery::mock(LeaveCreditService::class),
+            $policyResolver,
+            $rulesEngine,
             $workedDates,
             $paidLeaveDates,
         );
@@ -162,28 +187,5 @@ class HolidayEligibilityServiceTest extends TestCase
     private function regularHoliday(string $date): array
     {
         return ['date' => $date, 'type' => 'regular', 'name' => 'Regular Holiday'];
-    }
-}
-
-class FakeHolidayEligibilityService extends HolidayEligibilityService
-{
-    public function __construct(
-        AttendanceSessionService $attendanceSession,
-        HolidayService $holidayService,
-        LeaveCreditService $leaveCreditService,
-        private readonly array $workedDates,
-        private readonly array $paidLeaveDates,
-    ) {
-        parent::__construct($attendanceSession, $holidayService, $leaveCreditService);
-    }
-
-    protected function workedOn(User $employee, string $dateKey): bool
-    {
-        return in_array($dateKey, $this->workedDates, true);
-    }
-
-    protected function hasApprovedPaidLeave(User $employee, string $dateKey): bool
-    {
-        return in_array($dateKey, $this->paidLeaveDates, true);
     }
 }

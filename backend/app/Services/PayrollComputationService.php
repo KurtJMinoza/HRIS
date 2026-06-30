@@ -632,24 +632,37 @@ class PayrollComputationService
         $dayKey = $this->dayKeyForDate(Carbon::parse($dateKey, $tz));
         $daySchedule = $effectiveSchedule[$dayKey] ?? null;
         $isRestDay = $this->isRestDay($effectiveSchedule, Carbon::parse($dateKey, $tz));
-        $holiday = $this->getHolidayForUserDate($user, $dateKey);
+        $holidayRow = $this->holidayService->resolveHolidayForPayroll($user, $dateKey);
+        $holiday = $holidayRow !== null
+            ? array_merge($holidayRow, ['date' => (string) ($holidayRow['date'] ?? $dateKey)])
+            : null;
 
         // Phase 2: Rules Engine – resolve rule code and multipliers (policy-aware)
         $companyId = $user->getEffectiveCompanyId();
         $branchId = $user->branch_id;
         $policy = $this->policyResolver->getActivePolicy($companyId, $branchId, $dateKey);
-        $resolvedHolidayType = $holiday ? $this->rulesEngine->holidayTypeFromHolidayRow($holiday) : null;
+        $holidayPolicy = $holiday !== null
+            ? $this->holidayEligibility->resolveEffectivePolicy($policy, $holiday, $companyId)
+            : [];
+        $resolvedHolidayType = $holiday !== null
+            ? $this->holidayEligibility->resolvedPayrollHolidayType($holiday, $holidayPolicy)
+            : null;
         $ruleCode = $this->rulesEngine->resolveRuleCode($isRestDay, $resolvedHolidayType);
         $multipliers = $this->rulesEngine->getMultipliersForRule($ruleCode, $policy);
-        $holidayPolicy = $holiday !== null
-            ? $this->holidayEligibility->policyFor($policy, $companyId)
-            : [];
-        $holidayQualification = $holiday !== null
-            ? $this->holidayEligibility->evaluate($user, $holiday, $dateKey, $timeIn !== null && $timeOut !== null, $holidayPolicy)
+        $worked = $timeIn !== null && $timeOut !== null;
+        $holidayEligibility = $holiday !== null
+            ? $this->holidayEligibility->determineEligibility($user, $holiday, $dateKey, $worked, $policy)
             : null;
-        if ($holiday !== null && $holidayQualification !== null && ! $holidayQualification['eligible'] && $timeIn && $timeOut) {
-            // Covered payroll math remains centralized here; an excluded category receives
-            // ordinary rates instead of a parallel holiday calculation.
+        $holidayQualification = $holidayEligibility !== null
+            ? [
+                'eligible' => $holidayEligibility['eligible'],
+                'attendance_requirement_met' => $holidayEligibility['attendance_requirement_met'],
+                'reason' => $holidayEligibility['reason'],
+                'rule' => $holidayEligibility['rule'],
+            ]
+            : null;
+        if ($holiday !== null && $holidayQualification !== null && ! $holidayQualification['eligible'] && $worked) {
+            // Ineligible employees receive ordinary rates instead of holiday premiums.
             $multipliers = $this->rulesEngine->getMultipliersForRule('ORD', $policy);
         }
         $first8 = $multipliers['first_8'];
@@ -677,8 +690,13 @@ class PayrollComputationService
             'holiday_eligible' => $holidayQualification['eligible'] ?? null,
             'holiday_attendance_requirement_met' => $holidayQualification['attendance_requirement_met'] ?? null,
             'holiday_attendance_rule_applied' => $holidayQualification['rule'] ?? null,
-            'holiday_employee_category' => $holidayQualification['category'] ?? null,
             'holiday_eligibility_reason' => $holidayQualification['reason'] ?? null,
+            'holiday_employment_type' => $holidayEligibility['employment_type'] ?? null,
+            'holiday_employment_type_match' => $holidayEligibility['employment_type_match'] ?? null,
+            'holiday_policy_match' => $holidayEligibility['policy_match'] ?? null,
+            'holiday_unworked_multiplier' => $holiday !== null
+                ? $this->holidayEligibility->unworkedMultiplier($holiday, $holidayPolicy)
+                : null,
         ];
 
         $breakdown = [];
@@ -701,25 +719,24 @@ class PayrollComputationService
 
             $holidayPremiumPayForLeave = 0.0;
             $unworkedHolidayApplied = false;
-            if ($holiday !== null && ($holidayQualification['eligible'] ?? false)) {
-                $unworkedMultiplier = $this->holidayEligibility->unworkedMultiplier($holiday, $holidayPolicy);
-                if ($unworkedMultiplier > 0) {
-                    $holidayPremiumPayForLeave = round($dailyRate * $unworkedMultiplier, 2);
+            if ($holiday !== null) {
+                $holidayPay = $this->holidayEligibility->computeHolidayPay($user, [
+                    'date_key' => $dateKey,
+                    'worked' => false,
+                    'daily_rate' => $dailyRate,
+                    'hourly_rate' => $hourlyRate,
+                    'required_minutes' => $requiredMinutes,
+                    'is_rest_day' => $isRestDay,
+                ], $holiday, $policy);
+
+                if (($holidayPay['holiday_premium_pay'] ?? 0) > 0) {
+                    $holidayPremiumPayForLeave = (float) $holidayPay['holiday_premium_pay'];
                     $totalPay = $holidayPremiumPayForLeave;
                     $status = 'holiday';
                     $unworkedHolidayApplied = true;
-                    $breakdown[] = [
-                        'component' => 'holiday_premium',
-                        'minutes' => $requiredMinutes > 0 ? $requiredMinutes : 480,
-                        'rate' => $hourlyRate,
-                        'multiplier' => $unworkedMultiplier,
-                        'premium_multiplier' => $unworkedMultiplier,
-                        'holiday_name' => $holiday['name'] ?? null,
-                        'holiday_type' => $holiday['type'] ?? null,
-                        'amount' => $holidayPremiumPayForLeave,
-                        'worked' => false,
-                        'attendance_rule_applied' => $holidayQualification['rule'] ?? null,
-                    ];
+                    if (is_array($holidayPay['breakdown'] ?? null)) {
+                        $breakdown[] = $holidayPay['breakdown'];
+                    }
                 }
             }
 
@@ -1171,6 +1188,12 @@ class PayrollComputationService
         $day = $this->computeDayPayroll($user, $dateKey, $timeIn, $timeOut, $effectiveSchedule, 1000.0, $tz);
         $reg = (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0);
         $ot = (int) ($day['ot_day_minutes'] ?? 0) + (int) ($day['ot_night_minutes'] ?? 0);
+        $holidayPremium = round((float) ($day['holiday_premium_pay'] ?? 0), 2);
+        if ($holidayPremium > 0.0001 && ($reg + $ot) <= 0) {
+            $required = (int) ($day['required_minutes'] ?? 0);
+
+            return max(0, $required > 0 ? $required : 480);
+        }
 
         return max(0, $reg + $ot);
     }
@@ -1701,6 +1724,8 @@ class PayrollComputationService
                 $days[] = $dayPayroll;
                 $cursor->addDay();
             }
+
+            $this->ensureUnworkedHolidayPayForPeriod($user, $days, $from, $to, $effectiveSchedule, $dailyRate, $tz);
         }
 
         if (is_object($timingSink)) {
@@ -1909,10 +1934,18 @@ class PayrollComputationService
             $fullScheduledPresence = $requiredForDay <= 0
                 ? $regularMinutes > 0
                 : $regularMinutes >= max(0, $requiredForDay - $holidayPresenceToleranceMin);
-            $eligible = ($status === 'worked' && $fullScheduledPresence) || ($status === 'leave' && $hasPaidLeave);
+            $eligible = ($status === 'worked' && $fullScheduledPresence)
+                || ($status === 'leave' && $hasPaidLeave)
+                || ($status === 'holiday' && ($d['conditions']['holiday_eligible'] ?? false));
+            $unworkedMultiplier = (float) ($d['conditions']['holiday_unworked_multiplier'] ?? 0);
+            if ($status === 'holiday' && $eligible && $unworkedMultiplier > 0 && $hours <= 0) {
+                $hours = round(max(1, $requiredForDay > 0 ? $requiredForDay : 480) / 60, 2);
+                $multiplier = $unworkedMultiplier;
+            }
             $ruleCodeForDay = (string) ($d['conditions']['rule_code'] ?? '');
             $holidayPremiumBreakdown[] = [
                 'date' => (string) ($d['date'] ?? ''),
+                'holiday_id' => $holiday['id'] ?? null,
                 'holiday_name' => (string) ($holiday['name'] ?? 'Holiday'),
                 'holiday_type' => (string) ($holiday['type'] ?? ''),
                 'rule_code' => $ruleCodeForDay,
@@ -1922,6 +1955,24 @@ class PayrollComputationService
                 'eligible' => $eligible,
                 'amount' => $eligible ? $amount : 0.0,
             ];
+        }
+
+        $perHolidayLines = $this->buildPerHolidayEarningLines($holidayPremiumBreakdown, $dailyRate);
+        if ($perHolidayLines !== []) {
+            $dailyComputationEarningLines = array_values(array_filter(
+                $dailyComputationEarningLines,
+                fn (array $line): bool => ($line['key'] ?? '') !== 'daily:holiday_premium'
+            ));
+            $dailyComputationEarningLines = array_merge($dailyComputationEarningLines, $perHolidayLines);
+            usort($dailyComputationEarningLines, function (array $a, array $b): int {
+                $rank = ['regular_pay' => 5, 'REGULAR_HOLIDAY_PAY' => 30, 'SPECIAL_HOLIDAY_PAY' => 30];
+                $aCode = (string) ($a['component_code'] ?? '');
+                $bCode = (string) ($b['component_code'] ?? '');
+                $aSort = $rank[$aCode] ?? (str_starts_with((string) ($a['key'] ?? ''), 'daily:') ? 10 : 999);
+                $bSort = $rank[$bCode] ?? (str_starts_with((string) ($b['key'] ?? ''), 'daily:') ? 10 : 999);
+
+                return $aSort <=> $bSort;
+            });
         }
 
         $attendanceProration = $isConsultant
@@ -4177,5 +4228,146 @@ class PayrollComputationService
         }
 
         return $base;
+    }
+
+    /**
+     * Policy-first pass: generate unworked holiday pay even when no attendance_log exists.
+     *
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function ensureUnworkedHolidayPayForPeriod(
+        User $user,
+        array &$days,
+        Carbon $from,
+        Carbon $to,
+        array $effectiveSchedule,
+        float $dailyRate,
+        string $tz
+    ): void {
+        $daysByDate = [];
+        foreach ($days as $index => $day) {
+            $key = (string) ($day['date'] ?? '');
+            if ($key !== '') {
+                $daysByDate[$key] = $index;
+            }
+        }
+
+        $cursor = $from->copy()->startOfDay();
+        $end = $to->copy()->startOfDay();
+        while ($cursor->lessThanOrEqualTo($end)) {
+            $dateKey = $cursor->toDateString();
+            $holidayRow = $this->holidayService->resolveHolidayForPayroll($user, $dateKey);
+            if ($holidayRow === null) {
+                $cursor->addDay();
+
+                continue;
+            }
+
+            $holiday = array_merge($holidayRow, ['date' => $dateKey]);
+            [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
+            if ($timeIn !== null && $timeOut !== null) {
+                $cursor->addDay();
+
+                continue;
+            }
+
+            $policy = $this->policyResolver->getActivePolicy(
+                $user->getEffectiveCompanyId(),
+                $user->branch_id,
+                $dateKey
+            );
+            $evaluation = $this->holidayEligibility->shouldPayUnworkedHoliday($user, $holiday, $dateKey, $policy);
+            if (! ($evaluation['should_pay_unworked_holiday'] ?? false)) {
+                $cursor->addDay();
+
+                continue;
+            }
+
+            $index = $daysByDate[$dateKey] ?? null;
+            $existingPremium = $index !== null
+                ? round((float) ($days[$index]['holiday_premium_pay'] ?? 0), 2)
+                : 0.0;
+
+            if ($existingPremium > 0.0001) {
+                $cursor->addDay();
+
+                continue;
+            }
+
+            $dayPayroll = $this->computeDayPayroll(
+                $user,
+                $dateKey,
+                null,
+                null,
+                $effectiveSchedule,
+                $dailyRate,
+                $tz
+            );
+
+            if ($index !== null) {
+                $days[$index] = $dayPayroll;
+            } else {
+                $days[] = $dayPayroll;
+                $daysByDate[$dateKey] = count($days) - 1;
+            }
+
+            if (filter_var(config('payroll.debug_holiday_eligibility', false), FILTER_VALIDATE_BOOL)) {
+                Log::debug('holiday_unworked_pay', array_merge($evaluation, [
+                    'line_item_created' => round((float) ($dayPayroll['holiday_premium_pay'] ?? 0), 2) > 0.0001,
+                    'holiday_premium_pay' => round((float) ($dayPayroll['holiday_premium_pay'] ?? 0), 2),
+                ]));
+            }
+
+            $cursor->addDay();
+        }
+    }
+
+    /**
+     * Per-holiday payslip lines (REGULAR_HOLIDAY_PAY / SPECIAL_HOLIDAY_PAY).
+     *
+     * @param  list<array<string, mixed>>  $holidayPremiumBreakdown
+     * @return list<array<string, mixed>>
+     */
+    private function buildPerHolidayEarningLines(array $holidayPremiumBreakdown, float $dailyRate): array
+    {
+        $lines = [];
+        foreach ($holidayPremiumBreakdown as $item) {
+            if (! ($item['eligible'] ?? false)) {
+                continue;
+            }
+            $amount = round((float) ($item['amount'] ?? 0), 2);
+            if ($amount <= 0.0001) {
+                continue;
+            }
+
+            $dateKey = (string) ($item['date'] ?? '');
+            $holidayName = (string) ($item['holiday_name'] ?? 'Holiday');
+            $normalizedType = $this->holidayEligibility->normalizeHolidayType($item['holiday_type'] ?? null);
+            $componentCode = $this->holidayEligibility->holidayPayComponentCode($normalizedType);
+            $description = $this->holidayEligibility->holidayPayDescription($componentCode, $holidayName);
+            $hours = (float) ($item['hours'] ?? 0);
+            $minutes = $hours > 0 ? (int) round($hours * 60) : ($dailyRate > 0 ? 480 : 0);
+
+            $lines[] = [
+                'key' => 'holiday:'.$dateKey.':'.$componentCode,
+                'component_code' => $componentCode,
+                'label' => $description,
+                'description' => $description,
+                'amount' => $amount,
+                'units' => '1 day',
+                'minutes_worked' => $minutes,
+                'hourly_rate' => $dailyRate > 0 ? $dailyRate / 8.0 : null,
+                'metadata' => [
+                    'holiday_id' => $item['holiday_id'] ?? null,
+                    'holiday_type' => $item['holiday_type'] ?? null,
+                    'holiday_date' => $dateKey,
+                    'unworked' => true,
+                    'policy_source' => 'policy_settings',
+                    'multiplier' => $item['multiplier'] ?? null,
+                ],
+            ];
+        }
+
+        return $lines;
     }
 }

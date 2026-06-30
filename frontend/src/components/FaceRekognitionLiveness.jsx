@@ -110,26 +110,41 @@ export function FaceRekognitionLiveness({
   }, [attemptMeta])
 
   const ensureAmplifyConfig = useCallback((sessionData) => {
-    if (amplifyConfiguredRef.current) return
     const identityPoolId =
       sessionData?.cognitoIdentityPoolId || sessionData?.cognitoId || import.meta.env.VITE_COGNITO_IDENTITY_POOL_ID
+    const poolRegionFromId =
+      typeof identityPoolId === 'string' && identityPoolId.includes(':')
+        ? identityPoolId.split(':')[0]
+        : null
     const cognitoRegion =
-      sessionData?.cognitoRegion || import.meta.env.VITE_AWS_REGION || sessionData?.region || 'us-east-1'
-    if (identityPoolId) {
-      try {
-        Amplify.configure({
-          Auth: {
-            Cognito: {
-              identityPoolId,
-              identityPoolRegion: cognitoRegion,
-              allowGuestAccess: true,
-            },
+      poolRegionFromId ||
+      sessionData?.cognitoRegion ||
+      import.meta.env.VITE_AWS_REGION ||
+      sessionData?.region ||
+      'us-east-1'
+
+    if (!identityPoolId) {
+      return
+    }
+
+    const configKey = `${identityPoolId}|${cognitoRegion}`
+    if (amplifyConfiguredRef.current === configKey) {
+      return
+    }
+
+    try {
+      Amplify.configure({
+        Auth: {
+          Cognito: {
+            identityPoolId,
+            allowGuestAccess: true,
           },
-        })
-        amplifyConfiguredRef.current = true
-      } catch (e) {
-        console.warn('Amplify config (identity pool):', e?.message)
-      }
+        },
+      })
+      amplifyConfiguredRef.current = configKey
+      console.info('[FaceLiveness] Amplify configured', { identityPoolId, cognitoRegion })
+    } catch (e) {
+      console.warn('Amplify config (identity pool):', e?.message)
     }
   }, [])
 
@@ -407,16 +422,29 @@ export function FaceRekognitionLiveness({
     }
   }, [session, submitting, kioskMode, kioskType, attendanceDeviceProfile, authenticatedAttendance, onKioskSuccess, onKioskAttendanceCorrection, onVerified, onSuccess])
 
-  const handleError = useCallback(async (err) => {
+  const handleError = useCallback((err) => {
     console.error('Liveness error:', err)
-    if (handlingErrorRef.current) return
-    handlingErrorRef.current = true
-    setLoading(true)
-    try {
-      await fetchSession()
-    } finally {
-      handlingErrorRef.current = false
+    const state = String(err?.state ?? err?.name ?? '')
+    const msg = String(err?.message ?? state ?? 'Liveness check failed')
+    const combined = `${state} ${msg}`
+    // Only refresh session on explicit expiry; other errors (Cognito/IAM/camera) must not loop.
+    const refreshable = /SESSION_EXPIRED|SESSION_TIMED_OUT|ExpiredSession/i.test(combined)
+    if (refreshable && !handlingErrorRef.current) {
+      handlingErrorRef.current = true
+      fetchSession({ silent: true }).finally(() => {
+        handlingErrorRef.current = false
+      })
+      return
     }
+    const cognitoMisconfig = /credential|identity|cognito|not authorized|accessdenied|unrecognizedclient|forbidden|server issue|server_error/i.test(
+      combined
+    )
+    setError(
+      cognitoMisconfig
+        ? 'Face Liveness streaming failed. Check Cognito Identity Pool (us-east-1): enable guest access and add rekognition:StartFaceLivenessSession to the unauthenticated IAM role.'
+        : msg
+    )
+    setLoading(false)
   }, [fetchSession])
 
   const closeSuccessSummary = useCallback(() => {

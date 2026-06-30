@@ -1,4 +1,4 @@
-import { CalendarDays, Calendar, CheckCircle2, Clock, FileText, MessageSquareText, RefreshCw, UsersRound, XCircle } from 'lucide-react'
+import { CalendarDays, Calendar, CheckCircle2, Clock, FileText, MessageSquareText, RefreshCw, Trash2, UsersRound, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -389,6 +389,7 @@ function LeaveApprovalHistory({ history }) {
  *   retrying?: boolean
  *   onApprove?: (leave: object) => void
  *   onReject?: (leave: object) => void
+ *   onDelete?: (leave: object) => void
  *   actionLoading?: boolean
  * }} props
  */
@@ -404,6 +405,7 @@ export function LeaveRequestDetailModal({
   retrying = false,
   onApprove,
   onReject,
+  onDelete,
   actionLoading = false,
 }) {
   const badgeLabel = leave?.display_status || leave?.status || '—'
@@ -414,7 +416,8 @@ export function LeaveRequestDetailModal({
   const showContent = viewState === 'content'
   const canApprove = leave?.status === 'pending' && (leave?.can_approve === true || leave?.actor_can_approve === true)
   const canReject = leave?.status === 'pending' && (leave?.can_reject === true || leave?.actor_can_reject === true)
-  const showActions = canApprove || canReject
+  const canDelete = Boolean(leave?.actor_can_delete && onDelete)
+  const showActions = canApprove || canReject || canDelete
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -610,6 +613,18 @@ export function LeaveRequestDetailModal({
                       </Button>
                     ) : null}
                   </>
+                ) : null}
+                {canDelete ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-w-24 rounded-lg border-destructive/50 bg-card px-5 font-bold text-destructive hover:bg-destructive/10 dark:bg-card"
+                    onClick={() => onDelete?.(leave)}
+                    disabled={actionLoading}
+                  >
+                    <Trash2 className="mr-2 size-4" aria-hidden />
+                    Delete
+                  </Button>
                 ) : null}
                 <Button
                   type="button"

@@ -58,7 +58,6 @@ import {
   requestModuleThClass,
   requestModuleThRightClass,
 } from '@/lib/requestModuleTable'
-import { earliestLeaveStartYmd } from '@/lib/attendanceDates'
 
 const MAX_LEAVE_SUPPORTING_FILES = 5
 const MAX_LEAVE_FILE_BYTES = 10 * 1024 * 1024
@@ -558,10 +557,6 @@ function EmployeeLeaveSelfService() {
     billableCreditDays > 0 &&
     !eligible
 
-  /** Recomputed when the dialog opens so “tomorrow” stays correct if the session crosses midnight. */
-  const minLeaveDate = useMemo(() => earliestLeaveStartYmd(), [])
-  const minEndDate =
-    addForm.start_date && addForm.start_date >= minLeaveDate ? addForm.start_date : minLeaveDate
   const calendarViewerProfile = useMemo(
     () => ({
       name: user?.display_name || user?.name || '',
@@ -584,11 +579,6 @@ function EmployeeLeaveSelfService() {
 
   useEffect(() => {
     if (!addOpen || !addForm.start_date || !rangeEndForRestCheck) {
-      setRestRangeCheck(null)
-      setRestRangeValidating(false)
-      return
-    }
-    if (addForm.start_date < minLeaveDate) {
       setRestRangeCheck(null)
       setRestRangeValidating(false)
       return
@@ -625,7 +615,7 @@ function EmployeeLeaveSelfService() {
       cancelled = true
       clearTimeout(t)
     }
-  }, [addOpen, addForm.start_date, rangeEndForRestCheck, minLeaveDate, isSingleDate])
+  }, [addOpen, addForm.start_date, rangeEndForRestCheck, isSingleDate])
 
   useEffect(() => {
     if (!addOpen) {
@@ -766,10 +756,6 @@ function EmployeeLeaveSelfService() {
     const single = ut || hd
     if (!addForm.start_date) {
       setAddError(single ? 'Please select a leave date.' : 'Please select a start date.')
-      return
-    }
-    if (addForm.start_date < minLeaveDate) {
-      setAddError('Leave can only be filed for future dates. The earliest start date is tomorrow.')
       return
     }
     if (!single && !addForm.end_date) {
@@ -915,14 +901,6 @@ function EmployeeLeaveSelfService() {
       supportingFiles: [],
     })
     setAddOpen(true)
-  }
-
-  function handleCalendarInvalidDate() {
-    toast({
-      title: 'Date not available',
-      description: `Leave can be filed from ${minLeaveDate} onward.`,
-      variant: 'error',
-    })
   }
 
   const totalCount = rows.length
@@ -1344,12 +1322,11 @@ function EmployeeLeaveSelfService() {
                 <EmployeeLeaveCalendarView
                   leaves={filteredRows}
                   loading={loading}
-                  minLeaveDate={minLeaveDate}
                   showEmployeeDetails
                   viewerProfile={calendarViewerProfile}
                   onFileLeave={openFileLeaveWithDates}
                   onOpenLeave={openLeaveDetail}
-                  onInvalidDate={handleCalendarInvalidDate}
+                  onDeleteLeave={(leave) => setDeleteDialog({ open: true, leave })}
                 />
               ) : (
               <>
@@ -1479,9 +1456,8 @@ function EmployeeLeaveSelfService() {
                   File new leave
                 </DialogTitle>
                 <DialogDescription className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground @md:text-lg">
-                  Choose your leave type and dates. The earliest start date is tomorrow. Leave cannot cover dates that
-                  already have complete attendance (clock-in and clock-out) for you, and cannot overlap another pending or
-                  approved leave. Add optional remarks and supporting documents if needed.
+                  Choose your leave type and dates. Leave cannot overlap another pending or approved leave for the same
+                  dates. Add optional remarks and supporting documents if needed.
                 </DialogDescription>
               </div>
               <LeaveModalCalendarArt />
@@ -1560,7 +1536,6 @@ function EmployeeLeaveSelfService() {
                   <div className="relative">
                     <Input
                       type="date"
-                      min={minLeaveDate}
                       value={addForm.start_date}
                       onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
                       className={leaveModalFieldClass}
@@ -1573,7 +1548,6 @@ function EmployeeLeaveSelfService() {
                       <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">From</span>
                       <Input
                         type="date"
-                        min={minLeaveDate}
                         value={addForm.start_date}
                         onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
                         className={cn(leaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7')}
@@ -1584,7 +1558,7 @@ function EmployeeLeaveSelfService() {
                       <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">To</span>
                       <Input
                         type="date"
-                        min={minEndDate}
+                        min={addForm.start_date || undefined}
                         value={addForm.end_date}
                         onChange={(e) => setAddForm((prev) => ({ ...prev, end_date: e.target.value }))}
                         className={cn(leaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7')}
@@ -1796,9 +1770,8 @@ function EmployeeLeaveSelfService() {
             <div className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
               <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>File new leave</DialogTitle>
               <DialogDescription className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Choose your leave type and dates. The earliest start date is tomorrow. Leave cannot cover dates that
-                already have complete attendance (clock-in and clock-out) for you, and cannot overlap another pending or
-                approved leave. Add optional remarks and supporting documents if needed.
+                Choose your leave type and dates. Leave cannot overlap another pending or approved leave for the same
+                dates. Add optional remarks and supporting documents if needed.
               </DialogDescription>
             </div>
           </DialogHeader>
@@ -1836,7 +1809,6 @@ function EmployeeLeaveSelfService() {
                     <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       type="date"
-                      min={minLeaveDate}
                       value={addForm.start_date}
                       onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
                       className="h-9 pl-9 text-sm"
@@ -1849,7 +1821,6 @@ function EmployeeLeaveSelfService() {
                       <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         type="date"
-                        min={minLeaveDate}
                         value={addForm.start_date}
                         onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
                         className="h-9 pl-9 text-sm"
@@ -1860,7 +1831,7 @@ function EmployeeLeaveSelfService() {
                       <Calendar className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         type="date"
-                        min={minEndDate}
+                        min={addForm.start_date || undefined}
                         value={addForm.end_date}
                         onChange={(e) => setAddForm((prev) => ({ ...prev, end_date: e.target.value }))}
                         className="h-9 pl-9 text-sm"
@@ -2122,6 +2093,11 @@ function EmployeeLeaveSelfService() {
         }}
         leave={leaveDetailRow}
         resolveDocUrl={profileImageUrl}
+        onDelete={
+          leaveDetailRow?.actor_can_delete
+            ? (leave) => setDeleteDialog({ open: true, leave })
+            : undefined
+        }
       />
 
       <Dialog open={deleteDialog.open} onOpenChange={(open) => !open && setDeleteDialog({ open: false, leave: null })}>
