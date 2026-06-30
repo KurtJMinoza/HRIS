@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
 import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText } from 'lucide-react'
+import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,6 +32,7 @@ import {
 } from '@/components/attendance/attendanceRecordUtils'
 import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
 import { navigateAfterOverlayDismiss } from '@/lib/radixModalLock'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 const DEFAULT_CALENDAR_VALUE = null
 
@@ -165,6 +167,63 @@ function formatYmdShort(dateStr) {
   } catch {
     return String(dateStr)
   }
+}
+
+function isAttendanceSummarySkipDay(day) {
+  if (!day?.date) return true
+  const status = String(day.status || '').toLowerCase()
+  if (status === 'upcoming') return true
+  if (day.is_rest_day || status === 'rest' || status === 'rest_day') return true
+  if (status === 'leave' || status === 'holiday') return true
+  return false
+}
+
+function isScheduledWorkDay(day) {
+  return !isAttendanceSummarySkipDay(day)
+}
+
+function formatAttendanceMetricPercent(count, base) {
+  if (!base || base <= 0) return count > 0 ? '100.00' : '0.00'
+  return ((count / base) * 100).toFixed(2)
+}
+
+const ATTENDANCE_SUMMARY_SLICE_META = {
+  present: { label: 'Present', color: '#22c55e' },
+  absent: { label: 'Absent', color: '#ef4444' },
+  late: { label: 'Late', color: '#f97316' },
+  undertime: { label: 'Undertime', color: '#eab308' },
+}
+
+const ATTENDANCE_MONTH_LOOKBACK = 24
+
+function calendarMonthSelectKey(year, monthIndex) {
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}`
+}
+
+function parseCalendarMonthSelectKey(key) {
+  const [yearRaw, monthRaw] = String(key || '').split('-')
+  return { year: Number(yearRaw), monthIndex: Number(monthRaw) - 1 }
+}
+
+function buildAttendanceMonthOptions() {
+  const now = new Date()
+  const options = []
+  let year = now.getFullYear()
+  let monthIndex = now.getMonth()
+  for (let i = 0; i <= ATTENDANCE_MONTH_LOOKBACK; i += 1) {
+    const date = new Date(year, monthIndex, 1)
+    options.push({
+      value: calendarMonthSelectKey(year, monthIndex),
+      label: date.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' }),
+      isCurrent: i === 0,
+    })
+    monthIndex -= 1
+    if (monthIndex < 0) {
+      monthIndex = 11
+      year -= 1
+    }
+  }
+  return options
 }
 
 function formatHolidayCardDate(dateStr) {
@@ -484,6 +543,8 @@ export default function EmployeeDashboard() {
   const [error, setError] = useState(null)
   const [prevSummary, setPrevSummary] = useState(null)
   const [monthOtRequests, setMonthOtRequests] = useState([])
+  const [absentCounts, setAbsentCounts] = useState({ absent: 0, leave: 0, holiday: 0 })
+  const [attendanceSummaryModalOpen, setAttendanceSummaryModalOpen] = useState(false)
   const [otDetailsOpen, setOtDetailsOpen] = useState(false)
   const [otNoticeDismissed, setOtNoticeDismissed] = useState(false)
   const [faceAttendanceOpen, setFaceAttendanceOpen] = useState(false)
@@ -538,13 +599,14 @@ export default function EmployeeDashboard() {
     const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    if (cached && cached?.meta?.schema_version === 8 && opts.force !== true) {
+    if (cached && cached?.meta?.schema_version === 11 && opts.force !== true) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
       mergeSummary({
         ...(cached.summary || {}),
         from_date: `${monthKey}-01`,
         schedule_assigned: cached.schedule_assigned,
       })
+      setAbsentCounts(cached.absent_counts || { absent: 0, leave: 0, holiday: 0 })
       setMonthOtRequests(Array.isArray(cached.overtime_requests) ? cached.overtime_requests : [])
       setPrevSummary(null)
       setCalendarLoading(false)
@@ -563,12 +625,14 @@ export default function EmployeeDashboard() {
         from_date: `${monthKey}-01`,
         schedule_assigned: data.schedule_assigned,
       })
+      setAbsentCounts(data.absent_counts || { absent: 0, leave: 0, holiday: 0 })
       setMonthOtRequests(Array.isArray(data.overtime_requests) ? data.overtime_requests : [])
       setPrevSummary(null)
       setError(null)
     } catch (e) {
       if (controller.signal.aborted) return
       setDays([])
+      setAbsentCounts({ absent: 0, leave: 0, holiday: 0 })
       setMonthOtRequests([])
       setError(e.message)
     } finally {
@@ -952,6 +1016,69 @@ export default function EmployeeDashboard() {
     setCalendarMonth(t.getMonth())
   }
 
+  const monthAttendanceMetrics = useMemo(() => {
+    const scheduledDays = Array.isArray(days) ? days.filter(isScheduledWorkDay).length : 0
+    return {
+      present: summary?.present_count ?? 0,
+      absent: absentCounts?.absent ?? summary?.absent_count ?? 0,
+      late: summary?.late_count ?? 0,
+      undertime: summary?.undertime_count ?? 0,
+      scheduledDays,
+    }
+  }, [summary, absentCounts, days])
+
+  const attendanceSummaryBaseDays = monthAttendanceMetrics.scheduledDays
+
+  const attendanceSummarySlices = useMemo(() => {
+    const counts = {
+      present: monthAttendanceMetrics.present,
+      absent: monthAttendanceMetrics.absent,
+      late: monthAttendanceMetrics.late,
+      undertime: monthAttendanceMetrics.undertime,
+    }
+    return ['present', 'absent', 'late', 'undertime'].map((id) => {
+      const count = counts[id]
+      const meta = ATTENDANCE_SUMMARY_SLICE_META[id]
+      return {
+        id,
+        label: meta.label,
+        color: meta.color,
+        count,
+        percent: formatAttendanceMetricPercent(count, attendanceSummaryBaseDays),
+        chartValue: count > 0 ? count : 0,
+      }
+    })
+  }, [monthAttendanceMetrics, attendanceSummaryBaseDays])
+
+  const attendanceSummaryHasData = attendanceSummarySlices.some((slice) => slice.chartValue > 0)
+
+  const attendanceMonthOptions = useMemo(() => buildAttendanceMonthOptions(), [])
+
+  const attendanceMonthValue = calendarMonthSelectKey(calendarYear, calendarMonth)
+
+  const handleAttendanceMonthSelect = useCallback((value) => {
+    const parsed = parseCalendarMonthSelectKey(value)
+    if (!Number.isFinite(parsed.year) || !Number.isFinite(parsed.monthIndex)) return
+    if (parsed.monthIndex < 0 || parsed.monthIndex > 11) return
+    setCalendarYear(parsed.year)
+    setCalendarMonth(parsed.monthIndex)
+  }, [])
+
+  const attendanceSummaryModalDays = useMemo(
+    () => (Array.isArray(days) ? days : [])
+      .filter(isScheduledWorkDay)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date))),
+    [days],
+  )
+
+  const openAttendanceDayFromSummary = useCallback((dateStr) => {
+    if (!dateStr) return
+    const d = new Date(`${dateStr}T12:00:00`)
+    if (Number.isNaN(d.getTime())) return
+    setAttendanceSummaryModalOpen(false)
+    setSelectedDay(d)
+  }, [])
+
   /** Row for the clicked calendar day: API day, synthetic rest-day tile, or empty placeholder. */
   const selectedDayDetails = useMemo(() => {
     if (!selectedDay || !Array.isArray(days)) return null
@@ -982,6 +1109,7 @@ export default function EmployeeDashboard() {
 
   const dismissOverlays = useCallback(() => {
     setSelectedDay(null)
+    setAttendanceSummaryModalOpen(false)
     setOtDetailsOpen(false)
     setFaceAttendanceOpen(false)
   }, [])
@@ -1556,7 +1684,7 @@ export default function EmployeeDashboard() {
           </CardContent>
         </Card>
         </Motion.div>
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:col-span-2 @xl:col-span-1 @xl:row-span-2">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:col-span-2 @xl:col-span-1 @xl:col-start-3 @xl:row-start-1 @xl:row-span-2">
         <Card className="h-full overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] dark:bg-card/85">
           <CardHeader className="space-y-3 pb-2">
             <div className="flex items-start justify-between gap-3">
@@ -1714,7 +1842,146 @@ export default function EmployeeDashboard() {
           </CardContent>
         </Card>
         </Motion.div>
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
+        {/* Attendance Summary — beside Leave Overview, same footprint as Today's Time */}
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@xl:col-start-1 @xl:row-start-2">
+        <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] @sm:min-h-[11.2rem] dark:bg-card/85">
+          <CardHeader className="space-y-2 pb-2">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
+                Attendance Summary
+              </CardTitle>
+              <div className="rounded-lg bg-orange-500/10 p-2">
+                <CalendarDays className="size-4 text-orange-600 dark:text-orange-400" />
+              </div>
+            </div>
+            <div
+              className={cn(
+                'flex min-w-0 items-center gap-0.5 rounded-lg border border-orange-500/25 p-0.5',
+                'bg-gradient-to-br from-orange-500/[0.08] via-background to-background',
+                'shadow-sm ring-1 ring-orange-500/10',
+              )}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0 rounded-md text-orange-700 hover:bg-orange-500/10 hover:text-orange-800 dark:text-orange-400 dark:hover:bg-orange-500/15"
+                onClick={goPrevCalendarMonth}
+                aria-label="Previous month"
+              >
+                <ChevronLeft className="size-3.5" />
+              </Button>
+              <Select value={attendanceMonthValue} onValueChange={handleAttendanceMonthSelect}>
+                <SelectTrigger
+                  size="sm"
+                  className={cn(
+                    'h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-transparent px-2 shadow-none',
+                    'text-xs font-semibold text-foreground ring-0 focus:ring-0 focus-visible:ring-0',
+                    'hover:bg-orange-500/5 data-[state=open]:bg-orange-500/8',
+                    '@sm:text-sm',
+                  )}
+                  aria-label="Select month for attendance summary"
+                >
+                  <CalendarDays className="size-3.5 shrink-0 text-orange-600 dark:text-orange-400" aria-hidden />
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent
+                  position="popper"
+                  className="max-h-56 min-w-[var(--radix-select-trigger-width)] rounded-xl border-border/80 p-1.5 shadow-xl"
+                >
+                  {attendanceMonthOptions.map((option) => (
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      className={cn(
+                        'cursor-pointer rounded-lg py-2.5 pl-8 pr-3 text-sm font-medium',
+                        'focus:bg-orange-500/10 focus:text-orange-800 dark:focus:text-orange-300',
+                        'data-[state=checked]:bg-orange-500/12 data-[state=checked]:font-semibold data-[state=checked]:text-orange-800 dark:data-[state=checked]:text-orange-300',
+                      )}
+                    >
+                      {option.label}
+                      {option.isCurrent ? (
+                        <span className="ml-1.5 text-xs font-normal text-muted-foreground">· Current</span>
+                      ) : null}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0 rounded-md text-orange-700 hover:bg-orange-500/10 hover:text-orange-800 disabled:opacity-40 dark:text-orange-400 dark:hover:bg-orange-500/15"
+                onClick={goNextCalendarMonth}
+                disabled={!canGoNextMonth || loading || calendarLoading}
+                aria-label="Next month"
+              >
+                <ChevronRight className="size-3.5" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {loading || calendarLoading ? (
+              <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">Loading…</div>
+            ) : (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-lg text-left transition-colors hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/50"
+                onClick={() => setAttendanceSummaryModalOpen(true)}
+                aria-label={`View full attendance details for ${getMonthLabel()}`}
+              >
+                <div className="relative h-20 w-20 shrink-0">
+                  {attendanceSummaryHasData ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={attendanceSummarySlices}
+                          dataKey="chartValue"
+                          nameKey="label"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius="52%"
+                          outerRadius="88%"
+                          paddingAngle={2}
+                          stroke="none"
+                        >
+                          {attendanceSummarySlices.map((slice) => (
+                            <Cell key={slice.id} fill={slice.color} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-[10px] text-muted-foreground">
+                      No data
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  {attendanceSummarySlices.map((slice) => (
+                    <div
+                      key={slice.id}
+                      className="flex w-full min-w-0 items-center gap-1 px-0.5 py-0.5"
+                    >
+                      <span
+                        className="size-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: slice.color }}
+                        aria-hidden
+                      />
+                      <span className="min-w-0 flex-1 truncate text-[10px] text-foreground @sm:text-[11px]">{slice.label}</span>
+                      <span className="shrink-0 text-[10px] font-bold tabular-nums text-foreground @sm:text-[11px]">
+                        {slice.count}{' '}
+                        <span className="font-semibold text-muted-foreground">({slice.percent}%)</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </button>
+            )}
+          </CardContent>
+        </Card>
+        </Motion.div>
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@xl:col-start-2 @xl:row-start-2">
         <Card className="overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
@@ -2392,6 +2659,123 @@ export default function EmployeeDashboard() {
                 )}
               </div>
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={attendanceSummaryModalOpen}
+        onOpenChange={setAttendanceSummaryModalOpen}
+      >
+        <DialogContent
+          className="w-[calc(100vw-1rem)] max-w-4xl gap-0 p-0 sm:max-w-4xl"
+          innerClassName="gap-0 p-0"
+        >
+          <DialogHeader className="border-b px-5 py-4 pr-12 text-left">
+            <DialogTitle className="text-base font-semibold text-foreground">
+              Attendance Summary
+            </DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              {getMonthLabel()}
+              {attendanceSummaryBaseDays > 0 && (
+                <> · {attendanceSummaryBaseDays} scheduled work day{attendanceSummaryBaseDays === 1 ? '' : 's'}</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {calendarLoading ? (
+            <div className="px-5 py-10 text-sm text-muted-foreground">Loading…</div>
+          ) : (
+            <div className="grid min-h-[280px] grid-cols-1 @md:grid-cols-[11rem_minmax(0,1fr)]">
+              <aside className="border-b px-5 py-4 @md:border-b-0 @md:border-r">
+                <dl className="space-y-2.5 text-sm">
+                  {attendanceSummarySlices.map((slice) => (
+                    <div key={slice.id} className="flex items-baseline justify-between gap-3">
+                      <dt className="flex items-center gap-1.5 text-muted-foreground">
+                        <span
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: slice.color }}
+                          aria-hidden
+                        />
+                        {slice.label}
+                      </dt>
+                      <dd className="shrink-0 tabular-nums text-foreground">
+                        {slice.count}
+                        <span className="ml-1 text-xs text-muted-foreground">({slice.percent}%)</span>
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                {(summary?.total_hours != null || (summary?.late_minutes != null && summary.late_minutes > 0)) && (
+                  <dl className="mt-4 space-y-2 border-t pt-4 text-sm">
+                    {summary?.total_hours != null && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Total hours</dt>
+                        <dd className="tabular-nums text-foreground">{summary.total_hours}h</dd>
+                      </div>
+                    )}
+                    {summary?.late_minutes != null && summary.late_minutes > 0 && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-muted-foreground">Late (min)</dt>
+                        <dd className="tabular-nums text-foreground">{summary.late_minutes}</dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </aside>
+
+              <div className="min-h-0 max-h-[min(60vh,440px)] overflow-auto px-5 py-4">
+                {attendanceSummaryModalDays.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No records for this month.</p>
+                ) : (
+                  <table className="w-full min-w-[28rem] border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="pb-2 pr-3 font-medium">Date</th>
+                        <th className="pb-2 pr-3 font-medium">Status</th>
+                        <th className="pb-2 pr-3 font-medium">In</th>
+                        <th className="pb-2 pr-3 font-medium">Out</th>
+                        <th className="pb-2 pr-3 text-right font-medium">Late</th>
+                        <th className="pb-2 pr-3 text-right font-medium">UT</th>
+                        <th className="pb-2 w-12" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attendanceSummaryModalDays.map((day) => {
+                        const lateM = typeof day.late_minutes === 'number' ? day.late_minutes : 0
+                        const utM = typeof day.undertime_minutes === 'number' ? day.undertime_minutes : 0
+                        const timeIn = day.formatted_time_in || formatTime(day.time_in)
+                        const timeOut = day.formatted_time_out || formatTime(day.time_out)
+                        const statusLabel = calendarStatusBadge(day, day.status_label || day.status)
+                        return (
+                          <tr key={day.date} className="border-b border-border/50 last:border-0">
+                            <td className="py-2 pr-3 align-top text-foreground">{formatYmdShort(day.date)}</td>
+                            <td className="py-2 pr-3 align-top text-muted-foreground">{statusLabel}</td>
+                            <td className="py-2 pr-3 align-top tabular-nums text-foreground">{timeIn || '—'}</td>
+                            <td className="py-2 pr-3 align-top tabular-nums text-foreground">{timeOut || '—'}</td>
+                            <td className="py-2 pr-3 align-top text-right tabular-nums text-muted-foreground">
+                              {lateM > 0 ? lateM : '—'}
+                            </td>
+                            <td className="py-2 pr-3 align-top text-right tabular-nums text-muted-foreground">
+                              {utM > 0 ? utM : '—'}
+                            </td>
+                            <td className="py-2 align-top text-right">
+                              <button
+                                type="button"
+                                className="text-xs text-foreground underline-offset-2 hover:underline"
+                                onClick={() => openAttendanceDayFromSummary(day.date)}
+                              >
+                                Open
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>
