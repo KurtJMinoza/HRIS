@@ -647,6 +647,7 @@ export function FaceRekognitionLiveness({
               key={session.sessionId}
               sessionId={session.sessionId}
               region={session.region}
+              disableStartScreen={kioskMode}
               onAnalysisComplete={handleAnalysisComplete}
               onError={handleError}
             />
