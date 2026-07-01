@@ -2394,6 +2394,61 @@ export async function exportAdminAttendance(params = {}) {
   return res.blob()
 }
 
+// —— Employee activity tracking (session / navigation) ——
+
+export function trackEmployeeActivity(payload = {}) {
+  authenticatedFetch('/activity/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).catch(() => {})
+}
+
+// —— Admin: Employee Logs (activity timeline) ——
+
+export async function getAdminEmployeeLogs(params = {}) {
+  const query = new URLSearchParams()
+  if (params.from_date) query.set('from_date', params.from_date)
+  if (params.to_date) query.set('to_date', params.to_date)
+  if (params.employee_id) query.set('employee_id', String(params.employee_id))
+  if (params.category) query.set('category', params.category)
+  if (params.search) query.set('search', String(params.search).trim())
+  const p = Number(params.page)
+  query.set('page', String(Number.isFinite(p) && p >= 1 ? Math.floor(p) : 1))
+  query.set('per_page', String(normalizeAttendancePerPage(params.per_page, ADMIN_ATTENDANCE_PAGE_SIZE)))
+  const path = `/admin/employee-logs${query.toString() ? `?${query.toString()}` : ''}`
+  const fetchOpts = params.signal ? { signal: params.signal } : {}
+  const res = await authenticatedFetch(path, fetchOpts)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employee logs')
+  return data
+}
+
+export async function getAdminEmployeeLog(ref) {
+  const res = await authenticatedFetch(`/admin/employee-logs/${encodeURIComponent(ref)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load log detail')
+  return data.log ?? data
+}
+
+export async function exportAdminEmployeeLogs(params = {}) {
+  const query = new URLSearchParams()
+  if (params.from_date) query.set('from_date', params.from_date)
+  if (params.to_date) query.set('to_date', params.to_date)
+  if (params.employee_id) query.set('employee_id', String(params.employee_id))
+  if (params.category) query.set('category', params.category)
+  if (params.search) query.set('search', String(params.search).trim())
+  query.set('format', params.format === 'json' ? 'json' : 'csv')
+  query.set('_ts', String(Date.now()))
+  const res = await authenticatedFetch(`/admin/employee-logs/export?${query.toString()}`)
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to export employee logs')
+  }
+  if (params.format === 'json') return res.json()
+  return res.blob()
+}
+
 // —— Admin: Attendance Corrections ——
 
 /**

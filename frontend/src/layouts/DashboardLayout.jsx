@@ -27,6 +27,7 @@ import { markLoginSplashShown } from '@/lib/loginSplash'
 import { dispatchDismissOverlays, scheduleRadixModalLockReset } from '@/lib/radixModalLock'
 import { prefetchOrgModule } from '@/lib/orgModuleNav'
 import { useSidebarNavRescue } from '@/hooks/useSidebarNavRescue'
+import { useEmployeeActivityTracking } from '@/hooks/useEmployeeActivityTracking'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { UserAccountMenuContent } from '@/components/layout/UserAccountMenuContent'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
@@ -477,6 +478,7 @@ function SidebarContent({
 }
 
 export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
+  useEmployeeActivityTracking(true)
   const location = useLocation()
   const { user, logout } = useAuth()
   const navigate = useNavigate()

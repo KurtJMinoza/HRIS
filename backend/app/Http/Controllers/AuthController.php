@@ -7,6 +7,7 @@ use App\Enums\HrRole;
 use App\Models\AttendanceLog;
 use App\Models\FailedFaceAttempt;
 use App\Models\User;
+use App\Services\EmployeeActivityRecorder;
 use App\Services\DataScopeService;
 use App\Services\EmployeeStatusService;
 use App\Services\FaceAttemptThrottleService;
@@ -167,13 +168,9 @@ class AuthController extends Controller
             'time_ms' => round((microtime(true) - $lastLoginStart) * 1000),
         ]);
 
-        $tokenStart = microtime(true);
-        $token = $user->createToken('auth-token')->plainTextToken;
-        Log::info('Auth login timing step', [
-            'endpoint' => 'Auth.login',
-            'step' => 'token_generation',
-            'time_ms' => round((microtime(true) - $tokenStart) * 1000),
-        ]);
+        $accessToken = $user->createToken('auth-token');
+        $token = $accessToken->plainTextToken;
+        $this->recordSuccessfulLogin($user, $request, 'credentials', $accessToken);
 
         $payloadStart = microtime(true);
         $userPayload = $this->basicUserResponse($user);
@@ -203,7 +200,12 @@ class AuthController extends Controller
      */
     public function logout(Request $request): JsonResponse
     {
-        $request->user()?->currentAccessToken()?->delete();
+        $user = $request->user();
+        $token = $user?->currentAccessToken();
+        if ($user && $token) {
+            $this->recordLogoutActivity($user, $request, (int) $token->id);
+            $token->delete();
+        }
         $this->clearSessionAuthState($request);
 
         return response()->json(['message' => 'Logged out successfully']);
@@ -283,7 +285,9 @@ class AuthController extends Controller
 
         $user->forceFill(['last_login_at' => now()])->save();
 
-        $token = $user->createToken('auth-token')->plainTextToken;
+        $accessToken = $user->createToken('auth-token');
+        $token = $accessToken->plainTextToken;
+        $this->recordSuccessfulLogin($user, $request, 'qr', $accessToken);
 
         return response()->json([
             'user' => $this->basicUserResponse($user),
@@ -480,7 +484,9 @@ class AuthController extends Controller
 
         $user->forceFill(['last_login_at' => now()])->save();
 
-        $token = $user->createToken('auth-token')->plainTextToken;
+        $accessToken = $user->createToken('auth-token');
+        $token = $accessToken->plainTextToken;
+        $this->recordSuccessfulLogin($user, $request, 'face', $accessToken);
 
         $livenessScore = isset($result['spoof_confidence']) ? (float) $result['spoof_confidence'] : null;
         $faceContext = [
@@ -1031,5 +1037,34 @@ class AuthController extends Controller
     private static function userHasFace(User $user): bool
     {
         return $user->hasRegisteredFace();
+    }
+
+    private function recordSuccessfulLogin(User $user, Request $request, string $method, \Laravel\Sanctum\NewAccessToken $accessToken): void
+    {
+        try {
+            app(EmployeeActivityRecorder::class)->recordLogin(
+                $user,
+                $request,
+                $method,
+                (int) $accessToken->accessToken->id,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Failed to record employee login activity', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function recordLogoutActivity(User $user, Request $request, int $sessionTokenId): void
+    {
+        try {
+            app(EmployeeActivityRecorder::class)->recordLogout($user, $request, $sessionTokenId);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to record employee logout activity', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

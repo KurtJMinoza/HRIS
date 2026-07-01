@@ -20,6 +20,7 @@ import {
   Network,
   QrCode,
   Receipt,
+  ScrollText,
   Settings,
   ShieldCheck,
   Timer,
@@ -106,6 +107,7 @@ export const adminNavItems = [
     icon: Settings,
     children: [
       { to: '/admin/users-permissions', end: false, label: 'Users & Access', icon: UserCog },
+      { to: '/admin/employee-logs', end: false, label: 'Employee Logs', icon: ScrollText },
       { to: '/admin/daily-computation/policy-settings', end: false, label: 'Pay Policies', icon: Settings },
       { to: '/admin/approval-workflow-settings', end: false, label: 'Approval Rules', icon: ShieldCheck },
       { to: '/admin/email-notifications', end: false, label: 'Email Alerts', icon: Mail },

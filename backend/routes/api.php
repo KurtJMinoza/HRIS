@@ -4,6 +4,7 @@ use App\Http\Controllers\Admin\AdminUserAccountController;
 use App\Http\Controllers\Admin\ApprovalWorkflowSettingsController;
 use App\Http\Controllers\Admin\AreaController;
 use App\Http\Controllers\Admin\AttendanceCorrectionController;
+use App\Http\Controllers\Admin\EmployeeActivityLogController;
 use App\Http\Controllers\Admin\AttendanceMonitoringController;
 use App\Http\Controllers\Admin\BenefitCatalogController;
 use App\Http\Controllers\Admin\BranchController;
@@ -70,6 +71,7 @@ use App\Http\Controllers\PayslipDownloadController;
 use App\Http\Controllers\PresenceFilingController;
 use App\Http\Controllers\PublicMediaController;
 use App\Http\Controllers\PublicSettingsController;
+use App\Http\Controllers\EmployeeActivityTrackController;
 use App\Http\Controllers\RegularizationController;
 use App\Http\Controllers\SkillSuggestionController;
 use Illuminate\Support\Facades\Route;
@@ -101,6 +103,7 @@ Route::get('/attendance/kiosk/recent', [AttendanceController::class, 'recentKios
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/activity/track', [EmployeeActivityTrackController::class, 'store']);
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/auth/verify-qr', [AuthController::class, 'verifyQr']);
 
@@ -251,6 +254,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:attendance.view')->group(function () {
             Route::get('/admin/attendance', [AttendanceMonitoringController::class, 'index']);
             Route::get('/admin/attendance/export', [AttendanceMonitoringController::class, 'export']);
+        });
+        Route::middleware('permission:audit_logs.view|attendance.view')->group(function () {
+            Route::get('/admin/employee-logs', [EmployeeActivityLogController::class, 'index']);
+            Route::get('/admin/employee-logs/export', [EmployeeActivityLogController::class, 'export']);
+            Route::get('/admin/employee-logs/{ref}', [EmployeeActivityLogController::class, 'show'])
+                ->where('ref', '[a-z]+:[0-9]+');
         });
         Route::middleware('permission:geofence.view')->group(function () {
             Route::get('/admin/geofencing', [GeofenceController::class, 'index']);
