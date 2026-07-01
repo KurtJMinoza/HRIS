@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText } from 'lucide-react'
+import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, ArrowUpDown, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText, Search, SlidersHorizontal, MoreVertical } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -192,6 +192,35 @@ const ATTENDANCE_SUMMARY_SLICE_META = {
   absent: { label: 'Absent', color: '#ef4444' },
   late: { label: 'Late', color: '#f97316' },
   undertime: { label: 'Undertime', color: '#eab308' },
+}
+
+const ATTENDANCE_SUMMARY_STATUS_STYLES = {
+  present: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-300',
+  absent: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300',
+  late: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-orange-300',
+  undertime: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300',
+}
+
+function attendanceSummaryStatusKey(day) {
+  const status = String(day?.status || day?.status_label || '').toLowerCase()
+  const lateMinutes = Number(day?.late_minutes || 0)
+  const undertimeMinutes = Number(day?.undertime_minutes || 0)
+  if (status.includes('absent') || status === 'awol') return 'absent'
+  if (lateMinutes > 0 || status.includes('late')) return 'late'
+  if (undertimeMinutes > 0 || status.includes('undertime')) return 'undertime'
+  return 'present'
+}
+
+function attendanceSummaryStatusLabel(day) {
+  const key = attendanceSummaryStatusKey(day)
+  return ATTENDANCE_SUMMARY_SLICE_META[key]?.label || 'Present'
+}
+
+function compactPaginationPages(currentPage, pageCount) {
+  if (pageCount <= 5) return Array.from({ length: pageCount }, (_, index) => index + 1)
+  return [...new Set([1, currentPage - 1, currentPage, currentPage + 1, pageCount])]
+    .filter((page) => page >= 1 && page <= pageCount)
+    .sort((a, b) => a - b)
 }
 
 const ATTENDANCE_MONTH_LOOKBACK = 24
@@ -545,6 +574,9 @@ export default function EmployeeDashboard() {
   const [monthOtRequests, setMonthOtRequests] = useState([])
   const [absentCounts, setAbsentCounts] = useState({ absent: 0, leave: 0, holiday: 0 })
   const [attendanceSummaryModalOpen, setAttendanceSummaryModalOpen] = useState(false)
+  const [attendanceSummarySearch, setAttendanceSummarySearch] = useState('')
+  const [attendanceSummaryFilter, setAttendanceSummaryFilter] = useState('all')
+  const [attendanceSummaryPage, setAttendanceSummaryPage] = useState(1)
   const [otDetailsOpen, setOtDetailsOpen] = useState(false)
   const [otNoticeDismissed, setOtNoticeDismissed] = useState(false)
   const [faceAttendanceOpen, setFaceAttendanceOpen] = useState(false)
@@ -1070,6 +1102,36 @@ export default function EmployeeDashboard() {
       .sort((a, b) => String(a.date).localeCompare(String(b.date))),
     [days],
   )
+
+  const attendanceSummaryFilteredDays = useMemo(() => {
+    const query = attendanceSummarySearch.trim().toLowerCase()
+    return attendanceSummaryModalDays.filter((day) => {
+      const statusKey = attendanceSummaryStatusKey(day)
+      if (attendanceSummaryFilter !== 'all' && statusKey !== attendanceSummaryFilter) return false
+      if (!query) return true
+      const haystack = [
+        formatYmdShort(day.date),
+        attendanceSummaryStatusLabel(day),
+        day.formatted_time_in,
+        day.formatted_time_out,
+        day.remarks,
+        day.remark,
+      ].filter(Boolean).join(' ').toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [attendanceSummaryFilter, attendanceSummaryModalDays, attendanceSummarySearch])
+
+  const attendanceSummaryPageSize = 10
+  const attendanceSummaryPageCount = Math.max(1, Math.ceil(attendanceSummaryFilteredDays.length / attendanceSummaryPageSize))
+  const attendanceSummarySafePage = Math.min(attendanceSummaryPage, attendanceSummaryPageCount)
+  const attendanceSummaryPagedDays = useMemo(() => {
+    const start = (attendanceSummarySafePage - 1) * attendanceSummaryPageSize
+    return attendanceSummaryFilteredDays.slice(start, start + attendanceSummaryPageSize)
+  }, [attendanceSummaryFilteredDays, attendanceSummarySafePage])
+
+  useEffect(() => {
+    setAttendanceSummaryPage(1)
+  }, [attendanceMonthValue, attendanceSummaryFilter, attendanceSummarySearch])
 
   const openAttendanceDayFromSummary = useCallback((dateStr) => {
     if (!dateStr) return
@@ -2668,113 +2730,249 @@ export default function EmployeeDashboard() {
         onOpenChange={setAttendanceSummaryModalOpen}
       >
         <DialogContent
-          className="w-[calc(100vw-1rem)] max-w-4xl gap-0 p-0 sm:max-w-4xl"
-          innerClassName="gap-0 p-0"
+          className="w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-2xl border-border/70 bg-background p-0 shadow-[0_30px_90px_-28px_rgba(15,23,42,0.55)] sm:max-w-6xl"
+          innerClassName="max-h-[92vh] gap-0 overflow-y-auto p-0"
         >
-          <DialogHeader className="border-b px-5 py-4 pr-12 text-left">
-            <DialogTitle className="text-base font-semibold text-foreground">
-              Attendance Summary
-            </DialogTitle>
-            <DialogDescription className="text-sm text-muted-foreground">
-              {getMonthLabel()}
-              {attendanceSummaryBaseDays > 0 && (
-                <> · {attendanceSummaryBaseDays} scheduled work day{attendanceSummaryBaseDays === 1 ? '' : 's'}</>
-              )}
-            </DialogDescription>
+          <DialogHeader className="border-b-0 px-5 pb-3 pt-6 pr-14 text-left sm:px-7 sm:pb-4 sm:pt-7">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+                  Attendance Summary
+                </DialogTitle>
+                <DialogDescription className="mt-1.5 text-sm text-muted-foreground sm:text-base">
+                  {getMonthLabel()}
+                  {attendanceSummaryBaseDays > 0 && (
+                    <> <span className="px-1.5">•</span> {attendanceSummaryBaseDays} scheduled work day{attendanceSummaryBaseDays === 1 ? '' : 's'}</>
+                  )}
+                </DialogDescription>
+              </div>
+              <Select value={attendanceMonthValue} onValueChange={handleAttendanceMonthSelect}>
+                <SelectTrigger className="h-10 w-full shrink-0 rounded-lg border-border bg-background px-3 text-sm font-medium shadow-sm sm:w-40" aria-label="Select attendance summary month">
+                  <CalendarDays className="size-4 text-muted-foreground" aria-hidden />
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent position="popper" className="max-h-64 rounded-xl">
+                  {attendanceMonthOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value} className="rounded-lg">
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </DialogHeader>
 
           {calendarLoading ? (
-            <div className="px-5 py-10 text-sm text-muted-foreground">Loading…</div>
+            <div className="flex min-h-[34rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
+              Loading attendance summary…
+            </div>
           ) : (
-            <div className="grid min-h-[280px] grid-cols-1 @md:grid-cols-[11rem_minmax(0,1fr)]">
-              <aside className="border-b px-5 py-4 @md:border-b-0 @md:border-r">
-                <dl className="space-y-2.5 text-sm">
-                  {attendanceSummarySlices.map((slice) => (
-                    <div key={slice.id} className="flex items-baseline justify-between gap-3">
-                      <dt className="flex items-center gap-1.5 text-muted-foreground">
-                        <span
-                          className="size-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: slice.color }}
-                          aria-hidden
-                        />
-                        {slice.label}
-                      </dt>
-                      <dd className="shrink-0 tabular-nums text-foreground">
-                        {slice.count}
-                        <span className="ml-1 text-xs text-muted-foreground">({slice.percent}%)</span>
-                      </dd>
+            <div className="px-5 pb-6 sm:px-7 sm:pb-7">
+              <section className="grid gap-4 lg:grid-cols-[minmax(0,1.8fr)_minmax(17rem,0.95fr)]">
+                <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
+                  <div className="grid items-center gap-4 sm:grid-cols-[13rem_minmax(0,1fr)]">
+                    <div className="relative mx-auto h-48 w-48 shrink-0">
+                      {attendanceSummaryHasData ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={attendanceSummarySlices}
+                              dataKey="chartValue"
+                              nameKey="label"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius="64%"
+                              outerRadius="94%"
+                              paddingAngle={1.5}
+                              stroke="hsl(var(--background))"
+                              strokeWidth={2}
+                            >
+                              {attendanceSummarySlices.map((slice) => (
+                                <Cell key={slice.id} fill={slice.color} />
+                              ))}
+                            </Pie>
+                          </PieChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="absolute inset-2 rounded-full border-[1.7rem] border-muted" />
+                      )}
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-3xl font-bold tabular-nums tracking-tight text-foreground">{attendanceSummaryBaseDays}</span>
+                        <span className="mt-1 text-xs font-medium text-muted-foreground">Total Days</span>
+                      </div>
+                    </div>
+
+                    <dl className="grid gap-x-7 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                      {attendanceSummarySlices.map((slice) => (
+                        <div key={slice.id} className="flex min-w-0 items-center gap-3">
+                          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden />
+                          <dt className="min-w-0 flex-1 truncate font-medium text-muted-foreground">{slice.label}</dt>
+                          <dd className="shrink-0 font-semibold tabular-nums text-foreground">
+                            {slice.count} <span className="font-normal text-muted-foreground">({slice.percent}%)</span>
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                  {[
+                    { label: 'Total Hours', value: `${Number(summary?.total_hours || 0).toFixed(2)}h` },
+                    { label: 'Late (min)', value: summary?.late_minutes ?? 0 },
+                  ].map((metric) => (
+                    <div key={metric.label} className="flex min-h-28 items-center justify-between rounded-xl border border-orange-200/70 bg-gradient-to-br from-orange-50/80 to-background p-5 shadow-sm dark:border-orange-500/15 dark:from-orange-500/10 dark:to-background">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">{metric.label}</p>
+                        <p className="mt-2 text-2xl font-bold tabular-nums tracking-tight text-foreground">{metric.value}</p>
+                      </div>
+                      <span className="flex size-14 items-center justify-center rounded-full bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                        <Clock className="size-6" aria-hidden />
+                      </span>
                     </div>
                   ))}
-                </dl>
-                {(summary?.total_hours != null || (summary?.late_minutes != null && summary.late_minutes > 0)) && (
-                  <dl className="mt-4 space-y-2 border-t pt-4 text-sm">
-                    {summary?.total_hours != null && (
-                      <div className="flex justify-between gap-3">
-                        <dt className="text-muted-foreground">Total hours</dt>
-                        <dd className="tabular-nums text-foreground">{summary.total_hours}h</dd>
-                      </div>
-                    )}
-                    {summary?.late_minutes != null && summary.late_minutes > 0 && (
-                      <div className="flex justify-between gap-3">
-                        <dt className="text-muted-foreground">Late (min)</dt>
-                        <dd className="tabular-nums text-foreground">{summary.late_minutes}</dd>
-                      </div>
-                    )}
-                  </dl>
-                )}
-              </aside>
+                </div>
+              </section>
 
-              <div className="min-h-0 max-h-[min(60vh,440px)] overflow-auto px-5 py-4">
-                {attendanceSummaryModalDays.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No records for this month.</p>
-                ) : (
-                  <table className="w-full min-w-[28rem] border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-xs text-muted-foreground">
-                        <th className="pb-2 pr-3 font-medium">Date</th>
-                        <th className="pb-2 pr-3 font-medium">Status</th>
-                        <th className="pb-2 pr-3 font-medium">In</th>
-                        <th className="pb-2 pr-3 font-medium">Out</th>
-                        <th className="pb-2 pr-3 text-right font-medium">Late</th>
-                        <th className="pb-2 pr-3 text-right font-medium">UT</th>
-                        <th className="pb-2 w-12" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {attendanceSummaryModalDays.map((day) => {
-                        const lateM = typeof day.late_minutes === 'number' ? day.late_minutes : 0
-                        const utM = typeof day.undertime_minutes === 'number' ? day.undertime_minutes : 0
-                        const timeIn = day.formatted_time_in || formatTime(day.time_in)
-                        const timeOut = day.formatted_time_out || formatTime(day.time_out)
-                        const statusLabel = calendarStatusBadge(day, day.status_label || day.status)
-                        return (
-                          <tr key={day.date} className="border-b border-border/50 last:border-0">
-                            <td className="py-2 pr-3 align-top text-foreground">{formatYmdShort(day.date)}</td>
-                            <td className="py-2 pr-3 align-top text-muted-foreground">{statusLabel}</td>
-                            <td className="py-2 pr-3 align-top tabular-nums text-foreground">{timeIn || '—'}</td>
-                            <td className="py-2 pr-3 align-top tabular-nums text-foreground">{timeOut || '—'}</td>
-                            <td className="py-2 pr-3 align-top text-right tabular-nums text-muted-foreground">
-                              {lateM > 0 ? lateM : '—'}
-                            </td>
-                            <td className="py-2 pr-3 align-top text-right tabular-nums text-muted-foreground">
-                              {utM > 0 ? utM : '—'}
-                            </td>
-                            <td className="py-2 align-top text-right">
-                              <button
-                                type="button"
-                                className="text-xs text-foreground underline-offset-2 hover:underline"
-                                onClick={() => openAttendanceDayFromSummary(day.date)}
-                              >
-                                Open
-                              </button>
-                            </td>
+              <section className="mt-5">
+                <div className="border-b border-border">
+                  <div className="relative w-fit px-5 pb-3 text-sm font-semibold text-orange-600">
+                    Daily Breakdown
+                    <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-orange-500" />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <label className="relative block w-full sm:max-w-sm">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                    <input
+                      type="search"
+                      value={attendanceSummarySearch}
+                      onChange={(event) => setAttendanceSummarySearch(event.target.value)}
+                      placeholder="Search by date..."
+                      className="h-10 w-full rounded-lg border border-input bg-background pl-10 pr-4 text-sm shadow-sm outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-400/20"
+                    />
+                  </label>
+                  <label className="relative inline-flex h-10 w-full items-center gap-2 rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground shadow-sm sm:w-auto">
+                    <SlidersHorizontal className="size-4 text-muted-foreground" aria-hidden />
+                    <span>{attendanceSummaryFilter === 'all' ? 'Filters' : ATTENDANCE_SUMMARY_SLICE_META[attendanceSummaryFilter]?.label}</span>
+                    <select
+                      value={attendanceSummaryFilter}
+                      onChange={(event) => setAttendanceSummaryFilter(event.target.value)}
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                      aria-label="Filter attendance records by status"
+                    >
+                      <option value="all">All statuses</option>
+                      {attendanceSummarySlices.map((slice) => (
+                        <option key={slice.id} value={slice.id}>{slice.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm">
+                  {attendanceSummaryFilteredDays.length === 0 ? (
+                    <div className="flex min-h-48 flex-col items-center justify-center px-5 py-10 text-center">
+                      <CalendarDays className="mb-3 size-8 text-muted-foreground/50" aria-hidden />
+                      <p className="font-medium text-foreground">No attendance records found</p>
+                      <p className="mt-1 text-sm text-muted-foreground">Try another date or status filter.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[60rem] border-collapse text-sm">
+                        <thead className="bg-muted/25">
+                          <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
+                            {['Date', 'Status', 'Time In', 'Time Out', 'Late (min)', 'Undertime'].map((label) => (
+                              <th key={label} className="h-11 whitespace-nowrap px-3 font-medium first:pl-4">
+                                <span className="inline-flex items-center gap-1.5">
+                                  {label}
+                                  <ArrowUpDown className="size-3 opacity-55" aria-hidden />
+                                </span>
+                              </th>
+                            ))}
+                            <th className="h-11 px-3 font-medium">Remarks</th>
+                            <th className="h-11 w-12 px-3" />
                           </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {attendanceSummaryPagedDays.map((day) => {
+                            const lateM = Number(day.late_minutes || 0)
+                            const utM = Number(day.undertime_minutes || 0)
+                            const timeIn = day.formatted_time_in || formatTime(day.time_in)
+                            const timeOut = day.formatted_time_out || formatTime(day.time_out)
+                            const statusKey = attendanceSummaryStatusKey(day)
+                            const statusLabel = attendanceSummaryStatusLabel(day)
+                            return (
+                              <tr key={day.date} className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/20">
+                                <td className="whitespace-nowrap px-3 py-3 pl-4 text-foreground">
+                                  <span className="inline-flex items-center gap-2.5">
+                                    <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                                      <CalendarDays className="size-3.5" aria-hidden />
+                                    </span>
+                                    <span className="font-medium">{formatYmdShort(day.date)}</span>
+                                  </span>
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-3">
+                                  <span className={cn('inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold', ATTENDANCE_SUMMARY_STATUS_STYLES[statusKey])}>
+                                    <span className="size-2 rounded-full bg-current" aria-hidden />
+                                    {statusLabel}
+                                  </span>
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeIn || '—'}</td>
+                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeOut || '—'}</td>
+                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', lateM > 0 ? 'font-medium text-orange-600' : 'text-muted-foreground')}>
+                                  {lateM > 0 ? lateM : '—'}
+                                </td>
+                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', utM > 0 ? 'font-medium text-amber-600' : 'text-muted-foreground')}>
+                                  {utM > 0 ? utM : '—'}
+                                </td>
+                                <td className="max-w-40 truncate px-3 py-3 text-foreground">{day.remarks || day.remark || 'Open'}</td>
+                                <td className="px-3 py-3 text-right">
+                                  <button
+                                    type="button"
+                                    className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                                    onClick={() => openAttendanceDayFromSummary(day.date)}
+                                    aria-label={`Open attendance details for ${formatYmdShort(day.date)}`}
+                                  >
+                                    <MoreVertical className="size-4" aria-hidden />
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {attendanceSummaryFilteredDays.length > 0 && (
+                  <div className="flex flex-col gap-3 pt-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                    <p>
+                      Showing {(attendanceSummarySafePage - 1) * attendanceSummaryPageSize + 1} to{' '}
+                      {Math.min(attendanceSummarySafePage * attendanceSummaryPageSize, attendanceSummaryFilteredDays.length)} of{' '}
+                      {attendanceSummaryFilteredDays.length} entries
+                    </p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" onClick={() => setAttendanceSummaryPage((page) => Math.max(1, page - 1))} disabled={attendanceSummarySafePage <= 1} aria-label="Previous attendance page">
+                        <ChevronLeft className="size-4" />
+                      </Button>
+                      {compactPaginationPages(attendanceSummarySafePage, attendanceSummaryPageCount).map((page, index, pages) => (
+                        <span key={page} className="contents">
+                          {index > 0 && page - pages[index - 1] > 1 ? <span className="px-1">…</span> : null}
+                          <Button type="button" variant={page === attendanceSummarySafePage ? 'default' : 'outline'} size="icon" className={cn('size-9 rounded-lg', page === attendanceSummarySafePage && 'bg-orange-600 text-white hover:bg-orange-700')} onClick={() => setAttendanceSummaryPage(page)}>
+                            {page}
+                          </Button>
+                        </span>
+                      ))}
+                      <Button type="button" variant="outline" size="icon" className="size-9 rounded-lg" onClick={() => setAttendanceSummaryPage((page) => Math.min(attendanceSummaryPageCount, page + 1))} disabled={attendanceSummarySafePage >= attendanceSummaryPageCount} aria-label="Next attendance page">
+                        <ChevronRight className="size-4" />
+                      </Button>
+                      <div className="ml-1 flex h-9 items-center rounded-lg border border-input bg-background px-3 font-medium text-foreground shadow-sm">10 / page</div>
+                    </div>
+                  </div>
                 )}
-              </div>
+              </section>
             </div>
           )}
         </DialogContent>
