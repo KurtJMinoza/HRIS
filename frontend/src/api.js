@@ -3472,13 +3472,6 @@ export async function getPayPolicyEmploymentTypes(companyId = null) {
   return Array.isArray(data) ? data : []
 }
 
-export async function getPayPolicyAttendanceStatuses() {
-  const res = await authenticatedFetch('/admin/payroll/policies/attendance-statuses')
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to load attendance statuses')
-  return data
-}
-
 // —— Admin: Government Contributions (SSS/PhilHealth/Pag-IBIG/EC) ——
 
 export async function getStatutoryRates(params = {}) {

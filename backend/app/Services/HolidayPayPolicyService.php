@@ -21,7 +21,6 @@ class HolidayPayPolicyService
         private readonly LeaveCreditService $leaveCreditService,
         private readonly PolicyResolverService $policyResolver,
         private readonly PayrollRulesEngineService $rulesEngine,
-        private readonly HolidayPayRuleEngine $ruleEngine,
         private readonly ?EmploymentTypeResolver $employmentTypeResolver = null,
     ) {}
 
@@ -47,14 +46,7 @@ class HolidayPayPolicyService
     {
         $holiday ??= $this->holidayService->resolveHolidayForPayroll($employee, $holidayDate) ?? ['date' => $holidayDate];
         $resolved = $this->resolveEffectivePolicy($policy, $holiday, $employee->getEffectiveCompanyId());
-        $qualification = $this->ruleEngine->evaluateAttendanceQualification($employee, $holidayDate, $resolved, 'regular');
-
-        return [
-            'date' => $qualification['date'] ?? null,
-            'met' => (bool) ($qualification['met'] ?? false),
-            'reason' => (string) ($qualification['reason'] ?? ''),
-            'rule' => (string) ($qualification['rule'] ?? ''),
-        ];
+        return $this->precedingWorkdayRequirement($employee, $holidayDate, $resolved, [], true);
     }
 
     public function isQualifiedForUnworkedRegularHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null): bool
@@ -277,44 +269,56 @@ class HolidayPayPolicyService
         );
 
         if ($worked) {
-            $engineResult = in_array($normalizedType, ['regular', 'double'], true)
-                ? $this->ruleEngine->evaluateRegularWorked($employee, $holiday, $dateKey, $resolved)
-                : $this->ruleEngine->evaluateSpecialWorked($employee, $holiday, $dateKey, $resolved);
-            $result = $this->result(
-                (bool) $engineResult['eligible'],
-                (bool) $engineResult['attendance_requirement_met'],
-                (string) $engineResult['reason'],
-                (string) $engineResult['rule']
-            );
+            $result = $workedEmploymentTypeMatch
+                ? $this->result(
+                    true,
+                    true,
+                    'Worked on the holiday; the preceding-workday condition does not bar holiday work pay.',
+                    'worked_holiday'
+                )
+                : $this->result(
+                    false,
+                    true,
+                    'Employee employment type is not selected for worked holiday pay.',
+                    'worked_employment_type_excluded'
+                );
         } elseif (in_array($normalizedType, ['special_working', 'company'], true) || $normalizedType === null) {
             $result = $this->result(false, true, 'This day does not carry unworked holiday pay.', 'not_non_working_holiday');
-        } elseif ($normalizedType === 'special' && ! in_array($unworkedPolicy, [self::UNWORKED_NO_PAY, self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY], true) && ! $employmentTypeMatch) {
+        } elseif ($normalizedType === 'special' && $unworkedPolicy === self::UNWORKED_NO_PAY) {
+            $result = $this->result(false, true, 'Special non-working holiday follows No Work, No Pay.', 'special_no_work_no_pay');
+        } elseif ($normalizedType === 'special' && in_array($unworkedPolicy, [self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY], true)) {
+            $paidLeave = $this->hasApprovedPaidLeave($employee, $dateKey);
+            $result = $this->result(
+                $paidLeave,
+                true,
+                $paidLeave ? 'Approved paid leave is paid as leave.' : 'No approved paid leave covers this special holiday.',
+                $paidLeave ? 'special_paid_leave' : 'special_no_paid_leave'
+            );
+        } elseif ($normalizedType === 'special' && ! $employmentTypeMatch) {
             $result = $this->result(false, true, 'Employee employment type is not selected for unworked special holiday pay.', 'special_employment_type_excluded');
         } elseif ($normalizedType === 'special') {
-            $engineResult = $this->ruleEngine->evaluateSpecialUnworked($employee, $holiday, $dateKey, $resolved);
-            $result = $this->result(
-                (bool) $engineResult['eligible'],
-                (bool) $engineResult['attendance_requirement_met'],
-                (string) $engineResult['reason'],
-                (string) $engineResult['rule']
-            );
+            $result = $this->result(true, true, 'Company policy pays this covered employee for the unworked special holiday.', 'special_unworked_company_policy');
+        } elseif (in_array($normalizedType, ['regular', 'double'], true)
+            && ($unworkedPolicy === self::UNWORKED_DISABLED || ! ($resolved['pay_unworked_regular'] ?? true))) {
+            $result = $this->result(false, true, 'Unworked regular holiday pay is disabled for this policy.', 'unworked_regular_disabled');
         } elseif (in_array($normalizedType, ['regular', 'double'], true) && ! $employmentTypeMatch) {
             $result = $this->result(false, true, 'Employee employment type is not selected for unworked regular holiday pay.', 'regular_employment_type_excluded');
-        } elseif (in_array($normalizedType, ['regular', 'double'], true)) {
+        } elseif (in_array($normalizedType, ['regular', 'double'], true)
+            && (bool) ($resolved['regular_unworked']['always_pay'] ?? false)) {
+            $result = $this->result(true, true, 'Always Pay Regular Holiday policy override applies.', 'regular_always_pay_override');
+        } else {
             $attendance = (array) ($resolved['attendance'] ?? []);
             if (! ($attendance['require_previous_workday_presence'] ?? true)) {
                 $result = $this->result(true, true, 'Company policy waives the preceding-workday condition.', 'company_attendance_waiver');
             } else {
-                $engineResult = $this->ruleEngine->evaluateRegularUnworked($employee, $holiday, $dateKey, $resolved);
+                $qualification = $this->precedingWorkdayRequirement($employee, $dateKey, $resolved, []);
                 $result = $this->result(
-                    (bool) $engineResult['eligible'],
-                    (bool) $engineResult['attendance_requirement_met'],
-                    (string) $engineResult['reason'],
-                    (string) $engineResult['rule']
+                    $qualification['met'],
+                    $qualification['met'],
+                    $qualification['reason'],
+                    $qualification['rule']
                 );
             }
-        } else {
-            $result = $this->result(false, true, 'This day does not carry unworked holiday pay.', 'not_non_working_holiday');
         }
 
         $payload = [
@@ -330,13 +334,6 @@ class HolidayPayPolicyService
             'company_override' => ($resolved['attendance']['require_previous_workday_presence'] ?? true) === false,
             'holiday_scope_match' => $holidayScopeMatch,
             'rule' => $result['rule'],
-            'rule_used' => $worked
-                ? 'worked'
-                : ($resolved[$kind === 'special' ? 'special_unworked' : 'regular_unworked']['attendance_rule']['minimum_condition'] ?? null),
-            'attendance_rule' => $this->ruleEngine->resolvedAttendanceRule(
-                (array) ($resolved[$kind === 'special' ? 'special_unworked' : 'regular_unworked'] ?? []),
-                $kind
-            ),
         ];
 
         if (filter_var(config('payroll.debug_holiday_eligibility', false), FILTER_VALIDATE_BOOL)) {
@@ -739,7 +736,6 @@ class HolidayPayPolicyService
         unset($resolved['unworked_special_multiplier']);
         $resolved['regular_unworked']['unworked_pay_policy'] ??= self::UNWORKED_DOLE_DEFAULT;
         $resolved['special_unworked']['unworked_pay_policy'] ??= self::UNWORKED_NO_PAY;
-        $resolved = $this->ruleEngine->mergePolicyDefaults($resolved);
         $resolved['regular_unworked']['eligible_employment_types'] = $this->eligibleEmploymentTypes($resolved, 'regular');
         $resolved['special_unworked']['eligible_employment_types'] = $this->eligibleEmploymentTypes($resolved, 'special');
         foreach (['regular_worked', 'special_worked'] as $block) {

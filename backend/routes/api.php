@@ -666,7 +666,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/payroll/policies/companies', [PayPolicyController::class, 'companies']);
             Route::get('/admin/payroll/policies/condition-keys', [PayPolicyController::class, 'conditionKeys']);
             Route::get('/admin/payroll/policies/employment-types', [PayPolicyController::class, 'employmentTypes']);
-            Route::get('/admin/payroll/policies/attendance-statuses', [PayPolicyController::class, 'attendanceStatuses']);
             Route::get('/admin/payroll/policies/preview', [PayPolicyController::class, 'preview']);
             Route::get('/admin/payroll/policies/{id}', [PayPolicyController::class, 'show'])->whereNumber('id');
             Route::post('/admin/payroll/policies', [PayPolicyController::class, 'store']);

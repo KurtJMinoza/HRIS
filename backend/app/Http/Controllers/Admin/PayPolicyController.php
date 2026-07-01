@@ -10,8 +10,6 @@ use App\Models\PolicyMultiplier;
 use App\Models\PolicyNdSetting;
 use App\Models\HolidayPayPolicySetting;
 use App\Services\HolidayPayPolicyService;
-use App\Services\HolidayPayAttendanceStatusRegistry;
-use App\Services\HolidayPayRuleEngine;
 use App\Services\HolidayPolicyCache;
 use App\Services\AttendanceCacheService;
 use App\Services\EmployeeDashboardCacheService;
@@ -27,8 +25,6 @@ class PayPolicyController extends Controller
     public function __construct(
         private readonly PolicyResolverService $policyResolver,
         private readonly HolidayPayPolicyService $holidayPayPolicy,
-        private readonly HolidayPayRuleEngine $holidayRuleEngine,
-        private readonly HolidayPayAttendanceStatusRegistry $attendanceStatusRegistry,
         private readonly ?EmploymentTypeResolver $employmentTypeResolver = null,
     ) {}
 
@@ -327,19 +323,6 @@ class PayPolicyController extends Controller
     }
 
     /**
-     * Attendance status options for Holiday Pay rule builder.
-     */
-    public function attendanceStatuses(): JsonResponse
-    {
-        return response()->json([
-            'qualifying' => $this->attendanceStatusRegistry->qualifyingOptions(),
-            'disqualifying' => $this->attendanceStatusRegistry->disqualifyingOptions(),
-            'minimum_conditions' => $this->attendanceStatusRegistry->minimumConditionOptions(),
-            'successive_qualifications' => $this->attendanceStatusRegistry->successiveQualificationOptions(),
-        ]);
-    }
-
-    /**
      * Condition keys for multiplier table.
      */
     public function conditionKeys(): JsonResponse
@@ -452,20 +435,7 @@ class PayPolicyController extends Controller
             'holiday_policy.regular_unworked.eligible_employment_types' => ['sometimes', 'array'],
             'holiday_policy.regular_unworked.eligible_employment_types.*' => ['string', 'max:80'],
             'holiday_policy.regular_unworked.always_pay' => ['sometimes', 'boolean'],
-            'holiday_policy.regular_unworked.policy_mode' => ['sometimes', 'string', 'in:dole_default,custom'],
             'holiday_policy.regular_unworked.successive_holiday_rule' => ['sometimes', 'boolean'],
-            'holiday_policy.regular_unworked.successive_qualification' => ['sometimes', 'string', 'in:previous_working_day,previous_and_first_holiday_worked'],
-            'holiday_policy.regular_unworked.attendance_rule' => ['sometimes', 'array'],
-            'holiday_policy.regular_unworked.attendance_rule.minimum_condition' => ['sometimes', 'string', 'in:previous_working_day_only,previous_and_next,previous_or_next,next_working_day_only,none'],
-            'holiday_policy.regular_unworked.attendance_rule.qualifying_statuses' => ['sometimes', 'array'],
-            'holiday_policy.regular_unworked.attendance_rule.qualifying_statuses.*' => ['string', 'max:80'],
-            'holiday_policy.regular_unworked.attendance_rule.disqualifying_statuses' => ['sometimes', 'array'],
-            'holiday_policy.regular_unworked.attendance_rule.disqualifying_statuses.*' => ['string', 'max:80'],
-            'holiday_policy.regular_unworked.attendance_rule.lookup' => ['sometimes', 'array'],
-            'holiday_policy.regular_unworked.attendance_rule.lookup.skip_rest_days' => ['sometimes', 'boolean'],
-            'holiday_policy.regular_unworked.attendance_rule.lookup.skip_non_working_days' => ['sometimes', 'boolean'],
-            'holiday_policy.regular_unworked.attendance_rule.lookup.skip_holidays' => ['sometimes', 'boolean'],
-            'holiday_policy.regular_unworked.attendance_rule.lookup.skip_paid_leave' => ['sometimes', 'boolean'],
             'holiday_policy.regular_unworked.coverage_behaviour' => ['sometimes', 'string', 'in:respect_coverage,ignore_coverage'],
             'holiday_policy.regular_worked' => ['sometimes', 'array'],
             'holiday_policy.regular_worked.coverage_behaviour' => ['sometimes', 'string', 'in:respect_coverage,ignore_coverage'],
@@ -476,18 +446,6 @@ class PayPolicyController extends Controller
             'holiday_policy.special_unworked.unworked_pay_policy' => ['sometimes', 'string', 'in:no_work_no_pay,selected_employment_types,all_employment_types,all_employees,paid_leave,paid_leave_only'],
             'holiday_policy.special_unworked.eligible_employment_types' => ['sometimes', 'array'],
             'holiday_policy.special_unworked.eligible_employment_types.*' => ['string', 'max:80'],
-            'holiday_policy.special_unworked.policy_mode' => ['sometimes', 'string', 'in:dole_default,custom'],
-            'holiday_policy.special_unworked.attendance_rule' => ['sometimes', 'array'],
-            'holiday_policy.special_unworked.attendance_rule.minimum_condition' => ['sometimes', 'string', 'in:previous_working_day_only,previous_and_next,previous_or_next,next_working_day_only,none'],
-            'holiday_policy.special_unworked.attendance_rule.qualifying_statuses' => ['sometimes', 'array'],
-            'holiday_policy.special_unworked.attendance_rule.qualifying_statuses.*' => ['string', 'max:80'],
-            'holiday_policy.special_unworked.attendance_rule.disqualifying_statuses' => ['sometimes', 'array'],
-            'holiday_policy.special_unworked.attendance_rule.disqualifying_statuses.*' => ['string', 'max:80'],
-            'holiday_policy.special_unworked.attendance_rule.lookup' => ['sometimes', 'array'],
-            'holiday_policy.special_unworked.attendance_rule.lookup.skip_rest_days' => ['sometimes', 'boolean'],
-            'holiday_policy.special_unworked.attendance_rule.lookup.skip_non_working_days' => ['sometimes', 'boolean'],
-            'holiday_policy.special_unworked.attendance_rule.lookup.skip_holidays' => ['sometimes', 'boolean'],
-            'holiday_policy.special_unworked.attendance_rule.lookup.skip_paid_leave' => ['sometimes', 'boolean'],
             'holiday_policy.special_unworked.coverage_behaviour' => ['sometimes', 'string', 'in:respect_coverage,ignore_coverage'],
             'holiday_policy.special_worked' => ['sometimes', 'array'],
             'holiday_policy.special_worked.coverage_behaviour' => ['sometimes', 'string', 'in:respect_coverage,ignore_coverage'],
@@ -559,11 +517,6 @@ class PayPolicyController extends Controller
                     $merged[$block]['eligible_employment_types'] = array_values(array_unique(
                         (array) $incoming[$block]['eligible_employment_types']
                     ));
-                }
-                if (isset($incoming[$block]['attendance_rule']) && is_array($incoming[$block]['attendance_rule'])) {
-                    $merged[$block]['attendance_rule'] = $this->holidayRuleEngine->normalizeAttendanceRule(
-                        (array) $incoming[$block]['attendance_rule']
-                    );
                 }
             }
         }

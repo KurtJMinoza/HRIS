@@ -6,7 +6,6 @@ use App\Http\Controllers\Admin\PayPolicyController;
 use App\Models\Policy;
 use App\Models\User;
 use App\Services\AttendanceSessionService;
-use App\Services\HolidayPayAttendanceStatusRegistry;
 use App\Services\HolidayPayPolicyService;
 use App\Services\HolidayPolicyCache;
 use App\Services\HolidayService;
@@ -479,7 +478,6 @@ class HolidayPayPolicyServiceTest extends TestCase
             Mockery::mock(LeaveCreditService::class),
             $policyResolver,
             $rulesEngine,
-            app(HolidayPayAttendanceStatusRegistry::class),
             $workedDates,
             $paidLeaveDates,
         );

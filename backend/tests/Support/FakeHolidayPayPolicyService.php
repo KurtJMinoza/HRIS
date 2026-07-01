@@ -4,7 +4,6 @@ namespace Tests\Support;
 
 use App\Models\User;
 use App\Services\AttendanceSessionService;
-use App\Services\HolidayPayAttendanceStatusRegistry;
 use App\Services\HolidayPayPolicyService;
 use App\Services\HolidayService;
 use App\Services\LeaveCreditService;
@@ -19,19 +18,10 @@ class FakeHolidayPayPolicyService extends HolidayPayPolicyService
         LeaveCreditService $leaveCreditService,
         PolicyResolverService $policyResolver,
         PayrollRulesEngineService $rulesEngine,
-        HolidayPayAttendanceStatusRegistry $statusRegistry,
         private readonly array $workedDates,
         private readonly array $paidLeaveDates,
     ) {
-        $ruleEngine = new FakeHolidayPayRuleEngine(
-            $attendanceSession,
-            $holidayService,
-            $leaveCreditService,
-            $statusRegistry,
-            $workedDates,
-            $paidLeaveDates,
-        );
-        parent::__construct($attendanceSession, $holidayService, $leaveCreditService, $policyResolver, $rulesEngine, $ruleEngine);
+        parent::__construct($attendanceSession, $holidayService, $leaveCreditService, $policyResolver, $rulesEngine);
     }
 
     protected function workedOn(User $employee, string $dateKey): bool

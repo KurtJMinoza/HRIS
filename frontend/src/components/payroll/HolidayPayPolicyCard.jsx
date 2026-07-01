@@ -1,5 +1,5 @@
 import React from 'react'
-import { Building2, Info, Moon, Sun } from 'lucide-react'
+import { Building2, CalendarClock, Info, Moon, Sun } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -12,9 +12,7 @@ import {
   COVERAGE_BEHAVIOUR_OPTIONS,
   WORKED_EMPLOYMENT_TYPE_OPTIONS,
   normalizeHolidayPayPolicy,
-  specialUnworkedUsesCustomRules,
 } from '@/lib/holidayPayPolicy'
-import { HolidayPayRuleBuilder, PolicyModeToggle } from '@/components/payroll/HolidayPayRuleBuilder'
 
 function ToggleRow({ id, checked, onCheckedChange, label, hint }) {
   return (
@@ -158,14 +156,10 @@ export function HolidayPayPolicyCard({
   branchId,
   employmentTypes = [],
   employmentTypesLoading = false,
-  attendanceStatusCatalog = null,
-  attendanceStatusesLoading = false,
   onPolicyChange,
 }) {
   const holidayPolicy = normalizeHolidayPayPolicy(policy)
   const scopeBadge = companyId ? (branchId ? 'Branch override' : 'Company override') : 'Global default'
-  const showSpecialCustom =
-    specialUnworkedUsesCustomRules(holidayPolicy.special_unworked.unworked_pay_policy)
 
   return (
     <Card className="overflow-hidden border border-rose-200/40 shadow-sm dark:border-rose-900/35">
@@ -180,8 +174,8 @@ export function HolidayPayPolicyCard({
               </Badge>
             </div>
             <CardDescription className="mt-1.5 max-w-2xl text-sm leading-relaxed">
-              Configurable rule engine for unworked holiday pay. DOLE defaults ship preconfigured; customize
-              attendance qualification without code changes. Worked premium rates live in the Multipliers tab.
+              Controls payroll eligibility and earnings. Holiday Coverage in the Holidays module still drives
+              calendar and attendance. Worked premium rates live in the Multipliers tab.
             </CardDescription>
           </div>
         </div>
@@ -192,13 +186,16 @@ export function HolidayPayPolicyCard({
           <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <p className="text-muted-foreground">
             <span className="font-medium text-foreground">Coverage behaviour</span> decides whether payroll
-            pays employees outside the holiday&apos;s organizational scope. Attendance rules are evaluated by
-            the Holiday Pay rule engine at payroll time.
+            pays employees outside the holiday&apos;s organizational scope. It never changes who sees a holiday
+            on the calendar.
           </p>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-2">
-          <HolidayTypePanel title="Regular holiday" accent="bg-rose-500/5 dark:bg-rose-950/20">
+          <HolidayTypePanel
+            title="Regular holiday"
+            accent="bg-rose-500/5 dark:bg-rose-950/20"
+          >
             <PayScenarioBlock icon={Moon} title="Unworked pay">
               <PolicySelect
                 id="regular-unworked-policy"
@@ -216,59 +213,6 @@ export function HolidayPayPolicyCard({
                   onChange={(value) => onPolicyChange(['regular_unworked', 'eligible_employment_types'], value)}
                 />
               )}
-
-              <PolicyModeToggle
-                idPrefix="regular-unworked-mode"
-                value={holidayPolicy.regular_unworked.policy_mode}
-                onChange={(value) => onPolicyChange(['regular_unworked', 'policy_mode'], value)}
-              />
-
-              {holidayPolicy.regular_unworked.policy_mode === 'custom' && (
-                attendanceStatusesLoading ? (
-                  <p className="text-sm text-muted-foreground">Loading attendance statuses…</p>
-                ) : (
-                  <HolidayPayRuleBuilder
-                    idPrefix="regular-unworked"
-                    rule={holidayPolicy.regular_unworked.attendance_rule}
-                    statusCatalog={attendanceStatusCatalog}
-                    showSuccessive
-                    successiveEnabled={holidayPolicy.regular_unworked.successive_holiday_rule}
-                    successiveQualification={holidayPolicy.regular_unworked.successive_qualification}
-                    onRuleChange={(rule) => onPolicyChange(['regular_unworked', 'attendance_rule'], rule)}
-                    onSuccessiveChange={({ enabled, qualification }) => {
-                      if (enabled !== undefined) {
-                        onPolicyChange(['regular_unworked', 'successive_holiday_rule'], enabled)
-                      }
-                      if (qualification !== undefined) {
-                        onPolicyChange(['regular_unworked', 'successive_qualification'], qualification)
-                      }
-                    }}
-                  />
-                )
-              )}
-
-              {holidayPolicy.regular_unworked.policy_mode !== 'custom' && (
-                <ToggleRow
-                  id="successive-holiday-rule-dole"
-                  checked={holidayPolicy.regular_unworked.successive_holiday_rule !== false}
-                  onCheckedChange={(checked) =>
-                    onPolicyChange(['regular_unworked', 'successive_holiday_rule'], Boolean(checked))
-                  }
-                  label="Successive holiday rule (DOLE)"
-                  hint="Back-to-back regular holidays share the first holiday's qualifying condition."
-                />
-              )}
-
-              <ToggleRow
-                id="regular-always-pay"
-                checked={holidayPolicy.regular_unworked.always_pay === true}
-                onCheckedChange={(checked) =>
-                  onPolicyChange(['regular_unworked', 'always_pay'], Boolean(checked))
-                }
-                label="Always pay unworked regular holiday"
-                hint="Ignores attendance qualification; still respects holiday type and employment scope."
-              />
-
               <CoverageBehaviourToggle
                 id="regular-unworked-coverage"
                 value={holidayPolicy.regular_unworked.coverage_behaviour}
@@ -304,7 +248,10 @@ export function HolidayPayPolicyCard({
             </PayScenarioBlock>
           </HolidayTypePanel>
 
-          <HolidayTypePanel title="Special holiday" accent="bg-amber-500/5 dark:bg-amber-950/20">
+          <HolidayTypePanel
+            title="Special holiday"
+            accent="bg-amber-500/5 dark:bg-amber-950/20"
+          >
             <PayScenarioBlock icon={Moon} title="Unworked pay">
               <PolicySelect
                 id="special-unworked-policy"
@@ -322,29 +269,6 @@ export function HolidayPayPolicyCard({
                   onChange={(value) => onPolicyChange(['special_unworked', 'eligible_employment_types'], value)}
                 />
               )}
-
-              {showSpecialCustom && (
-                <>
-                  <PolicyModeToggle
-                    idPrefix="special-unworked-mode"
-                    value={holidayPolicy.special_unworked.policy_mode}
-                    onChange={(value) => onPolicyChange(['special_unworked', 'policy_mode'], value)}
-                  />
-                  {holidayPolicy.special_unworked.policy_mode === 'custom' && (
-                    attendanceStatusesLoading ? (
-                      <p className="text-sm text-muted-foreground">Loading attendance statuses…</p>
-                    ) : (
-                      <HolidayPayRuleBuilder
-                        idPrefix="special-unworked"
-                        rule={holidayPolicy.special_unworked.attendance_rule}
-                        statusCatalog={attendanceStatusCatalog}
-                        onRuleChange={(rule) => onPolicyChange(['special_unworked', 'attendance_rule'], rule)}
-                      />
-                    )
-                  )}
-                </>
-              )}
-
               <CoverageBehaviourToggle
                 id="special-unworked-coverage"
                 value={holidayPolicy.special_unworked.coverage_behaviour}
@@ -380,6 +304,38 @@ export function HolidayPayPolicyCard({
             </PayScenarioBlock>
           </HolidayTypePanel>
         </div>
+
+        <section className="rounded-xl border border-border/60 bg-card shadow-sm">
+          <div className="border-b border-border/50 px-5 py-4">
+            <div className="flex items-center gap-2">
+              <CalendarClock className="size-4 text-muted-foreground" aria-hidden />
+              <h4 className="font-semibold">Unworked regular — attendance rules</h4>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Applied when evaluating unworked regular holiday pay only.
+            </p>
+          </div>
+          <div className="grid gap-3 p-5 sm:grid-cols-2">
+            <ToggleRow
+              id="previous-workday-required"
+              checked={holidayPolicy.attendance.require_previous_workday_presence !== false}
+              onCheckedChange={(checked) =>
+                onPolicyChange(['attendance', 'require_previous_workday_presence'], Boolean(checked))
+              }
+              label="Require attendance on the previous workday"
+              hint="Employee must have been present (or on paid leave) before the holiday."
+            />
+            <ToggleRow
+              id="successive-holiday-rule"
+              checked={holidayPolicy.regular_unworked.successive_holiday_rule !== false}
+              onCheckedChange={(checked) =>
+                onPolicyChange(['regular_unworked', 'successive_holiday_rule'], Boolean(checked))
+              }
+              label="Successive holiday rule"
+              hint="Back-to-back regular holidays share the first holiday's qualifying condition."
+            />
+          </div>
+        </section>
       </CardContent>
     </Card>
   )

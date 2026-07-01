@@ -39,23 +39,10 @@ class Policy extends Model
         ],
         'regular_unworked' => [
             'unworked_pay_policy' => 'dole_default',
-            'policy_mode' => 'dole_default',
             'eligible_employment_types' => [],
             'always_pay' => false,
             'successive_holiday_rule' => true,
-            'successive_qualification' => 'previous_working_day',
             'coverage_behaviour' => 'respect_coverage',
-            'attendance_rule' => [
-                'minimum_condition' => 'previous_working_day_only',
-                'qualifying_statuses' => [],
-                'disqualifying_statuses' => [],
-                'lookup' => [
-                    'skip_rest_days' => true,
-                    'skip_non_working_days' => true,
-                    'skip_holidays' => true,
-                    'skip_paid_leave' => false,
-                ],
-            ],
         ],
         'regular_worked' => [
             'coverage_behaviour' => 'respect_coverage',
@@ -64,20 +51,8 @@ class Policy extends Model
         ],
         'special_unworked' => [
             'unworked_pay_policy' => 'no_work_no_pay',
-            'policy_mode' => 'dole_default',
             'eligible_employment_types' => [],
             'coverage_behaviour' => 'respect_coverage',
-            'attendance_rule' => [
-                'minimum_condition' => 'previous_working_day_only',
-                'qualifying_statuses' => [],
-                'disqualifying_statuses' => [],
-                'lookup' => [
-                    'skip_rest_days' => true,
-                    'skip_non_working_days' => true,
-                    'skip_holidays' => true,
-                    'skip_paid_leave' => false,
-                ],
-            ],
         ],
         'special_worked' => [
             'coverage_behaviour' => 'respect_coverage',

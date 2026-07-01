@@ -31,36 +31,6 @@ export const WORKED_EMPLOYMENT_TYPE_OPTIONS = [
   { value: 'selected_employment_types', label: 'Selected Employment Types' },
 ]
 
-export const POLICY_MODE_OPTIONS = [
-  { value: 'dole_default', label: 'Follow DOLE Default' },
-  { value: 'custom', label: 'Custom Company Policy' },
-]
-
-export const MINIMUM_CONDITION_OPTIONS = [
-  { value: 'previous_working_day_only', label: 'Previous Working Day Only (DOLE Default)' },
-  { value: 'previous_and_next', label: 'Previous AND Next Working Day' },
-  { value: 'previous_or_next', label: 'Previous OR Next Working Day' },
-  { value: 'next_working_day_only', label: 'Next Working Day Only' },
-  { value: 'none', label: 'No Attendance Requirement' },
-]
-
-export const SUCCESSIVE_QUALIFICATION_OPTIONS = [
-  { value: 'previous_working_day', label: 'Previous Working Day' },
-  { value: 'previous_and_first_holiday_worked', label: 'Previous AND First Holiday Worked' },
-]
-
-export const DEFAULT_ATTENDANCE_RULE = {
-  minimum_condition: 'previous_working_day_only',
-  qualifying_statuses: ['present', 'late', 'approved_paid_leave'],
-  disqualifying_statuses: ['absent', 'leave_without_pay', 'incomplete', 'unpaid_absence'],
-  lookup: {
-    skip_rest_days: true,
-    skip_non_working_days: true,
-    skip_holidays: true,
-    skip_paid_leave: false,
-  },
-}
-
 export const DEFAULT_HOLIDAY_POLICY = {
   pay_unworked_regular: true,
   pay_unworked_special: false,
@@ -74,13 +44,10 @@ export const DEFAULT_HOLIDAY_POLICY = {
   },
   regular_unworked: {
     unworked_pay_policy: 'dole_default',
-    policy_mode: 'dole_default',
     eligible_employment_types: [],
     always_pay: false,
     successive_holiday_rule: true,
-    successive_qualification: 'previous_working_day',
     coverage_behaviour: 'respect_coverage',
-    attendance_rule: { ...DEFAULT_ATTENDANCE_RULE },
   },
   regular_worked: {
     coverage_behaviour: 'respect_coverage',
@@ -89,10 +56,8 @@ export const DEFAULT_HOLIDAY_POLICY = {
   },
   special_unworked: {
     unworked_pay_policy: 'no_work_no_pay',
-    policy_mode: 'dole_default',
     eligible_employment_types: [],
     coverage_behaviour: 'respect_coverage',
-    attendance_rule: { ...DEFAULT_ATTENDANCE_RULE },
   },
   special_worked: {
     coverage_behaviour: 'respect_coverage',
@@ -124,36 +89,20 @@ export const NON_STATUTORY_HOLIDAY_TYPES = [
   },
 ]
 
-function normalizeAttendanceRule(raw) {
-  const rule = raw && typeof raw === 'object' ? raw : {}
-  return {
-    minimum_condition: rule.minimum_condition || DEFAULT_ATTENDANCE_RULE.minimum_condition,
-    qualifying_statuses: [...(rule.qualifying_statuses?.length ? rule.qualifying_statuses : DEFAULT_ATTENDANCE_RULE.qualifying_statuses)],
-    disqualifying_statuses: [...(rule.disqualifying_statuses?.length ? rule.disqualifying_statuses : DEFAULT_ATTENDANCE_RULE.disqualifying_statuses)],
-    lookup: {
-      ...DEFAULT_ATTENDANCE_RULE.lookup,
-      ...(rule.lookup || {}),
-    },
-  }
-}
-
-function normalizeUnworkedBlock(defaults, incoming) {
-  const block = { ...defaults, ...(incoming || {}) }
-  return {
-    ...block,
-    policy_mode: block.policy_mode === 'custom' ? 'custom' : 'dole_default',
-    eligible_employment_types: [...(block.eligible_employment_types || [])],
-    attendance_rule: normalizeAttendanceRule(block.attendance_rule),
-    successive_qualification: block.successive_qualification || 'previous_working_day',
-  }
-}
-
 export function normalizeHolidayPayPolicy(value) {
   const policy = value && typeof value === 'object' ? value : {}
   const attendance = { ...DEFAULT_HOLIDAY_POLICY.attendance, ...(policy.attendance || {}) }
   const eligibility = { ...DEFAULT_HOLIDAY_POLICY.eligibility, ...(policy.eligibility || {}) }
-  const regularUnworked = normalizeUnworkedBlock(DEFAULT_HOLIDAY_POLICY.regular_unworked, policy.regular_unworked)
-  const specialUnworked = normalizeUnworkedBlock(DEFAULT_HOLIDAY_POLICY.special_unworked, policy.special_unworked)
+  const regularUnworked = {
+    ...DEFAULT_HOLIDAY_POLICY.regular_unworked,
+    ...(policy.regular_unworked || {}),
+    eligible_employment_types: [...(policy.regular_unworked?.eligible_employment_types || [])],
+  }
+  const specialUnworked = {
+    ...DEFAULT_HOLIDAY_POLICY.special_unworked,
+    ...(policy.special_unworked || {}),
+    eligible_employment_types: [...(policy.special_unworked?.eligible_employment_types || [])],
+  }
   const regularWorked = {
     ...DEFAULT_HOLIDAY_POLICY.regular_worked,
     ...(policy.regular_worked || {}),
@@ -171,10 +120,6 @@ export function normalizeHolidayPayPolicy(value) {
   if (specialUnworked.unworked_pay_policy === 'paid_leave') specialUnworked.unworked_pay_policy = 'paid_leave_only'
   if (!policy.special_unworked && (policy.pay_unworked_special || policy.eligibility?.company_may_pay_unworked_special)) {
     specialUnworked.unworked_pay_policy = 'all_employment_types'
-  }
-
-  if (attendance.require_previous_workday_presence === false && regularUnworked.policy_mode !== 'custom') {
-    regularUnworked.attendance_rule.minimum_condition = 'none'
   }
 
   const paysUnworkedSpecial = specialUnworked.unworked_pay_policy !== 'no_work_no_pay'
@@ -204,10 +149,6 @@ export function normalizeHolidayPayPolicy(value) {
       paid_leave_qualifies: true,
       skip_rest_days: true,
       skip_company_non_working_days: true,
-      require_previous_workday_presence:
-        regularUnworked.policy_mode === 'custom'
-          ? regularUnworked.attendance_rule.minimum_condition !== 'none'
-          : attendance.require_previous_workday_presence !== false,
     },
   }
 }
@@ -215,35 +156,27 @@ export function normalizeHolidayPayPolicy(value) {
 export function serializeHolidayPayPolicyForSave(policy) {
   const normalized = normalizeHolidayPayPolicy(policy)
 
-  const serializeBlock = (block) => {
-    const payload = {
-      unworked_pay_policy: block.unworked_pay_policy,
-      eligible_employment_types: block.eligible_employment_types,
-      coverage_behaviour: block.coverage_behaviour,
-      policy_mode: block.policy_mode,
-    }
-    if (block.policy_mode === 'custom') {
-      payload.attendance_rule = block.attendance_rule
-    }
-    return payload
-  }
-
   return {
     pay_unworked_regular: normalized.pay_unworked_regular,
     pay_unworked_special: normalized.pay_unworked_special,
     eligibility: normalized.eligibility,
     regular_unworked: {
-      ...serializeBlock(normalized.regular_unworked),
+      unworked_pay_policy: normalized.regular_unworked.unworked_pay_policy,
+      eligible_employment_types: normalized.regular_unworked.eligible_employment_types,
       always_pay: normalized.regular_unworked.always_pay,
       successive_holiday_rule: normalized.regular_unworked.successive_holiday_rule,
-      successive_qualification: normalized.regular_unworked.successive_qualification,
+      coverage_behaviour: normalized.regular_unworked.coverage_behaviour,
     },
     regular_worked: {
       coverage_behaviour: normalized.regular_worked.coverage_behaviour,
       employment_type_rule: normalized.regular_worked.employment_type_rule,
       eligible_employment_types: normalized.regular_worked.eligible_employment_types,
     },
-    special_unworked: serializeBlock(normalized.special_unworked),
+    special_unworked: {
+      unworked_pay_policy: normalized.special_unworked.unworked_pay_policy,
+      eligible_employment_types: normalized.special_unworked.eligible_employment_types,
+      coverage_behaviour: normalized.special_unworked.coverage_behaviour,
+    },
     special_worked: {
       coverage_behaviour: normalized.special_worked.coverage_behaviour,
       employment_type_rule: normalized.special_worked.employment_type_rule,
@@ -257,8 +190,4 @@ export function serializeHolidayPayPolicyForSave(policy) {
       skip_company_non_working_days: true,
     },
   }
-}
-
-export function specialUnworkedUsesCustomRules(unworkedPayPolicy) {
-  return !['no_work_no_pay', 'paid_leave_only'].includes(unworkedPayPolicy)
 }
