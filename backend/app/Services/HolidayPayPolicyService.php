@@ -21,6 +21,8 @@ class HolidayPayPolicyService
         private readonly LeaveCreditService $leaveCreditService,
         private readonly PolicyResolverService $policyResolver,
         private readonly PayrollRulesEngineService $rulesEngine,
+        private readonly HolidayPayRuleEngine $ruleEngine,
+        private readonly ?EmploymentTypeResolver $employmentTypeResolver = null,
     ) {}
 
     /** @return array<string, mixed> */
@@ -45,8 +47,14 @@ class HolidayPayPolicyService
     {
         $holiday ??= $this->holidayService->resolveHolidayForPayroll($employee, $holidayDate) ?? ['date' => $holidayDate];
         $resolved = $this->resolveEffectivePolicy($policy, $holiday, $employee->getEffectiveCompanyId());
+        $qualification = $this->ruleEngine->evaluateAttendanceQualification($employee, $holidayDate, $resolved, 'regular');
 
-        return $this->precedingWorkdayRequirement($employee, $holidayDate, $resolved, [], true);
+        return [
+            'date' => $qualification['date'] ?? null,
+            'met' => (bool) ($qualification['met'] ?? false),
+            'reason' => (string) ($qualification['reason'] ?? ''),
+            'rule' => (string) ($qualification['rule'] ?? ''),
+        ];
     }
 
     public function isQualifiedForUnworkedRegularHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null): bool
@@ -121,22 +129,30 @@ class HolidayPayPolicyService
                 'worked' => false,
                 'unworked' => true,
                 'policy_source' => 'policy_settings',
-                'employment_type_match' => $qualification['employment_type_match'] ?? null,
                 'previous_workday_passed' => $qualification['attendance_requirement_met'] ?? null,
                 'attendance_rule_applied' => $qualification['rule'] ?? null,
             ];
         } elseif ($worked && $qualification['eligible'] && $paidRegularMinutes > 0 && $workedFirst8 > 1.00001) {
+            $normalizedType = $this->normalizeHolidayType($holiday['type'] ?? null) ?? 'regular';
+            $componentCode = $this->holidayPayComponentCode($normalizedType, false);
+            $holidayName = (string) ($holiday['name'] ?? 'Holiday');
             $holidayPremiumPay = round(($paidRegularMinutes / 60.0) * $hourlyRate * $workedFirst8, 2);
             $breakdown = [
                 'component' => 'holiday_premium',
+                'component_code' => $componentCode,
+                'description' => $this->holidayPayDescription($componentCode, $holidayName),
                 'minutes' => $paidRegularMinutes,
                 'rate' => $hourlyRate,
                 'multiplier' => $workedFirst8,
                 'premium_multiplier' => round($workedFirst8, 2),
-                'holiday_name' => $holiday['name'] ?? null,
+                'holiday_id' => $holiday['id'] ?? null,
+                'holiday_name' => $holidayName,
                 'holiday_type' => $holiday['type'] ?? null,
                 'amount' => $holidayPremiumPay,
                 'worked' => true,
+                'unworked' => false,
+                'policy_source' => 'policy_settings',
+                'multiplier_source' => 'multipliers_tab',
                 'attendance_rule_applied' => $qualification['rule'] ?? null,
             ];
         }
@@ -224,14 +240,7 @@ class HolidayPayPolicyService
     /** @return array{eligible: bool, attendance_requirement_met: bool, reason: string, rule: string} */
     public function evaluate(User $employee, array $holiday, string $dateKey, bool $worked, ?Policy $policy = null): array
     {
-        $determination = $this->determineEligibility($employee, $holiday, $dateKey, $worked, $policy);
-
-        return [
-            'eligible' => (bool) $determination['eligible'],
-            'attendance_requirement_met' => (bool) $determination['attendance_requirement_met'],
-            'reason' => (string) $determination['reason'],
-            'rule' => (string) $determination['rule'],
-        ];
+        return $this->determineEligibility($employee, $holiday, $dateKey, $worked, $policy);
     }
 
     /**
@@ -242,8 +251,6 @@ class HolidayPayPolicyService
      * @return array{
      *   eligible: bool,
      *   reason: string,
-     *   employment_type: string,
-     *   employment_type_match: bool,
      *   attendance_requirement_met: bool,
      *   policy_match: bool,
      *   company_override: bool,
@@ -251,63 +258,85 @@ class HolidayPayPolicyService
      *   rule: string
      * }
      */
-    public function determineEligibility(User $employee, array $holiday, string $dateKey, bool $worked, ?Policy $policy = null): array
+    public function determineEligibility(User $employee, array $holiday, string $dateKey, bool $worked, ?Policy $policy = null, ?bool $calendarScopeMatch = null): array
     {
         $resolved = $this->resolveEffectivePolicy($policy, $holiday, $employee->getEffectiveCompanyId());
-        $employmentType = $this->employeeEmploymentType($employee);
         $normalizedType = $this->normalizeHolidayType($holiday['type'] ?? null);
-        $holidayScopeMatch = $normalizedType !== null;
-        $employmentTypeMatch = $normalizedType !== null
-            && $this->unworkedPayAllowsEmployee($resolved, $employee, $normalizedType);
+        $holidayScopeMatch = $calendarScopeMatch ?? ($this->holidayService->resolveHolidayForPayroll($employee, $dateKey) !== null);
+        $kind = in_array($normalizedType, ['regular', 'double'], true) ? 'regular' : 'special';
+        $unworkedPolicy = $this->unworkedPayPolicy($resolved, $kind);
+        $employmentType = $this->employmentTypeResolver()->resolveForEmployee($employee);
+        $allowedEmploymentTypes = $this->eligibleEmploymentTypes($resolved, $kind);
+        $employmentTypeMatch = $this->employmentTypeAllowed($unworkedPolicy, $employmentType, $allowedEmploymentTypes, $kind);
+        $workedEmploymentRule = $this->workedEmploymentTypeRule($resolved, $kind);
+        $workedAllowedEmploymentTypes = $this->eligibleEmploymentTypesForWorked($resolved, $kind);
+        $workedEmploymentTypeMatch = $this->workedEmploymentTypeAllowed(
+            $workedEmploymentRule,
+            $employmentType,
+            $workedAllowedEmploymentTypes
+        );
 
         if ($worked) {
+            $engineResult = in_array($normalizedType, ['regular', 'double'], true)
+                ? $this->ruleEngine->evaluateRegularWorked($employee, $holiday, $dateKey, $resolved)
+                : $this->ruleEngine->evaluateSpecialWorked($employee, $holiday, $dateKey, $resolved);
             $result = $this->result(
-                true,
-                true,
-                'Worked on the holiday; the preceding-workday condition does not bar holiday work pay.',
-                'worked_holiday'
+                (bool) $engineResult['eligible'],
+                (bool) $engineResult['attendance_requirement_met'],
+                (string) $engineResult['reason'],
+                (string) $engineResult['rule']
             );
         } elseif (in_array($normalizedType, ['special_working', 'company'], true) || $normalizedType === null) {
             $result = $this->result(false, true, 'This day does not carry unworked holiday pay.', 'not_non_working_holiday');
-        } elseif (! $employmentTypeMatch) {
-            $rule = $normalizedType === 'special' ? 'special_no_work_no_pay' : 'unworked_employment_type_excluded';
+        } elseif ($normalizedType === 'special' && ! in_array($unworkedPolicy, [self::UNWORKED_NO_PAY, self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY], true) && ! $employmentTypeMatch) {
+            $result = $this->result(false, true, 'Employee employment type is not selected for unworked special holiday pay.', 'special_employment_type_excluded');
+        } elseif ($normalizedType === 'special') {
+            $engineResult = $this->ruleEngine->evaluateSpecialUnworked($employee, $holiday, $dateKey, $resolved);
             $result = $this->result(
-                false,
-                true,
-                $normalizedType === 'special'
-                    ? 'Special non-working holiday follows no work, no pay for this employment type.'
-                    : 'This employment type is not eligible for unworked regular holiday pay.',
-                $rule
+                (bool) $engineResult['eligible'],
+                (bool) $engineResult['attendance_requirement_met'],
+                (string) $engineResult['reason'],
+                (string) $engineResult['rule']
             );
-        } elseif ($normalizedType === 'special' && $this->specialUnworkedSkipsAttendance($resolved)) {
-            $result = $this->result(true, true, 'Company policy pays unworked special holiday for this employment type.', 'special_unworked_company_policy');
-        } elseif (in_array($normalizedType, ['regular', 'double'], true) && ! ($resolved['pay_unworked_regular'] ?? true)) {
-            $result = $this->result(false, true, 'Unworked regular holiday pay is disabled for this policy.', 'unworked_regular_disabled');
-        } else {
+        } elseif (in_array($normalizedType, ['regular', 'double'], true) && ! $employmentTypeMatch) {
+            $result = $this->result(false, true, 'Employee employment type is not selected for unworked regular holiday pay.', 'regular_employment_type_excluded');
+        } elseif (in_array($normalizedType, ['regular', 'double'], true)) {
             $attendance = (array) ($resolved['attendance'] ?? []);
             if (! ($attendance['require_previous_workday_presence'] ?? true)) {
                 $result = $this->result(true, true, 'Company policy waives the preceding-workday condition.', 'company_attendance_waiver');
             } else {
-                $qualification = $this->precedingWorkdayRequirement($employee, $dateKey, $resolved, []);
+                $engineResult = $this->ruleEngine->evaluateRegularUnworked($employee, $holiday, $dateKey, $resolved);
                 $result = $this->result(
-                    $qualification['met'],
-                    $qualification['met'],
-                    $qualification['reason'],
-                    $qualification['rule']
+                    (bool) $engineResult['eligible'],
+                    (bool) $engineResult['attendance_requirement_met'],
+                    (string) $engineResult['reason'],
+                    (string) $engineResult['rule']
                 );
             }
+        } else {
+            $result = $this->result(false, true, 'This day does not carry unworked holiday pay.', 'not_non_working_holiday');
         }
 
         $payload = [
             'eligible' => $result['eligible'],
             'reason' => $result['reason'],
-            'employment_type' => $employmentType,
-            'employment_type_match' => $worked || $employmentTypeMatch,
             'attendance_requirement_met' => $result['attendance_requirement_met'],
-            'policy_match' => $employmentTypeMatch,
+            'policy_match' => $holidayScopeMatch,
+            'employment_type' => $employmentType,
+            'allowed_employment_types' => $allowedEmploymentTypes,
+            'employment_type_match' => $worked ? $workedEmploymentTypeMatch : $employmentTypeMatch,
+            'worked_employment_type_rule' => $workedEmploymentRule,
+            'worked_allowed_employment_types' => $workedAllowedEmploymentTypes,
             'company_override' => ($resolved['attendance']['require_previous_workday_presence'] ?? true) === false,
             'holiday_scope_match' => $holidayScopeMatch,
             'rule' => $result['rule'],
+            'rule_used' => $worked
+                ? 'worked'
+                : ($resolved[$kind === 'special' ? 'special_unworked' : 'regular_unworked']['attendance_rule']['minimum_condition'] ?? null),
+            'attendance_rule' => $this->ruleEngine->resolvedAttendanceRule(
+                (array) ($resolved[$kind === 'special' ? 'special_unworked' : 'regular_unworked'] ?? []),
+                $kind
+            ),
         ];
 
         if (filter_var(config('payroll.debug_holiday_eligibility', false), FILTER_VALIDATE_BOOL)) {
@@ -317,10 +346,11 @@ class HolidayPayPolicyService
                 'holiday_name' => $holiday['name'] ?? null,
                 'holiday_date' => $dateKey,
                 'worked' => $worked,
+                'employment_type' => $employmentType,
+                'allowed_employment_types' => $allowedEmploymentTypes,
+                'employment_type_match' => $worked ? $workedEmploymentTypeMatch : $employmentTypeMatch,
                 'unworked_pay_policy_regular' => $this->unworkedPayPolicy($resolved, 'regular'),
                 'unworked_pay_policy_special' => $this->unworkedPayPolicy($resolved, 'special'),
-                'eligible_employment_types_regular' => $this->eligibleEmploymentTypes($resolved, 'regular'),
-                'eligible_employment_types_special' => $this->eligibleEmploymentTypes($resolved, 'special'),
             ]));
         }
 
@@ -332,7 +362,7 @@ class HolidayPayPolicyService
      *
      * @return array<string, mixed>
      */
-    public function shouldPayUnworkedHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null): array
+    public function shouldPayUnworkedHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null, ?bool $calendarScopeMatch = null): array
     {
         $companyId = $employee->getEffectiveCompanyId();
         $resolved = $this->resolveEffectivePolicy($policy, $holiday, $companyId);
@@ -340,8 +370,8 @@ class HolidayPayPolicyService
         $kind = in_array($normalizedType, ['regular', 'double'], true) ? 'regular' : 'special';
         $workedOnHoliday = $this->workedOn($employee, $dateKey);
         $hasAttendanceLog = $workedOnHoliday;
-        $holidayScopeMatch = $this->holidayService->resolveHolidayForPayroll($employee, $dateKey) !== null;
-        $determination = $this->determineEligibility($employee, $holiday, $dateKey, $workedOnHoliday, $policy);
+        $holidayScopeMatch = $calendarScopeMatch ?? ($this->holidayService->resolveHolidayForPayroll($employee, $dateKey) !== null);
+        $determination = $this->determineEligibility($employee, $holiday, $dateKey, $workedOnHoliday, $policy, $holidayScopeMatch);
         $previousWorkday = $this->getPreviousQualifyingWorkday($employee, $dateKey, $policy, $holiday);
         $unworkedMultiplier = $this->unworkedMultiplier($holiday, $resolved);
         $shouldPay = ! $workedOnHoliday
@@ -351,14 +381,14 @@ class HolidayPayPolicyService
         $payload = [
             'employee_id' => $employee->id,
             'employee_name' => (string) ($employee->display_name ?? $employee->name ?? ''),
-            'employment_type' => $determination['employment_type'] ?? null,
             'holiday_id' => $holiday['id'] ?? null,
             'holiday_name' => $holiday['name'] ?? null,
             'holiday_type' => $holiday['type'] ?? null,
             'holiday_scope_match' => $holidayScopeMatch,
             'policy_found' => $policy !== null,
             'unworked_pay_policy' => $this->unworkedPayPolicy($resolved, $kind),
-            'eligible_employment_types' => $this->eligibleEmploymentTypes($resolved, $kind),
+            'employment_type' => $determination['employment_type'] ?? null,
+            'allowed_employment_types' => $determination['allowed_employment_types'] ?? [],
             'employment_type_match' => (bool) ($determination['employment_type_match'] ?? false),
             'has_attendance_log' => $hasAttendanceLog,
             'worked_on_holiday' => $workedOnHoliday,
@@ -377,18 +407,30 @@ class HolidayPayPolicyService
         return $payload;
     }
 
-    public function holidayPayComponentCode(?string $normalizedHolidayType): string
+    public function holidayPayComponentCode(?string $normalizedHolidayType, bool $unworked = true): string
     {
+        if (! $unworked) {
+            return in_array($normalizedHolidayType, ['regular', 'double'], true)
+                ? 'REGULAR_HOLIDAY_WORKED_PAY'
+                : 'SPECIAL_HOLIDAY_WORKED_PAY';
+        }
+
         return in_array($normalizedHolidayType, ['regular', 'double'], true)
-            ? 'REGULAR_HOLIDAY_PAY'
-            : 'SPECIAL_HOLIDAY_PAY';
+            ? 'REGULAR_HOLIDAY_UNWORKED_PAY'
+            : 'SPECIAL_HOLIDAY_UNWORKED_PAY';
     }
 
     public function holidayPayDescription(string $componentCode, string $holidayName): string
     {
-        $prefix = $componentCode === 'REGULAR_HOLIDAY_PAY' ? 'Regular Holiday Pay' : 'Special Holiday Pay';
+        $prefix = match ($componentCode) {
+            'REGULAR_HOLIDAY_UNWORKED_PAY' => 'Regular Holiday — Unworked Pay',
+            'SPECIAL_HOLIDAY_UNWORKED_PAY' => 'Special Holiday — Unworked Pay',
+            'REGULAR_HOLIDAY_WORKED_PAY', 'REGULAR_HOLIDAY_PAY' => 'Regular Holiday — Worked Pay',
+            'SPECIAL_HOLIDAY_WORKED_PAY', 'SPECIAL_HOLIDAY_PAY' => 'Special Holiday — Worked Pay',
+            default => 'Holiday Pay',
+        };
 
-        return $prefix.' - '.$holidayName;
+        return $prefix.': '.$holidayName;
     }
 
     public function unworkedMultiplier(array $holiday, array $policy): float
@@ -396,8 +438,17 @@ class HolidayPayPolicyService
         return match ($this->normalizeHolidayType($holiday['type'] ?? null)) {
             'regular' => 1.0,
             'double' => 2.0,
-            'special' => $this->unworkedPayPolicy($policy, 'special') !== self::UNWORKED_NO_PAY
-                ? max(1.0, (float) ($policy['unworked_special_multiplier'] ?? 1.0))
+            'special' => in_array($this->unworkedPayPolicy($policy, 'special'), [
+                self::UNWORKED_COVERED,
+                self::UNWORKED_ALL,
+                self::UNWORKED_ALL_TYPES,
+                'selected_employment_types',
+                self::UNWORKED_PAID_LEAVE,
+                self::UNWORKED_PAID_LEAVE_ONLY,
+                self::UNWORKED_COMPANY_POLICY,
+                self::UNWORKED_CBA,
+            ], true)
+                ? 1.0
                 : 0.0,
             default => 0.0,
         };
@@ -407,9 +458,49 @@ class HolidayPayPolicyService
 
     public const UNWORKED_COVERED = 'covered_employees';
 
-    public const UNWORKED_SELECTED = 'selected_employment_types';
+    public const UNWORKED_DOLE_DEFAULT = 'dole_default';
 
     public const UNWORKED_ALL = 'all_employees';
+
+    public const UNWORKED_ALL_TYPES = 'all_employment_types';
+
+    public const UNWORKED_DISABLED = 'disabled';
+
+    public const UNWORKED_PAID_LEAVE = 'paid_leave';
+
+    public const UNWORKED_PAID_LEAVE_ONLY = 'paid_leave_only';
+
+    public const UNWORKED_COMPANY_POLICY = 'company_policy';
+
+    public const UNWORKED_CBA = 'cba';
+
+    public const COVERAGE_RESPECT = 'respect_coverage';
+
+    public const COVERAGE_IGNORE = 'ignore_coverage';
+
+    /**
+     * Whether payroll may pay outside Holiday module organizational coverage.
+     * Calendar/attendance always respect coverage regardless of this setting.
+     */
+    public function shouldIgnoreHolidayCoverage(array $resolvedPolicy, string $holidayKind, bool $worked): bool
+    {
+        return $this->coverageBehaviour($resolvedPolicy, $holidayKind, $worked) === self::COVERAGE_IGNORE;
+    }
+
+    public function coverageBehaviour(array $resolvedPolicy, string $holidayKind, bool $worked): string
+    {
+        $blockKey = match ($holidayKind) {
+            'regular' => $worked ? 'regular_worked' : 'regular_unworked',
+            'special' => $worked ? 'special_worked' : 'special_unworked',
+            default => $worked ? 'regular_worked' : 'regular_unworked',
+        };
+        $behaviour = (string) (($resolvedPolicy[$blockKey]['coverage_behaviour'] ?? null)
+            ?? ($worked ? self::COVERAGE_RESPECT : self::COVERAGE_RESPECT));
+
+        return in_array($behaviour, [self::COVERAGE_IGNORE, self::COVERAGE_RESPECT], true)
+            ? $behaviour
+            : self::COVERAGE_RESPECT;
+    }
 
     public function normalizeHolidayType(mixed $type): ?string
     {
@@ -444,7 +535,8 @@ class HolidayPayPolicyService
 
             $priorHoliday = $this->holidayService->resolveHolidayForPayroll($employee, $priorKey);
             $priorType = $this->normalizeHolidayType($priorHoliday['type'] ?? null);
-            if ($priorHoliday !== null && in_array($priorType, ['regular', 'double'], true)) {
+            if ($priorHoliday !== null && in_array($priorType, ['regular', 'double'], true)
+                && (bool) ($policy['regular_unworked']['successive_holiday_rule'] ?? true)) {
                 if ($this->workedOn($employee, $priorKey)) {
                     return [
                         'date' => $includeDate ? $priorKey : null,
@@ -512,6 +604,11 @@ class HolidayPayPolicyService
         return $timeIn !== null && $timeOut !== null;
     }
 
+    public function hasWorkedOnDate(User $employee, string $dateKey): bool
+    {
+        return $this->workedOn($employee, $dateKey);
+    }
+
     protected function hasApprovedPaidLeave(User $employee, string $dateKey): bool
     {
         $leave = $this->approvedLeaveOnDate($employee, $dateKey);
@@ -521,6 +618,11 @@ class HolidayPayPolicyService
 
         return $this->leaveCreditService->consumesCredits((string) $leave->type)
             && $this->leaveCreditService->dateIsPaidLeavePortion($employee, $leave, $dateKey);
+    }
+
+    public function isApprovedPaidLeaveOnDate(User $employee, string $dateKey): bool
+    {
+        return $this->hasApprovedPaidLeave($employee, $dateKey);
     }
 
     private function approvedLeaveOnDate(User $employee, string $dateKey): ?LeaveRequest
@@ -551,88 +653,78 @@ class HolidayPayPolicyService
         return ! is_array($day) || empty($day['in']);
     }
 
-    private function employeeEmploymentType(User $employee): string
-    {
-        $employmentType = $this->normalize((string) ($employee->employment_type ?? ''));
-        $employmentStatus = $this->normalize((string) ($employee->employment_status ?? ''));
-        $position = $this->normalize((string) ($employee->position ?? ''));
-
-        if (str_contains($employmentType, 'probation') || str_contains($employmentStatus, 'probation')) {
-            return 'probationary';
-        }
-        if (str_contains($employmentType, 'contract') || str_contains($employmentStatus, 'contract')) {
-            return 'contractual';
-        }
-        if (str_contains($employmentType, 'fixed_term') || str_contains($employmentStatus, 'fixed_term')) {
-            return 'fixed_term';
-        }
-        if (str_contains($employmentType, 'consultant')) {
-            return 'consultant';
-        }
-        if (str_contains($employmentType, 'execom') || str_contains($position, 'execom')
-            || str_contains($position, 'executive') || str_contains($position, 'ceo')) {
-            return 'execom';
-        }
-        if (str_contains($employmentType, 'part_time') || str_contains($employmentType, 'parttime')) {
-            return 'part_time';
-        }
-        if (str_contains($employmentType, 'project')) {
-            return 'project_based';
-        }
-        if (str_contains($employmentStatus, 'regular')) {
-            return 'regular';
-        }
-
-        return 'regular';
-    }
-
     private function unworkedPayPolicy(array $policy, string $holidayKind): string
     {
         $configKey = $holidayKind === 'special' ? 'special_unworked' : 'regular_unworked';
         $config = (array) ($policy[$configKey] ?? []);
 
-        return (string) ($config['unworked_pay_policy'] ?? ($holidayKind === 'special' ? self::UNWORKED_NO_PAY : self::UNWORKED_COVERED));
+        return (string) ($config['unworked_pay_policy'] ?? ($holidayKind === 'special' ? self::UNWORKED_NO_PAY : self::UNWORKED_DOLE_DEFAULT));
+    }
+
+    /** @return list<string> */
+    private function eligibleEmploymentTypesForWorked(array $policy, string $holidayKind): array
+    {
+        $key = $holidayKind === 'special' ? 'special_worked' : 'regular_worked';
+
+        return array_values(array_unique(array_filter(array_map(
+            fn ($value): string => $this->normalize((string) $value),
+            (array) ($policy[$key]['eligible_employment_types'] ?? [])
+        ))));
+    }
+
+    private function workedEmploymentTypeRule(array $policy, string $holidayKind): string
+    {
+        $key = $holidayKind === 'special' ? 'special_worked' : 'regular_worked';
+        $rule = (string) ($policy[$key]['employment_type_rule'] ?? 'all_employment_types');
+
+        return in_array($rule, ['all_employment_types', 'selected_employment_types'], true)
+            ? $rule
+            : 'all_employment_types';
+    }
+
+    /** @param list<string> $allowed */
+    private function workedEmploymentTypeAllowed(string $rule, string $employeeType, array $allowed): bool
+    {
+        return match ($rule) {
+            'selected_employment_types' => in_array($employeeType, $allowed, true),
+            default => true,
+        };
     }
 
     /** @return list<string> */
     private function eligibleEmploymentTypes(array $policy, string $holidayKind): array
     {
-        $configKey = $holidayKind === 'special' ? 'special_unworked' : 'regular_unworked';
+        $key = $holidayKind === 'special' ? 'special_unworked' : 'regular_unworked';
 
-        return array_values((array) ($policy[$configKey]['eligible_employment_types'] ?? []));
+        return array_values(array_unique(array_filter(array_map(
+            fn ($value): string => $this->normalize((string) $value),
+            (array) ($policy[$key]['eligible_employment_types'] ?? [])
+        ))));
     }
 
-    private function unworkedPayAllowsEmployee(array $policy, User $employee, string $normalizedType): bool
+    /** @param list<string> $allowed */
+    private function employmentTypeAllowed(string $mode, string $employeeType, array $allowed, string $kind): bool
     {
-        $kind = in_array($normalizedType, ['regular', 'double'], true) ? 'regular' : 'special';
-        $mode = $this->unworkedPayPolicy($policy, $kind);
-        $employeeType = $this->employeeEmploymentType($employee);
-
         return match ($mode) {
-            self::UNWORKED_NO_PAY => false,
-            self::UNWORKED_COVERED, self::UNWORKED_ALL => true,
-            self::UNWORKED_SELECTED => in_array($employeeType, $this->eligibleEmploymentTypes($policy, $kind), true),
+            self::UNWORKED_DISABLED, self::UNWORKED_NO_PAY => false,
+            'selected_employment_types' => in_array($employeeType, $allowed, true),
+            self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY => true,
+            self::UNWORKED_DOLE_DEFAULT, self::UNWORKED_COVERED, self::UNWORKED_ALL,
+            self::UNWORKED_ALL_TYPES, self::UNWORKED_COMPANY_POLICY, self::UNWORKED_CBA => true,
             default => $kind === 'regular',
         };
     }
 
-    private function specialUnworkedSkipsAttendance(array $policy): bool
+    private function employmentTypeResolver(): EmploymentTypeResolver
     {
-        $attendance = (array) ($policy['attendance'] ?? []);
-        if (array_key_exists('require_previous_workday_presence', $attendance) && ! $attendance['require_previous_workday_presence']) {
-            return true;
-        }
-
-        $mode = $this->unworkedPayPolicy($policy, 'special');
-
-        return in_array($mode, [self::UNWORKED_SELECTED, self::UNWORKED_ALL], true);
+        return $this->employmentTypeResolver ?? app(EmploymentTypeResolver::class);
     }
 
     /** @param  array<string, mixed>  $resolved */
     private function normalizeResolvedPolicy(array $resolved): array
     {
         $resolved = array_replace_recursive(Policy::DEFAULT_HOLIDAY_POLICY, $resolved);
-        $resolved['pay_unworked_regular'] = true;
+        $resolved['pay_unworked_regular'] = ($resolved['regular_unworked']['unworked_pay_policy'] ?? self::UNWORKED_DOLE_DEFAULT) !== self::UNWORKED_DISABLED;
         $specialPolicy = (string) ($resolved['special_unworked']['unworked_pay_policy'] ?? self::UNWORKED_NO_PAY);
         // ponytail: legacy policies only had pay_unworked_special — infer once when special_unworked was never stored
         if (! isset($resolved['special_unworked']['unworked_pay_policy']) && empty($resolved['special_unworked'])) {
@@ -644,17 +736,31 @@ class HolidayPayPolicyService
         $resolved['pay_unworked_special'] = $specialPolicy !== self::UNWORKED_NO_PAY;
         $resolved['eligibility']['company_may_pay_unworked_special'] = $resolved['pay_unworked_special'];
         $resolved['eligibility']['special_no_work_no_pay'] = $specialPolicy === self::UNWORKED_NO_PAY;
-        $resolved['unworked_special_multiplier'] = max(1.0, (float) ($resolved['unworked_special_multiplier'] ?? 1.0));
-        $resolved['regular_unworked']['unworked_pay_policy'] ??= self::UNWORKED_COVERED;
+        unset($resolved['unworked_special_multiplier']);
+        $resolved['regular_unworked']['unworked_pay_policy'] ??= self::UNWORKED_DOLE_DEFAULT;
         $resolved['special_unworked']['unworked_pay_policy'] ??= self::UNWORKED_NO_PAY;
-        $resolved['regular_unworked']['eligible_employment_types'] = array_values((array) ($resolved['regular_unworked']['eligible_employment_types'] ?? []));
-        $resolved['special_unworked']['eligible_employment_types'] = array_values((array) ($resolved['special_unworked']['eligible_employment_types'] ?? []));
+        $resolved = $this->ruleEngine->mergePolicyDefaults($resolved);
+        $resolved['regular_unworked']['eligible_employment_types'] = $this->eligibleEmploymentTypes($resolved, 'regular');
+        $resolved['special_unworked']['eligible_employment_types'] = $this->eligibleEmploymentTypes($resolved, 'special');
+        foreach (['regular_worked', 'special_worked'] as $block) {
+            $kind = $block === 'special_worked' ? 'special' : 'regular';
+            $rule = (string) ($resolved[$block]['employment_type_rule'] ?? 'all_employment_types');
+            $resolved[$block]['employment_type_rule'] = in_array($rule, ['all_employment_types', 'selected_employment_types'], true)
+                ? $rule
+                : 'all_employment_types';
+            $resolved[$block]['eligible_employment_types'] = $this->eligibleEmploymentTypesForWorked($resolved, $kind);
+        }
+        foreach (['regular_unworked', 'regular_worked', 'special_unworked', 'special_worked'] as $block) {
+            $behaviour = (string) ($resolved[$block]['coverage_behaviour'] ?? self::COVERAGE_RESPECT);
+            $resolved[$block]['coverage_behaviour'] = in_array($behaviour, [self::COVERAGE_IGNORE, self::COVERAGE_RESPECT], true)
+                ? $behaviour
+                : self::COVERAGE_RESPECT;
+        }
         $resolved['non_statutory'] = array_replace_recursive(
             Policy::DEFAULT_HOLIDAY_POLICY['non_statutory'] ?? [],
             (array) ($resolved['non_statutory'] ?? [])
         );
-        $resolved['non_statutory']['special_working']['pay_as_ordinary_day'] =
-            (bool) ($resolved['non_statutory']['special_working']['pay_as_ordinary_day'] ?? true);
+        $resolved['non_statutory']['special_working']['pay_as_ordinary_day'] = true;
         $resolved['non_statutory']['company']['pay_as_ordinary_day'] =
             (bool) ($resolved['non_statutory']['company']['pay_as_ordinary_day'] ?? true);
 

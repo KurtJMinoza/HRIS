@@ -3462,6 +3462,23 @@ export async function getPayPolicyConditionKeys() {
   return data
 }
 
+export async function getPayPolicyEmploymentTypes(companyId = null) {
+  const query = new URLSearchParams()
+  if (companyId != null && companyId !== '') query.set('company_id', String(companyId))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/payroll/policies/employment-types${suffix}`)
+  const data = await res.json().catch(() => ([]))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employment types')
+  return Array.isArray(data) ? data : []
+}
+
+export async function getPayPolicyAttendanceStatuses() {
+  const res = await authenticatedFetch('/admin/payroll/policies/attendance-statuses')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load attendance statuses')
+  return data
+}
+
 // —— Admin: Government Contributions (SSS/PhilHealth/Pag-IBIG/EC) ——
 
 export async function getStatutoryRates(params = {}) {

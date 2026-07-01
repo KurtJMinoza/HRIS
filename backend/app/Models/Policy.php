@@ -20,7 +20,6 @@ class Policy extends Model
     public const DEFAULT_HOLIDAY_POLICY = [
         'pay_unworked_regular' => true,
         'pay_unworked_special' => false,
-        'unworked_special_multiplier' => 1.0,
         'eligibility' => [
             'pay_unworked_regular' => true,
             'special_no_work_no_pay' => true,
@@ -31,16 +30,58 @@ class Policy extends Model
         ],
         'attendance' => [
             'paid_leave_qualifies' => true,
+            'official_business_qualifies' => true,
+            'training_qualifies' => true,
+            'paid_suspension_qualifies' => true,
             'require_previous_workday_presence' => true,
             'skip_rest_days' => true,
             'skip_company_non_working_days' => true,
         ],
         'regular_unworked' => [
-            'unworked_pay_policy' => 'covered_employees',
+            'unworked_pay_policy' => 'dole_default',
+            'policy_mode' => 'dole_default',
+            'eligible_employment_types' => [],
+            'always_pay' => false,
+            'successive_holiday_rule' => true,
+            'successive_qualification' => 'previous_working_day',
+            'coverage_behaviour' => 'respect_coverage',
+            'attendance_rule' => [
+                'minimum_condition' => 'previous_working_day_only',
+                'qualifying_statuses' => [],
+                'disqualifying_statuses' => [],
+                'lookup' => [
+                    'skip_rest_days' => true,
+                    'skip_non_working_days' => true,
+                    'skip_holidays' => true,
+                    'skip_paid_leave' => false,
+                ],
+            ],
+        ],
+        'regular_worked' => [
+            'coverage_behaviour' => 'respect_coverage',
+            'employment_type_rule' => 'all_employment_types',
             'eligible_employment_types' => [],
         ],
         'special_unworked' => [
             'unworked_pay_policy' => 'no_work_no_pay',
+            'policy_mode' => 'dole_default',
+            'eligible_employment_types' => [],
+            'coverage_behaviour' => 'respect_coverage',
+            'attendance_rule' => [
+                'minimum_condition' => 'previous_working_day_only',
+                'qualifying_statuses' => [],
+                'disqualifying_statuses' => [],
+                'lookup' => [
+                    'skip_rest_days' => true,
+                    'skip_non_working_days' => true,
+                    'skip_holidays' => true,
+                    'skip_paid_leave' => false,
+                ],
+            ],
+        ],
+        'special_worked' => [
+            'coverage_behaviour' => 'respect_coverage',
+            'employment_type_rule' => 'all_employment_types',
             'eligible_employment_types' => [],
         ],
         'non_statutory' => [

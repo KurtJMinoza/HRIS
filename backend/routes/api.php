@@ -665,12 +665,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/payroll/policies', [PayPolicyController::class, 'index']);
             Route::get('/admin/payroll/policies/companies', [PayPolicyController::class, 'companies']);
             Route::get('/admin/payroll/policies/condition-keys', [PayPolicyController::class, 'conditionKeys']);
+            Route::get('/admin/payroll/policies/employment-types', [PayPolicyController::class, 'employmentTypes']);
+            Route::get('/admin/payroll/policies/attendance-statuses', [PayPolicyController::class, 'attendanceStatuses']);
             Route::get('/admin/payroll/policies/preview', [PayPolicyController::class, 'preview']);
-            Route::get('/admin/payroll/policies/{id}', [PayPolicyController::class, 'show']);
+            Route::get('/admin/payroll/policies/{id}', [PayPolicyController::class, 'show'])->whereNumber('id');
             Route::post('/admin/payroll/policies', [PayPolicyController::class, 'store']);
-            Route::put('/admin/payroll/policies/{id}', [PayPolicyController::class, 'update']);
-            Route::post('/admin/payroll/policies/{id}/duplicate', [PayPolicyController::class, 'duplicate']);
-            Route::delete('/admin/payroll/policies/{id}', [PayPolicyController::class, 'destroy']);
+            Route::put('/admin/payroll/policies/{id}', [PayPolicyController::class, 'update'])->whereNumber('id');
+            Route::post('/admin/payroll/policies/{id}/duplicate', [PayPolicyController::class, 'duplicate'])->whereNumber('id');
+            Route::delete('/admin/payroll/policies/{id}', [PayPolicyController::class, 'destroy'])->whereNumber('id');
         });
         Route::middleware('permission:government_deductions.view|government_deductions.rates.view|government_deductions.audit|payroll.view')->group(function () {
             Route::get('/admin/payroll/statutory-rates', [GovernmentContributionController::class, 'rates']);

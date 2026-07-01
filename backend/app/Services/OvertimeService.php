@@ -142,10 +142,6 @@ class OvertimeService
         $context = $this->renderedOvertimeContext($user, $dateKey, $actualClockOut);
         $actualRenderedMinutes = (int) ($context['actual_rendered_minutes'] ?? 0);
         $hasClockOut = $actualClockOut !== null;
-        $actualStart = $context['schedule_end'] ?? null;
-        $actualEnd = $actualStart instanceof Carbon
-            ? $actualStart->copy()->addMinutes($actualRenderedMinutes)
-            : null;
 
         $approvedRecords = $records
             ->filter(fn (Overtime $ot): bool => $ot->status === Overtime::STATUS_APPROVED)
@@ -159,6 +155,12 @@ class OvertimeService
             : 0;
         $reason = $this->reductionReason($approvedTotalMinutes, $actualRenderedMinutes, $hasClockOut);
 
+        /** @var OvertimePayrollService $overtimePayroll */
+        $overtimePayroll = app(OvertimePayrollService::class);
+        $totalPayableMinutes = $approvedTotalMinutes > 0
+            ? $overtimePayroll->resolvePayableOtMinutes($actualRenderedMinutes, $approvedTotalMinutes)
+            : 0;
+
         $last = null;
         foreach ($records as $overtime) {
             if ($overtime->status === Overtime::STATUS_REJECTED) {
@@ -169,14 +171,12 @@ class OvertimeService
             $approvedHours = $overtime->status === Overtime::STATUS_APPROVED
                 ? round(max(0.0, (float) ($overtime->approved_ot_hours ?? $overtime->computed_hours ?? 0)), 2)
                 : null;
-            $payableMinutes = 0;
-            if ($overtime->status === Overtime::STATUS_APPROVED && $actualStart instanceof Carbon && $actualEnd instanceof Carbon && $actualRenderedMinutes > 0) {
-                $windowStart = $this->approvedWindowStart($overtime, $dateKey, $tz);
-                if ($windowStart instanceof Carbon) {
-                    $windowEnd = $this->approvedWindowEnd($overtime, $dateKey, $tz, $windowStart);
-                    $payableMinutes = $this->overlapMinutes($windowStart, $windowEnd, $actualStart, $actualEnd);
-                }
-            }
+            $recordApprovedMinutes = $approvedHours !== null
+                ? (int) round($approvedHours * 60)
+                : 0;
+            $payableMinutes = ($overtime->status === Overtime::STATUS_APPROVED && $approvedTotalMinutes > 0)
+                ? (int) round($totalPayableMinutes * ($recordApprovedMinutes / $approvedTotalMinutes))
+                : 0;
 
             $payload = [
                 'time_out' => $actualClockOut?->copy()->timezone($tz)->format('H:i:s'),

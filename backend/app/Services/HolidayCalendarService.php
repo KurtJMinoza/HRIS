@@ -508,6 +508,27 @@ class HolidayCalendarService
     }
 
     /**
+     * Best active holiday on a calendar date, without employee scope filtering.
+     * Used by payroll when Holiday Pay Policy ignores organizational coverage.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function activeHolidayOnDate(string $dateKey): ?array
+    {
+        $year = (int) substr($dateKey, 0, 4);
+        if ($year < 2000) {
+            return null;
+        }
+
+        $matches = $this->holidaysForYear($year)
+            ->filter(fn (array $row): bool => ($row['date'] ?? null) === $dateKey)
+            ->values()
+            ->all();
+
+        return $this->bestActiveMatch($matches);
+    }
+
+    /**
      * @return array{name: string, type: string, scope: string, description: ?string}|null
      */
     public function holidayForUserDate(User $user, string $dateKey): ?array

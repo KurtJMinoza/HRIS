@@ -7,6 +7,7 @@ use App\Models\Policy;
 use App\Models\User;
 use App\Services\AttendanceSessionService;
 use App\Services\HolidayEligibilityService;
+use App\Services\HolidayPayAttendanceStatusRegistry;
 use App\Services\HolidayPayPolicyService;
 use App\Services\HolidayPolicyCache;
 use App\Services\HolidayService;
@@ -14,6 +15,7 @@ use App\Services\LeaveCreditService;
 use App\Services\PayrollRulesEngineService;
 use App\Services\PolicyResolverService;
 use Illuminate\Validation\ValidationException;
+use Carbon\Carbon;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\FakeHolidayPayPolicyService;
@@ -72,23 +74,18 @@ class HolidayEligibilityServiceTest extends TestCase
         $override = array_replace_recursive(Policy::DEFAULT_HOLIDAY_POLICY, [
             'special_unworked' => [
                 'unworked_pay_policy' => 'all_employees',
-                'eligible_employment_types' => [],
             ],
-            'unworked_special_multiplier' => 1.30,
         ]);
         $policyModel = new Policy(['holiday_policy' => $override]);
         $paid = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, $policyModel);
         $this->assertTrue($paid['eligible']);
-        $this->assertSame(1.3, $service->unworkedMultiplier($holiday, $service->resolveEffectivePolicy($policyModel, $holiday)));
+        $this->assertSame(1.0, $service->unworkedMultiplier($holiday, $service->resolveEffectivePolicy($policyModel, $holiday)));
     }
 
     #[DataProvider('belowMinimumRates')]
     public function test_policy_validation_rejects_holiday_rates_below_dole_minimum(string $code, string $field, float $value): void
     {
-        $controller = new PayPolicyController(
-            Mockery::mock(PolicyResolverService::class),
-            Mockery::mock(HolidayPayPolicyService::class)
-        );
+        $controller = app(PayPolicyController::class);
         $method = new \ReflectionMethod($controller, 'validateDoleMinimums');
 
         try {
@@ -154,12 +151,27 @@ class HolidayEligibilityServiceTest extends TestCase
         $rulesEngine->shouldReceive('holidayTypeFromHolidayRow')->andReturn('regular');
         $rulesEngine->shouldReceive('resolveRuleCode')->andReturn('RH');
 
+        $attendance = Mockery::mock(AttendanceSessionService::class);
+        $attendance->shouldReceive('getTimesForDate')->andReturnUsing(function ($user, $dateKey) use ($workedDates) {
+            if (in_array($dateKey, $workedDates, true)) {
+                $tz = 'Asia/Manila';
+
+                return [
+                    Carbon::parse("{$dateKey} 08:00:00", $tz),
+                    Carbon::parse("{$dateKey} 17:00:00", $tz),
+                ];
+            }
+
+            return [null, null];
+        });
+
         return new FakeHolidayPayPolicyService(
-            Mockery::mock(AttendanceSessionService::class),
+            $attendance,
             $holidayService,
             Mockery::mock(LeaveCreditService::class),
             $policyResolver,
             $rulesEngine,
+            app(HolidayPayAttendanceStatusRegistry::class),
             $workedDates,
             $paidLeaveDates,
         );

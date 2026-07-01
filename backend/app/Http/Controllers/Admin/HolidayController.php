@@ -137,7 +137,6 @@ class HolidayController extends Controller
             'scope' => $policy?->company_id !== null ? 'company_override' : 'global_default',
             'pay_unworked_regular' => true,
             'pay_unworked_special' => (bool) ($settings['pay_unworked_special'] ?? false),
-            'unworked_special_multiplier' => max(1.0, (float) ($settings['unworked_special_multiplier'] ?? 1.0)),
             'worked_multiplier' => (float) $multipliers['first_8'],
             'ot_multiplier' => (float) $multipliers['ot'],
             'nd_addon_multiplier' => max(0.10, (float) ($multipliers['nd_addon'] ?? 0.10)),

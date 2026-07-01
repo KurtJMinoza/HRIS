@@ -89,7 +89,7 @@ function emptyForm() {
     date: '',
     type: 'regular',
     description: '',
-    scope: 'company',
+    scope: 'nationwide',
     companyIds: [],
     branchIds: [],
     divisionIds: [],

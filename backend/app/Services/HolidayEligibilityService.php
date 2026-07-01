@@ -27,9 +27,25 @@ class HolidayEligibilityService
     }
 
     /** @return array<string, mixed> */
-    public function determineEligibility(User $employee, array $holiday, string $dateKey, bool $worked, ?Policy $policy = null): array
+    public function shouldPayUnworkedHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null, ?bool $calendarScopeMatch = null): array
     {
-        return $this->holidayPayPolicy->determineEligibility($employee, $holiday, $dateKey, $worked, $policy);
+        return $this->holidayPayPolicy->shouldPayUnworkedHoliday($employee, $holiday, $dateKey, $policy, $calendarScopeMatch);
+    }
+
+    public function shouldIgnoreHolidayCoverage(array $resolvedPolicy, string $holidayKind, bool $worked): bool
+    {
+        return $this->holidayPayPolicy->shouldIgnoreHolidayCoverage($resolvedPolicy, $holidayKind, $worked);
+    }
+
+    public function coverageBehaviour(array $resolvedPolicy, string $holidayKind, bool $worked): string
+    {
+        return $this->holidayPayPolicy->coverageBehaviour($resolvedPolicy, $holidayKind, $worked);
+    }
+
+    /** @return array<string, mixed> */
+    public function determineEligibility(User $employee, array $holiday, string $dateKey, bool $worked, ?Policy $policy = null, ?bool $calendarScopeMatch = null): array
+    {
+        return $this->holidayPayPolicy->determineEligibility($employee, $holiday, $dateKey, $worked, $policy, $calendarScopeMatch);
     }
 
     /**
@@ -41,15 +57,9 @@ class HolidayEligibilityService
         return $this->holidayPayPolicy->computeHolidayPay($employee, $attendance, $holiday, $policy);
     }
 
-    /** @return array<string, mixed> */
-    public function shouldPayUnworkedHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null): array
+    public function holidayPayComponentCode(?string $normalizedHolidayType, bool $unworked = true): string
     {
-        return $this->holidayPayPolicy->shouldPayUnworkedHoliday($employee, $holiday, $dateKey, $policy);
-    }
-
-    public function holidayPayComponentCode(?string $normalizedHolidayType): string
-    {
-        return $this->holidayPayPolicy->holidayPayComponentCode($normalizedHolidayType);
+        return $this->holidayPayPolicy->holidayPayComponentCode($normalizedHolidayType, $unworked);
     }
 
     public function holidayPayDescription(string $componentCode, string $holidayName): string

@@ -15,8 +15,6 @@ class HolidayPayPolicySetting extends Model
 
     public const UNWORKED_COVERED = 'covered_employees';
 
-    public const UNWORKED_SELECTED = 'selected_employment_types';
-
     public const UNWORKED_ALL = 'all_employees';
 
     protected $fillable = [
@@ -28,6 +26,10 @@ class HolidayPayPolicySetting extends Model
         'holiday_type',
         'unworked_pay_policy',
         'eligible_employment_types',
+        'regular_unworked_policy',
+        'regular_unworked_employment_types',
+        'special_unworked_policy',
+        'special_unworked_employment_types',
         'pay_unworked',
         'require_previous_workday_attendance',
         'allow_paid_leave',
@@ -43,12 +45,18 @@ class HolidayPayPolicySetting extends Model
         'disable_attendance_qualification',
         'notes',
         'status',
+        'rest_day_lookup_enabled',
+        'paid_leave_qualifies',
+        'successive_holiday_rule_enabled',
+        'is_active',
     ];
 
     protected function casts(): array
     {
         return [
             'eligible_employment_types' => 'array',
+            'regular_unworked_employment_types' => 'array',
+            'special_unworked_employment_types' => 'array',
             'pay_unworked' => 'boolean',
             'require_previous_workday_attendance' => 'boolean',
             'allow_paid_leave' => 'boolean',
@@ -62,6 +70,10 @@ class HolidayPayPolicySetting extends Model
             'always_pay_unworked' => 'boolean',
             'enable_successive_rule' => 'boolean',
             'disable_attendance_qualification' => 'boolean',
+            'rest_day_lookup_enabled' => 'boolean',
+            'paid_leave_qualifies' => 'boolean',
+            'successive_holiday_rule_enabled' => 'boolean',
+            'is_active' => 'boolean',
         ];
     }
 
@@ -90,11 +102,29 @@ class HolidayPayPolicySetting extends Model
     {
         $overlay = [];
 
+        if ($this->regular_unworked_policy) {
+            $overlay['regular_unworked']['unworked_pay_policy'] = $this->regular_unworked_policy;
+            $overlay['regular_unworked']['eligible_employment_types'] =
+                array_values((array) $this->regular_unworked_employment_types);
+        }
+        if ($this->special_unworked_policy) {
+            $overlay['special_unworked']['unworked_pay_policy'] = $this->special_unworked_policy;
+            $overlay['special_unworked']['eligible_employment_types'] =
+                array_values((array) $this->special_unworked_employment_types);
+        }
+        if ($this->paid_leave_qualifies !== null) {
+            $overlay['attendance']['paid_leave_qualifies'] = (bool) $this->paid_leave_qualifies;
+        }
+        if ($this->rest_day_lookup_enabled !== null) {
+            $overlay['attendance']['skip_rest_days'] = (bool) $this->rest_day_lookup_enabled;
+        }
+        if ($this->successive_holiday_rule_enabled !== null) {
+            $overlay['regular_unworked']['successive_holiday_rule'] =
+                (bool) $this->successive_holiday_rule_enabled;
+        }
+
         if ($this->unworked_pay_policy) {
             $overlay['per_holiday_unworked_pay_policy'] = $this->unworked_pay_policy;
-        }
-        if (is_array($this->eligible_employment_types) && $this->eligible_employment_types !== []) {
-            $overlay['per_holiday_eligible_employment_types'] = $this->eligible_employment_types;
         }
         if ($this->pay_unworked !== null) {
             $overlay['per_holiday_pay_unworked'] = (bool) $this->pay_unworked;

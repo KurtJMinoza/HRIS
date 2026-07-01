@@ -30,6 +30,7 @@ class PayrollLine extends Model
         'calculation_standard',
         'source_type',
         'source_id',
+        'holiday_id',
         'metadata',
         'status',
         'sort_order',

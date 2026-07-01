@@ -61,6 +61,8 @@ import {
   createPayPolicy,
   getPayPolicyPreview,
   getPayPolicyCompanies,
+  getPayPolicyEmploymentTypes,
+  getPayPolicyAttendanceStatuses,
 } from '@/api'
 import { useToast } from '@/components/ui/use-toast'
 import { PayrollLogisticsPolicyShell } from '@/components/payroll/PayrollLogisticsPolicyShell'
@@ -464,6 +466,10 @@ export default function AdminPolicySettings() {
   useAuth()
   const { toast } = useToast()
   const [companies, setCompanies] = useState([])
+  const [employmentTypes, setEmploymentTypes] = useState([])
+  const [employmentTypesLoading, setEmploymentTypesLoading] = useState(false)
+  const [attendanceStatusCatalog, setAttendanceStatusCatalog] = useState(null)
+  const [attendanceStatusesLoading, setAttendanceStatusesLoading] = useState(false)
   const [policies, setPolicies] = useState([])
   const [selectedPolicy, setSelectedPolicy] = useState(null)
   const [policyDetail, setPolicyDetail] = useState(null)
@@ -567,6 +573,46 @@ export default function AdminPolicySettings() {
   useEffect(() => {
     fetchCompanies()
   }, [fetchCompanies])
+
+  useEffect(() => {
+    let active = true
+    setEmploymentTypesLoading(true)
+    getPayPolicyEmploymentTypes(policyDetail?.company_id)
+      .then((rows) => {
+        if (active) setEmploymentTypes(Array.isArray(rows) ? rows : [])
+      })
+      .catch((error) => {
+        if (active) {
+          setEmploymentTypes([])
+          toast({ title: 'Failed to load employment types', description: error?.message, variant: 'error' })
+        }
+      })
+      .finally(() => {
+        if (active) setEmploymentTypesLoading(false)
+      })
+
+    return () => { active = false }
+  }, [policyDetail?.company_id, toast])
+
+  useEffect(() => {
+    let active = true
+    setAttendanceStatusesLoading(true)
+    getPayPolicyAttendanceStatuses()
+      .then((catalog) => {
+        if (active) setAttendanceStatusCatalog(catalog)
+      })
+      .catch((error) => {
+        if (active) {
+          setAttendanceStatusCatalog(null)
+          toast({ title: 'Failed to load attendance statuses', description: error?.message, variant: 'error' })
+        }
+      })
+      .finally(() => {
+        if (active) setAttendanceStatusesLoading(false)
+      })
+
+    return () => { active = false }
+  }, [toast])
 
   useEffect(() => {
     fetchPolicies()
@@ -1430,6 +1476,10 @@ export default function AdminPolicySettings() {
                         policy={policyDetail.holiday_policy}
                         companyId={policyDetail.company_id}
                         branchId={policyDetail.branch_id}
+                        employmentTypes={employmentTypes}
+                        employmentTypesLoading={employmentTypesLoading}
+                        attendanceStatusCatalog={attendanceStatusCatalog}
+                        attendanceStatusesLoading={attendanceStatusesLoading}
                         onPolicyChange={updateHolidayPolicy}
                       />
                     </Motion.div>

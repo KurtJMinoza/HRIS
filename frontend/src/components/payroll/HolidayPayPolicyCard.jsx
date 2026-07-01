@@ -1,97 +1,154 @@
-import React, { useState } from 'react'
-import { BriefcaseBusiness, Building2, CalendarDays, ChevronDown, ChevronRight, Info, Scale } from 'lucide-react'
+import React from 'react'
+import { Building2, Info, Moon, Sun } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import {
-  EMPLOYMENT_TYPES,
-  NON_STATUTORY_HOLIDAY_TYPES,
   REGULAR_UNWORKED_OPTIONS,
   SPECIAL_UNWORKED_OPTIONS,
-  UNWORKED_POLICY_LABELS,
+  COVERAGE_BEHAVIOUR_OPTIONS,
+  WORKED_EMPLOYMENT_TYPE_OPTIONS,
   normalizeHolidayPayPolicy,
+  specialUnworkedUsesCustomRules,
 } from '@/lib/holidayPayPolicy'
+import { HolidayPayRuleBuilder, PolicyModeToggle } from '@/components/payroll/HolidayPayRuleBuilder'
 
-function ToggleRow({ id, checked, onCheckedChange, disabled = false, label, hint }) {
+function ToggleRow({ id, checked, onCheckedChange, label, hint }) {
   return (
-    <div className={cn(
-      'flex items-start gap-3 rounded-lg border p-3.5 transition-colors',
-      disabled ? 'border-border/30 bg-muted/20' : 'border-border/50 bg-card hover:border-border/70',
-    )}>
-      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} className="mt-0.5" />
+    <label
+      htmlFor={id}
+      className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/50 bg-background/80 px-3.5 py-3 transition-colors hover:bg-muted/30"
+    >
+      <Checkbox id={id} checked={checked} onCheckedChange={onCheckedChange} className="mt-0.5" />
       <div className="min-w-0 space-y-0.5">
-        <Label htmlFor={id} className={cn('text-sm font-medium leading-snug', disabled && 'cursor-default text-muted-foreground')}>
-          {label}
-        </Label>
-        {hint && <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>}
+        <span className="text-sm font-medium leading-snug">{label}</span>
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
+    </label>
+  )
+}
+
+function PolicySelect({ id, label, value, options, onChange }) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger id={id} className="h-10 w-full bg-background">
+          <SelectValue placeholder="Select policy" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+function CoverageBehaviourToggle({ id, value, onChange }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Coverage behaviour
+      </Label>
+      <div role="radiogroup" aria-labelledby={`${id}-label`} className="grid gap-2 sm:grid-cols-2">
+        {COVERAGE_BEHAVIOUR_OPTIONS.map((option) => {
+          const selected = value === option.value
+          const isIgnore = option.value === 'ignore_coverage'
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange(option.value)}
+              className={cn(
+                'rounded-lg border px-3 py-2.5 text-left text-sm transition-colors',
+                selected
+                  ? isIgnore
+                    ? 'border-amber-500/50 bg-amber-500/10 ring-1 ring-amber-500/30'
+                    : 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
+                  : 'border-border/60 bg-background hover:bg-muted/40',
+              )}
+            >
+              <span className="font-medium">{isIgnore ? 'Ignore coverage' : 'Respect coverage'}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {isIgnore ? 'Payroll only — calendar still uses Holiday Coverage' : 'DOLE default — must be in scope'}
+              </span>
+            </button>
+          )
+        })}
       </div>
     </div>
   )
 }
 
-function PolicySection({ title, description, icon: Icon, badge, children }) {
-  return (
-    <section className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
-      <div className="flex items-center justify-between gap-4 border-b border-border/50 px-5 py-4">
-        <div className="flex min-w-0 items-start gap-3">
-          {Icon && (
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/8 text-primary">
-              <Icon className="size-4" />
-            </div>
-          )}
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="font-semibold tracking-tight text-foreground">{title}</h4>
-              {badge}
-            </div>
-            {description && <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{description}</p>}
-          </div>
-        </div>
-      </div>
-      <div className="space-y-4 px-5 py-4">{children}</div>
-    </section>
-  )
-}
-
-function EmploymentTypeMultiSelect({ idPrefix, selected = [], onChange }) {
-  const toggle = (key) => {
+function EmploymentTypeSelector({ idPrefix, options, selected, loading, onChange }) {
+  const toggle = (value) => {
     const next = new Set(selected)
-    if (next.has(key)) next.delete(key)
-    else next.add(key)
+    if (next.has(value)) next.delete(value)
+    else next.add(value)
     onChange(Array.from(next))
   }
 
+  if (loading) return <p className="text-sm text-muted-foreground">Loading employment types…</p>
+  if (!options.length) {
+    return (
+      <p className="rounded-lg border border-dashed border-border/60 px-3 py-2 text-sm text-muted-foreground">
+        No employment types found for active employees in this scope.
+      </p>
+    )
+  }
+
   return (
-    <div className="grid gap-2 @md:grid-cols-2">
-      {EMPLOYMENT_TYPES.map(([key, label]) => (
-        <ToggleRow
-          key={key}
-          id={`${idPrefix}-${key}`}
-          checked={selected.includes(key)}
-          onCheckedChange={() => toggle(key)}
-          label={label}
-        />
-      ))}
+    <div className="space-y-2 rounded-lg border border-border/50 bg-muted/15 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Allowed employment types
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {options.map((option) => (
+          <ToggleRow
+            key={option.value}
+            id={`${idPrefix}-${option.value}`}
+            checked={selected.includes(option.value)}
+            onCheckedChange={() => toggle(option.value)}
+            label={option.label}
+            hint={`${option.employee_count} active`}
+          />
+        ))}
+      </div>
     </div>
   )
 }
 
-function UnworkedPayDropdown({ id, label, hint, value, options, onChange }) {
+function PayScenarioBlock({ icon: Icon, title, children, muted }) {
   return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-sm font-medium">{label}</Label>
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {options.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-      </select>
+    <div className={cn('space-y-3 rounded-lg border border-border/50 p-4', muted && 'bg-muted/10')}>
+      <div className="flex items-center gap-2">
+        <Icon className="size-4 text-muted-foreground" aria-hidden />
+        <h5 className="text-sm font-semibold">{title}</h5>
+      </div>
+      {children}
     </div>
+  )
+}
+
+function HolidayTypePanel({ title, accent, children }) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+      <div className={cn('border-b border-border/50 px-5 py-4', accent)}>
+        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+      </div>
+      <div className="space-y-4 p-5">{children}</div>
+    </section>
   )
 }
 
@@ -99,154 +156,231 @@ export function HolidayPayPolicyCard({
   policy,
   companyId,
   branchId,
+  employmentTypes = [],
+  employmentTypesLoading = false,
+  attendanceStatusCatalog = null,
+  attendanceStatusesLoading = false,
   onPolicyChange,
 }) {
-  const [open, setOpen] = useState(true)
   const holidayPolicy = normalizeHolidayPayPolicy(policy)
-
-  const scopeBadge = companyId
-    ? branchId ? 'Branch override' : 'Company override'
-    : 'Global default'
-
-  const specialUnworkedLabel = UNWORKED_POLICY_LABELS[holidayPolicy.special_unworked.unworked_pay_policy] || '—'
-  const regularUnworkedLabel = UNWORKED_POLICY_LABELS[holidayPolicy.regular_unworked.unworked_pay_policy] || '—'
+  const scopeBadge = companyId ? (branchId ? 'Branch override' : 'Company override') : 'Global default'
+  const showSpecialCustom =
+    specialUnworkedUsesCustomRules(holidayPolicy.special_unworked.unworked_pay_policy)
 
   return (
-    <Card className="overflow-hidden border border-border/60 bg-card shadow-sm">
-      <CardHeader className="border-b border-border/50 bg-gradient-to-br from-muted/40 via-muted/20 to-transparent p-0">
-        <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-start justify-between gap-4 px-5 py-5 text-left @sm:px-6">
-          <div className="flex min-w-0 items-start gap-4">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-700 ring-1 ring-rose-500/20 dark:text-rose-300">
-              <Scale className="size-5" />
+    <Card className="overflow-hidden border border-rose-200/40 shadow-sm dark:border-rose-900/35">
+      <CardHeader className="border-b border-rose-200/50 bg-gradient-to-r from-rose-50/90 via-background to-background pb-4 dark:border-rose-900/40 dark:from-rose-950/40 dark:via-card dark:to-card">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-lg font-semibold tracking-tight">Holiday pay policy</CardTitle>
+              <Badge variant="outline" className="gap-1 border-rose-300/50 bg-background/80">
+                <Building2 className="size-3" />
+                {scopeBadge}
+              </Badge>
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-xl font-semibold tracking-tight">Holiday Pay Policy</CardTitle>
-                <Badge variant="outline" className="gap-1 font-normal">
-                  <Building2 className="size-3" />
-                  {scopeBadge}
-                </Badge>
-              </div>
-              <CardDescription className="mt-1.5 max-w-2xl text-sm leading-relaxed">
-                Configure who qualifies for unworked holiday pay. Premium multipliers are managed under the Multipliers tab.
-              </CardDescription>
-            </div>
+            <CardDescription className="mt-1.5 max-w-2xl text-sm leading-relaxed">
+              Configurable rule engine for unworked holiday pay. DOLE defaults ship preconfigured; customize
+              attendance qualification without code changes. Worked premium rates live in the Multipliers tab.
+            </CardDescription>
           </div>
-          {open ? <ChevronDown className="mt-1 size-5 shrink-0 text-muted-foreground" /> : <ChevronRight className="mt-1 size-5 shrink-0 text-muted-foreground" />}
-        </button>
+        </div>
       </CardHeader>
 
-      {open && (
-        <CardContent className="space-y-5 p-5 @sm:p-6">
-          <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 px-4 py-3.5 text-sm">
-            <Info className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
-            <div>
-              <p className="font-medium text-foreground">Eligibility configuration</p>
-              <p className="mt-1 leading-relaxed text-muted-foreground">
-                Preceding workday attendance follows DOLE standards: present or approved paid leave on the immediately preceding working day. Unpaid absence on that day disqualifies unworked holiday pay.
-              </p>
-            </div>
-          </div>
+      <CardContent className="space-y-6 p-5 @sm:p-6">
+        <div className="flex gap-3 rounded-xl border border-border/50 bg-muted/20 px-4 py-3 text-sm dark:bg-muted/10">
+          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <p className="text-muted-foreground">
+            <span className="font-medium text-foreground">Coverage behaviour</span> decides whether payroll
+            pays employees outside the holiday&apos;s organizational scope. Attendance rules are evaluated by
+            the Holiday Pay rule engine at payroll time.
+          </p>
+        </div>
 
-          <div className="grid gap-5 @lg:grid-cols-2">
-            <PolicySection
-              title="Regular holiday — unworked pay"
-              description="Employees who do not work on a regular holiday."
-              icon={CalendarDays}
-              badge={<Badge variant="secondary" className="text-[10px] font-normal">{regularUnworkedLabel}</Badge>}
-            >
-              <UnworkedPayDropdown
+        <div className="grid gap-6 xl:grid-cols-2">
+          <HolidayTypePanel title="Regular holiday" accent="bg-rose-500/5 dark:bg-rose-950/20">
+            <PayScenarioBlock icon={Moon} title="Unworked pay">
+              <PolicySelect
                 id="regular-unworked-policy"
-                label="Unworked pay eligibility"
-                hint="Determines which employee groups may receive pay without working on a regular holiday."
+                label="Who gets paid without clock-in"
                 value={holidayPolicy.regular_unworked.unworked_pay_policy}
                 options={REGULAR_UNWORKED_OPTIONS}
                 onChange={(value) => onPolicyChange(['regular_unworked', 'unworked_pay_policy'], value)}
               />
               {holidayPolicy.regular_unworked.unworked_pay_policy === 'selected_employment_types' && (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Allowed employment types</p>
-                  <EmploymentTypeMultiSelect
-                    idPrefix="regular-unworked-types"
-                    selected={holidayPolicy.regular_unworked.eligible_employment_types}
-                    onChange={(types) => onPolicyChange(['regular_unworked', 'eligible_employment_types'], types)}
-                  />
-                </div>
+                <EmploymentTypeSelector
+                  idPrefix="regular-employment-type"
+                  options={employmentTypes}
+                  selected={holidayPolicy.regular_unworked.eligible_employment_types}
+                  loading={employmentTypesLoading}
+                  onChange={(value) => onPolicyChange(['regular_unworked', 'eligible_employment_types'], value)}
+                />
               )}
-              <ToggleRow
-                id="elig-prev-day"
-                checked={holidayPolicy.attendance.require_previous_workday_presence !== false}
-                onCheckedChange={(checked) => onPolicyChange(['attendance', 'require_previous_workday_presence'], Boolean(checked))}
-                label="Require preceding workday attendance"
-                hint="When enabled, employees must have been present or on approved paid leave on the immediately preceding working day."
-              />
-            </PolicySection>
 
-            <PolicySection
-              title="Special holiday — unworked pay"
-              description="Special non-working holidays default to No Work, No Pay."
-              icon={CalendarDays}
-              badge={<Badge variant="secondary" className="text-[10px] font-normal">{specialUnworkedLabel}</Badge>}
-            >
-              <UnworkedPayDropdown
+              <PolicyModeToggle
+                idPrefix="regular-unworked-mode"
+                value={holidayPolicy.regular_unworked.policy_mode}
+                onChange={(value) => onPolicyChange(['regular_unworked', 'policy_mode'], value)}
+              />
+
+              {holidayPolicy.regular_unworked.policy_mode === 'custom' && (
+                attendanceStatusesLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading attendance statuses…</p>
+                ) : (
+                  <HolidayPayRuleBuilder
+                    idPrefix="regular-unworked"
+                    rule={holidayPolicy.regular_unworked.attendance_rule}
+                    statusCatalog={attendanceStatusCatalog}
+                    showSuccessive
+                    successiveEnabled={holidayPolicy.regular_unworked.successive_holiday_rule}
+                    successiveQualification={holidayPolicy.regular_unworked.successive_qualification}
+                    onRuleChange={(rule) => onPolicyChange(['regular_unworked', 'attendance_rule'], rule)}
+                    onSuccessiveChange={({ enabled, qualification }) => {
+                      if (enabled !== undefined) {
+                        onPolicyChange(['regular_unworked', 'successive_holiday_rule'], enabled)
+                      }
+                      if (qualification !== undefined) {
+                        onPolicyChange(['regular_unworked', 'successive_qualification'], qualification)
+                      }
+                    }}
+                  />
+                )
+              )}
+
+              {holidayPolicy.regular_unworked.policy_mode !== 'custom' && (
+                <ToggleRow
+                  id="successive-holiday-rule-dole"
+                  checked={holidayPolicy.regular_unworked.successive_holiday_rule !== false}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['regular_unworked', 'successive_holiday_rule'], Boolean(checked))
+                  }
+                  label="Successive holiday rule (DOLE)"
+                  hint="Back-to-back regular holidays share the first holiday's qualifying condition."
+                />
+              )}
+
+              <ToggleRow
+                id="regular-always-pay"
+                checked={holidayPolicy.regular_unworked.always_pay === true}
+                onCheckedChange={(checked) =>
+                  onPolicyChange(['regular_unworked', 'always_pay'], Boolean(checked))
+                }
+                label="Always pay unworked regular holiday"
+                hint="Ignores attendance qualification; still respects holiday type and employment scope."
+              />
+
+              <CoverageBehaviourToggle
+                id="regular-unworked-coverage"
+                value={holidayPolicy.regular_unworked.coverage_behaviour}
+                onChange={(value) => onPolicyChange(['regular_unworked', 'coverage_behaviour'], value)}
+              />
+            </PayScenarioBlock>
+
+            <PayScenarioBlock icon={Sun} title="Worked pay" muted>
+              <p className="text-xs text-muted-foreground">
+                Premium multiplier (e.g. 200%) is set under Multipliers → Regular Holiday.
+              </p>
+              <PolicySelect
+                id="regular-worked-employment-rule"
+                label="Employment type rule"
+                value={holidayPolicy.regular_worked.employment_type_rule}
+                options={WORKED_EMPLOYMENT_TYPE_OPTIONS}
+                onChange={(value) => onPolicyChange(['regular_worked', 'employment_type_rule'], value)}
+              />
+              {holidayPolicy.regular_worked.employment_type_rule === 'selected_employment_types' && (
+                <EmploymentTypeSelector
+                  idPrefix="regular-worked-employment-type"
+                  options={employmentTypes}
+                  selected={holidayPolicy.regular_worked.eligible_employment_types}
+                  loading={employmentTypesLoading}
+                  onChange={(value) => onPolicyChange(['regular_worked', 'eligible_employment_types'], value)}
+                />
+              )}
+              <CoverageBehaviourToggle
+                id="regular-worked-coverage"
+                value={holidayPolicy.regular_worked.coverage_behaviour}
+                onChange={(value) => onPolicyChange(['regular_worked', 'coverage_behaviour'], value)}
+              />
+            </PayScenarioBlock>
+          </HolidayTypePanel>
+
+          <HolidayTypePanel title="Special holiday" accent="bg-amber-500/5 dark:bg-amber-950/20">
+            <PayScenarioBlock icon={Moon} title="Unworked pay">
+              <PolicySelect
                 id="special-unworked-policy"
-                label="Unworked pay eligibility"
-                hint="Company may extend pay to absent employees on special holidays beyond the DOLE default."
+                label="Who gets paid without clock-in"
                 value={holidayPolicy.special_unworked.unworked_pay_policy}
                 options={SPECIAL_UNWORKED_OPTIONS}
                 onChange={(value) => onPolicyChange(['special_unworked', 'unworked_pay_policy'], value)}
               />
               {holidayPolicy.special_unworked.unworked_pay_policy === 'selected_employment_types' && (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Allowed employment types</p>
-                  <EmploymentTypeMultiSelect
-                    idPrefix="special-unworked-types"
-                    selected={holidayPolicy.special_unworked.eligible_employment_types}
-                    onChange={(types) => onPolicyChange(['special_unworked', 'eligible_employment_types'], types)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Selected types receive special holiday pay even when absent. All others follow No Work, No Pay.
-                  </p>
-                </div>
+                <EmploymentTypeSelector
+                  idPrefix="special-employment-type"
+                  options={employmentTypes}
+                  selected={holidayPolicy.special_unworked.eligible_employment_types}
+                  loading={employmentTypesLoading}
+                  onChange={(value) => onPolicyChange(['special_unworked', 'eligible_employment_types'], value)}
+                />
               )}
-            </PolicySection>
-          </div>
 
-          <div className="grid gap-5 @lg:grid-cols-2">
-            {NON_STATUTORY_HOLIDAY_TYPES.map(({ key, label, hint }) => {
-              const payOrdinary = holidayPolicy.non_statutory?.[key]?.pay_as_ordinary_day !== false
-              const Icon = key === 'company' ? Building2 : BriefcaseBusiness
-
-              return (
-                <PolicySection
-                  key={key}
-                  title={label}
-                  description={hint}
-                  icon={Icon}
-                  badge={(
-                    <Badge variant="secondary" className="text-[10px] font-normal">
-                      {payOrdinary ? 'Ordinary day (default)' : 'SNW premium if worked'}
-                    </Badge>
-                  )}
-                >
-                  <ToggleRow
-                    id={`non-statutory-${key}-ordinary`}
-                    checked={payOrdinary}
-                    onCheckedChange={(checked) => onPolicyChange(['non_statutory', key, 'pay_as_ordinary_day'], Boolean(checked))}
-                    label="Pay as ordinary working day"
-                    hint={key === 'special_working'
-                      ? 'When enabled (default), no RH/SNW statutory premium applies. Disable only if company policy treats this like a special non-working holiday.'
-                      : 'When enabled (default), no statutory holiday premium. Disable if your company pays SNW rates for internal events.'}
+              {showSpecialCustom && (
+                <>
+                  <PolicyModeToggle
+                    idPrefix="special-unworked-mode"
+                    value={holidayPolicy.special_unworked.policy_mode}
+                    onChange={(value) => onPolicyChange(['special_unworked', 'policy_mode'], value)}
                   />
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    Unworked pay does not apply — employees who are absent are not entitled to holiday premium by default.
-                  </p>
-                </PolicySection>
-              )
-            })}
-          </div>
-        </CardContent>
-      )}
+                  {holidayPolicy.special_unworked.policy_mode === 'custom' && (
+                    attendanceStatusesLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading attendance statuses…</p>
+                    ) : (
+                      <HolidayPayRuleBuilder
+                        idPrefix="special-unworked"
+                        rule={holidayPolicy.special_unworked.attendance_rule}
+                        statusCatalog={attendanceStatusCatalog}
+                        onRuleChange={(rule) => onPolicyChange(['special_unworked', 'attendance_rule'], rule)}
+                      />
+                    )
+                  )}
+                </>
+              )}
+
+              <CoverageBehaviourToggle
+                id="special-unworked-coverage"
+                value={holidayPolicy.special_unworked.coverage_behaviour}
+                onChange={(value) => onPolicyChange(['special_unworked', 'coverage_behaviour'], value)}
+              />
+            </PayScenarioBlock>
+
+            <PayScenarioBlock icon={Sun} title="Worked pay" muted>
+              <p className="text-xs text-muted-foreground">
+                Premium multiplier is set under Multipliers → Special Holiday.
+              </p>
+              <PolicySelect
+                id="special-worked-employment-rule"
+                label="Employment type rule"
+                value={holidayPolicy.special_worked.employment_type_rule}
+                options={WORKED_EMPLOYMENT_TYPE_OPTIONS}
+                onChange={(value) => onPolicyChange(['special_worked', 'employment_type_rule'], value)}
+              />
+              {holidayPolicy.special_worked.employment_type_rule === 'selected_employment_types' && (
+                <EmploymentTypeSelector
+                  idPrefix="special-worked-employment-type"
+                  options={employmentTypes}
+                  selected={holidayPolicy.special_worked.eligible_employment_types}
+                  loading={employmentTypesLoading}
+                  onChange={(value) => onPolicyChange(['special_worked', 'eligible_employment_types'], value)}
+                />
+              )}
+              <CoverageBehaviourToggle
+                id="special-worked-coverage"
+                value={holidayPolicy.special_worked.coverage_behaviour}
+                onChange={(value) => onPolicyChange(['special_worked', 'coverage_behaviour'], value)}
+              />
+            </PayScenarioBlock>
+          </HolidayTypePanel>
+        </div>
+      </CardContent>
     </Card>
   )
 }

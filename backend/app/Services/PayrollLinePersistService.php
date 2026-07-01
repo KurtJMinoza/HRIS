@@ -130,6 +130,7 @@ class PayrollLinePersistService
                     'calculation_standard' => $draftLine->calculation_standard,
                     'source_type' => $draftLine->source_type,
                     'source_id' => $draftLine->source_id,
+                    'holiday_id' => $draftLine->holiday_id,
                     'metadata' => $draftLine->metadata,
                     'status' => PayrollLine::STATUS_FINALIZED,
                     'sort_order' => (int) $draftLine->sort_order,
@@ -499,6 +500,9 @@ class PayrollLinePersistService
             'calculation_standard' => $standard !== '' ? $standard : null,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
+            'holiday_id' => isset($line['metadata']['holiday_id']) && is_numeric($line['metadata']['holiday_id'])
+                ? (int) $line['metadata']['holiday_id']
+                : null,
             'metadata' => array_merge(
                 is_array($line['metadata'] ?? null) ? $line['metadata'] : [],
                 [

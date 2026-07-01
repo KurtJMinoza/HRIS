@@ -2,7 +2,7 @@
 
 Holiday Pay Policy is part of the existing versioned `Policy` record and is edited only through Admin → Payroll → Policy Settings. There is no separate Holiday Policy module.
 
-`HolidayEligibilityService` resolves entitlement and attendance qualification. `PayrollComputationService` remains the single source of truth for earnings calculations and reads the existing `policy_multipliers` rows for RH, RHRD, SH, SHRD, DH, and DHRD.
+`HolidayPayEvaluationService` is the payroll-facing decision layer. It evaluates every covered holiday in the payroll period even when no attendance row exists. `HolidayPayPolicyService` resolves attendance and leave qualification, while `PayrollComputationService` remains the earnings source of truth and reads the existing `policy_multipliers` rows for RH, RHRD, SH, SHRD, DH, and DHRD.
 
 ## Consumers
 
@@ -22,6 +22,9 @@ Holiday Pay Policy is part of the existing versioned `Policy` record and is edit
 - Company multipliers are clamped to statutory minimums and may only be more favorable.
 - The immediately preceding working day accepts attendance or approved paid leave. Rest/non-working days are skipped.
 - Successive regular holidays inherit the condition before the first holiday; working the first restores eligibility for the next.
+- Policies may apply to all current employment types or a selected set. `EmploymentTypeResolver` derives the same normalized type for the UI and payroll evaluation from current HRIS employee data.
+- Holiday coverage configured in the Holiday module remains authoritative.
+- Eligible unworked lines use `REGULAR_HOLIDAY_UNWORKED_PAY` and `SPECIAL_HOLIDAY_UNWORKED_PAY` and are generated without requiring a holiday attendance log.
 
 ## API
 
@@ -30,6 +33,7 @@ Holiday settings are returned and saved in the `holiday_policy` property of the 
 - `GET /api/admin/payroll/policies/{id}`
 - `POST /api/admin/payroll/policies`
 - `PUT /api/admin/payroll/policies/{id}`
+- `GET /api/admin/payroll/policies/employment-types`
 
 ## Cache
 

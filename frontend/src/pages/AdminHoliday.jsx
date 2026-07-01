@@ -812,7 +812,7 @@ export default function AdminHoliday({ mode = 'admin' }) {
     name: holiday.name,
     date: holiday.date || selectedCell?.dateStr,
     type: holiday.type,
-    scope: holiday.scope || 'nationwide',
+    scope: holiday.company_id != null ? (holiday.scope || 'company') : (holiday.scope || 'nationwide'),
     company_id: holiday.company_id ?? undefined,
     branch_id: holiday.branch_id ?? undefined,
     department_id: holiday.department_id ?? undefined,

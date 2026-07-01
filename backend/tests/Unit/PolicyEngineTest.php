@@ -587,8 +587,9 @@ class PolicyEngineTest extends TestCase
             'Asia/Manila'
         );
 
-        $this->assertSame(0.17, $result['approved_ot_hours']);
+        $this->assertSame(8.0, $result['approved_ot_hours']);
         $this->assertSame(8.0, $result['approved_ot_requested_hours']);
+        $this->assertSame(0.17, $result['payable_ot_hours']);
     }
 
     public function test_approved_ot_without_clock_logs_includes_night_differential(): void

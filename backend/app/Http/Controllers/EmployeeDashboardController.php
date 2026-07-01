@@ -401,7 +401,6 @@ class EmployeeDashboardController extends Controller
                     'scope' => $activePolicy?->company_id !== null ? 'company_override' : 'global_default',
                     'eligible' => $qualification['eligible'] ?? null,
                     'employment_type' => $qualification['employment_type'] ?? null,
-                    'employment_type_match' => $qualification['employment_type_match'] ?? null,
                     'attendance_rule_applied' => $qualification['rule'] ?? 'pending',
                     'reason' => $qualification['reason'] ?? 'Eligibility is evaluated when the holiday date is reached.',
                     'unworked_multiplier' => $this->holidayEligibility->unworkedMultiplier($holidayOnDate, $settings),

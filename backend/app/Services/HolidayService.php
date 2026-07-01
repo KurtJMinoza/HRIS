@@ -191,6 +191,28 @@ class HolidayService
     }
 
     /**
+     * Payroll earnings resolution: calendar scope first, then any active holiday on the date.
+     *
+     * @return array{holiday: ?array, calendar_scope_match: bool}
+     */
+    public function resolveHolidayForPayrollEarnings(User $user, string $dateKey): array
+    {
+        $calendar = $this->resolveHolidayForPayroll($user, $dateKey);
+        if ($calendar !== null) {
+            return ['holiday' => $calendar, 'calendar_scope_match' => true];
+        }
+
+        if ($this->isMovedHolidayOriginalDateForEmployee($user, $dateKey)) {
+            return ['holiday' => null, 'calendar_scope_match' => false];
+        }
+
+        return [
+            'holiday' => $this->holidayCalendar->activeHolidayOnDate($dateKey),
+            'calendar_scope_match' => false,
+        ];
+    }
+
+    /**
      * Suppress the original (or duplicate) calendar date when the same holiday is active elsewhere.
      */
     private function isRelocatedHolidaySourceDate(User $user, string $dateKey, array $calendarHoliday): bool
