@@ -38,15 +38,16 @@ class HolidayPayWorkedOutsideCoverageTest extends TestCase
             'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
             'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
             'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
-            'sat' => null,
+            'sat' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
         ];
     }
 
     /** @return array{0: Company, 1: Company, 2: User, 3: Policy} */
     private function seedScenario(array $holidayPolicyOverride): array
     {
-        $aci = Company::create(['name' => 'ACI']);
-        $mchisi = Company::create(['name' => 'MCHISI']);
+        $suffix = substr(uniqid(), -6);
+        $aci = Company::create(['name' => 'ACI-'.$suffix]);
+        $mchisi = Company::create(['name' => 'MCHISI-'.$suffix]);
 
         $employee = User::factory()->create([
             'company_id' => $aci->id,
@@ -135,11 +136,42 @@ class HolidayPayWorkedOutsideCoverageTest extends TestCase
 
         $this->assertSame('RH', $result['conditions']['rule_code'] ?? null);
         $this->assertSame(2.0, (float) ($result['conditions']['first_8'] ?? 0));
-        $this->assertGreaterThan(1500.0, (float) ($result['holiday_premium_pay'] ?? 0));
+        $this->assertGreaterThan(600.0, (float) ($result['regular_pay'] ?? 0));
+        $this->assertGreaterThan(600.0, (float) ($result['holiday_premium_pay'] ?? 0));
+        $this->assertGreaterThan(1200.0, (float) ($result['total_pay'] ?? 0));
 
         $holidayLine = collect($result['breakdown'] ?? [])
             ->first(fn (array $row) => ($row['component'] ?? '') === 'holiday_premium');
         $this->assertSame('REGULAR_HOLIDAY_WORKED_PAY', $holidayLine['component_code'] ?? null);
+    }
+
+    public function test_worked_regular_holiday_outside_coverage_paid_when_only_unworked_ignores_coverage(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        [, , $employee] = $this->seedScenario([
+            'regular_unworked' => ['coverage_behaviour' => 'ignore_coverage'],
+            'regular_worked' => ['coverage_behaviour' => 'respect_coverage'],
+        ]);
+        $dateKey = '2026-06-13';
+        $this->clockFullDay($employee, $dateKey);
+
+        $result = app(PayrollComputationService::class)->computeDayPayroll(
+            $employee,
+            $dateKey,
+            Carbon::parse("{$dateKey} 08:00:00", 'Asia/Manila'),
+            Carbon::parse("{$dateKey} 17:00:00", 'Asia/Manila'),
+            $this->schedule(),
+            800,
+            'Asia/Manila'
+        );
+
+        $this->assertSame('RH', $result['conditions']['rule_code'] ?? null);
+        $this->assertGreaterThan(600.0, (float) ($result['regular_pay'] ?? 0));
+        $this->assertGreaterThan(600.0, (float) ($result['holiday_premium_pay'] ?? 0));
+        $this->assertGreaterThan(1200.0, (float) ($result['total_pay'] ?? 0));
     }
 
     public function test_worked_regular_holiday_outside_coverage_not_paid_when_policy_respects_coverage(): void
@@ -207,17 +239,17 @@ class HolidayPayWorkedOutsideCoverageTest extends TestCase
             'special_worked' => ['coverage_behaviour' => 'ignore_coverage'],
         ]);
 
-        Holiday::query()->whereDate('date', '2026-06-13')->delete();
+        Holiday::query()->whereDate('date', '2026-08-21')->delete();
         Holiday::query()->create([
             'name' => 'Special Day',
-            'date' => '2026-06-13',
+            'date' => '2026-08-21',
             'type' => 'special',
             'scope' => 'company',
             'company_id' => $mchisi->id,
             'status' => 'active',
         ]);
 
-        $dateKey = '2026-06-13';
+        $dateKey = '2026-08-21';
         $this->clockFullDay($employee, $dateKey);
 
         $result = app(PayrollComputationService::class)->computeDayPayroll(
@@ -231,7 +263,9 @@ class HolidayPayWorkedOutsideCoverageTest extends TestCase
         );
 
         $this->assertSame('SH', $result['conditions']['rule_code'] ?? null);
-        $this->assertGreaterThan(1000.0, (float) ($result['holiday_premium_pay'] ?? 0));
+        $this->assertGreaterThan(600.0, (float) ($result['regular_pay'] ?? 0));
+        $this->assertGreaterThan(150.0, (float) ($result['holiday_premium_pay'] ?? 0));
+        $this->assertGreaterThan(900.0, (float) ($result['total_pay'] ?? 0));
 
         $service = app(HolidayPayPolicyService::class);
         $this->assertSame('SPECIAL_HOLIDAY_WORKED_PAY', $service->holidayPayComponentCode('special', false));

@@ -65,7 +65,7 @@ class PayPolicyController extends Controller
             ->with(['multipliers', 'ndSetting', 'company:id,name', 'branch:id,name'])
             ->findOrFail($id);
 
-        return response()->json($policy);
+        return response()->json($this->policyPayload($policy));
     }
 
     /**
@@ -119,7 +119,7 @@ class PayPolicyController extends Controller
         $policy->load(['multipliers', 'ndSetting']);
         $this->invalidateHolidayPolicy($policy);
 
-        return response()->json($policy, 201);
+        return response()->json($this->policyPayload($policy), 201);
     }
 
     /**
@@ -179,7 +179,16 @@ class PayPolicyController extends Controller
         $policy->load(['multipliers', 'ndSetting']);
         $this->invalidateHolidayPolicy($policy);
 
-        return response()->json($policy);
+        return response()->json($this->policyPayload($policy));
+    }
+
+    /** @return array<string, mixed> */
+    private function policyPayload(Policy $policy): array
+    {
+        $payload = $policy->toArray();
+        $payload['holiday_policy'] = $policy->resolvedHolidayPolicy();
+
+        return $payload;
     }
 
     /**
@@ -399,6 +408,7 @@ class PayPolicyController extends Controller
                 'special_unworked_policy' => $special['unworked_pay_policy'] ?? 'no_work_no_pay',
                 'special_unworked_employment_types' => array_values((array) ($special['eligible_employment_types'] ?? [])),
                 'require_previous_workday_attendance' => (bool) ($attendance['require_previous_workday_presence'] ?? true),
+                'require_following_workday_attendance' => (bool) ($attendance['require_following_workday_presence'] ?? false),
                 'allow_paid_leave' => (bool) ($attendance['paid_leave_qualifies'] ?? true),
                 'paid_leave_qualifies' => (bool) ($attendance['paid_leave_qualifies'] ?? true),
                 'rest_day_lookup_enabled' => (bool) ($attendance['skip_rest_days'] ?? true),
@@ -423,6 +433,7 @@ class PayPolicyController extends Controller
             'holiday_policy.force_leave_credits' => ['prohibited'],
             'holiday_policy.attendance' => ['sometimes', 'array'],
             'holiday_policy.attendance.require_previous_workday_presence' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.require_following_workday_presence' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.paid_leave_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.official_business_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.training_qualifies' => ['sometimes', 'boolean'],
@@ -534,6 +545,11 @@ class PayPolicyController extends Controller
                 Policy::DEFAULT_HOLIDAY_POLICY['attendance'] ?? [],
                 $incoming['attendance']
             );
+            foreach (['require_previous_workday_presence', 'require_following_workday_presence'] as $attendanceFlag) {
+                if (array_key_exists($attendanceFlag, $incoming['attendance'])) {
+                    $merged['attendance'][$attendanceFlag] = (bool) $incoming['attendance'][$attendanceFlag];
+                }
+            }
         }
 
         $specialPolicy = (string) ($merged['special_unworked']['unworked_pay_policy'] ?? 'no_work_no_pay');

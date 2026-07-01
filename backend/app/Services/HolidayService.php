@@ -207,7 +207,7 @@ class HolidayService
         }
 
         return [
-            'holiday' => $this->holidayCalendar->activeHolidayOnDate($dateKey),
+            'holiday' => $this->holidayCalendar->activeHolidayOnDate($dateKey, $user),
             'calendar_scope_match' => false,
         ];
     }

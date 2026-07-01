@@ -49,6 +49,13 @@ class HolidayPayPolicyService
         return $this->precedingWorkdayRequirement($employee, $holidayDate, $resolved, [], true);
     }
 
+    public function getFollowingQualifyingWorkday(User $employee, string $holidayDate, ?Policy $policy = null, ?array $holiday = null): array
+    {
+        $holiday ??= $this->holidayService->resolveHolidayForPayroll($employee, $holidayDate) ?? ['date' => $holidayDate];
+        $resolved = $this->resolveEffectivePolicy($policy, $holiday, $employee->getEffectiveCompanyId());
+        return $this->followingWorkdayRequirement($employee, $holidayDate, $resolved, [], true);
+    }
+
     public function isQualifiedForUnworkedRegularHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null): bool
     {
         $type = $this->normalizeHolidayType($holiday['type'] ?? null);
@@ -128,7 +135,9 @@ class HolidayPayPolicyService
             $normalizedType = $this->normalizeHolidayType($holiday['type'] ?? null) ?? 'regular';
             $componentCode = $this->holidayPayComponentCode($normalizedType, false);
             $holidayName = (string) ($holiday['name'] ?? 'Holiday');
-            $holidayPremiumPay = round(($paidRegularMinutes / 60.0) * $hourlyRate * $workedFirst8, 2);
+            $basePay = round(($paidRegularMinutes / 60.0) * $hourlyRate, 2);
+            $premiumIncrement = max(0.0, $workedFirst8 - 1.0);
+            $holidayPremiumPay = round($basePay * $premiumIncrement, 2);
             $breakdown = [
                 'component' => 'holiday_premium',
                 'component_code' => $componentCode,
@@ -136,7 +145,7 @@ class HolidayPayPolicyService
                 'minutes' => $paidRegularMinutes,
                 'rate' => $hourlyRate,
                 'multiplier' => $workedFirst8,
-                'premium_multiplier' => round($workedFirst8, 2),
+                'premium_multiplier' => round($premiumIncrement, 2),
                 'holiday_id' => $holiday['id'] ?? null,
                 'holiday_name' => $holidayName,
                 'holiday_type' => $holiday['type'] ?? null,
@@ -308,10 +317,19 @@ class HolidayPayPolicyService
             $result = $this->result(true, true, 'Always Pay Regular Holiday policy override applies.', 'regular_always_pay_override');
         } else {
             $attendance = (array) ($resolved['attendance'] ?? []);
-            if (! ($attendance['require_previous_workday_presence'] ?? true)) {
-                $result = $this->result(true, true, 'Company policy waives the preceding-workday condition.', 'company_attendance_waiver');
+            $prevRequired = (bool) ($attendance['require_previous_workday_presence'] ?? true);
+            $followRequired = (bool) ($attendance['require_following_workday_presence'] ?? false);
+
+            if (! $prevRequired && ! $followRequired) {
+                $result = $this->result(true, true, 'Company policy waives the workday attendance conditions.', 'company_attendance_waiver');
             } else {
-                $qualification = $this->precedingWorkdayRequirement($employee, $dateKey, $resolved, []);
+                $qualification = $this->evaluateWorkdayAttendanceRequirements(
+                    $employee,
+                    $dateKey,
+                    $resolved,
+                    $prevRequired,
+                    $followRequired
+                );
                 $result = $this->result(
                     $qualification['met'],
                     $qualification['met'],
@@ -331,7 +349,8 @@ class HolidayPayPolicyService
             'employment_type_match' => $worked ? $workedEmploymentTypeMatch : $employmentTypeMatch,
             'worked_employment_type_rule' => $workedEmploymentRule,
             'worked_allowed_employment_types' => $workedAllowedEmploymentTypes,
-            'company_override' => ($resolved['attendance']['require_previous_workday_presence'] ?? true) === false,
+            'company_override' => ($resolved['attendance']['require_previous_workday_presence'] ?? true) === false
+                && ($resolved['attendance']['require_following_workday_presence'] ?? false) === false,
             'holiday_scope_match' => $holidayScopeMatch,
             'rule' => $result['rule'],
         ];
@@ -370,6 +389,7 @@ class HolidayPayPolicyService
         $holidayScopeMatch = $calendarScopeMatch ?? ($this->holidayService->resolveHolidayForPayroll($employee, $dateKey) !== null);
         $determination = $this->determineEligibility($employee, $holiday, $dateKey, $workedOnHoliday, $policy, $holidayScopeMatch);
         $previousWorkday = $this->getPreviousQualifyingWorkday($employee, $dateKey, $policy, $holiday);
+        $followingWorkday = $this->getFollowingQualifyingWorkday($employee, $dateKey, $policy, $holiday);
         $unworkedMultiplier = $this->unworkedMultiplier($holiday, $resolved);
         $shouldPay = ! $workedOnHoliday
             && ($determination['eligible'] ?? false)
@@ -392,6 +412,9 @@ class HolidayPayPolicyService
             'previous_workday_date' => $previousWorkday['date'] ?? null,
             'previous_workday_status' => ($previousWorkday['met'] ?? false) ? 'qualified' : 'not_qualified',
             'previous_workday_passed' => (bool) ($previousWorkday['met'] ?? false),
+            'following_workday_date' => $followingWorkday['date'] ?? null,
+            'following_workday_status' => ($followingWorkday['met'] ?? false) ? 'qualified' : 'not_qualified',
+            'following_workday_passed' => (bool) ($followingWorkday['met'] ?? false),
             'should_pay_unworked_holiday' => $shouldPay,
             'line_item_created' => false,
             'skip_reason' => $shouldPay ? null : (string) ($determination['reason'] ?? 'not_eligible'),
@@ -478,10 +501,17 @@ class HolidayPayPolicyService
     /**
      * Whether payroll may pay outside Holiday module organizational coverage.
      * Calendar/attendance always respect coverage regardless of this setting.
+     *
+     * ponytail: ignore on either unworked or worked panel applies payroll-wide for that
+     * holiday kind — present and absent employees outside scope both qualify when either
+     * panel is set to ignore_coverage.
      */
     public function shouldIgnoreHolidayCoverage(array $resolvedPolicy, string $holidayKind, bool $worked): bool
     {
-        return $this->coverageBehaviour($resolvedPolicy, $holidayKind, $worked) === self::COVERAGE_IGNORE;
+        unset($worked);
+
+        return $this->coverageBehaviour($resolvedPolicy, $holidayKind, true) === self::COVERAGE_IGNORE
+            || $this->coverageBehaviour($resolvedPolicy, $holidayKind, false) === self::COVERAGE_IGNORE;
     }
 
     public function coverageBehaviour(array $resolvedPolicy, string $holidayKind, bool $worked): string
@@ -562,32 +592,140 @@ class HolidayPayPolicyService
                 continue;
             }
 
-            if ($this->workedOn($employee, $priorKey)) {
-                return [
-                    'date' => $includeDate ? $priorKey : null,
-                    'met' => true,
-                    'reason' => 'Present on the immediately preceding working day.',
-                    'rule' => 'present_previous_workday',
-                ];
-            }
-            if (($attendance['paid_leave_qualifies'] ?? true) && $this->hasApprovedPaidLeave($employee, $priorKey)) {
-                return [
-                    'date' => $includeDate ? $priorKey : null,
-                    'met' => true,
-                    'reason' => 'Approved paid leave qualifies on the preceding working day.',
-                    'rule' => 'paid_leave_previous_workday',
-                ];
-            }
-
-            return [
-                'date' => $includeDate ? $priorKey : null,
-                'met' => false,
-                'reason' => 'Absent without pay on the immediately preceding working day.',
-                'rule' => 'unpaid_absence_previous_workday',
-            ];
+            return $this->workdayAttendanceResult($employee, $priorKey, $attendance, $includeDate, 'preceding');
         }
 
         return ['date' => null, 'met' => false, 'reason' => 'Unable to resolve a preceding working day.', 'rule' => 'attendance_unresolved'];
+    }
+
+    /** @return array{date: ?string, met: bool, reason: string, rule: string} */
+    private function followingWorkdayRequirement(User $employee, string $dateKey, array $policy, array $visited, bool $includeDate = false): array
+    {
+        $attendance = (array) ($policy['attendance'] ?? []);
+        if (! ($attendance['require_following_workday_presence'] ?? false)) {
+            return [
+                'date' => null,
+                'met' => true,
+                'reason' => 'Following-workday attendance is not required.',
+                'rule' => 'following_workday_not_required',
+            ];
+        }
+
+        if (isset($visited[$dateKey]) || count($visited) > 370) {
+            return ['date' => null, 'met' => false, 'reason' => 'Unable to resolve a following working day.', 'rule' => 'attendance_unresolved'];
+        }
+        $visited[$dateKey] = true;
+        $cursor = Carbon::parse($dateKey)->addDay();
+        $schedule = EmployeeScheduleResolver::resolve($employee);
+
+        while (count($visited) <= 370) {
+            $nextKey = $cursor->toDateString();
+            if (isset($visited[$nextKey])) {
+                return ['date' => null, 'met' => false, 'reason' => 'Unable to resolve a following working day.', 'rule' => 'attendance_unresolved'];
+            }
+
+            $nextHoliday = $this->holidayService->resolveHolidayForPayroll($employee, $nextKey);
+            $nextType = $this->normalizeHolidayType($nextHoliday['type'] ?? null);
+            if ($this->shouldSkipDate($schedule, $cursor, $nextType, $attendance)) {
+                $visited[$nextKey] = true;
+                $cursor->addDay();
+
+                continue;
+            }
+
+            if ($this->isFutureAttendanceDate($nextKey)) {
+                return [
+                    'date' => $includeDate ? $nextKey : null,
+                    'met' => false,
+                    'reason' => 'The following working day has not occurred yet.',
+                    'rule' => 'following_workday_not_yet_occurred',
+                ];
+            }
+
+            return $this->workdayAttendanceResult(
+                $employee,
+                $nextKey,
+                $attendance,
+                $includeDate,
+                'following'
+            );
+        }
+
+        return ['date' => null, 'met' => false, 'reason' => 'Unable to resolve a following working day.', 'rule' => 'attendance_unresolved'];
+    }
+
+    /** @return array{met: bool, reason: string, rule: string} */
+    private function evaluateWorkdayAttendanceRequirements(
+        User $employee,
+        string $dateKey,
+        array $policy,
+        bool $previousRequired,
+        bool $followingRequired
+    ): array {
+        $preceding = null;
+        if ($previousRequired) {
+            $preceding = $this->precedingWorkdayRequirement($employee, $dateKey, $policy, []);
+            if (! $preceding['met']) {
+                return $preceding;
+            }
+        }
+
+        if ($followingRequired) {
+            return $this->followingWorkdayRequirement($employee, $dateKey, $policy, []);
+        }
+
+        if ($preceding !== null) {
+            return $preceding;
+        }
+
+        return [
+            'met' => true,
+            'reason' => 'Workday attendance conditions are satisfied.',
+            'rule' => 'company_attendance_waiver',
+        ];
+    }
+
+    /** @return array{date: ?string, met: bool, reason: string, rule: string} */
+    private function workdayAttendanceResult(
+        User $employee,
+        string $workdayKey,
+        array $attendance,
+        bool $includeDate,
+        string $direction
+    ): array {
+        $isFollowing = $direction === 'following';
+        $position = $isFollowing ? 'following' : 'preceding';
+
+        if ($this->workedOn($employee, $workdayKey)) {
+            return [
+                'date' => $includeDate ? $workdayKey : null,
+                'met' => true,
+                'reason' => "Present on the immediately {$position} working day.",
+                'rule' => $isFollowing ? 'present_following_workday' : 'present_previous_workday',
+            ];
+        }
+        if (($attendance['paid_leave_qualifies'] ?? true) && $this->hasApprovedPaidLeave($employee, $workdayKey)) {
+            return [
+                'date' => $includeDate ? $workdayKey : null,
+                'met' => true,
+                'reason' => "Approved paid leave qualifies on the {$position} working day.",
+                'rule' => $isFollowing ? 'paid_leave_following_workday' : 'paid_leave_previous_workday',
+            ];
+        }
+
+        return [
+            'date' => $includeDate ? $workdayKey : null,
+            'met' => false,
+            'reason' => "Absent without pay on the immediately {$position} working day.",
+            'rule' => $isFollowing ? 'unpaid_absence_following_workday' : 'unpaid_absence_previous_workday',
+        ];
+    }
+
+    private function isFutureAttendanceDate(string $dateKey): bool
+    {
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+
+        return Carbon::parse($dateKey, $tz)->startOfDay()->gt(Carbon::now($tz)->startOfDay());
     }
 
     protected function workedOn(User $employee, string $dateKey): bool

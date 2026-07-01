@@ -34,6 +34,7 @@ class Policy extends Model
             'training_qualifies' => true,
             'paid_suspension_qualifies' => true,
             'require_previous_workday_presence' => true,
+            'require_following_workday_presence' => false,
             'skip_rest_days' => true,
             'skip_company_non_working_days' => true,
         ],

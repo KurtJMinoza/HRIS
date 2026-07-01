@@ -67,7 +67,8 @@ class HolidayPayPolicyServiceTest extends TestCase
 
         $this->assertTrue($result['eligible']);
         $this->assertSame('worked_holiday', $result['qualification']['rule']);
-        $this->assertGreaterThan(1000.0, $result['holiday_premium_pay']);
+        $this->assertGreaterThan(900.0, $result['holiday_premium_pay']);
+        $this->assertLessThanOrEqual(1000.0, $result['holiday_premium_pay']);
     }
 
     public function test_special_non_working_unworked_is_no_pay(): void
@@ -99,7 +100,7 @@ class HolidayPayPolicyServiceTest extends TestCase
 
         $this->assertTrue($result['eligible']);
         $this->assertSame(1.3, $result['worked_first8_multiplier']);
-        $this->assertSame(1300.0, $result['holiday_premium_pay']);
+        $this->assertSame(300.0, $result['holiday_premium_pay']);
     }
 
     public function test_rest_days_are_skipped_to_previous_working_day(): void
@@ -109,6 +110,42 @@ class HolidayPayPolicyServiceTest extends TestCase
 
         $this->assertTrue($result['eligible']);
         $this->assertSame('present_previous_workday', $result['rule']);
+    }
+
+    public function test_following_workday_requirement_blocks_when_absent_after_holiday(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-12']);
+        $policy = $this->policyWithHolidayRules([
+            'attendance' => ['require_following_workday_presence' => true],
+        ]);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-15'), '2026-06-15', false, $policy);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('unpaid_absence_following_workday', $result['rule']);
+    }
+
+    public function test_following_workday_requirement_qualifies_when_present_after_holiday(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-12', '2026-06-16']);
+        $policy = $this->policyWithHolidayRules([
+            'attendance' => ['require_following_workday_presence' => true],
+        ]);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-15'), '2026-06-15', false, $policy);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('present_following_workday', $result['rule']);
+    }
+
+    public function test_following_workday_skips_rest_days_after_holiday(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-11', '2026-06-15']);
+        $policy = $this->policyWithHolidayRules([
+            'attendance' => ['require_following_workday_presence' => true],
+        ]);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-12'), '2026-06-12', false, $policy);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('present_following_workday', $result['rule']);
     }
 
     public function test_two_successive_regular_holidays_use_first_holiday_condition(): void

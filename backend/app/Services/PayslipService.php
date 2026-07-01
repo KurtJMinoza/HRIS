@@ -3869,8 +3869,6 @@ class PayslipService
                     continue;
                 }
             } elseif ($componentMinutes <= 0 && $componentAmount <= 0.0001) {
-                // Holiday/premium days intentionally carry a zero regular_pay row while
-                // their first-8h compensation is booked under holiday_premium.
                 continue;
             }
 

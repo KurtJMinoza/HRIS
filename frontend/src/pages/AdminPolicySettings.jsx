@@ -803,7 +803,8 @@ export default function AdminPolicySettings() {
   const updateHolidayPolicy = (path, value) => {
     setPolicyDetail((prev) => {
       if (!prev) return prev
-      const next = { ...normalizeHolidayPayPolicy(prev.holiday_policy) }
+      const base = normalizeHolidayPayPolicy(prev.holiday_policy)
+      const next = structuredClone(base)
       let cursor = next
       path.forEach((key, index) => {
         if (index === path.length - 1) {

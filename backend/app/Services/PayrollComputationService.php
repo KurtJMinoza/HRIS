@@ -1025,9 +1025,15 @@ class PayrollComputationService
         $qualifiesStatutoryHolidayPremium = $isStatutoryHolidayRate
             && $paidReg > 0
             && ($holidayQualification['eligible'] ?? true);
-        $payFirst8Multiplier = $qualifiesStatutoryHolidayPremium ? $first8 : 1.0;
+        $baseRegularPay = ($paidReg / 60.0) * $hourlyRate;
+        $holidayIncrementMultiplier = $qualifiesStatutoryHolidayPremium ? max(0.0, $first8 - 1.0) : 0.0;
 
-        $first8Pay = ($paidReg / 60.0) * $hourlyRate * $payFirst8Multiplier;
+        $regularBasePayOnly = round($baseRegularPay, 2);
+        $holidayPremiumPay = $qualifiesStatutoryHolidayPremium
+            ? round($baseRegularPay * $holidayIncrementMultiplier, 2)
+            : 0.0;
+        $first8Pay = round($regularBasePayOnly + $holidayPremiumPay, 2);
+
         $otPay = (float) ($approvedOtComp['ot_pay'] ?? 0);
         $ndPayRegular = ($ndRegPaid / 60.0) * $hourlyRate * $ndBase * $ndPremium;
         $ndPayOt = $approvedOtHours > 0.0001
@@ -1036,14 +1042,12 @@ class PayrollComputationService
         $ndPay = $allowNdPremium ? ($ndPayRegular + $ndPayOt) : 0.0;
 
         $totalPay = $first8Pay + $otPay + $ndPay;
-        // Holiday premium = full first-8 pay at holiday rate (entire day compensation, NOT just increment).
-        // On holiday days, regular_pay becomes 0 and the full first8Pay moves to holiday_premium.
+        // DOLE worked holiday: base regular pay (100%) plus holiday premium increment (e.g. +100% on RH).
+        // Unworked entitlement remains a single holiday_premium line in the no-punch branch.
         $isHolidayDay = $qualifiesStatutoryHolidayPremium;
-        $holidayPremiumPay = $isHolidayDay ? round($first8Pay, 2) : 0.0;
-        $regularBasePayOnly = $isHolidayDay ? 0.0 : round($first8Pay, 2);
 
         $ndNightMinutesForBreakdown = $ndRegPaid + $effectiveNdOvertimeMinutes;
-        $breakdown[] = ['component' => 'regular_pay', 'minutes' => $isHolidayDay ? 0 : $paidReg, 'rate' => $hourlyRate, 'multiplier' => 1.0, 'amount' => max(0.0, $regularBasePayOnly)];
+        $breakdown[] = ['component' => 'regular_pay', 'minutes' => $paidReg, 'rate' => $hourlyRate, 'multiplier' => 1.0, 'amount' => max(0.0, $regularBasePayOnly)];
         if ($regularMinutesOverThreshold > 0) {
             $breakdown[] = [
                 'component' => 'regular_hours_over_threshold',
@@ -1099,7 +1103,7 @@ class PayrollComputationService
                 'minutes' => $paidReg,
                 'rate' => $hourlyRate,
                 'multiplier' => $first8,
-                'premium_multiplier' => round($first8, 2),
+                'premium_multiplier' => round($holidayIncrementMultiplier, 2),
                 'holiday_id' => $holiday['id'] ?? null,
                 'holiday_name' => $holidayName,
                 'holiday_type' => $holiday['type'] ?? null,
@@ -3118,11 +3122,14 @@ class PayrollComputationService
      */
     private function dayIsPremiumHolidayExcludedFromRegularAttendanceSummary(array $day): bool
     {
-        $calendarPremiumHoliday = is_array($day['holiday'] ?? null)
-            && ((float) ($day['conditions']['first_8'] ?? 1.0)) > 1.00001;
-        $earnedHolidayPremium = round((float) ($day['holiday_premium_pay'] ?? 0), 2) > 0.0001;
+        $status = strtolower(trim((string) ($day['status'] ?? '')));
+        // Unworked statutory holiday: pay is holiday-only, not an ordinary regular working day.
+        if ($status !== 'holiday') {
+            return false;
+        }
 
-        return $calendarPremiumHoliday && $earnedHolidayPremium;
+        return is_array($day['holiday'] ?? null)
+            && round((float) ($day['holiday_premium_pay'] ?? 0), 2) > 0.0001;
     }
 
     /**

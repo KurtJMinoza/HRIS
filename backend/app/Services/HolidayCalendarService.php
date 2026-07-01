@@ -513,7 +513,7 @@ class HolidayCalendarService
      *
      * @return array<string, mixed>|null
      */
-    public function activeHolidayOnDate(string $dateKey): ?array
+    public function activeHolidayOnDate(string $dateKey, ?User $user = null): ?array
     {
         $year = (int) substr($dateKey, 0, 4);
         if ($year < 2000) {
@@ -525,7 +525,7 @@ class HolidayCalendarService
             ->values()
             ->all();
 
-        return $this->bestActiveMatch($matches);
+        return $this->bestActiveMatch($matches, $user);
     }
 
     /**
@@ -545,7 +545,7 @@ class HolidayCalendarService
             ->values()
             ->all();
 
-        return $this->bestActiveMatch($matches);
+        return $this->bestActiveMatch($matches, $user);
     }
 
     public function rowAppliesToTarget(
@@ -571,9 +571,21 @@ class HolidayCalendarService
      * @param  list<array<string, mixed>>  $matches
      * @return array<string, mixed>|null
      */
-    private function bestActiveMatch(array $matches): ?array
+    private function bestActiveMatch(array $matches, ?User $user = null): ?array
     {
-        usort($matches, function (array $a, array $b) {
+        usort($matches, function (array $a, array $b) use ($user) {
+            $type = $this->holidayTypePrecedence($b) <=> $this->holidayTypePrecedence($a);
+            if ($type !== 0) {
+                return $type;
+            }
+
+            if ($user !== null) {
+                $company = $this->payrollCompanyAffinity($b, $user) <=> $this->payrollCompanyAffinity($a, $user);
+                if ($company !== 0) {
+                    return $company;
+                }
+            }
+
             $scope = $this->scopePrecedence($b) <=> $this->scopePrecedence($a);
             if ($scope !== 0) {
                 return $scope;
@@ -624,6 +636,32 @@ class HolidayCalendarService
             'regional' => 20,
             default => 10,
         };
+    }
+
+    /** Payroll/statutory weight: regular holidays beat special on the same date. */
+    private function holidayTypePrecedence(array $row): int
+    {
+        return match (strtolower(trim((string) ($row['type'] ?? '')))) {
+            'double', 'double_holiday' => 50,
+            'regular', 'regular_holiday' => 40,
+            'special', 'special_non_working', 'special_non_working_holiday' => 20,
+            'special_working', 'special_working_day', 'company', 'company_event' => 10,
+            default => 0,
+        };
+    }
+
+    private function payrollCompanyAffinity(array $row, User $user): int
+    {
+        $employeeCompanyId = (int) $user->getEffectiveCompanyId();
+        $holidayCompanyId = (int) ($row['company_id'] ?? 0);
+        if ($employeeCompanyId > 0 && $holidayCompanyId === $employeeCompanyId) {
+            return 30;
+        }
+        if ($holidayCompanyId === 0 && strtolower((string) ($row['scope'] ?? '')) === 'nationwide') {
+            return 20;
+        }
+
+        return 0;
     }
 
     private function sourcePrecedence(array $row): int

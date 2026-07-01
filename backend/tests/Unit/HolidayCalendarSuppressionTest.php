@@ -119,4 +119,33 @@ class HolidayCalendarSuppressionTest extends TestCase
         $this->assertCount(1, $rows);
         $this->assertSame('2026-06-13', $rows->first()['date']);
     }
+
+    public function test_active_holiday_on_date_prefers_regular_over_special_on_same_date(): void
+    {
+        Holiday::query()->whereDate('date', '2026-06-20')->delete();
+
+        Holiday::query()->create([
+            'date' => '2026-06-20',
+            'name' => 'Special Day',
+            'type' => 'special',
+            'scope' => 'company',
+            'company_id' => 1,
+            'status' => 'active',
+        ]);
+        Holiday::query()->create([
+            'date' => '2026-06-20',
+            'name' => 'Independence Day',
+            'type' => 'regular',
+            'scope' => 'company',
+            'company_id' => 1,
+            'status' => 'active',
+        ]);
+
+        $service = app(HolidayCalendarService::class);
+        $service->flushMergedYearCaches();
+
+        $picked = $service->activeHolidayOnDate('2026-06-20');
+        $this->assertSame('Independence Day', $picked['name'] ?? null);
+        $this->assertSame('regular', $picked['type'] ?? null);
+    }
 }

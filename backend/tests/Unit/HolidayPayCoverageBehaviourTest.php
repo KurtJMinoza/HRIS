@@ -18,8 +18,8 @@ class HolidayPayCoverageBehaviourTest extends TestCase
         ];
 
         $this->assertTrue($service->shouldIgnoreHolidayCoverage($policy, 'regular', false));
-        $this->assertFalse($service->shouldIgnoreHolidayCoverage($policy, 'regular', true));
-        $this->assertFalse($service->shouldIgnoreHolidayCoverage($policy, 'special', false));
+        $this->assertTrue($service->shouldIgnoreHolidayCoverage($policy, 'regular', true));
+        $this->assertTrue($service->shouldIgnoreHolidayCoverage($policy, 'special', false));
         $this->assertTrue($service->shouldIgnoreHolidayCoverage($policy, 'special', true));
     }
 

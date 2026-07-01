@@ -59,6 +59,7 @@ return new class extends Migration
             'special_unworked_employment_types' => fn (Blueprint $table) => $table->json('special_unworked_employment_types')->nullable(),
             'paid_leave_qualifies' => fn (Blueprint $table) => $table->boolean('paid_leave_qualifies')->default(true),
             'rest_day_lookup_enabled' => fn (Blueprint $table) => $table->boolean('rest_day_lookup_enabled')->default(true),
+            'require_following_workday_attendance' => fn (Blueprint $table) => $table->boolean('require_following_workday_attendance')->nullable(),
             'successive_holiday_rule_enabled' => fn (Blueprint $table) => $table->boolean('successive_holiday_rule_enabled')->default(true),
             'is_active' => fn (Blueprint $table) => $table->boolean('is_active')->default(true),
         ];

@@ -79,7 +79,7 @@ function CoverageBehaviourToggle({ id, value, onChange }) {
             >
               <span className="font-medium">{isIgnore ? 'Ignore coverage' : 'Respect coverage'}</span>
               <span className="mt-0.5 block text-xs text-muted-foreground">
-                {isIgnore ? 'Payroll only — calendar still uses Holiday Coverage' : 'DOLE default — must be in scope'}
+                {isIgnore ? 'Payroll only — applies to present and absent outside scope' : 'DOLE default — must be in scope'}
               </span>
             </button>
           )
@@ -186,8 +186,8 @@ export function HolidayPayPolicyCard({
           <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <p className="text-muted-foreground">
             <span className="font-medium text-foreground">Coverage behaviour</span> decides whether payroll
-            pays employees outside the holiday&apos;s organizational scope. It never changes who sees a holiday
-            on the calendar.
+            pays employees outside the holiday&apos;s organizational scope. Ignore on either unworked or worked
+            applies payroll-wide for that holiday type. Calendar and attendance always respect Holiday Coverage.
           </p>
         </div>
 
@@ -222,7 +222,8 @@ export function HolidayPayPolicyCard({
 
             <PayScenarioBlock icon={Sun} title="Worked pay" muted>
               <p className="text-xs text-muted-foreground">
-                Premium multiplier (e.g. 200%) is set under Multipliers → Regular Holiday.
+                DOLE double pay: regular pay (100%) plus holiday worked premium (e.g. +100% on regular holidays).
+                Multipliers are set under Multipliers → Regular Holiday.
               </p>
               <PolicySelect
                 id="regular-worked-employment-rule"
@@ -278,7 +279,8 @@ export function HolidayPayPolicyCard({
 
             <PayScenarioBlock icon={Sun} title="Worked pay" muted>
               <p className="text-xs text-muted-foreground">
-                Premium multiplier is set under Multipliers → Special Holiday.
+                DOLE double pay: regular pay (100%) plus holiday worked premium. Multiplier is set under
+                Multipliers → Special Holiday.
               </p>
               <PolicySelect
                 id="special-worked-employment-rule"
@@ -322,8 +324,17 @@ export function HolidayPayPolicyCard({
               onCheckedChange={(checked) =>
                 onPolicyChange(['attendance', 'require_previous_workday_presence'], Boolean(checked))
               }
-              label="Require attendance on the previous workday"
-              hint="Employee must have been present (or on paid leave) before the holiday."
+              label="Require attendance on the preceding workday"
+              hint="Must be present or on paid leave on the last workday before the holiday."
+            />
+            <ToggleRow
+              id="following-workday-required"
+              checked={holidayPolicy.attendance.require_following_workday_presence === true}
+              onCheckedChange={(checked) =>
+                onPolicyChange(['attendance', 'require_following_workday_presence'], Boolean(checked))
+              }
+              label="Require attendance on the following workday"
+              hint="Must be present or on paid leave on the first workday after the holiday."
             />
             <ToggleRow
               id="successive-holiday-rule"

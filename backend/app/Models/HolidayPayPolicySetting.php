@@ -32,6 +32,7 @@ class HolidayPayPolicySetting extends Model
         'special_unworked_employment_types',
         'pay_unworked',
         'require_previous_workday_attendance',
+        'require_following_workday_attendance',
         'allow_paid_leave',
         'allow_official_business',
         'allow_training',
@@ -59,6 +60,7 @@ class HolidayPayPolicySetting extends Model
             'special_unworked_employment_types' => 'array',
             'pay_unworked' => 'boolean',
             'require_previous_workday_attendance' => 'boolean',
+            'require_following_workday_attendance' => 'boolean',
             'allow_paid_leave' => 'boolean',
             'allow_official_business' => 'boolean',
             'allow_training' => 'boolean',
@@ -142,6 +144,7 @@ class HolidayPayPolicySetting extends Model
 
         $attendanceMap = [
             'require_previous_workday_attendance' => 'require_previous_workday_presence',
+            'require_following_workday_attendance' => 'require_following_workday_presence',
             'allow_paid_leave' => 'paid_leave_qualifies',
             'allow_rest_day_lookup' => 'skip_rest_days',
             'allow_company_nonworking_lookup' => 'skip_company_non_working_days',

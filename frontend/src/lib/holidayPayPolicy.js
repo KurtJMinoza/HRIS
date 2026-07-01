@@ -67,6 +67,7 @@ export const DEFAULT_HOLIDAY_POLICY = {
   attendance: {
     paid_leave_qualifies: true,
     require_previous_workday_presence: true,
+    require_following_workday_presence: false,
     skip_rest_days: true,
     skip_company_non_working_days: true,
   },
@@ -146,6 +147,8 @@ export function normalizeHolidayPayPolicy(value) {
     },
     attendance: {
       ...attendance,
+      require_previous_workday_presence: attendance.require_previous_workday_presence !== false,
+      require_following_workday_presence: attendance.require_following_workday_presence === true,
       paid_leave_qualifies: true,
       skip_rest_days: true,
       skip_company_non_working_days: true,
@@ -184,7 +187,8 @@ export function serializeHolidayPayPolicyForSave(policy) {
     },
     non_statutory: normalized.non_statutory,
     attendance: {
-      require_previous_workday_presence: normalized.attendance.require_previous_workday_presence,
+      require_previous_workday_presence: normalized.attendance.require_previous_workday_presence !== false,
+      require_following_workday_presence: normalized.attendance.require_following_workday_presence === true,
       paid_leave_qualifies: true,
       skip_rest_days: true,
       skip_company_non_working_days: true,
