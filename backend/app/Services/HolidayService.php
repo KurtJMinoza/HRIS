@@ -29,6 +29,89 @@ class HolidayService
     }
 
     /**
+     * All active holidays in a pay period, sorted by date ASC.
+     * Resolves each calendar date independently — never first()/limit(1).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function holidaysForPayrollPeriod(User $user, string $fromDate, string $toDate): array
+    {
+        $from = Carbon::parse($fromDate)->startOfDay();
+        $to = Carbon::parse($toDate)->startOfDay();
+        if ($to->lessThan($from)) {
+            return [];
+        }
+
+        $policyResolver = app(PolicyResolverService::class);
+        $holidayPayPolicy = app(HolidayPayPolicyService::class);
+        $holidays = [];
+        $seen = [];
+
+        $dbRows = Holiday::query()
+            ->where('status', 'active')
+            ->whereDate('date', '>=', $fromDate)
+            ->whereDate('date', '<=', $toDate)
+            ->orderBy('date')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($dbRows as $model) {
+            $row = $this->serializeForCoverage($model);
+            $dateKey = (string) ($row['date'] ?? '');
+            if ($dateKey === '') {
+                continue;
+            }
+
+            $identity = ((string) ($row['id'] ?? '')).'|'.$dateKey;
+            if (isset($seen[$identity])) {
+                continue;
+            }
+
+            $scopeMatch = $this->holidayCoversEmployee($row, $user);
+            $policy = $policyResolver->getActivePolicy(
+                $user->getEffectiveCompanyId(),
+                $user->branch_id,
+                $dateKey
+            );
+            $resolved = $holidayPayPolicy->resolveEffectivePolicy($policy, $row, $user->getEffectiveCompanyId());
+            $normalizedType = $holidayPayPolicy->normalizeHolidayType($row['type'] ?? null);
+            $kind = in_array($normalizedType, ['regular', 'double'], true) ? 'regular' : 'special';
+            $gate = $holidayPayPolicy->eligibleForHolidayPayEvaluation($user, $row, $resolved, $kind, false);
+
+            if (! $gate['eligible_for_holiday_evaluation']) {
+                continue;
+            }
+
+            $seen[$identity] = true;
+            $holidays[] = array_merge($row, [
+                'date' => $dateKey,
+                'calendar_scope_match' => $scopeMatch,
+            ]);
+        }
+
+        $cursor = $from->copy();
+        while ($cursor->lessThanOrEqualTo($to)) {
+            $dateKey = $cursor->toDateString();
+            $swap = $this->isSwapHolidayForEmployee($user, $dateKey);
+            if ($swap !== null) {
+                $identity = ((string) ($swap['id'] ?? '')).'|'.$dateKey;
+                if (! isset($seen[$identity])) {
+                    $seen[$identity] = true;
+                    $holidays[] = array_merge($swap, [
+                        'date' => $dateKey,
+                        'calendar_scope_match' => true,
+                    ]);
+                }
+            }
+            $cursor->addDay();
+        }
+
+        usort($holidays, fn (array $a, array $b): int => strcmp((string) ($a['date'] ?? ''), (string) ($b['date'] ?? '')));
+
+        return $holidays;
+    }
+
+    /**
      * Check if a date is a swap holiday for a specific employee.
      * This is the primary method all modules should call.
      */
@@ -202,6 +285,12 @@ class HolidayService
             return ['holiday' => $calendar, 'calendar_scope_match' => true];
         }
 
+        foreach ($this->activeHolidayRowsOnDate($dateKey) as $row) {
+            if ($this->holidayCoversEmployee($row, $user)) {
+                return ['holiday' => $row, 'calendar_scope_match' => true];
+            }
+        }
+
         if ($this->isMovedHolidayOriginalDateForEmployee($user, $dateKey)) {
             return ['holiday' => null, 'calendar_scope_match' => false];
         }
@@ -210,6 +299,18 @@ class HolidayService
             'holiday' => $this->holidayCalendar->activeHolidayOnDate($dateKey, $user),
             'calendar_scope_match' => false,
         ];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function activeHolidayRowsOnDate(string $dateKey): array
+    {
+        return Holiday::query()
+            ->where('status', 'active')
+            ->whereDate('date', $dateKey)
+            ->orderBy('id')
+            ->get()
+            ->map(fn (Holiday $holiday) => $this->serializeForCoverage($holiday))
+            ->all();
     }
 
     /**

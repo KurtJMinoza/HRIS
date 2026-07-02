@@ -466,6 +466,7 @@ class HolidayPayPolicyServiceTest extends TestCase
         $holidayService = Mockery::mock(HolidayService::class);
         $holidayService->shouldReceive('resolveHolidayForPayroll')
             ->andReturnUsing(fn (User $employee, string $dateKey) => $holidays[$dateKey] ?? null);
+        $holidayService->shouldReceive('holidayCoversEmployee')->andReturn(true);
 
         $policyResolver = Mockery::mock(PolicyResolverService::class);
         $policyResolver->shouldReceive('getActivePolicy')->andReturn(null);

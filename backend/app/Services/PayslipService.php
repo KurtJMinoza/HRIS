@@ -3489,11 +3489,14 @@ class PayslipService
         $seen = [];
         $out = [];
         foreach ($lines as $line) {
+            $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
             $key = implode('|', [
                 strtolower(trim((string) ($line['component_code'] ?? $line['code'] ?? ''))),
+                strtolower(trim((string) ($metadata['holiday_id'] ?? ''))),
+                strtolower(trim((string) ($metadata['holiday_date'] ?? ''))),
                 strtolower(trim((string) ($line['pay_component_id'] ?? ''))),
+                strtolower(trim((string) ($line['key'] ?? ''))),
                 strtolower(trim((string) ($line['label'] ?? $line['name'] ?? ''))),
-                number_format(round((float) ($line['amount'] ?? $line['resolved_amount'] ?? 0), 2), 2, '.', ''),
             ]);
             if (isset($seen[$key])) {
                 continue;
@@ -3863,11 +3866,15 @@ class PayslipService
                 }
             }
 
+            $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+
             if (! $hasRegularPayComponent) {
-                $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
                 if ($dayRegularMinutes <= 0 || $holidayPremiumPay > 0) {
                     continue;
                 }
+            } elseif ($componentAmount <= 0.0001) {
+                // Worked holiday: base is in regular_pay when amount > 0; premium is a separate line.
+                continue;
             } elseif ($componentMinutes <= 0 && $componentAmount <= 0.0001) {
                 continue;
             }
@@ -4005,6 +4012,9 @@ class PayslipService
             $hourlyRateRaw = $row['hourly_rate'] ?? null;
             $hourlyRate = is_numeric($hourlyRateRaw) ? (float) $hourlyRateRaw : null;
             $lineKey = strtolower(trim((string) ($row['key'] ?? '')));
+            $componentCode = strtoupper(trim((string) ($row['component_code'] ?? '')));
+            $isHolidayPayLine = str_starts_with($lineKey, 'holiday:')
+                || str_contains($componentCode, 'HOLIDAY');
             $unitsRaw = $row['units'] ?? null;
             $unitsStr = $unitsRaw === null || $unitsRaw === '' ? null : trim((string) $unitsRaw);
 
@@ -4037,9 +4047,8 @@ class PayslipService
                 : $formatted['units'];
             $amountFromMinutes = $formatted['amount'];
 
-            // Amounts are minute-based for parity with Daily Computation:
-            // amount = (actual worked minutes / 60) * hourly rate, rounded once.
-            // For regular pay, the hourly rate is backfilled from daily_rate / 8 when needed.
+            // Amounts are minute-based for parity with Daily Computation — except holiday pay
+            // lines, which already carry the premium increment (worked) or unworked daily rate.
             $lineLabel = strtolower($label);
             $isWithholdingLine = str_contains($lineKey, 'withholding')
                 || str_contains($lineKey, 'wht')
@@ -4066,7 +4075,7 @@ class PayslipService
             $out[] = array_merge($row, [
                 'key' => isset($row['key']) ? (string) $row['key'] : '',
                 'label' => $label,
-                'amount' => $amountFromMinutes ?? $amt,
+                'amount' => ($isHolidayPayLine || $amountFromMinutes === null) ? $amt : $amountFromMinutes,
                 'units' => $unitsFromMinutes ?: (($unitsStr !== null && $unitsStr !== '') ? $this->sanitizePayslipText($unitsStr) : null),
                 'minutes_worked' => $minutesWorked,
                 'hourly_rate' => $hourlyRate,

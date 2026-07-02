@@ -31,6 +31,7 @@ class PayrollLine extends Model
         'source_type',
         'source_id',
         'holiday_id',
+        'holiday_date',
         'metadata',
         'status',
         'sort_order',

@@ -131,6 +131,7 @@ class PayrollLinePersistService
                     'source_type' => $draftLine->source_type,
                     'source_id' => $draftLine->source_id,
                     'holiday_id' => $draftLine->holiday_id,
+                    'holiday_date' => $draftLine->holiday_date,
                     'metadata' => $draftLine->metadata,
                     'status' => PayrollLine::STATUS_FINALIZED,
                     'sort_order' => (int) $draftLine->sort_order,
@@ -351,11 +352,19 @@ class PayrollLinePersistService
             "payroll:report:company:{$companyId}",
             "payroll:recent:company:{$companyId}",
             "payroll:recent:user:{$userId}",
+            "holiday_policy:{$companyId}",
+            "holiday_scope:{$companyId}",
+            "holiday_compute:{$userId}",
+            "payroll_preview:{$userId}",
+            "payroll_components:{$batchId}",
+            "attendance_summary:{$userId}",
         ];
 
         foreach ($keys as $key) {
             Cache::forget($key);
         }
+
+        HolidayPolicyCache::forgetPolicy($companyId > 0 ? $companyId : null);
 
         Log::info('payroll.cache_cleared_after_finalization', [
             'payslip_id' => (int) $payslip->id,
@@ -503,6 +512,9 @@ class PayrollLinePersistService
             'holiday_id' => isset($line['metadata']['holiday_id']) && is_numeric($line['metadata']['holiday_id'])
                 ? (int) $line['metadata']['holiday_id']
                 : null,
+            'holiday_date' => isset($line['metadata']['holiday_date'])
+                ? (string) $line['metadata']['holiday_date']
+                : null,
             'metadata' => array_merge(
                 is_array($line['metadata'] ?? null) ? $line['metadata'] : [],
                 [
@@ -563,8 +575,11 @@ class PayrollLinePersistService
     private function lineIdentityKey(PayrollLine $line): string
     {
         $code = trim((string) ($line->component_code ?? ''));
+        $holidayId = (string) ($line->holiday_id ?? '');
+        $holidayDate = (string) ($line->holiday_date ?? data_get($line->metadata, 'holiday_date', ''));
+
         if ($code !== '') {
-            return $line->type.':'.$code;
+            return $line->type.':'.$code.':'.$holidayId.':'.$holidayDate;
         }
 
         return $line->type.':'.trim((string) ($line->line_key ?? 'line:'.$line->id));

@@ -94,7 +94,18 @@ class HolidayPayPolicyService
             $holiday,
             $companyId
         );
-        $qualification = $this->evaluate($employee, $holiday, $dateKey, $worked, $policy);
+        $scopeMatch = $this->holidayService->holidayCoversEmployee(
+            array_merge($holiday, ['date' => $dateKey]),
+            $employee
+        );
+        $qualification = $this->determineEligibility(
+            $employee,
+            $holiday,
+            $dateKey,
+            $worked,
+            $policy,
+            $scopeMatch
+        );
         $unworkedMultiplier = $this->unworkedMultiplier($holiday, $resolvedPolicy);
 
         $resolvedHolidayType = $this->rulesEngine->holidayTypeFromHolidayRow($holiday);
@@ -427,8 +438,21 @@ class HolidayPayPolicyService
         return $payload;
     }
 
-    public function holidayPayComponentCode(?string $normalizedHolidayType, bool $unworked = true): string
-    {
+    public function holidayPayComponentCode(
+        ?string $normalizedHolidayType,
+        bool $unworked = true,
+        bool $isRestDay = false
+    ): string {
+        if ($normalizedHolidayType === 'special_working') {
+            return 'SPECIAL_WORKING_DAY_PAY';
+        }
+
+        if ($isRestDay) {
+            return in_array($normalizedHolidayType, ['regular', 'double'], true)
+                ? 'RESTDAY_REGULAR_HOLIDAY_PAY'
+                : 'RESTDAY_SPECIAL_HOLIDAY_PAY';
+        }
+
         if (! $unworked) {
             return in_array($normalizedHolidayType, ['regular', 'double'], true)
                 ? 'REGULAR_HOLIDAY_WORKED_PAY'
@@ -447,6 +471,9 @@ class HolidayPayPolicyService
             'SPECIAL_HOLIDAY_UNWORKED_PAY' => 'Special Holiday — Unworked Pay',
             'REGULAR_HOLIDAY_WORKED_PAY', 'REGULAR_HOLIDAY_PAY' => 'Regular Holiday — Worked Pay',
             'SPECIAL_HOLIDAY_WORKED_PAY', 'SPECIAL_HOLIDAY_PAY' => 'Special Holiday — Worked Pay',
+            'SPECIAL_WORKING_DAY_PAY' => 'Special Working Day Pay',
+            'RESTDAY_REGULAR_HOLIDAY_PAY' => 'Regular Holiday — Rest Day Pay',
+            'RESTDAY_SPECIAL_HOLIDAY_PAY' => 'Special Holiday — Rest Day Pay',
             default => 'Holiday Pay',
         };
 
@@ -512,6 +539,29 @@ class HolidayPayPolicyService
 
         return $this->coverageBehaviour($resolvedPolicy, $holidayKind, true) === self::COVERAGE_IGNORE
             || $this->coverageBehaviour($resolvedPolicy, $holidayKind, false) === self::COVERAGE_IGNORE;
+    }
+
+    /**
+     * Payroll-only gate: in-scope employees always evaluate; out-of-scope only when policy ignores coverage.
+     *
+     * @return array{scope_match: bool, coverage_behaviour: string, eligible_for_holiday_evaluation: bool}
+     */
+    public function eligibleForHolidayPayEvaluation(
+        User $employee,
+        array $holiday,
+        array $resolvedPolicy,
+        string $kind,
+        bool $worked
+    ): array {
+        $scopeMatch = $this->holidayService->holidayCoversEmployee($holiday, $employee);
+        $coverageBehaviour = $this->coverageBehaviour($resolvedPolicy, $kind, $worked);
+        $eligible = $scopeMatch || $this->shouldIgnoreHolidayCoverage($resolvedPolicy, $kind, $worked);
+
+        return [
+            'scope_match' => $scopeMatch,
+            'coverage_behaviour' => $coverageBehaviour,
+            'eligible_for_holiday_evaluation' => $eligible,
+        ];
     }
 
     public function coverageBehaviour(array $resolvedPolicy, string $holidayKind, bool $worked): string

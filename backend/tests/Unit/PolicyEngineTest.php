@@ -774,19 +774,19 @@ class PolicyEngineTest extends TestCase
                     'is_rest_day' => false,
                     'regular_day_minutes' => 480,
                     'regular_night_minutes' => 0,
-                    'holiday_premium_pay' => 1600,
+                    'holiday_premium_pay' => 800,
                     'breakdown' => [
                         [
                             'component' => 'regular_pay',
-                            'minutes' => 0,
+                            'minutes' => 480,
                             'rate' => 100,
-                            'amount' => 0,
+                            'amount' => 800,
                         ],
                         [
                             'component' => 'holiday_premium',
                             'minutes' => 480,
                             'rate' => 100,
-                            'amount' => 1600,
+                            'amount' => 800,
                         ],
                     ],
                 ],
@@ -797,9 +797,9 @@ class PolicyEngineTest extends TestCase
         $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
 
         $this->assertSame('Regular pay', $line['label'] ?? null);
-        $this->assertSame('1 day, 0 hrs 0 mins', $line['units'] ?? null);
-        $this->assertSame(800.0, $line['amount'] ?? null);
-        $this->assertSame(480, $line['minutes_worked'] ?? null);
+        $this->assertSame('2 days, 0 hrs 0 mins', $line['units'] ?? null);
+        $this->assertSame(1600.0, $line['amount'] ?? null);
+        $this->assertSame(960, $line['minutes_worked'] ?? null);
     }
 
     public function test_open_clock_in_is_not_paired_with_next_workday_clock_out(): void

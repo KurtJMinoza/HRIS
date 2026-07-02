@@ -57,9 +57,12 @@ class HolidayEligibilityService
         return $this->holidayPayPolicy->computeHolidayPay($employee, $attendance, $holiday, $policy);
     }
 
-    public function holidayPayComponentCode(?string $normalizedHolidayType, bool $unworked = true): string
-    {
-        return $this->holidayPayPolicy->holidayPayComponentCode($normalizedHolidayType, $unworked);
+    public function holidayPayComponentCode(
+        ?string $normalizedHolidayType,
+        bool $unworked = true,
+        bool $isRestDay = false
+    ): string {
+        return $this->holidayPayPolicy->holidayPayComponentCode($normalizedHolidayType, $unworked, $isRestDay);
     }
 
     public function holidayPayDescription(string $componentCode, string $holidayName): string
