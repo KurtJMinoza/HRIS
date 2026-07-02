@@ -53,6 +53,74 @@ class HolidayPayPolicyServiceTest extends TestCase
         $this->assertSame('unpaid_absence_previous_workday', $result['qualification']['rule']);
     }
 
+    public function test_selected_regular_holiday_is_paid_when_qualified(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-11']);
+        $policy = $this->policyWithHolidayRules([
+            'regular_unworked' => [
+                'holiday_selection_mode' => 'selected_regular_holidays',
+                'holiday_ids' => [10],
+            ],
+        ]);
+        $holiday = ['id' => 10, 'date' => '2026-06-12', 'type' => 'regular', 'name' => 'Independence Day'];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2026-06-12', false, $policy);
+
+        $this->assertTrue($result['eligible']);
+    }
+
+    public function test_unselected_regular_holiday_does_not_receive_unworked_pay(): void
+    {
+        $service = $this->service(workedDates: ['2026-12-23']);
+        $policy = $this->policyWithHolidayRules([
+            'regular_unworked' => [
+                'holiday_selection_mode' => 'selected_regular_holidays',
+                'holiday_ids' => [10],
+            ],
+        ]);
+        $holiday = ['id' => 20, 'date' => '2026-12-25', 'type' => 'regular', 'name' => 'Christmas Day'];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2026-12-25', false, $policy);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('regular_holiday_not_selected', $result['rule']);
+    }
+
+    public function test_unworked_selection_does_not_block_worked_holiday_pay(): void
+    {
+        $service = $this->service();
+        $policy = $this->policyWithHolidayRules([
+            'regular_unworked' => [
+                'holiday_selection_mode' => 'selected_regular_holidays',
+                'holiday_ids' => [10],
+            ],
+        ]);
+        $holiday = ['id' => 20, 'date' => '2026-12-25', 'type' => 'regular', 'name' => 'Christmas Day'];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2026-12-25', true, $policy);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('worked_holiday', $result['rule']);
+    }
+
+    public function test_selected_special_holiday_receives_unworked_pay(): void
+    {
+        $service = $this->service();
+        $policy = $this->policyWithHolidayRules([
+            'special_unworked' => [
+                'unworked_pay_policy' => 'all_employment_types',
+                'holiday_selection_mode' => 'selected_special_holidays',
+                'holiday_ids' => [30],
+            ],
+        ]);
+        $holiday = ['id' => 30, 'date' => '2026-08-21', 'type' => 'special', 'name' => 'TEST DAY'];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, $policy);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('special_unworked_company_policy', $result['rule']);
+    }
+
     public function test_regular_holiday_worked_paid_even_after_unpaid_absence_before(): void
     {
         $service = $this->service();

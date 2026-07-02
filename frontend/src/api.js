@@ -5064,7 +5064,9 @@ export async function removeEmployeeBenefit(employeeId, assignmentId) {
  */
 export async function getAdminHolidays(params = {}) {
   const year = params.year ?? new Date().getFullYear()
-  const res = await authenticatedFetch(`/admin/holidays?year=${year}`)
+  const query = new URLSearchParams({ year: String(year) })
+  if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
+  const res = await authenticatedFetch(`/admin/holidays?${query.toString()}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load holidays')
   return data

@@ -127,11 +127,47 @@ function EmploymentTypeSelector({ idPrefix, options, selected, loading, onChange
   )
 }
 
-function PayScenarioBlock({ icon: Icon, title, children, muted }) {
+function HolidaySelector({ idPrefix, holidays, selected, loading, kind, onChange }) {
+  const toggle = (id) => {
+    const next = new Set(selected.map(Number))
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onChange(Array.from(next))
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border/50 bg-muted/15 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected holidays</p>
+        <Badge variant="secondary">{selected.length} {kind} {selected.length === 1 ? 'Holiday' : 'Holidays'} selected</Badge>
+      </div>
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading holidays…</p>
+      ) : holidays.length ? (
+        <div className="grid max-h-64 gap-2 overflow-y-auto sm:grid-cols-2">
+          {holidays.map((holiday) => (
+            <ToggleRow
+              key={holiday.id}
+              id={`${idPrefix}-${holiday.id}`}
+              checked={selected.map(Number).includes(Number(holiday.id))}
+              onCheckedChange={() => toggle(Number(holiday.id))}
+              label={holiday.name}
+              hint={holiday.date}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">No active {kind.toLowerCase()} holidays found in the Holiday Module.</p>
+      )}
+    </div>
+  )
+}
+
+function PayScenarioBlock({ icon, title, children, muted }) {
   return (
     <div className={cn('space-y-3 rounded-lg border border-border/50 p-4', muted && 'bg-muted/10')}>
       <div className="flex items-center gap-2">
-        <Icon className="size-4 text-muted-foreground" aria-hidden />
+        {React.createElement(icon, { className: 'size-4 text-muted-foreground', 'aria-hidden': true })}
         <h5 className="text-sm font-semibold">{title}</h5>
       </div>
       {children}
@@ -156,10 +192,14 @@ export function HolidayPayPolicyCard({
   branchId,
   employmentTypes = [],
   employmentTypesLoading = false,
+  holidays = [],
+  holidaysLoading = false,
   onPolicyChange,
 }) {
   const holidayPolicy = normalizeHolidayPayPolicy(policy)
   const scopeBadge = companyId ? (branchId ? 'Branch override' : 'Company override') : 'Global default'
+  const regularHolidays = holidays.filter((holiday) => ['regular', 'regular_holiday'].includes(String(holiday.type).toLowerCase()))
+  const specialHolidays = holidays.filter((holiday) => ['special', 'special_non_working', 'special_non_working_holiday'].includes(String(holiday.type).toLowerCase()))
 
   return (
     <Card className="overflow-hidden border border-rose-200/40 shadow-sm dark:border-rose-900/35">
@@ -199,12 +239,29 @@ export function HolidayPayPolicyCard({
             <PayScenarioBlock icon={Moon} title="Unworked pay">
               <PolicySelect
                 id="regular-unworked-policy"
-                label="Who gets paid without clock-in"
-                value={holidayPolicy.regular_unworked.unworked_pay_policy}
+                label="Unworked Pay Policy"
+                value={holidayPolicy.regular_unworked.holiday_selection_mode}
                 options={REGULAR_UNWORKED_OPTIONS}
-                onChange={(value) => onPolicyChange(['regular_unworked', 'unworked_pay_policy'], value)}
+                onChange={(value) => onPolicyChange(['regular_unworked', 'holiday_selection_mode'], value)}
               />
-              {holidayPolicy.regular_unworked.unworked_pay_policy === 'selected_employment_types' && (
+              {holidayPolicy.regular_unworked.holiday_selection_mode === 'selected_regular_holidays' && (
+                <HolidaySelector
+                  idPrefix="regular-holiday"
+                  holidays={regularHolidays}
+                  selected={holidayPolicy.regular_unworked.holiday_ids}
+                  loading={holidaysLoading}
+                  kind="Regular"
+                  onChange={(value) => onPolicyChange(['regular_unworked', 'holiday_ids'], value)}
+                />
+              )}
+              <PolicySelect
+                id="regular-unworked-employment-rule"
+                label="Employment Type Rule"
+                value={holidayPolicy.regular_unworked.employment_type_mode}
+                options={WORKED_EMPLOYMENT_TYPE_OPTIONS}
+                onChange={(value) => onPolicyChange(['regular_unworked', 'employment_type_mode'], value)}
+              />
+              {holidayPolicy.regular_unworked.employment_type_mode === 'selected_employment_types' && (
                 <EmploymentTypeSelector
                   idPrefix="regular-employment-type"
                   options={employmentTypes}
@@ -256,12 +313,29 @@ export function HolidayPayPolicyCard({
             <PayScenarioBlock icon={Moon} title="Unworked pay">
               <PolicySelect
                 id="special-unworked-policy"
-                label="Who gets paid without clock-in"
-                value={holidayPolicy.special_unworked.unworked_pay_policy}
+                label="Unworked Pay Policy"
+                value={holidayPolicy.special_unworked.holiday_selection_mode}
                 options={SPECIAL_UNWORKED_OPTIONS}
-                onChange={(value) => onPolicyChange(['special_unworked', 'unworked_pay_policy'], value)}
+                onChange={(value) => onPolicyChange(['special_unworked', 'holiday_selection_mode'], value)}
               />
-              {holidayPolicy.special_unworked.unworked_pay_policy === 'selected_employment_types' && (
+              {holidayPolicy.special_unworked.holiday_selection_mode === 'selected_special_holidays' && (
+                <HolidaySelector
+                  idPrefix="special-holiday"
+                  holidays={specialHolidays}
+                  selected={holidayPolicy.special_unworked.holiday_ids}
+                  loading={holidaysLoading}
+                  kind="Special"
+                  onChange={(value) => onPolicyChange(['special_unworked', 'holiday_ids'], value)}
+                />
+              )}
+              <PolicySelect
+                id="special-unworked-employment-rule"
+                label="Employment Type Rule"
+                value={holidayPolicy.special_unworked.employment_type_mode}
+                options={WORKED_EMPLOYMENT_TYPE_OPTIONS}
+                onChange={(value) => onPolicyChange(['special_unworked', 'employment_type_mode'], value)}
+              />
+              {holidayPolicy.special_unworked.employment_type_mode === 'selected_employment_types' && (
                 <EmploymentTypeSelector
                   idPrefix="special-employment-type"
                   options={employmentTypes}

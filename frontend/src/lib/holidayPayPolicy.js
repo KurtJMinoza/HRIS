@@ -1,15 +1,15 @@
 export const REGULAR_UNWORKED_OPTIONS = [
-  { value: 'dole_default', label: 'DOLE Default: Pay covered employees if qualified' },
-  { value: 'selected_employment_types', label: 'Pay Selected Employment Types' },
-  { value: 'all_employment_types', label: 'Pay All Employment Types' },
+  { value: 'dole_default', label: 'DOLE Default: All Regular Holidays if qualified' },
+  { value: 'selected_regular_holidays', label: 'Selected Regular Holidays Only' },
+  { value: 'all_regular_holidays', label: 'All Regular Holidays' },
   { value: 'disabled', label: 'Disabled' },
 ]
 
 export const SPECIAL_UNWORKED_OPTIONS = [
-  { value: 'no_work_no_pay', label: 'No Work, No Pay — DOLE Default' },
-  { value: 'selected_employment_types', label: 'Pay Selected Employment Types' },
-  { value: 'all_employment_types', label: 'Pay All Employment Types' },
-  { value: 'paid_leave_only', label: 'Paid Leave Only' },
+  { value: 'no_work_no_pay_default', label: 'No Work, No Pay — DOLE Default' },
+  { value: 'selected_special_holidays', label: 'Selected Special Holidays Only' },
+  { value: 'all_special_holidays', label: 'All Special Holidays' },
+  { value: 'disabled', label: 'Disabled' },
 ]
 
 export const UNWORKED_POLICY_LABELS = Object.fromEntries([
@@ -44,6 +44,9 @@ export const DEFAULT_HOLIDAY_POLICY = {
   },
   regular_unworked: {
     unworked_pay_policy: 'dole_default',
+    holiday_selection_mode: 'dole_default',
+    holiday_ids: [],
+    employment_type_mode: 'all_employment_types',
     eligible_employment_types: [],
     always_pay: false,
     successive_holiday_rule: true,
@@ -56,6 +59,9 @@ export const DEFAULT_HOLIDAY_POLICY = {
   },
   special_unworked: {
     unworked_pay_policy: 'no_work_no_pay',
+    holiday_selection_mode: 'no_work_no_pay_default',
+    holiday_ids: [],
+    employment_type_mode: 'all_employment_types',
     eligible_employment_types: [],
     coverage_behaviour: 'respect_coverage',
   },
@@ -97,11 +103,13 @@ export function normalizeHolidayPayPolicy(value) {
   const regularUnworked = {
     ...DEFAULT_HOLIDAY_POLICY.regular_unworked,
     ...(policy.regular_unworked || {}),
+    holiday_ids: [...(policy.regular_unworked?.holiday_ids || [])].map(Number).filter(Number.isInteger),
     eligible_employment_types: [...(policy.regular_unworked?.eligible_employment_types || [])],
   }
   const specialUnworked = {
     ...DEFAULT_HOLIDAY_POLICY.special_unworked,
     ...(policy.special_unworked || {}),
+    holiday_ids: [...(policy.special_unworked?.holiday_ids || [])].map(Number).filter(Number.isInteger),
     eligible_employment_types: [...(policy.special_unworked?.eligible_employment_types || [])],
   }
   const regularWorked = {
@@ -123,7 +131,39 @@ export function normalizeHolidayPayPolicy(value) {
     specialUnworked.unworked_pay_policy = 'all_employment_types'
   }
 
-  const paysUnworkedSpecial = specialUnworked.unworked_pay_policy !== 'no_work_no_pay'
+  if (!policy.regular_unworked?.holiday_selection_mode) {
+    regularUnworked.holiday_selection_mode = regularUnworked.unworked_pay_policy === 'disabled'
+      ? 'disabled'
+      : 'dole_default'
+  }
+  if (!policy.special_unworked?.holiday_selection_mode) {
+    specialUnworked.holiday_selection_mode = specialUnworked.unworked_pay_policy === 'no_work_no_pay'
+      ? 'no_work_no_pay_default'
+      : 'all_special_holidays'
+  }
+  if (!policy.regular_unworked?.employment_type_mode) {
+    regularUnworked.employment_type_mode = regularUnworked.unworked_pay_policy === 'selected_employment_types'
+      ? 'selected_employment_types'
+      : 'all_employment_types'
+  }
+  if (!policy.special_unworked?.employment_type_mode) {
+    specialUnworked.employment_type_mode = specialUnworked.unworked_pay_policy === 'selected_employment_types'
+      ? 'selected_employment_types'
+      : 'all_employment_types'
+  }
+
+  regularUnworked.unworked_pay_policy = regularUnworked.holiday_selection_mode === 'disabled'
+    ? 'disabled'
+    : regularUnworked.employment_type_mode === 'selected_employment_types'
+      ? 'selected_employment_types'
+      : 'dole_default'
+  specialUnworked.unworked_pay_policy = ['disabled', 'no_work_no_pay_default'].includes(specialUnworked.holiday_selection_mode)
+    ? 'no_work_no_pay'
+    : specialUnworked.employment_type_mode === 'selected_employment_types'
+      ? 'selected_employment_types'
+      : 'all_employment_types'
+
+  const paysUnworkedSpecial = !['disabled', 'no_work_no_pay_default'].includes(specialUnworked.holiday_selection_mode)
 
   return {
     pay_unworked_regular: regularUnworked.unworked_pay_policy !== 'disabled',
@@ -165,6 +205,9 @@ export function serializeHolidayPayPolicyForSave(policy) {
     eligibility: normalized.eligibility,
     regular_unworked: {
       unworked_pay_policy: normalized.regular_unworked.unworked_pay_policy,
+      holiday_selection_mode: normalized.regular_unworked.holiday_selection_mode,
+      holiday_ids: normalized.regular_unworked.holiday_ids,
+      employment_type_mode: normalized.regular_unworked.employment_type_mode,
       eligible_employment_types: normalized.regular_unworked.eligible_employment_types,
       always_pay: normalized.regular_unworked.always_pay,
       successive_holiday_rule: normalized.regular_unworked.successive_holiday_rule,
@@ -177,6 +220,9 @@ export function serializeHolidayPayPolicyForSave(policy) {
     },
     special_unworked: {
       unworked_pay_policy: normalized.special_unworked.unworked_pay_policy,
+      holiday_selection_mode: normalized.special_unworked.holiday_selection_mode,
+      holiday_ids: normalized.special_unworked.holiday_ids,
+      employment_type_mode: normalized.special_unworked.employment_type_mode,
       eligible_employment_types: normalized.special_unworked.eligible_employment_types,
       coverage_behaviour: normalized.special_unworked.coverage_behaviour,
     },

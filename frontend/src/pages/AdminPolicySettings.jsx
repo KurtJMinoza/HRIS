@@ -62,6 +62,7 @@ import {
   getPayPolicyPreview,
   getPayPolicyCompanies,
   getPayPolicyEmploymentTypes,
+  getAdminHolidays,
 } from '@/api'
 import { useToast } from '@/components/ui/use-toast'
 import { PayrollLogisticsPolicyShell } from '@/components/payroll/PayrollLogisticsPolicyShell'
@@ -467,6 +468,8 @@ export default function AdminPolicySettings() {
   const [companies, setCompanies] = useState([])
   const [employmentTypes, setEmploymentTypes] = useState([])
   const [employmentTypesLoading, setEmploymentTypesLoading] = useState(false)
+  const [holidays, setHolidays] = useState([])
+  const [holidaysLoading, setHolidaysLoading] = useState(false)
   const [policies, setPolicies] = useState([])
   const [selectedPolicy, setSelectedPolicy] = useState(null)
   const [policyDetail, setPolicyDetail] = useState(null)
@@ -586,6 +589,28 @@ export default function AdminPolicySettings() {
       })
       .finally(() => {
         if (active) setEmploymentTypesLoading(false)
+      })
+
+    return () => { active = false }
+  }, [policyDetail?.company_id, toast])
+
+  useEffect(() => {
+    let active = true
+    setHolidaysLoading(true)
+    getAdminHolidays({ year: new Date().getFullYear(), company_id: policyDetail?.company_id })
+      .then((response) => {
+        if (active) {
+          setHolidays((Array.isArray(response?.holidays) ? response.holidays : []).filter((holiday) => holiday?.id != null))
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setHolidays([])
+          toast({ title: 'Failed to load holidays', description: error?.message, variant: 'error' })
+        }
+      })
+      .finally(() => {
+        if (active) setHolidaysLoading(false)
       })
 
     return () => { active = false }
@@ -873,7 +898,7 @@ export default function AdminPolicySettings() {
       disableActions={!policyDetail}
     >
       <Motion.div
-        className="mx-auto min-w-0 max-w-[1600px] space-y-6 rounded-2xl border border-transparent bg-transparent pb-10 dark:border-border/25"
+        className="mx-auto flex min-w-0 max-w-[1600px] flex-col gap-6 rounded-2xl border border-transparent bg-transparent pb-10 dark:border-border/25"
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
@@ -889,7 +914,7 @@ export default function AdminPolicySettings() {
         </div>
 
         {policyDetail && (
-          <section className="space-y-4" aria-labelledby="core-multipliers-heading">
+          <section className="order-2 space-y-4" aria-labelledby="core-multipliers-heading">
             <div className="flex flex-wrap items-end justify-between gap-2">
               <div>
                 <h3 id="core-multipliers-heading" className="text-lg font-semibold tracking-tight">
@@ -944,11 +969,11 @@ export default function AdminPolicySettings() {
           </section>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(340px,480px)_minmax(0,1fr)]">
+        <div className="contents">
         {/* Policy selector — data table + toolbar (matches Daily computation logs) */}
         <Card
           className={cn(
-            'gap-0 border-0 bg-card py-0 shadow-sm lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)] lg:flex lg:flex-col lg:self-start lg:overflow-hidden',
+            'order-1 gap-0 overflow-hidden border-0 bg-card py-0 shadow-sm',
             POLICY_CARD_HOVER_STICKY
           )}
         >
@@ -989,7 +1014,7 @@ export default function AdminPolicySettings() {
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
+              <div className="max-h-[24rem] min-h-0 flex-1 overflow-x-auto overflow-y-auto">
                 {loadingPolicies ? (
                   <div className="flex items-center gap-2 px-4 py-8 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />
@@ -1071,7 +1096,7 @@ export default function AdminPolicySettings() {
           </Card>
 
           {/* Main content: tabbed config */}
-          <div className="min-w-0 space-y-4">
+          <div className="order-3 min-w-0 space-y-4">
             {!selectedPolicy ? (
               <Card className={cn('border-0 bg-card shadow-sm', POLICY_CARD_HOVER)}>
                 <CardContent className="space-y-2 py-16 text-center text-muted-foreground">
@@ -1456,6 +1481,8 @@ export default function AdminPolicySettings() {
                         branchId={policyDetail.branch_id}
                         employmentTypes={employmentTypes}
                         employmentTypesLoading={employmentTypesLoading}
+                        holidays={holidays}
+                        holidaysLoading={holidaysLoading}
                         onPolicyChange={updateHolidayPolicy}
                       />
                     </Motion.div>

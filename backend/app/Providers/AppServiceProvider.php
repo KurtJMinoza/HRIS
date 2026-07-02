@@ -27,6 +27,7 @@ use App\Services\EmployeeDashboardCacheService;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
+use App\Services\HolidayPolicyCache;
 use App\Services\LegacyOrganizationMirrorService;
 use App\Support\AdminDashboardCache;
 use App\Support\EmployeeProfileCache;
@@ -89,6 +90,12 @@ class AppServiceProvider extends ServiceProvider
                 AttendanceCacheService::invalidate((int) $user->id);
                 EmployeeDashboardCacheService::invalidate((int) $user->id);
             }
+            if ($user->wasChanged(['employment_type', 'employment_status', 'employment_status_effective_date'])) {
+                AttendanceCacheService::invalidate((int) $user->id);
+                EmployeeDashboardCacheService::invalidate((int) $user->id);
+                HolidayPolicyCache::forgetPolicy((int) ($user->getEffectiveCompanyId() ?? 0));
+                PayrollCacheInvalidator::clear('employee_employment_type_changed', ['user_id' => (int) $user->id]);
+            }
         });
         User::deleted(function (User $user): void {
             HeadAssignmentEmployeeSearchCache::flush();
@@ -120,6 +127,7 @@ class AppServiceProvider extends ServiceProvider
                 ['summary', 'attendance', 'charts', 'recent']
             );
             AdminDashboardCache::invalidateCompany(0, ['summary', 'attendance', 'charts', 'recent']);
+            PayrollCacheInvalidator::clear('attendance_changed', ['user_id' => (int) $log->user_id]);
         };
         AttendanceLog::saved($invalidateAttendanceForLog);
         AttendanceLog::deleted($invalidateAttendanceForLog);
@@ -166,6 +174,7 @@ class AppServiceProvider extends ServiceProvider
             if ($leave->wasChanged('status') || $leave->status === LeaveRequest::STATUS_APPROVED) {
                 AttendanceCacheService::invalidate((int) $leave->user_id);
                 EmployeeDashboardCacheService::invalidate((int) $leave->user_id);
+                PayrollCacheInvalidator::clear('leave_changed', ['user_id' => (int) $leave->user_id]);
             }
         });
         LeaveRequest::deleted(function (LeaveRequest $leave): void {
@@ -178,6 +187,7 @@ class AppServiceProvider extends ServiceProvider
             if ($leave->user_id) {
                 AttendanceCacheService::invalidate((int) $leave->user_id);
                 EmployeeDashboardCacheService::invalidate((int) $leave->user_id);
+                PayrollCacheInvalidator::clear('leave_deleted', ['user_id' => (int) $leave->user_id]);
             }
         });
 

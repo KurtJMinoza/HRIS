@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\PolicyConditionKey;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
+use App\Models\Holiday;
 use App\Models\Policy;
 use App\Models\PolicyMultiplier;
 use App\Models\PolicyNdSetting;
@@ -404,9 +405,17 @@ class PayPolicyController extends Controller
                 'company_id' => $policy->company_id,
                 'branch_id' => $policy->branch_id,
                 'regular_unworked_policy' => $regular['unworked_pay_policy'] ?? 'dole_default',
+                'regular_unworked_holiday_selection_mode' => $regular['holiday_selection_mode'] ?? 'dole_default',
+                'regular_unworked_holiday_ids' => array_values((array) ($regular['holiday_ids'] ?? [])),
                 'regular_unworked_employment_types' => array_values((array) ($regular['eligible_employment_types'] ?? [])),
+                'regular_unworked_employment_type_mode' => $regular['employment_type_mode'] ?? 'all_employment_types',
+                'regular_unworked_coverage_behavior' => $regular['coverage_behaviour'] ?? 'respect_coverage',
                 'special_unworked_policy' => $special['unworked_pay_policy'] ?? 'no_work_no_pay',
+                'special_unworked_holiday_selection_mode' => $special['holiday_selection_mode'] ?? 'no_work_no_pay_default',
+                'special_unworked_holiday_ids' => array_values((array) ($special['holiday_ids'] ?? [])),
                 'special_unworked_employment_types' => array_values((array) ($special['eligible_employment_types'] ?? [])),
+                'special_unworked_employment_type_mode' => $special['employment_type_mode'] ?? 'all_employment_types',
+                'special_unworked_coverage_behavior' => $special['coverage_behaviour'] ?? 'respect_coverage',
                 'require_previous_workday_attendance' => (bool) ($attendance['require_previous_workday_presence'] ?? true),
                 'require_following_workday_attendance' => (bool) ($attendance['require_following_workday_presence'] ?? false),
                 'allow_paid_leave' => (bool) ($attendance['paid_leave_qualifies'] ?? true),
@@ -443,6 +452,10 @@ class PayPolicyController extends Controller
             'holiday_policy.eligibility' => ['sometimes', 'array'],
             'holiday_policy.regular_unworked' => ['sometimes', 'array'],
             'holiday_policy.regular_unworked.unworked_pay_policy' => ['sometimes', 'string', 'in:dole_default,covered_employees,selected_employment_types,all_employment_types,all_employees,disabled'],
+            'holiday_policy.regular_unworked.holiday_selection_mode' => ['sometimes', 'string', 'in:dole_default,selected_regular_holidays,all_regular_holidays,disabled'],
+            'holiday_policy.regular_unworked.holiday_ids' => ['sometimes', 'array'],
+            'holiday_policy.regular_unworked.holiday_ids.*' => ['integer', 'distinct', 'exists:holidays,id'],
+            'holiday_policy.regular_unworked.employment_type_mode' => ['sometimes', 'string', 'in:all_employment_types,selected_employment_types'],
             'holiday_policy.regular_unworked.eligible_employment_types' => ['sometimes', 'array'],
             'holiday_policy.regular_unworked.eligible_employment_types.*' => ['string', 'max:80'],
             'holiday_policy.regular_unworked.always_pay' => ['sometimes', 'boolean'],
@@ -455,6 +468,10 @@ class PayPolicyController extends Controller
             'holiday_policy.regular_worked.eligible_employment_types.*' => ['string', 'max:80'],
             'holiday_policy.special_unworked' => ['sometimes', 'array'],
             'holiday_policy.special_unworked.unworked_pay_policy' => ['sometimes', 'string', 'in:no_work_no_pay,selected_employment_types,all_employment_types,all_employees,paid_leave,paid_leave_only'],
+            'holiday_policy.special_unworked.holiday_selection_mode' => ['sometimes', 'string', 'in:no_work_no_pay_default,selected_special_holidays,all_special_holidays,disabled'],
+            'holiday_policy.special_unworked.holiday_ids' => ['sometimes', 'array'],
+            'holiday_policy.special_unworked.holiday_ids.*' => ['integer', 'distinct', 'exists:holidays,id'],
+            'holiday_policy.special_unworked.employment_type_mode' => ['sometimes', 'string', 'in:all_employment_types,selected_employment_types'],
             'holiday_policy.special_unworked.eligible_employment_types' => ['sometimes', 'array'],
             'holiday_policy.special_unworked.eligible_employment_types.*' => ['string', 'max:80'],
             'holiday_policy.special_unworked.coverage_behaviour' => ['sometimes', 'string', 'in:respect_coverage,ignore_coverage'],
@@ -503,6 +520,30 @@ class PayPolicyController extends Controller
             }
         }
 
+        foreach ([
+            'regular_unworked' => ['mode' => 'selected_regular_holidays', 'types' => ['regular', 'regular_holiday']],
+            'special_unworked' => ['mode' => 'selected_special_holidays', 'types' => ['special', 'special_non_working', 'special_non_working_holiday']],
+        ] as $block => $selection) {
+            $settings = (array) ($holidayPolicy[$block] ?? []);
+            if (($settings['holiday_selection_mode'] ?? null) !== $selection['mode']) {
+                continue;
+            }
+
+            $ids = array_values(array_unique(array_map('intval', (array) ($settings['holiday_ids'] ?? []))));
+            if ($ids === []) {
+                $errors["holiday_policy.{$block}.holiday_ids"] = ['Select at least one holiday.'];
+                continue;
+            }
+
+            $matchingCount = Holiday::query()
+                ->whereIn('id', $ids)
+                ->whereIn('type', $selection['types'])
+                ->count();
+            if ($matchingCount !== count($ids)) {
+                $errors["holiday_policy.{$block}.holiday_ids"] = ['Selected holidays must match this holiday type.'];
+            }
+        }
+
         if ($errors !== []) {
             throw ValidationException::withMessages($errors);
         }
@@ -528,6 +569,12 @@ class PayPolicyController extends Controller
                     $merged[$block]['eligible_employment_types'] = array_values(array_unique(
                         (array) $incoming[$block]['eligible_employment_types']
                     ));
+                }
+                if (array_key_exists('holiday_ids', $incoming[$block])) {
+                    $merged[$block]['holiday_ids'] = array_values(array_unique(array_map(
+                        'intval',
+                        (array) $incoming[$block]['holiday_ids']
+                    )));
                 }
             }
         }

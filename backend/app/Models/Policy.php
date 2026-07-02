@@ -40,6 +40,9 @@ class Policy extends Model
         ],
         'regular_unworked' => [
             'unworked_pay_policy' => 'dole_default',
+            'holiday_selection_mode' => 'dole_default',
+            'holiday_ids' => [],
+            'employment_type_mode' => 'all_employment_types',
             'eligible_employment_types' => [],
             'always_pay' => false,
             'successive_holiday_rule' => true,
@@ -52,6 +55,9 @@ class Policy extends Model
         ],
         'special_unworked' => [
             'unworked_pay_policy' => 'no_work_no_pay',
+            'holiday_selection_mode' => 'no_work_no_pay_default',
+            'holiday_ids' => [],
+            'employment_type_mode' => 'all_employment_types',
             'eligible_employment_types' => [],
             'coverage_behaviour' => 'respect_coverage',
         ],
@@ -104,6 +110,16 @@ class Policy extends Model
     public function resolvedHolidayPolicy(): array
     {
         $stored = is_array($this->holiday_policy) ? $this->holiday_policy : [];
+
+        foreach (['regular_unworked', 'special_unworked'] as $block) {
+            if (isset($stored[$block])
+                && is_array($stored[$block])
+                && ! array_key_exists('employment_type_mode', $stored[$block])) {
+                $stored[$block]['employment_type_mode'] = ($stored[$block]['unworked_pay_policy'] ?? null) === 'selected_employment_types'
+                    ? 'selected_employment_types'
+                    : 'all_employment_types';
+            }
+        }
 
         return array_replace_recursive(self::DEFAULT_HOLIDAY_POLICY, $stored);
     }
