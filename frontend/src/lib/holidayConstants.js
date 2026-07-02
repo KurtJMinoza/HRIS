@@ -32,13 +32,13 @@ export const HOLIDAY_TYPE_OPTIONS = [
     value: 'regular',
     label: 'Regular Holiday',
     short: 'RH',
-    hint: '200% daily rate for first 8h if worked (ordinary day); higher if rest day / OT.',
+    hint: 'Covered employees receive qualified unworked pay; 200% for the first 8h if worked.',
   },
   {
     value: 'special',
     label: 'Special Non-Working Holiday',
     short: 'SNW',
-    hint: '130% if worked; typically no pay if unworked unless policy/CBA.',
+    hint: 'Covered employees receive qualified unworked pay for this Admin Holiday; 130% if worked.',
   },
   {
     value: 'special_working',
@@ -92,9 +92,9 @@ export const HOLIDAY_STATUS_OPTIONS = [
 export function holidayImpactPreview(type) {
   switch (type) {
     case 'regular':
-      return { label: 'Regular Holiday → 200% if worked (1st 8h)', tone: 'teal' }
+      return { label: 'Regular Holiday → 100% qualified unworked pay · 200% if worked', tone: 'teal' }
     case 'special':
-      return { label: 'Special Non-Working → 130% if worked (1st 8h)', tone: 'amber' }
+      return { label: 'Special Non-Working → 100% qualified unworked pay · 130% if worked', tone: 'amber' }
     case 'special_working':
       return { label: 'Special Working Day → ordinary rates (no statutory holiday premium)', tone: 'slate' }
     case 'company':

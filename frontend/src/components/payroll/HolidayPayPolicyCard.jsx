@@ -140,7 +140,7 @@ function HolidaySelector({ idPrefix, holidays, selected, loading, kind, onChange
   return (
     <div className="space-y-2 rounded-lg border border-border/50 bg-muted/15 p-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected holidays</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected payroll overrides</p>
         <Badge variant="secondary">{selectedIds.length} {kind} {selectedIds.length === 1 ? 'Holiday' : 'Holidays'} selected</Badge>
       </div>
       {loading ? (
@@ -227,9 +227,10 @@ export function HolidayPayPolicyCard({
         <div className="flex gap-3 rounded-xl border border-border/50 bg-muted/20 px-4 py-3 text-sm dark:bg-muted/10">
           <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <p className="text-muted-foreground">
-            <span className="font-medium text-foreground">Coverage behaviour</span> decides whether payroll
-            pays employees outside the holiday&apos;s organizational scope. Ignore on either unworked or worked
-            applies payroll-wide for that holiday type. Calendar and attendance always respect Holiday Coverage.
+            <span className="font-medium text-foreground">Holiday Coverage</span> grants unworked pay to employees
+            inside a Regular or Special Non-Working holiday&apos;s organizational scope, even when this policy is off.
+            Ignore Coverage can also pay employees outside that scope; a selected-holiday list narrows that payroll override.
+            Calendar and attendance always respect Holiday Coverage.
           </p>
         </div>
 

@@ -255,7 +255,9 @@ class HolidayPayEvaluationService
                 ? (float) ($pay['worked_first8_multiplier'] ?? 1.0)
                 : (float) ($pay['unworked_multiplier'] ?? 0),
             'multiplier_source' => 'policy_settings_multipliers',
-            'policy_source' => 'policy_settings_holiday_pay',
+            'policy_source' => ($pay['unworked_pay_source'] ?? null) === 'holiday_module_coverage'
+                ? 'holiday_module_coverage'
+                : 'policy_settings_holiday_pay',
             'previous_workday_passed' => $previousWorkday === null ? null : (bool) ($previousWorkday['met'] ?? false),
             'should_create_worked_holiday_pay' => $shouldCreateWorked,
             'should_create_unworked_holiday_pay' => $shouldCreateUnworked,

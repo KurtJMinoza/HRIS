@@ -98,6 +98,7 @@ class HolidayPayPolicyService
             array_merge($holiday, ['date' => $dateKey]),
             $employee
         );
+        $holidayModuleGrant = ! $worked && $this->holidayModuleGrantsUnworkedPay($holiday, $scopeMatch);
         $qualification = $this->determineEligibility(
             $employee,
             $holiday,
@@ -106,7 +107,9 @@ class HolidayPayPolicyService
             $policy,
             $scopeMatch
         );
-        $unworkedMultiplier = $this->unworkedMultiplier($holiday, $resolvedPolicy);
+        $unworkedMultiplier = $holidayModuleGrant
+            ? $this->holidayModuleUnworkedMultiplier($holiday)
+            : $this->unworkedMultiplier($holiday, $resolvedPolicy);
 
         $resolvedHolidayType = $this->rulesEngine->holidayTypeFromHolidayRow($holiday);
         $ruleCode = $this->rulesEngine->resolveRuleCode($isRestDay, $resolvedHolidayType);
@@ -138,7 +141,7 @@ class HolidayPayPolicyService
                 'amount' => $holidayPremiumPay,
                 'worked' => false,
                 'unworked' => true,
-                'policy_source' => 'policy_settings',
+                'policy_source' => $holidayModuleGrant ? 'holiday_module_coverage' : 'policy_settings',
                 'previous_workday_passed' => $qualification['attendance_requirement_met'] ?? null,
                 'attendance_rule_applied' => $qualification['rule'] ?? null,
             ];
@@ -174,6 +177,7 @@ class HolidayPayPolicyService
             'eligible' => $qualification['eligible'],
             'qualification' => $qualification,
             'unworked_multiplier' => $unworkedMultiplier,
+            'unworked_pay_source' => $holidayModuleGrant ? 'holiday_module_coverage' : 'policy_settings',
             'worked_first8_multiplier' => $workedFirst8,
             'rule_code' => $ruleCode,
             'holiday_premium_pay' => $holidayPremiumPay,
@@ -289,6 +293,12 @@ class HolidayPayPolicyService
             $employmentType,
             $workedAllowedEmploymentTypes
         );
+        // Employees inside Holiday-module coverage remain eligible under the
+        // unworked-pay policy. A selected-holiday list only narrows an
+        // ignore-coverage override for employees outside that scope.
+        $holidayAllowedForUnworkedPay = $holidayScopeMatch
+            || $this->holidaySelectedForUnworkedPay($resolved, $kind, $holiday);
+        $holidayModuleGrant = ! $worked && $this->holidayModuleGrantsUnworkedPay($holiday, $holidayScopeMatch);
 
         if ($worked) {
             $result = $workedEmploymentTypeMatch
@@ -306,16 +316,16 @@ class HolidayPayPolicyService
                 );
         } elseif (in_array($normalizedType, ['special_working', 'company'], true) || $normalizedType === null) {
             $result = $this->result(false, true, 'This day does not carry unworked holiday pay.', 'not_non_working_holiday');
-        } elseif ($normalizedType === 'special' && $unworkedPolicy === self::UNWORKED_NO_PAY) {
+        } elseif (! $holidayModuleGrant && $normalizedType === 'special' && $unworkedPolicy === self::UNWORKED_NO_PAY) {
             $result = $this->result(false, true, 'Special non-working holiday follows No Work, No Pay.', 'special_no_work_no_pay');
-        } elseif (! $this->holidaySelectedForUnworkedPay($resolved, $kind, $holiday)) {
+        } elseif (! $holidayAllowedForUnworkedPay) {
             $result = $this->result(
                 false,
                 true,
                 'This holiday is not selected for unworked holiday pay.',
                 $kind.'_holiday_not_selected'
             );
-        } elseif ($normalizedType === 'special' && in_array($unworkedPolicy, [self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY], true)) {
+        } elseif (! $holidayModuleGrant && $normalizedType === 'special' && in_array($unworkedPolicy, [self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY], true)) {
             $paidLeave = $this->hasApprovedPaidLeave($employee, $dateKey);
             $result = $this->result(
                 $paidLeave,
@@ -323,7 +333,7 @@ class HolidayPayPolicyService
                 $paidLeave ? 'Approved paid leave is paid as leave.' : 'No approved paid leave covers this special holiday.',
                 $paidLeave ? 'special_paid_leave' : 'special_no_paid_leave'
             );
-        } elseif ($normalizedType === 'special' && ! $employmentTypeMatch) {
+        } elseif (! $holidayModuleGrant && $normalizedType === 'special' && ! $employmentTypeMatch) {
             $result = $this->result(false, true, 'Employee employment type is not selected for unworked special holiday pay.', 'special_employment_type_excluded');
         } elseif ($normalizedType === 'special') {
             $attendance = (array) ($resolved['attendance'] ?? []);
@@ -347,10 +357,10 @@ class HolidayPayPolicyService
                     $qualification['rule']
                 );
             }
-        } elseif (in_array($normalizedType, ['regular', 'double'], true)
+        } elseif (! $holidayModuleGrant && in_array($normalizedType, ['regular', 'double'], true)
             && ($unworkedPolicy === self::UNWORKED_DISABLED || ! ($resolved['pay_unworked_regular'] ?? true))) {
             $result = $this->result(false, true, 'Unworked regular holiday pay is disabled for this policy.', 'unworked_regular_disabled');
-        } elseif (in_array($normalizedType, ['regular', 'double'], true) && ! $employmentTypeMatch) {
+        } elseif (! $holidayModuleGrant && in_array($normalizedType, ['regular', 'double'], true) && ! $employmentTypeMatch) {
             $result = $this->result(false, true, 'Employee employment type is not selected for unworked regular holiday pay.', 'regular_employment_type_excluded');
         } elseif (in_array($normalizedType, ['regular', 'double'], true)
             && (bool) ($resolved['regular_unworked']['always_pay'] ?? false)) {
@@ -431,7 +441,9 @@ class HolidayPayPolicyService
         $determination = $this->determineEligibility($employee, $holiday, $dateKey, $workedOnHoliday, $policy, $holidayScopeMatch);
         $previousWorkday = $this->getPreviousQualifyingWorkday($employee, $dateKey, $policy, $holiday);
         $followingWorkday = $this->getFollowingQualifyingWorkday($employee, $dateKey, $policy, $holiday);
-        $unworkedMultiplier = $this->unworkedMultiplier($holiday, $resolved);
+        $unworkedMultiplier = $this->holidayModuleGrantsUnworkedPay($holiday, $holidayScopeMatch)
+            ? $this->holidayModuleUnworkedMultiplier($holiday)
+            : $this->unworkedMultiplier($holiday, $resolved);
         $shouldPay = ! $workedOnHoliday
             && ($determination['eligible'] ?? false)
             && $unworkedMultiplier > 0.00001;
@@ -529,6 +541,29 @@ class HolidayPayPolicyService
                 : 0.0,
             default => 0.0,
         };
+    }
+
+    /**
+     * A persisted Admin Holiday is itself an instruction to pay covered employees
+     * when its type carries unworked pay. Policy Settings still govern seeded
+     * calendar defaults and any override for employees outside Holiday Coverage.
+     */
+    private function holidayModuleGrantsUnworkedPay(array $holiday, bool $scopeMatch): bool
+    {
+        if (! $scopeMatch || ! is_numeric($holiday['id'] ?? null) || (int) $holiday['id'] <= 0) {
+            return false;
+        }
+
+        return in_array($this->normalizeHolidayType($holiday['type'] ?? null), [
+            'regular',
+            'double',
+            'special',
+        ], true);
+    }
+
+    private function holidayModuleUnworkedMultiplier(array $holiday): float
+    {
+        return $this->normalizeHolidayType($holiday['type'] ?? null) === 'double' ? 2.0 : 1.0;
     }
 
     public const UNWORKED_NO_PAY = 'no_work_no_pay';

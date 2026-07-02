@@ -1,13 +1,13 @@
 export const REGULAR_UNWORKED_OPTIONS = [
   { value: 'dole_default', label: 'DOLE Default: All Regular Holidays if qualified' },
-  { value: 'selected_regular_holidays', label: 'Selected Regular Holidays Only' },
+  { value: 'selected_regular_holidays', label: 'Holiday Coverage + Selected Payroll Overrides' },
   { value: 'all_regular_holidays', label: 'All Regular Holidays' },
   { value: 'disabled', label: 'Disabled' },
 ]
 
 export const SPECIAL_UNWORKED_OPTIONS = [
   { value: 'no_work_no_pay_default', label: 'No Work, No Pay — DOLE Default' },
-  { value: 'selected_special_holidays', label: 'Selected Special Holidays Only' },
+  { value: 'selected_special_holidays', label: 'Holiday Coverage + Selected Payroll Overrides' },
   { value: 'all_special_holidays', label: 'All Special Holidays' },
   { value: 'disabled', label: 'Disabled' },
 ]
