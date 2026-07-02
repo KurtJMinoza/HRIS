@@ -156,6 +156,50 @@ class AttendanceSessionService
     }
 
     /**
+     * Attendance-policy presence for a local calendar day.
+     *
+     * The attendance UI treats any verified punch or approved correction as
+     * present, even when the pair is incomplete. Holiday qualification must use
+     * that same presence meaning; worked-holiday computation still requires a
+     * complete session through {@see getTimesForDate}.
+     */
+    public function hasPresenceForDate(User $user, string $dateKey, ?string $tz = null): bool
+    {
+        $tz ??= config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $correctionKey = ((int) $user->id).'|'.$dateKey;
+
+        if ($this->bulkPayrollMode) {
+            if (isset($this->bulkCorrectionsByUserDate[$correctionKey])) {
+                return true;
+            }
+
+            return $this->hasAnyVerifiedLogOnLocalDate((int) $user->id, $dateKey, $tz);
+        }
+
+        $hasApprovedCorrection = AttendanceCorrection::query()
+            ->where('user_id', $user->id)
+            ->whereDate('date', $dateKey)
+            ->where('approved', true)
+            ->where(function ($query) {
+                $query->where('pending_approval', false)->orWhereNull('pending_approval');
+            })
+            ->whereNull('rejected_at')
+            ->exists();
+
+        if ($hasApprovedCorrection) {
+            return true;
+        }
+
+        $dayStartUtc = Carbon::parse($dateKey, $tz)->startOfDay()->timezone('UTC');
+        $dayEndUtc = Carbon::parse($dateKey, $tz)->endOfDay()->timezone('UTC');
+
+        return AttendanceLog::query()
+            ->where('user_id', $user->id)
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
+            ->exists();
+    }
+
+    /**
      * Mirrors {@see PayrollComputationService::resolveAllowanceAttendanceValidity} using bulk stores.
      *
      * @return array{valid: bool, reason: string, sources: array<string, bool>}

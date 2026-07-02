@@ -128,8 +128,10 @@ function EmploymentTypeSelector({ idPrefix, options, selected, loading, onChange
 }
 
 function HolidaySelector({ idPrefix, holidays, selected, loading, kind, onChange }) {
+  const availableIds = new Set(holidays.map((holiday) => Number(holiday.id)))
+  const selectedIds = selected.map(Number).filter((id) => availableIds.has(id))
   const toggle = (id) => {
-    const next = new Set(selected.map(Number))
+    const next = new Set(selectedIds)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     onChange(Array.from(next))
@@ -139,7 +141,7 @@ function HolidaySelector({ idPrefix, holidays, selected, loading, kind, onChange
     <div className="space-y-2 rounded-lg border border-border/50 bg-muted/15 p-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected holidays</p>
-        <Badge variant="secondary">{selected.length} {kind} {selected.length === 1 ? 'Holiday' : 'Holidays'} selected</Badge>
+        <Badge variant="secondary">{selectedIds.length} {kind} {selectedIds.length === 1 ? 'Holiday' : 'Holidays'} selected</Badge>
       </div>
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading holidays…</p>
@@ -149,7 +151,7 @@ function HolidaySelector({ idPrefix, holidays, selected, loading, kind, onChange
             <ToggleRow
               key={holiday.id}
               id={`${idPrefix}-${holiday.id}`}
-              checked={selected.map(Number).includes(Number(holiday.id))}
+              checked={selectedIds.includes(Number(holiday.id))}
               onCheckedChange={() => toggle(Number(holiday.id))}
               label={holiday.name}
               hint={holiday.date}

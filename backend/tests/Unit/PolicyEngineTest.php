@@ -838,6 +838,33 @@ class PolicyEngineTest extends TestCase
         $this->assertNull($timeOut);
     }
 
+    public function test_incomplete_verified_punch_still_counts_as_attendance_presence(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $user = User::factory()->create();
+        $dateKey = '2026-06-12';
+
+        try {
+            AttendanceLog::create([
+                'user_id' => $user->id,
+                'type' => AttendanceLog::TYPE_CLOCK_OUT,
+                'verified_at' => Carbon::parse("{$dateKey} 18:07", 'Asia/Manila')->utc(),
+            ]);
+
+            $attendance = app(AttendanceSessionService::class);
+            [$timeIn, $timeOut] = $attendance->getTimesForDate($user, $dateKey, 'Asia/Manila');
+
+            $this->assertNull($timeIn);
+            $this->assertNull($timeOut);
+            $this->assertTrue($attendance->hasPresenceForDate($user, $dateKey, 'Asia/Manila'));
+        } finally {
+            $user->forceDelete();
+        }
+    }
+
     public function test_empty_salary_tab_overrides_stale_basic_salary_assignment(): void
     {
         if (! $this->tablesExist()) {

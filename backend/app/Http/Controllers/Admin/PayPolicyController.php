@@ -454,7 +454,7 @@ class PayPolicyController extends Controller
             'holiday_policy.regular_unworked.unworked_pay_policy' => ['sometimes', 'string', 'in:dole_default,covered_employees,selected_employment_types,all_employment_types,all_employees,disabled'],
             'holiday_policy.regular_unworked.holiday_selection_mode' => ['sometimes', 'string', 'in:dole_default,selected_regular_holidays,all_regular_holidays,disabled'],
             'holiday_policy.regular_unworked.holiday_ids' => ['sometimes', 'array'],
-            'holiday_policy.regular_unworked.holiday_ids.*' => ['integer', 'distinct', 'exists:holidays,id'],
+            'holiday_policy.regular_unworked.holiday_ids.*' => ['integer', 'distinct'],
             'holiday_policy.regular_unworked.employment_type_mode' => ['sometimes', 'string', 'in:all_employment_types,selected_employment_types'],
             'holiday_policy.regular_unworked.eligible_employment_types' => ['sometimes', 'array'],
             'holiday_policy.regular_unworked.eligible_employment_types.*' => ['string', 'max:80'],
@@ -470,7 +470,7 @@ class PayPolicyController extends Controller
             'holiday_policy.special_unworked.unworked_pay_policy' => ['sometimes', 'string', 'in:no_work_no_pay,selected_employment_types,all_employment_types,all_employees,paid_leave,paid_leave_only'],
             'holiday_policy.special_unworked.holiday_selection_mode' => ['sometimes', 'string', 'in:no_work_no_pay_default,selected_special_holidays,all_special_holidays,disabled'],
             'holiday_policy.special_unworked.holiday_ids' => ['sometimes', 'array'],
-            'holiday_policy.special_unworked.holiday_ids.*' => ['integer', 'distinct', 'exists:holidays,id'],
+            'holiday_policy.special_unworked.holiday_ids.*' => ['integer', 'distinct'],
             'holiday_policy.special_unworked.employment_type_mode' => ['sometimes', 'string', 'in:all_employment_types,selected_employment_types'],
             'holiday_policy.special_unworked.eligible_employment_types' => ['sometimes', 'array'],
             'holiday_policy.special_unworked.eligible_employment_types.*' => ['string', 'max:80'],
@@ -531,15 +531,14 @@ class PayPolicyController extends Controller
 
             $ids = array_values(array_unique(array_map('intval', (array) ($settings['holiday_ids'] ?? []))));
             if ($ids === []) {
-                $errors["holiday_policy.{$block}.holiday_ids"] = ['Select at least one holiday.'];
                 continue;
             }
 
-            $matchingCount = Holiday::query()
+            $wrongTypeExists = Holiday::query()
                 ->whereIn('id', $ids)
-                ->whereIn('type', $selection['types'])
-                ->count();
-            if ($matchingCount !== count($ids)) {
+                ->whereNotIn('type', $selection['types'])
+                ->exists();
+            if ($wrongTypeExists) {
                 $errors["holiday_policy.{$block}.holiday_ids"] = ['Selected holidays must match this holiday type.'];
             }
         }
@@ -571,10 +570,21 @@ class PayPolicyController extends Controller
                     ));
                 }
                 if (array_key_exists('holiday_ids', $incoming[$block])) {
-                    $merged[$block]['holiday_ids'] = array_values(array_unique(array_map(
+                    $holidayIds = array_values(array_unique(array_map(
                         'intval',
                         (array) $incoming[$block]['holiday_ids']
                     )));
+                    $allowedTypes = $block === 'regular_unworked'
+                        ? ['regular', 'regular_holiday']
+                        : ['special', 'special_non_working', 'special_non_working_holiday'];
+                    $merged[$block]['holiday_ids'] = Holiday::query()
+                        ->whereIn('id', $holidayIds)
+                        ->whereIn('type', $allowedTypes)
+                        ->where('status', 'active')
+                        ->pluck('id')
+                        ->map(fn ($id): int => (int) $id)
+                        ->values()
+                        ->all();
                 }
             }
         }

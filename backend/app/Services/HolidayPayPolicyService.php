@@ -756,7 +756,7 @@ class HolidayPayPolicyService
         $isFollowing = $direction === 'following';
         $position = $isFollowing ? 'following' : 'preceding';
 
-        if ($this->workedOn($employee, $workdayKey)) {
+        if ($this->presentOn($employee, $workdayKey)) {
             return [
                 'date' => $includeDate ? $workdayKey : null,
                 'met' => true,
@@ -797,6 +797,19 @@ class HolidayPayPolicyService
         );
 
         return $timeIn !== null && $timeOut !== null;
+    }
+
+    protected function presentOn(User $employee, string $dateKey): bool
+    {
+        if ($this->workedOn($employee, $dateKey)) {
+            return true;
+        }
+
+        return $this->attendanceSession->hasPresenceForDate(
+            $employee,
+            $dateKey,
+            config('attendance.timezone', config('app.timezone', 'Asia/Manila'))
+        );
     }
 
     public function hasWorkedOnDate(User $employee, string $dateKey): bool

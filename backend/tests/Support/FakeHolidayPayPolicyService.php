@@ -29,6 +29,11 @@ class FakeHolidayPayPolicyService extends HolidayPayPolicyService
         return in_array($dateKey, $this->workedDates, true);
     }
 
+    protected function presentOn(User $employee, string $dateKey): bool
+    {
+        return in_array($dateKey, $this->workedDates, true);
+    }
+
     protected function hasApprovedPaidLeave(User $employee, string $dateKey): bool
     {
         return in_array($dateKey, $this->paidLeaveDates, true);
