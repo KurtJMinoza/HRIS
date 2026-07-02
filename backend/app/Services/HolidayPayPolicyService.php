@@ -326,7 +326,27 @@ class HolidayPayPolicyService
         } elseif ($normalizedType === 'special' && ! $employmentTypeMatch) {
             $result = $this->result(false, true, 'Employee employment type is not selected for unworked special holiday pay.', 'special_employment_type_excluded');
         } elseif ($normalizedType === 'special') {
-            $result = $this->result(true, true, 'Company policy pays this covered employee for the unworked special holiday.', 'special_unworked_company_policy');
+            $attendance = (array) ($resolved['attendance'] ?? []);
+            $prevRequired = (bool) ($attendance['require_previous_workday_presence'] ?? true);
+            $followRequired = (bool) ($attendance['require_following_workday_presence'] ?? false);
+
+            if (! $prevRequired && ! $followRequired) {
+                $result = $this->result(true, true, 'Company policy pays this covered employee for the unworked special holiday.', 'special_unworked_company_policy');
+            } else {
+                $qualification = $this->evaluateWorkdayAttendanceRequirements(
+                    $employee,
+                    $dateKey,
+                    $resolved,
+                    $prevRequired,
+                    $followRequired
+                );
+                $result = $this->result(
+                    $qualification['met'],
+                    $qualification['met'],
+                    $qualification['reason'],
+                    $qualification['rule']
+                );
+            }
         } elseif (in_array($normalizedType, ['regular', 'double'], true)
             && ($unworkedPolicy === self::UNWORKED_DISABLED || ! ($resolved['pay_unworked_regular'] ?? true))) {
             $result = $this->result(false, true, 'Unworked regular holiday pay is disabled for this policy.', 'unworked_regular_disabled');

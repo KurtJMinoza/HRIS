@@ -164,6 +164,7 @@ class HolidayPaySpecialHolidayTest extends TestCase
 
         [, , $employee, , $holiday] = $this->seedSpecialHolidayScenario($this->specialPolicy());
         $dateKey = '2026-06-24';
+        $this->clockFullDay($employee, '2026-06-23');
 
         $evaluation = app(HolidayPayEvaluationService::class)->evaluateHoliday(
             $employee,
@@ -242,6 +243,7 @@ class HolidayPaySpecialHolidayTest extends TestCase
 
         [, , $employee] = $this->seedSpecialHolidayScenario($this->specialPolicy(), 'aci');
         $dateKey = '2026-06-24';
+        $this->clockFullDay($employee, '2026-06-23');
 
         $evaluation = app(HolidayPayEvaluationService::class)->evaluateHoliday(
             $employee,

@@ -387,10 +387,10 @@ export function HolidayPayPolicyCard({
           <div className="border-b border-border/50 px-5 py-4">
             <div className="flex items-center gap-2">
               <CalendarClock className="size-4 text-muted-foreground" aria-hidden />
-              <h4 className="font-semibold">Unworked regular — attendance rules</h4>
+              <h4 className="font-semibold">Unworked holiday — attendance rules</h4>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              Applied when evaluating unworked regular holiday pay only.
+              Applied when evaluating unworked regular and special non-working holiday pay.
             </p>
           </div>
           <div className="grid gap-3 p-5 sm:grid-cols-2">
