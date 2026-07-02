@@ -148,7 +148,8 @@ class HolidayPayPolicyService
             $holidayName = (string) ($holiday['name'] ?? 'Holiday');
             $basePay = round(($paidRegularMinutes / 60.0) * $hourlyRate, 2);
             $premiumIncrement = max(0.0, $workedFirst8 - 1.0);
-            $holidayPremiumPay = round($basePay * $premiumIncrement, 2);
+            $useFullRateOnHolidayLine = $normalizedType === 'special';
+            $holidayPremiumPay = round($basePay * ($useFullRateOnHolidayLine ? $workedFirst8 : $premiumIncrement), 2);
             $breakdown = [
                 'component' => 'holiday_premium',
                 'component_code' => $componentCode,

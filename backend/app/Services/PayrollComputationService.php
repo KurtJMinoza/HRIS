@@ -1027,12 +1027,23 @@ class PayrollComputationService
             && ($holidayQualification['eligible'] ?? true);
         $baseRegularPay = ($paidReg / 60.0) * $hourlyRate;
         $holidayIncrementMultiplier = $qualifiesStatutoryHolidayPremium ? max(0.0, $first8 - 1.0) : 0.0;
+        $normalizedHolidayTypeForPay = $holiday !== null
+            ? $this->holidayEligibility->normalizeHolidayType($holiday['type'] ?? null)
+            : null;
+        $isWorkedSpecialNonWorking = $qualifiesStatutoryHolidayPremium
+            && $normalizedHolidayTypeForPay === 'special';
 
-        // Regular pay keeps the 1.00× base; holiday line is the premium increment only (RH +100%, SH +30%).
-        $regularBasePayOnly = round($baseRegularPay, 2);
-        $holidayPremiumPay = $qualifiesStatutoryHolidayPremium
-            ? round($baseRegularPay * $holidayIncrementMultiplier, 2)
-            : 0.0;
+        // RH: 1.00× stays in regular pay, premium increment on holiday line.
+        // SH (special non-working): full 1.30× on holiday line; that day is excluded from regular pay.
+        if ($isWorkedSpecialNonWorking) {
+            $regularBasePayOnly = 0.0;
+            $holidayPremiumPay = round($baseRegularPay * $first8, 2);
+        } else {
+            $regularBasePayOnly = round($baseRegularPay, 2);
+            $holidayPremiumPay = $qualifiesStatutoryHolidayPremium
+                ? round($baseRegularPay * $holidayIncrementMultiplier, 2)
+                : 0.0;
+        }
         $first8Pay = round($regularBasePayOnly + $holidayPremiumPay, 2);
 
         $otPay = (float) ($approvedOtComp['ot_pay'] ?? 0);
@@ -1043,7 +1054,7 @@ class PayrollComputationService
         $ndPay = $allowNdPremium ? ($ndPayRegular + $ndPayOt) : 0.0;
 
         $totalPay = $first8Pay + $otPay + $ndPay;
-        // Worked holiday: base in regular_pay, premium increment in holiday_premium (per-holiday payslip lines).
+        // RH worked: base in regular_pay + premium on holiday line. SH worked: full rate on holiday line only.
         // Unworked entitlement remains a single holiday_premium line in the no-punch branch.
         $isHolidayDay = $qualifiesStatutoryHolidayPremium;
 
@@ -1812,7 +1823,8 @@ class PayrollComputationService
             $totalRegularNight += (int) ($d['regular_night_minutes'] ?? 0);
             $totalOtDay += (int) ($d['ot_day_minutes'] ?? 0);
             $totalOtNight += (int) ($d['ot_night_minutes'] ?? 0);
-            if ($requiredMinutes > 0 && $dayStatus === 'worked' && ! $dayIsRest) {
+            if ($requiredMinutes > 0 && $dayStatus === 'worked' && ! $dayIsRest
+                && ! $this->dayIsWorkedSpecialNonWorkingHolidayExcludedFromRegularPay($d)) {
                 $actualWorkedDayUnits += min(1.0, $regularPaidMinutes / $requiredMinutes);
             }
             foreach ($dayBreakdown as $entry) {
@@ -3060,6 +3072,27 @@ class PayrollComputationService
     }
 
     /**
+     * Worked special non-working holiday: full SH rate is on the holiday line, not regular pay.
+     */
+    private function dayIsWorkedSpecialNonWorkingHolidayExcludedFromRegularPay(array $day): bool
+    {
+        if (strtolower(trim((string) ($day['status'] ?? ''))) !== 'worked') {
+            return false;
+        }
+
+        $holiday = $day['holiday'] ?? null;
+        if (! is_array($holiday)) {
+            return false;
+        }
+
+        if ($this->holidayEligibility->normalizeHolidayType($holiday['type'] ?? null) !== 'special') {
+            return false;
+        }
+
+        return round((float) ($day['holiday_premium_pay'] ?? 0), 2) > 0.0001;
+    }
+
+    /**
      * True when calendar premium (first_8 > 1) holiday pay is booked as holiday_premium, not 1× regular base.
      * Matches computeEmployeePayroll() $dayIsHolidayForBaseSplit — those dates must not appear as "regular working days"
      * on payslips (minutes still exist in attendance; pay is under Holiday premium).
@@ -3120,9 +3153,9 @@ class PayrollComputationService
             $totalMinutesAllPresence += $regularMinutes;
             $presenceDays++;
 
-            // Premium holiday (worked RH/SH at &gt;1×): compensation is in Holiday premium, not Regular pay — omit from
-            // regular-rate day list so counts match {@see daily_computation_earning_lines} "Regular pay".
-            if ($this->dayIsPremiumHolidayExcludedFromRegularAttendanceSummary($day)) {
+            // Worked SH: full rate on holiday line. Unworked RH/SH: holiday-only pay.
+            if ($this->dayIsPremiumHolidayExcludedFromRegularAttendanceSummary($day)
+                || $this->dayIsWorkedSpecialNonWorkingHolidayExcludedFromRegularPay($day)) {
                 continue;
             }
 
@@ -4637,10 +4670,12 @@ class PayrollComputationService
             $worked = (bool) ($item['worked'] ?? false);
             $multiplier = round((float) ($item['multiplier'] ?? 1.0), 2);
             $baseHourly = $dailyRate > 0 ? $dailyRate / 8.0 : null;
-            // Worked holiday payslip lines show the premium increment only (regular pay has the 1.00× base).
+            // RH worked: premium increment only. SH worked: full statutory rate on holiday line.
             $lineHourly = $baseHourly;
             if ($worked && $baseHourly !== null && $multiplier > 1.00001) {
-                $lineHourly = round($baseHourly * max(0.0, $multiplier - 1.0), 4);
+                $lineHourly = $normalizedType === 'special'
+                    ? round($baseHourly * $multiplier, 4)
+                    : round($baseHourly * max(0.0, $multiplier - 1.0), 4);
             } elseif (! $worked && $baseHourly !== null && $multiplier > 0) {
                 $lineHourly = round($baseHourly * $multiplier, 4);
             }
