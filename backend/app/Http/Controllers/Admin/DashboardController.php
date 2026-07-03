@@ -506,6 +506,27 @@ class DashboardController extends Controller
      */
     private function formatDashboardOvertimeRequest(Overtime $pendingOvertimeRequest): array
     {
+        $currentApprovalRecord = \App\Models\OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+            ->where('request_id', (int) $pendingOvertimeRequest->id)
+            ->where('approval_status', \App\Models\OrgApprovalRecord::STATUS_PENDING)
+            ->orderBy('sequence_order')
+            ->with('approver')
+            ->first();
+
+        $label = null;
+        $approverName = null;
+        if ($currentApprovalRecord) {
+            $storedLabel = trim((string) ($currentApprovalRecord->approval_label ?? ''));
+            if ($storedLabel !== '') {
+                $label = rtrim(str_ireplace(' approval', '', $storedLabel));
+            } else {
+                $role = \App\Enums\HrRole::tryFrom((string) $currentApprovalRecord->approver_role);
+                $label = $role?->badgeLabel();
+            }
+            $approverName = $currentApprovalRecord->approver?->display_name ?? $currentApprovalRecord->approver_name;
+        }
+
         return [
             'id' => (int) $pendingOvertimeRequest->id,
             'request_id' => (int) $pendingOvertimeRequest->id,
@@ -525,6 +546,10 @@ class DashboardController extends Controller
             'reason' => $pendingOvertimeRequest->reason,
             'remarks' => $pendingOvertimeRequest->remarks,
             'status' => $pendingOvertimeRequest->status,
+            'display_status' => $label ? 'Pending '.$label.' Approval' : 'Pending',
+            'display_badge_color' => 'orange',
+            'current_step_name' => $label,
+            'current_approver_name' => $approverName,
         ];
     }
 

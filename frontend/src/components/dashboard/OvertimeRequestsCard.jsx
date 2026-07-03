@@ -3,6 +3,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/ca
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import OvertimeStatusBadge from '@/components/overtime/OvertimeStatusBadge'
 import {
   DASHBOARD_PENDING_CARD_HEADER_CLASS,
   DASHBOARD_PENDING_CARD_SHELL_CLASS,
@@ -161,10 +162,7 @@ function PendingOvertimeItem({ request, onReviewRequest }) {
           </div>
         </div>
 
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">
-          <Clock3 className="size-3" aria-hidden />
-          Pending
-        </span>
+        <OvertimeStatusBadge row={request} className="items-end" />
       </div>
 
       <div className="my-2 h-px bg-border/70" />

@@ -53,6 +53,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
+import OvertimeStatusBadge from '@/components/overtime/OvertimeStatusBadge'
 import { formatHHmmTo12h, toHhMm, toTimeInputValue } from '@/lib/timeFormat'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import {
@@ -422,58 +423,16 @@ function formatOvertimeTimeRange(row) {
 
 /** One line: step progress + current status (matches Correction Requests clarity). */
 function formatOvertimeStatusLine(row) {
-  const primary = row.display_status || row.status || '—'
-  const waitingLabel = waitingForLabel(row.approval_progress)
-  const label = waitingLabel || primary
-  const summary = approvalStepsSummary(row.approval_progress)
-  if (summary && label && label !== '—') {
-    return `${summary} — ${label}`
-  }
-  return label
-}
-
-function waitingForLabel(steps) {
-  if (!Array.isArray(steps)) return null
-  const current = steps.find((s) => s.status === 'current')
-  if (!current) return null
-  const label = current.label || current.approver_role_label || ''
-  return label ? `Waiting for ${label}` : null
+  const s = String(row.status || '').toLowerCase()
+  if (s === 'approved') return 'Approved'
+  if (s === 'rejected') return 'Rejected'
+  const step = row.current_step_name
+  if (step) return `Waiting for ${step}`
+  return row.display_status || row.status || '—'
 }
 
 function OvertimeStatusCell({ row }) {
-  const summary = approvalStepsSummary(row.approval_progress)
-  const primary = row.display_status || row.status || '—'
-  const waitingLabel = waitingForLabel(row.approval_progress)
-
-  const displayLabel = waitingLabel || primary
-
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      {summary ? (
-        <p className="text-[11px] font-semibold leading-snug text-muted-foreground" title={summary}>
-          {summary}
-        </p>
-      ) : null}
-      <span
-        className={cn(
-          'inline-flex w-fit max-w-full items-start gap-1.5 rounded-full border border-transparent px-2.5 py-1.5 text-xs font-semibold leading-snug shadow-sm',
-          statusBadgeClass(primary),
-        )}
-        title={formatOvertimeStatusLine(row)}
-      >
-        <Timer className="mt-0.5 size-3.5 shrink-0 opacity-80" aria-hidden />
-        <span className="line-clamp-2 text-left">{displayLabel}</span>
-      </span>
-      {row.hr_wait_message ? (
-        <p
-          className="line-clamp-2 text-[11px] leading-snug text-amber-800 dark:text-amber-200/90"
-          title={row.hr_wait_message}
-        >
-          {row.hr_wait_message}
-        </p>
-      ) : null}
-    </div>
-  )
+  return <OvertimeStatusBadge row={row} />
 }
 
 function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelete, onApprove, onReject, mobile = false }) {
@@ -735,12 +694,12 @@ function DetailSection({ title, children, className }) {
 
 function OvertimeStatusPill({ row }) {
   const label = formatOvertimeStatusLine(row)
-  const status = row?.status
-  const Icon = status === 'approved' ? CheckCircle2 : status === 'rejected' ? XCircle : Clock
+  const color = row.display_badge_color || (row.status === 'approved' ? 'green' : row.status === 'rejected' ? 'red' : 'orange')
+  const Icon = color === 'green' ? CheckCircle2 : color === 'red' ? XCircle : Clock
   const tone =
-    status === 'approved'
+    color === 'green'
       ? 'border-emerald-200/80 bg-emerald-50 text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/35 dark:text-emerald-100'
-      : status === 'rejected'
+      : color === 'red'
         ? 'border-rose-200/80 bg-rose-50 text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/35 dark:text-rose-100'
         : 'border-amber-200/80 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/35 dark:text-amber-100'
 

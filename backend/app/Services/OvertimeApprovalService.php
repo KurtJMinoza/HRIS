@@ -79,6 +79,23 @@ class OvertimeApprovalService
         );
     }
 
+    public function buildCurrentStepLabel(Overtime $overtime): ?string
+    {
+        $progress = $this->buildApprovalProgress($overtime);
+        foreach ($progress as $step) {
+            if (($step['status'] ?? '') === 'current') {
+                $label = $step['label'] ?? $step['approver_role_label'] ?? null;
+                if ($label) {
+                    return rtrim(str_ireplace(' approval', '', (string) $label));
+                }
+
+                return $label;
+            }
+        }
+
+        return null;
+    }
+
     public function deriveDisplayStatusLabel(Overtime $overtime): string
     {
         if ($overtime->rejected_at || $overtime->status === Overtime::STATUS_REJECTED) {

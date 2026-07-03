@@ -292,6 +292,85 @@ class EmployeeOvertimeController extends Controller
         ];
     }
 
+    private function deriveBadgeColor(Overtime $overtime): string
+    {
+        if ($overtime->status === Overtime::STATUS_REJECTED || $overtime->rejected_at !== null) {
+            return 'red';
+        }
+        if ($overtime->status === Overtime::STATUS_APPROVED) {
+            return 'green';
+        }
+
+        return 'orange';
+    }
+
+    private function deriveCurrentStepName(Overtime $overtime): ?string
+    {
+        if ($overtime->status === Overtime::STATUS_APPROVED || $overtime->status === Overtime::STATUS_REJECTED || $overtime->rejected_at) {
+            return null;
+        }
+
+        return $this->overtimeApprovalService->buildCurrentStepLabel($overtime);
+    }
+
+    private function deriveCurrentApproverName(Overtime $overtime): ?string
+    {
+        $progress = $this->overtimeApprovalService->buildApprovalProgress($overtime);
+        foreach ($progress as $step) {
+            if (($step['status'] ?? '') === 'current') {
+                return $step['approver_name'] ?? null;
+            }
+        }
+
+        return null;
+    }
+
+    private function derivePendingDisplayStatus(Overtime $overtime, ?User $currentApprover): string
+    {
+        $step = $this->deriveCurrentStepName($overtime);
+
+        if ($step) {
+            return 'Pending '.$step.' Approval';
+        }
+
+        return 'Pending';
+    }
+
+    private function deriveStepNameFromApprover(?User $approver): ?string
+    {
+        if ($approver === null) {
+            return null;
+        }
+
+        $progress = $this->overtimeApprovalService->buildApprovalProgress($approver);
+
+        return null;
+    }
+
+    private function deriveTableStepName(string $approvalStage): ?string
+    {
+        return match ($approvalStage) {
+            \App\Support\HrApprovalStages::PENDING_FIRST => 'Department Head',
+            \App\Support\HrApprovalStages::PENDING_SECOND => 'HR',
+            default => null,
+        };
+    }
+
+    private function deriveTableDisplayStatus(string $status, ?string $stepName): string
+    {
+        if ($status === Overtime::STATUS_APPROVED) {
+            return 'Approved';
+        }
+        if ($status === Overtime::STATUS_REJECTED) {
+            return 'Rejected';
+        }
+        if ($stepName) {
+            return 'Pending '.$stepName.' Approval';
+        }
+
+        return 'Pending';
+    }
+
     private function mapOvertimeRowForEmployee(Overtime $o, ?User $actor = null): array
     {
         $o->loadMissing([
@@ -335,6 +414,9 @@ class EmployeeOvertimeController extends Controller
             'created_at' => $o->created_at?->toIso8601String(),
             'filed_at' => $o->filed_at?->toIso8601String(),
             'display_status' => $this->overtimeApprovalService->deriveDisplayStatusLabel($o),
+            'display_badge_color' => $this->deriveBadgeColor($o),
+            'current_step_name' => $this->deriveCurrentStepName($o),
+            'current_approver_name' => $this->deriveCurrentApproverName($o),
             'approval_stage' => $o->approval_stage,
             'approval_progress' => $this->mergeOvertimeRemarksIntoProgress(
                 $o,
@@ -377,22 +459,23 @@ class EmployeeOvertimeController extends Controller
         if ($reason !== '') {
             $reasonSummary = strlen($reason) > 140 ? substr($reason, 0, 137).'...' : $reason;
         }
-        $displayStatus = match ($o->status) {
-            Overtime::STATUS_APPROVED => 'HR Approved',
-            Overtime::STATUS_REJECTED => 'Rejected',
-            default => 'Pending',
-        };
+        $stepName = $o->status === Overtime::STATUS_PENDING
+            ? $this->deriveTableStepName((string) ($o->approval_stage ?? ''))
+            : null;
+        $displayStatus = $this->deriveTableDisplayStatus($o->status, $stepName);
 
         return array_merge([
             'id' => (int) $o->id,
-            'overtime_date' => $o->date?->toDateString(),
+            'overtime_date' => $o->date->toDateString(),
             'requested_start_time' => $o->schedule_end?->format('H:i'),
             'requested_end_time' => $o->expected_end_time?->format('H:i'),
             'requested_hours' => (float) ($o->computed_hours ?? 0),
             'approved_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
             'status' => $o->status,
             'approval_stage' => $o->approval_stage,
+            'current_step_name' => $stepName,
             'current_approver_name' => $currentApprover?->display_name,
+            'display_badge_color' => $this->deriveBadgeColor($o),
             'reason_summary' => $reasonSummary,
             'created_at' => $o->created_at?->toIso8601String(),
             'updated_at' => $o->updated_at?->toIso8601String(),
@@ -401,7 +484,7 @@ class EmployeeOvertimeController extends Controller
             'can_edit' => $canEdit,
 
             // Compatibility aliases used by the existing shared table.
-            'date' => $o->date?->toDateString(),
+            'date' => $o->date->toDateString(),
             'schedule_end' => $o->schedule_end?->format('H:i'),
             'expected_end_time' => $o->expected_end_time?->format('H:i'),
             'start_time' => $o->schedule_end?->format('H:i'),

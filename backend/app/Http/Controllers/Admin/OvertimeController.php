@@ -302,6 +302,9 @@ class OvertimeController extends Controller
                 'created_at' => $o->created_at?->toIso8601String(),
                 'filed_at' => $o->filed_at?->toIso8601String(),
                 'display_status' => $this->overtimeListDisplayStatus($o, $currentApproval),
+                'display_badge_color' => $this->overtimeBadgeColor($o),
+                'current_step_name' => $this->overtimeCurrentStepName($currentApproval),
+                'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
                 'approval_stage' => $o->approval_stage,
                 'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : $o->approval_stage,
                 'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
@@ -1734,6 +1737,9 @@ class OvertimeController extends Controller
             'rejection_note' => $overtime->rejection_note,
             'status' => $overtime->status,
             'display_status' => $this->overtimeListDisplayStatus($overtime, $pending),
+            'display_badge_color' => $this->overtimeBadgeColor($overtime),
+            'current_step_name' => $this->overtimeCurrentStepName($pending),
+            'current_approver_name' => $pending?->approver?->display_name ?? $pending?->approver_name,
             'current_approver_id' => $pending?->approver_id,
             'current_approver' => $pending?->approver?->display_name ?? $pending?->approver_name,
             'current_stage' => $pending ? $this->approvalRecordStageLabel($pending) : $overtime->approval_stage,
@@ -1808,6 +1814,26 @@ class OvertimeController extends Controller
                 'sequence_order' => (int) $record->sequence_order,
             ];
         })->values()->all();
+    }
+
+    private function overtimeBadgeColor(Overtime $overtime): string
+    {
+        if ($overtime->status === Overtime::STATUS_REJECTED || $overtime->rejected_at !== null) {
+            return 'red';
+        }
+        if ($overtime->status === Overtime::STATUS_APPROVED) {
+            return 'green';
+        }
+        return 'orange';
+    }
+
+    private function overtimeCurrentStepName(?OrgApprovalRecord $currentApproval): ?string
+    {
+        if ($currentApproval === null) {
+            return null;
+        }
+
+        return rtrim(str_ireplace(' approval', '', (string) $this->approvalRecordStageLabel($currentApproval)));
     }
 
     private function initialsForName(?string $name): string
