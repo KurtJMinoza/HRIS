@@ -210,6 +210,18 @@ class HolidayService
      */
     public function flushCoverageCache(): void
     {
+        $keys = [
+            'holiday_scope:*',
+            'holiday_pay_policy:*',
+            'payroll_preview:*',
+            'payroll_run:*',
+            'employee_dashboard:calendar:*',
+            'attendance_summary:*',
+            'admin_dashboard:holidays:*',
+        ];
+        foreach ($keys as $pattern) {
+            Cache::forget($pattern);
+        }
         Cache::flush();
         $this->holidayCalendar->flushMergedYearCaches();
     }
@@ -221,6 +233,10 @@ class HolidayService
     {
         Cache::forget(self::COVERAGE_CACHE_PREFIX.'swap_date:'.$dateKey);
         Cache::forget(self::COVERAGE_CACHE_PREFIX.'moved_from:'.$dateKey);
+        Cache::forget('holiday_scope:date:'.$dateKey);
+        Cache::forget('payroll_preview:date:'.$dateKey);
+        Cache::forget('employee_dashboard:calendar:'.$dateKey);
+        Cache::forget('admin_dashboard:holidays:'.$dateKey);
     }
 
     /**

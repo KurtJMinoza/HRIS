@@ -7,6 +7,7 @@ use App\Models\Department;
 use App\Models\Division;
 use App\Models\EmployeeOrganizationAssignment;
 use App\Models\Holiday;
+use App\Models\HolidayScope;
 use App\Models\SectionUnit;
 use App\Models\User;
 use Carbon\Carbon;
@@ -473,6 +474,21 @@ class HolidayScopeResolver
     /** @return array<string, mixed> */
     private function holidayRow(Holiday $holiday): array
     {
+        $coverageIds = $holiday->getCoverageIds();
+        $coverageType = $holiday->coverage_type;
+
+        if (empty($coverageIds) && $coverageType === null && Schema::hasTable('holiday_scopes')) {
+            $scopes = $holiday->relationLoaded('holidayScopes')
+                ? $holiday->holidayScopes
+                : HolidayScope::query()->where('holiday_id', $holiday->id)->get();
+
+            if ($scopes->isNotEmpty()) {
+                $first = $scopes->first();
+                $coverageType = $first->scope_type;
+                $coverageIds = $scopes->pluck('scope_id')->map(fn ($id) => (int) $id)->values()->all();
+            }
+        }
+
         return [
             'id' => $holiday->id,
             'name' => $holiday->name,
@@ -487,8 +503,8 @@ class HolidayScopeResolver
             'department_id' => $holiday->department_id,
             'section_unit_id' => $holiday->section_unit_id,
             'employee_id' => $holiday->employee_id,
-            'coverage_type' => $holiday->coverage_type,
-            'coverage_ids' => $holiday->getCoverageIds(),
+            'coverage_type' => $coverageType,
+            'coverage_ids' => $coverageIds,
         ];
     }
 
@@ -499,15 +515,19 @@ class HolidayScopeResolver
      */
     private function logDecision(array $holiday, string $scopeType, array $scopeIds, User $employee, ?array $context, bool $matched, string $reason): void
     {
+        $context = $context ?? $this->emptyContext();
         Log::debug('holiday_scope_resolver', [
             'holiday_id' => $holiday['id'] ?? null,
             'holiday_name' => $holiday['name'] ?? null,
-            'scope_type' => $scopeType,
+            'coverage_type' => $holiday['coverage_type'] ?? $holiday['scope'] ?? 'nationwide',
             'selected_scope_ids' => $scopeIds,
             'employee_id' => (int) $employee->id,
             'employee_company_id' => $context['company_id'] ?? $this->effectiveCompanyId($employee),
             'employee_branch_id' => $context['branch_id'] ?? $employee->branch_id,
-            'matched' => $matched,
+            'employee_division_id' => $context['division_id'] ?? $employee->division_id,
+            'employee_department_id' => $context['department_id'] ?? $employee->department_id,
+            'employee_section_id' => $context['section_unit_id'] ?? $employee->section_unit_id,
+            'scope_match' => $matched,
             'skip_reason' => $matched ? null : $reason,
         ]);
     }

@@ -195,6 +195,7 @@ class HolidayController extends Controller
 
         $holiday->update($payload);
         $holiday->refresh();
+        $holiday->syncHolidayScopes();
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushRuntimeCaches();
 
@@ -248,6 +249,7 @@ class HolidayController extends Controller
         }
 
         $holiday->refresh();
+        $holiday->syncHolidayScopes();
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushRuntimeCaches();
 
@@ -326,6 +328,7 @@ class HolidayController extends Controller
                 $this->holidayService->flushCoverageForDate($newDate);
             }
             $holiday = $existing->refresh();
+            $holiday->syncHolidayScopes();
         } else {
             $this->holiday->newQuery()->updateOrCreate(
                 [
@@ -341,6 +344,7 @@ class HolidayController extends Controller
                 $this->payloadForWrite($old)
             );
             $holiday = $this->holiday->newQuery()->create($this->payloadForWrite($new));
+            $holiday->syncHolidayScopes();
             $this->holidayService->flushCoverageForDate($valid['date']);
             $this->holidayService->flushCoverageForDate($valid['new_date']);
         }
@@ -419,6 +423,7 @@ class HolidayController extends Controller
         }
 
         $holiday = $this->holiday->newQuery()->create($payload);
+        $holiday->refresh()->syncHolidayScopes();
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushCoverageForDate($valid['date']);
         $this->holidayService->flushRuntimeCaches();
@@ -500,6 +505,7 @@ class HolidayController extends Controller
 
         $holiday->update($updateData);
         $holiday->refresh();
+        $holiday->syncHolidayScopes();
 
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushCoverageForDate($oldDateKey);
@@ -925,17 +931,48 @@ class HolidayController extends Controller
     {
         $query = $this->holiday->newQuery()
             ->where('date', $valid['date'])
-            ->where('scope', $valid['scope'] ?? 'nationwide')
-            ->where('company_id', $valid['company_id'] ?? null)
-            ->where('branch_id', $valid['branch_id'] ?? null)
-            ->where('division_id', $valid['division_id'] ?? null)
-            ->where('department_id', $valid['department_id'] ?? null)
-            ->where('section_unit_id', $valid['section_unit_id'] ?? null)
-            ->where('employee_id', $valid['employee_id'] ?? null)
             ->whereIn('status', ['active', 'draft']);
 
         if ($ignoreId !== null) {
             $query->where('id', '!=', $ignoreId);
+        }
+
+        $scope = $valid['scope'] ?? 'nationwide';
+        $coverageType = $valid['coverage_type'] ?? null;
+        $coverageIds = $valid['coverage_ids'] ?? [];
+
+        if ($scope === 'nationwide') {
+            $query->where('scope', 'nationwide');
+        } elseif ($coverageType !== null && is_array($coverageIds) && ! empty($coverageIds)) {
+            $query->where('scope', $scope);
+            $coverageIds = array_map('intval', $coverageIds);
+
+            $query->where(function ($q) use ($coverageType, $coverageIds, $valid) {
+                $q->where(function ($sub) use ($coverageType, $coverageIds) {
+                    $sub->where('coverage_type', $coverageType)
+                        ->whereJsonContains('coverage_ids', $coverageIds[0]);
+                });
+
+                if (! empty($valid['company_id'])) {
+                    $q->orWhere(function ($sub) use ($valid) {
+                        $sub->where('scope', $valid['scope'] ?? 'nationwide')
+                            ->where('company_id', $valid['company_id'])
+                            ->whereNull('branch_id')
+                            ->whereNull('division_id')
+                            ->whereNull('department_id')
+                            ->whereNull('section_unit_id')
+                            ->whereNull('employee_id');
+                    });
+                }
+            });
+        } else {
+            $query->where('scope', $scope)
+                ->where('company_id', $valid['company_id'] ?? null)
+                ->where('branch_id', $valid['branch_id'] ?? null)
+                ->where('division_id', $valid['division_id'] ?? null)
+                ->where('department_id', $valid['department_id'] ?? null)
+                ->where('section_unit_id', $valid['section_unit_id'] ?? null)
+                ->where('employee_id', $valid['employee_id'] ?? null);
         }
 
         return $query->exists();
@@ -998,6 +1035,8 @@ class HolidayController extends Controller
             ->where($keys)
             ->where('id', '!=', $holiday->id)
             ->delete();
+
+        $holiday->refresh()->syncHolidayScopes();
 
         return $holiday;
     }
@@ -1415,70 +1454,13 @@ class HolidayController extends Controller
     private function employeesForHolidayScope(array $holiday): \Illuminate\Database\Eloquent\Builder
     {
         $query = User::query()->activeRoster();
+        $date = Carbon::parse((string) ($holiday['date'] ?? now()->toDateString()));
 
-        $coverageType = $holiday['coverage_type'] ?? null;
-        $coverageIds = $holiday['coverage_ids'] ?? [];
-        if ($coverageType !== null && is_array($coverageIds) && ! empty($coverageIds)) {
-            $coverageIds = array_map('intval', $coverageIds);
+        $employeeIds = (clone $query)->get()->filter(
+            fn (User $employee): bool => $this->holidayScopeResolver->appliesRowToEmployee($holiday, $employee, $date)
+        )->pluck('id')->all();
 
-            return match ($coverageType) {
-                'company' => $query->where(function ($q) use ($coverageIds) {
-                    $q->whereIn('company_id', $coverageIds)
-                        ->orWhereHas('companyHeadships', fn ($sub) => $sub->whereIn('id', $coverageIds))
-                        ->orWhereHas('branch', fn ($sub) => $sub->whereIn('company_id', $coverageIds))
-                        ->orWhereHas('departmentRelation.branch', fn ($sub) => $sub->whereIn('company_id', $coverageIds));
-                }),
-                'branches' => $query->where(function ($q) use ($coverageIds) {
-                    $q->whereIn('branch_id', $coverageIds)
-                        ->orWhereHas('departmentRelation', fn ($sub) => $sub->whereIn('branch_id', $coverageIds));
-                }),
-                'divisions' => $query->whereIn('division_id', $coverageIds),
-                'departments' => $query->whereIn('department_id', $coverageIds),
-                'section_units' => $query->whereIn('section_unit_id', $coverageIds),
-                'employees' => $query->whereIn('id', $coverageIds),
-                default => $query,
-            };
-        }
-
-        $scope = (string) ($holiday['scope'] ?? 'nationwide');
-
-        if ($scope === 'employee' && ! empty($holiday['employee_id'])) {
-            return $query->where('id', (int) $holiday['employee_id']);
-        }
-
-        if ($scope === 'department' && ! empty($holiday['department_id'])) {
-            return $query->where('department_id', (int) $holiday['department_id']);
-        }
-
-        if ($scope === 'section_unit' && ! empty($holiday['section_unit_id'])) {
-            return $query->where('section_unit_id', (int) $holiday['section_unit_id']);
-        }
-
-        if ($scope === 'division' && ! empty($holiday['division_id'])) {
-            return $query->where('division_id', (int) $holiday['division_id']);
-        }
-
-        if ($scope === 'branch' && ! empty($holiday['branch_id'])) {
-            $branchId = (int) $holiday['branch_id'];
-
-            return $query->where(function ($q) use ($branchId) {
-                $q->where('branch_id', $branchId)
-                    ->orWhereHas('departmentRelation', fn ($department) => $department->where('branch_id', $branchId));
-            });
-        }
-
-        if ($scope === 'company' && ! empty($holiday['company_id'])) {
-            $companyId = (int) $holiday['company_id'];
-
-            return $query->where(function ($q) use ($companyId) {
-                $q->where('company_id', $companyId)
-                    ->orWhereHas('companyHeadships', fn ($company) => $company->where('id', $companyId))
-                    ->orWhereHas('branch', fn ($branch) => $branch->where('company_id', $companyId))
-                    ->orWhereHas('departmentRelation.branch', fn ($branch) => $branch->where('company_id', $companyId));
-            });
-        }
-
-        return $query;
+        return $query->whereIn('id', $employeeIds);
     }
 
     private function holidayPremiumMultiplier(string $type): float
