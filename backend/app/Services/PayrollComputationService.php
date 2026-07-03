@@ -1032,19 +1032,26 @@ class PayrollComputationService
             : null;
         $isWorkedSpecialNonWorking = $qualifiesStatutoryHolidayPremium
             && $normalizedHolidayTypeForPay === 'special';
+        $isRestDayWorked = $isRestDay && $paidReg > 0;
+        $restDayWorkedPay = 0.0;
 
         // RH: 1.00× stays in regular pay, premium increment on holiday line.
         // SH (special non-working): full 1.30× on holiday line; that day is excluded from regular pay.
+        // RD (rest day worked): full multiplier on a single rest_day_worked_pay line; excluded from regular pay.
         if ($isWorkedSpecialNonWorking) {
             $regularBasePayOnly = 0.0;
             $holidayPremiumPay = round($baseRegularPay * $first8, 2);
+        } elseif ($isRestDayWorked) {
+            $regularBasePayOnly = 0.0;
+            $holidayPremiumPay = 0.0;
+            $restDayWorkedPay = round($baseRegularPay * $first8, 2);
         } else {
             $regularBasePayOnly = round($baseRegularPay, 2);
             $holidayPremiumPay = $qualifiesStatutoryHolidayPremium
                 ? round($baseRegularPay * $holidayIncrementMultiplier, 2)
                 : 0.0;
         }
-        $first8Pay = round($regularBasePayOnly + $holidayPremiumPay, 2);
+        $first8Pay = round($regularBasePayOnly + $holidayPremiumPay + $restDayWorkedPay, 2);
 
         $otPay = (float) ($approvedOtComp['ot_pay'] ?? 0);
         $ndPayRegular = ($ndRegPaid / 60.0) * $hourlyRate * $ndBase * $ndPremium;
@@ -1055,11 +1062,21 @@ class PayrollComputationService
 
         $totalPay = $first8Pay + $otPay + $ndPay;
         // RH worked: base in regular_pay + premium on holiday line. SH worked: full rate on holiday line only.
+        // RD worked: full multiplier on a single rest_day_worked_pay line; excluded from regular pay.
         // Unworked entitlement remains a single holiday_premium line in the no-punch branch.
         $isHolidayDay = $qualifiesStatutoryHolidayPremium;
 
         $ndNightMinutesForBreakdown = $ndRegPaid + $effectiveNdOvertimeMinutes;
         $breakdown[] = ['component' => 'regular_pay', 'minutes' => $paidReg, 'rate' => $hourlyRate, 'multiplier' => 1.0, 'amount' => max(0.0, $regularBasePayOnly)];
+        if ($restDayWorkedPay > 0.0001) {
+            $breakdown[] = [
+                'component' => 'rest_day_worked_pay',
+                'minutes' => $paidReg,
+                'rate' => $hourlyRate,
+                'multiplier' => $first8,
+                'amount' => $restDayWorkedPay,
+            ];
+        }
         if ($regularMinutesOverThreshold > 0) {
             $breakdown[] = [
                 'component' => 'regular_hours_over_threshold',
@@ -1862,6 +1879,7 @@ class PayrollComputationService
             'nd_pay' => 'Night differential',
             'night_diff' => 'Night differential',
             'holiday_premium' => 'Holiday premium',
+            'rest_day_worked_pay' => 'Rest Day Worked Pay',
             'paid_leave' => 'Leave adjustments',
             'paid_leave_daily_flat' => 'Leave adjustments',
             'attendance_correction' => 'Attendance corrections',
@@ -1876,6 +1894,7 @@ class PayrollComputationService
             'nd_pay' => 20,
             'night_diff' => 20,
             'holiday_premium' => 30,
+            'rest_day_worked_pay' => 25,
             'attendance_correction' => 40,
             'paid_leave' => 50,
             'paid_leave_daily_flat' => 50,

@@ -154,6 +154,10 @@ class AttendanceRollupService
         }
 
         if ($status === 'rest' || ! empty($row['is_rest_day'])) {
+            if (! empty($row['is_rest_day_worked'])) {
+                return 'Rest Day Worked';
+            }
+
             return 'Rest Day';
         }
 
@@ -255,6 +259,10 @@ class AttendanceRollupService
         }
 
         if ($status === 'rest' || ! empty($row['is_rest_day'])) {
+            if (! empty($row['is_rest_day_worked'])) {
+                return 'Rest Day Worked';
+            }
+
             return 'Rest Day';
         }
 
@@ -322,7 +330,7 @@ class AttendanceRollupService
 
         $normalized = strtolower(trim($label));
 
-        return $normalized === 'rest day' || $normalized === 'restday';
+        return $normalized === 'rest day' || $normalized === 'restday' || $normalized === 'rest day worked';
     }
 
     /**

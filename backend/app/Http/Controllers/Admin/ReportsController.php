@@ -892,15 +892,28 @@ class ReportsController extends Controller
                         $timeOut = $correctionD->time_out;
                     }
                     if ($correctionD->time_in && $correctionD->time_out) {
-                        $workedMinutes = $todaySchedule
-                            ? AttendanceStatusService::getNetWorkedMinutes(
+                        if ($todaySchedule) {
+                            $workedMinutes = AttendanceStatusService::getNetWorkedMinutes(
                                 $correctionD->time_in,
                                 $correctionD->time_out,
                                 $todaySchedule,
                                 $dateKey,
                                 $attendanceTz
-                            )
-                            : (int) $correctionD->time_in->diffInMinutes($correctionD->time_out);
+                            );
+                        } elseif ($isRestDayRow) {
+                            $breakSchedule = AttendanceStatusService::firstScheduleWithBreaks($effectiveSchedule);
+                            $workedMinutes = $breakSchedule !== null
+                                ? AttendanceStatusService::getNetWorkedMinutes(
+                                    $correctionD->time_in,
+                                    $correctionD->time_out,
+                                    $breakSchedule,
+                                    $dateKey,
+                                    $attendanceTz
+                                )
+                                : (int) $correctionD->time_in->diffInMinutes($correctionD->time_out);
+                        } else {
+                            $workedMinutes = (int) $correctionD->time_in->diffInMinutes($correctionD->time_out);
+                        }
                     }
                 }
 
@@ -911,24 +924,35 @@ class ReportsController extends Controller
                 // For regular clock-in/out logs (no correction covering both times), deduct the
                 // schedule's unpaid break window so worked minutes are consistent across all views.
                 if (! ($correctionD && $correctionD->time_in && $correctionD->time_out)) {
-                    if ($todaySchedule && $timeIn && $timeOut) {
+                    if ($timeIn && $timeOut) {
                         $tIn = $timeIn instanceof Carbon ? $timeIn : Carbon::parse($timeIn);
                         $tOut = $timeOut instanceof Carbon ? $timeOut : Carbon::parse($timeOut);
-                        $workedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                            $tIn, $tOut, $todaySchedule, $dateKey, $attendanceTz
-                        );
+                        if ($todaySchedule) {
+                            $workedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                                $tIn, $tOut, $todaySchedule, $dateKey, $attendanceTz
+                            );
+                        } elseif ($isRestDayRow) {
+                            $breakSchedule = AttendanceStatusService::firstScheduleWithBreaks($effectiveSchedule);
+                            $workedMinutes = $breakSchedule !== null
+                                ? AttendanceStatusService::getNetWorkedMinutes(
+                                    $tIn, $tOut, $breakSchedule, $dateKey, $attendanceTz
+                                )
+                                : (int) $tIn->diffInMinutes($tOut);
+                        }
                     }
                 }
 
-                // Rest day / not scheduled: suppress incidental punches, but keep approved OT filings visible.
+                // Rest day / not scheduled: suppress only when no actual punches.
                 if (! (is_array($todaySchedule) && ! empty($todaySchedule['in']))) {
-                    $timeIn = null;
-                    $timeOut = null;
-                    $workedMinutes = null;
-                    $virtualClockOutFromOt = false;
-                    if ($approvedOvertimeRecords === []) {
-                        $approvedOtForDetailedRow = null;
-                        $otRecords = [];
+                    if ($timeIn === null && $timeOut === null) {
+                        $timeIn = null;
+                        $timeOut = null;
+                        $workedMinutes = null;
+                        $virtualClockOutFromOt = false;
+                        if ($approvedOvertimeRecords === []) {
+                            $approvedOtForDetailedRow = null;
+                            $otRecords = [];
+                        }
                     }
                 }
 
@@ -975,7 +999,11 @@ class ReportsController extends Controller
                 } elseif ($holidayOnDate !== null) {
                     $status = 'holiday';
                 } elseif ($isRestDayRow) {
-                    $status = 'rest';
+                    if ($timeIn || $timeOut) {
+                        $status = $timeIn ? 'present' : 'incomplete';
+                    } else {
+                        $status = 'rest';
+                    }
                 } elseif ($todaySchedule && ! empty($todaySchedule['in'])) {
                     if (! $effectiveTimeIn) {
                         if ($effectiveTimeOut) {
@@ -1246,8 +1274,9 @@ class ReportsController extends Controller
                 $payrollImpactMinutes = 0;
                 $payrollImpactHours = 0.0;
                 $premiumDay = null;
+                $hasWorkableSchedule = is_array($todaySchedule) && ! empty($todaySchedule['in']);
                 if ($needsHeavy) {
-                    if ($todaySchedule && ! empty($todaySchedule['in'])) {
+                    if ($hasWorkableSchedule || $isRestDayRow) {
                         $tInPayroll = $effectiveTimeIn
                             ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
                             : null;
@@ -1347,6 +1376,8 @@ class ReportsController extends Controller
                         'presence_issue' => $presenceIssue,
                         'attendance_time_out_status' => $attendanceOtStatus,
                         'leave_type' => $leaveInfo['type'] ?? null,
+                        'is_rest_day' => $isRestDayRow || $status === 'rest',
+                        'is_rest_day_worked' => $isRestDayRow && ($effectiveTimeIn || $effectiveTimeOut),
                         'leave_status' => $leaveInfo['status'] ?? null,
                         'undertime_filing_status' => $undertimeFilingStatus,
                         'leave_start_date' => $leaveInfo['start_date'] ?? null,

@@ -631,13 +631,15 @@ class AttendanceMonitoringController extends Controller
                     is_array($todaySchedule) ? $todaySchedule : null
                 );
 
-                // Rest day / not scheduled: never surface punches in attendance monitoring.
+                // Rest day / not scheduled: surface punches only if attendance logs exist.
                 $isWorkday = is_array($todaySchedule) && ! empty($todaySchedule['in']);
                 if (! $isWorkday || $isRestDayRow) {
-                    $effectiveTimeIn = null;
-                    $effectiveTimeOut = null;
-                    $effectiveWorkedMinutes = null;
-                    $virtualClockOutFromOt = false;
+                    if ($timeIn === null && $timeOut === null) {
+                        $effectiveTimeIn = null;
+                        $effectiveTimeOut = null;
+                        $effectiveWorkedMinutes = null;
+                        $virtualClockOutFromOt = false;
+                    }
                 }
 
                 if ($correction && $correction->approved) {
@@ -668,12 +670,23 @@ class AttendanceMonitoringController extends Controller
                 $virtualClockOutFromOt = false;
 
                 if (! ($correction && $correction->approved && $correction->time_in && $correction->time_out)) {
-                    if ($todaySchedule && $effectiveTimeIn && $effectiveTimeOut) {
+                    if ($effectiveTimeIn && $effectiveTimeOut) {
                         $tIn = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
                         $tOut = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
-                        $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                            $tIn, $tOut, $todaySchedule, $dateKey, $tz
-                        );
+                        if ($todaySchedule) {
+                            $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                                $tIn, $tOut, $todaySchedule, $dateKey, $tz
+                            );
+                        } elseif ($isRestDayRow) {
+                            $breakSchedule = AttendanceStatusService::firstScheduleWithBreaks($effectiveSchedule);
+                            if ($breakSchedule !== null) {
+                                $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                                    $tIn, $tOut, $breakSchedule, $dateKey, $tz
+                                );
+                            } else {
+                                $effectiveWorkedMinutes = (int) $tIn->diffInMinutes($tOut);
+                            }
+                        }
                     }
                 }
 
@@ -696,7 +709,11 @@ class AttendanceMonitoringController extends Controller
                 } elseif ($holidayOnDate !== null) {
                     $status = 'holiday';
                 } elseif ($isRestDayRow) {
-                    $status = 'rest';
+                    if ($effectiveTimeIn || $effectiveTimeOut) {
+                        $status = $effectiveTimeIn ? 'present' : 'incomplete';
+                    } else {
+                        $status = 'rest';
+                    }
                 } elseif ($todaySchedule && ! empty($todaySchedule['in'])) {
                     if (! $effectiveTimeIn) {
                         if ($effectiveTimeOut) {
@@ -769,9 +786,7 @@ class AttendanceMonitoringController extends Controller
                         }
                     }
                 } elseif ($effectiveTimeIn || $effectiveTimeOut) {
-                    // If not scheduled today, punches are ignored (rest day).
-                    // Keep status as "—" instead of fabricating Present.
-                    if ($isWorkday) {
+                    if ($isWorkday || $isRestDayRow) {
                         $status = 'present';
                     }
                 }
@@ -905,7 +920,7 @@ class AttendanceMonitoringController extends Controller
                 // Payroll Impact (hrs): payslip-parity via PayrollComputationService (paid regular + paid OT),
                 // not min(net-worked, schedule) + raw approved OT (pre-shift "total hours" skewed Impact).
                 $payrollImpactMinutes = 0;
-                if ($isWorkday && $includePayrollImpact) {
+                if (($isWorkday || $isRestDayRow) && $includePayrollImpact) {
                     $tInPayroll = $effectiveTimeIn
                         ? ($effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn))
                         : null;
@@ -966,6 +981,7 @@ class AttendanceMonitoringController extends Controller
                     'total_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                     'status' => $status,
                     'is_rest_day' => $isRestDayRow || $status === 'rest',
+                    'is_rest_day_worked' => $isRestDayRow && ($effectiveTimeIn || $effectiveTimeOut),
                     'holiday_name' => $holidayOnDate['name'] ?? null,
                     'holiday_type' => $holidayOnDate['type'] ?? null,
                     'schedule_label' => ($isRestDayRow || $status === 'rest') ? 'Rest Day' : null,
@@ -1052,12 +1068,6 @@ class AttendanceMonitoringController extends Controller
         string $tz
     ): void {
         foreach ($pageRows as &$r) {
-            $scheduleIn = $r['schedule_in'] ?? null;
-            $scheduleOut = $r['schedule_out'] ?? null;
-            if (! $scheduleIn || ! $scheduleOut) {
-                continue;
-            }
-
             $employee = $employeesById->get((int) ($r['employee_id'] ?? 0));
             if (! $employee instanceof User) {
                 continue;
@@ -1264,32 +1274,8 @@ class AttendanceMonitoringController extends Controller
         return null;
     }
 
-    /** @param list<Overtime> $records */
-    private function pickOvertimeForVirtualEnd(array $records): ?Overtime
-    {
-        $best = null;
-        foreach ($records as $ot) {
-            if ($best === null) {
-                $best = $ot;
-                continue;
-            }
-            $candidate = $ot->expected_end_time ?? $ot->time_out;
-            $current = $best->expected_end_time ?? $best->time_out;
-            if ($candidate && (! $current || $candidate->format('H:i:s') > $current->format('H:i:s'))) {
-                $best = $ot;
-            }
-        }
-
-        return $best;
-    }
-
     /**
-     * Attendance Monitoring must mirror Reports: approved OT contributes payable OT,
-     * ND hours/pay, and total premium even when no clock-out snapshot exists.
-     *
-     * @param  list<Overtime>  $approvedRecords
-     * @param  array{effective_schedule?: ?array, company_id?: ?int, hourly_rate?: float}  $context
-     * @param  array{in?: string, out?: string}|null  $daySchedule
+     * Paginated monitoring endpoint (cached).
      */
     private function applyApprovedOvertimePayToMonitoringPremiumDay(
         ?array $premiumDay,
@@ -1343,6 +1329,24 @@ class AttendanceMonitoringController extends Controller
         );
 
         return $row;
+    }
+
+    private function pickOvertimeForVirtualEnd(array $records): ?Overtime
+    {
+        $best = null;
+        foreach ($records as $ot) {
+            if ($best === null) {
+                $best = $ot;
+                continue;
+            }
+            $candidate = $ot->expected_end_time ?? $ot->time_out;
+            $current = $best->expected_end_time ?? $best->time_out;
+            if ($candidate && (! $current || $candidate->format('H:i:s') > $current->format('H:i:s'))) {
+                $best = $ot;
+            }
+        }
+
+        return $best;
     }
 
     private function overtimeReductionReason(string $basis, int $approvedMinutes, int $actualMinutes, int $payableMinutes): ?string

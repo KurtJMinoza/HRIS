@@ -182,21 +182,55 @@ class AttendanceStatusResolver
 
         // Priority 3: Rest Day
         if ($isRestDay) {
-            return $this->buildResult(
-                status: self::STATUS_REST,
+            if (! $hasTimeIn && ! $hasTimeOut) {
+                return $this->buildResult(
+                    status: self::STATUS_REST,
+                    dateKey: $dateKey,
+                    todayDate: $todayDate,
+                    nowTz: $nowTz,
+                    daySchedule: $daySchedule,
+                    effectiveTimeIn: null,
+                    effectiveTimeOut: null,
+                    effectiveWorkedMinutes: null,
+                    hasTimeIn: false,
+                    hasTimeOut: false,
+                    correction: null,
+                    isFuture: $isFuture,
+                    metrics: $this->emptyMetrics(),
+                    overtimeContext: $overtimeContext,
+                    isRestDayWorked: false,
+                );
+            }
+            // Rest day with attendance — resolve status normally using actual data.
+            $status = $this->resolveAttendanceStatus(
                 dateKey: $dateKey,
                 todayDate: $todayDate,
                 nowTz: $nowTz,
                 daySchedule: $daySchedule,
-                effectiveTimeIn: null,
-                effectiveTimeOut: null,
-                effectiveWorkedMinutes: null,
-                hasTimeIn: false,
-                hasTimeOut: false,
-                correction: null,
+                effectiveTimeIn: $effectiveTimeIn,
+                effectiveTimeOut: $effectiveTimeOut,
+                hasTimeIn: $hasTimeIn,
+                hasTimeOut: $hasTimeOut,
                 isFuture: $isFuture,
-                metrics: $this->emptyMetrics(),
+                metrics: $metrics,
                 overtimeContext: $overtimeContext,
+            );
+            return $this->buildResult(
+                status: $status,
+                dateKey: $dateKey,
+                todayDate: $todayDate,
+                nowTz: $nowTz,
+                daySchedule: $daySchedule,
+                effectiveTimeIn: $effectiveTimeIn,
+                effectiveTimeOut: $effectiveTimeOut,
+                effectiveWorkedMinutes: $effectiveWorkedMinutes,
+                hasTimeIn: $hasTimeIn,
+                hasTimeOut: $hasTimeOut,
+                correction: $correction,
+                isFuture: $isFuture,
+                metrics: $metrics,
+                overtimeContext: $overtimeContext,
+                isRestDayWorked: true,
             );
         }
 
@@ -397,6 +431,7 @@ class AttendanceStatusResolver
         bool $isFuture,
         array $metrics,
         ?array $overtimeContext = null,
+        bool $isRestDayWorked = false,
     ): array {
         $qualified = $this->presenceDisplay->qualify(
             $dateKey, $todayDate, $nowTz, $daySchedule,
@@ -427,6 +462,7 @@ class AttendanceStatusResolver
             'approved_ot_hours' => $approvedOtHours,
             'payable_ot_hours' => $payableOtHours,
             'payroll_impact_hours' => $payableOtHours > 0 ? $payableOtHours : $approvedOtHours,
+            'is_rest_day_worked' => $isRestDayWorked,
         ];
     }
 

@@ -62,7 +62,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::summaryKey($employeeId, $todayDate);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 6) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 7) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             Log::debug('[EmployeeDashboard] summary cache HIT', [
@@ -184,7 +184,7 @@ class EmployeeDashboardController extends Controller
             'upcoming_payroll' => $upcomingBatch,
             'latest_payslip' => $latestPayslipSummary,
             'meta' => [
-                'schema_version' => 6,
+                'schema_version' => 7,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -242,7 +242,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 11) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 13) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -506,7 +506,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 11,
+                'schema_version' => 13,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -783,7 +783,7 @@ class EmployeeDashboardController extends Controller
         $lateLabel = $resolved['late_label'] ?? null;
         $undertimeMinutes = ($resolved['undertime_minutes'] ?? 0) > 0 ? (int) $resolved['undertime_minutes'] : null;
 
-        if ($isRestDay) {
+        if ($isRestDay && ! $hasTimeIn && ! $hasTimeOut) {
             $effectiveTimeIn = null;
             $effectiveTimeOut = null;
             $hasTimeIn = false;
@@ -791,9 +791,10 @@ class EmployeeDashboardController extends Controller
         }
 
         // Status label
+        $isRestDayWorked = (bool) ($resolved['is_rest_day_worked'] ?? false);
         $labelMap = [
             'leave' => 'On leave',
-            'rest' => AttendanceStatusResolver::REST_DAY_LABEL,
+            'rest' => $isRestDayWorked ? 'Rest Day Worked' : AttendanceStatusResolver::REST_DAY_LABEL,
             'absent' => 'Missed clock-in',
             'present' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present',
             'present_with_ot' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present with OT',
@@ -821,6 +822,7 @@ class EmployeeDashboardController extends Controller
             'schedule_in' => is_array($daySchedule) ? ($daySchedule['in'] ?? null) : null,
             'schedule_out' => is_array($daySchedule) ? ($daySchedule['out'] ?? null) : null,
             'is_rest_day' => $isRestDay,
+            'is_rest_day_worked' => $isRestDayWorked,
             'has_time_in' => $hasTimeIn,
             'has_time_out' => $hasTimeOut,
         ];

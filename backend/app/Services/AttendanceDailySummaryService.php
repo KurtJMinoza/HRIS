@@ -132,16 +132,24 @@ class AttendanceDailySummaryService
         );
 
         $status = $resolved['status'];
+        $isRestDayWorked = (bool) ($resolved['is_rest_day_worked'] ?? false);
 
         // Net worked minutes: recompute with full break deduction
         $effectiveWorkedMinutes = $resolved['effective_worked_minutes'];
-        if ($hasTimeIn && $hasTimeOut && $effectiveTimeIn && $effectiveTimeOut && is_array($daySchedule)) {
+        if ($hasTimeIn && $hasTimeOut && $effectiveTimeIn && $effectiveTimeOut) {
             $in = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
             $out = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
             if ($out->greaterThan($in)) {
-                $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                    $in, $out, $daySchedule, $dateKey, $tz
+                $scheduleForBreak = is_array($daySchedule) ? $daySchedule : (
+                    $isRestDayWorked ? $this->firstScheduleWithBreaks($effectiveSchedule) : null
                 );
+                if ($scheduleForBreak !== null) {
+                    $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                        $in, $out, $scheduleForBreak, $dateKey, $tz
+                    );
+                } else {
+                    $effectiveWorkedMinutes = (int) $in->diffInMinutes($out);
+                }
             }
         }
 
@@ -222,12 +230,17 @@ class AttendanceDailySummaryService
         $isRestDayStatus = in_array($status, ['rest', 'rest_day', 'no_schedule_rest'], true) || $isRestDay;
         $isHoliday = $status === 'holiday';
 
+        $statusLabel = $resolved['status_label'] ?? AttendanceStatusResolver::statusLabel($status);
+        if ($isRestDayWorked) {
+            $statusLabel = 'Rest Day Worked';
+        }
+
         return [
             'date' => $dateKey,
             'status' => in_array($status, ['rest', 'rest_day', 'no_schedule_rest'], true) ? 'rest' : $status,
-            'status_label' => $resolved['status_label'] ?? AttendanceStatusResolver::statusLabel($status),
+            'status_label' => $statusLabel,
             'status_code' => $resolved['status_code'] ?? $status,
-            'display_badge' => $resolved['display_badge'] ?? AttendanceStatusResolver::statusLabel($status),
+            'display_badge' => $statusLabel,
 
             'time_in' => $this->formatTimeInTz($effectiveTimeIn, $tz),
             'time_out' => $this->formatTimeInTz($effectiveTimeOut, $tz),
@@ -266,7 +279,8 @@ class AttendanceDailySummaryService
             'is_present' => $isPresent,
             'is_absent' => $isAbsent,
             'is_leave' => $isLeave,
-            'is_rest_day' => $isRestDayStatus,
+            'is_rest_day' => $isRestDayStatus || $isRestDayWorked,
+            'is_rest_day_worked' => $isRestDayWorked,
             'is_holiday' => $isHoliday,
 
             'presence_label' => $resolved['presence_label'],
@@ -439,5 +453,22 @@ class AttendanceDailySummaryService
         }
 
         return $dayConfig;
+    }
+
+    private function firstScheduleWithBreaks(?array $effectiveSchedule): ?array
+    {
+        if (! is_array($effectiveSchedule)) {
+            return null;
+        }
+        foreach ($effectiveSchedule as $dayKey => $schedule) {
+            if (is_array($schedule) && (
+                ! empty($schedule['break_start']) ||
+                ! empty($schedule['break_end']) ||
+                ! empty($schedule['breaks'])
+            )) {
+                return $schedule;
+            }
+        }
+        return null;
     }
 }

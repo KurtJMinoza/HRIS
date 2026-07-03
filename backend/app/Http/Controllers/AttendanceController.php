@@ -2502,6 +2502,11 @@ class AttendanceController extends Controller
             $effectiveTimeOut = $timeOut;
             $effectiveWorkedMinutes = $workedMinutes;
 
+            $isRestDayRow = $this->attendanceRollup->isScheduledRestDay(
+                $effectiveSchedule,
+                is_array($daySchedule) ? $daySchedule : null
+            );
+
             if ($correction && $correction->approved) {
                 if ($correction->time_in) {
                     $effectiveTimeIn = $correction->time_in;
@@ -2509,28 +2514,50 @@ class AttendanceController extends Controller
                 if ($correction->time_out) {
                     $effectiveTimeOut = $correction->time_out;
                 }
-                if ($correction->time_in && $correction->time_out) {
-                    $effectiveWorkedMinutes = $daySchedule
-                        ? AttendanceStatusService::getNetWorkedMinutes(
-                            $correction->time_in,
-                            $correction->time_out,
-                            $daySchedule,
-                            $dateKey,
-                            $attendanceTz
-                        )
-                        : (int) $correction->time_in->diffInMinutes($correction->time_out);
-                }
+                    if ($correction->time_in && $correction->time_out) {
+                        if ($daySchedule) {
+                            $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                                $correction->time_in,
+                                $correction->time_out,
+                                $daySchedule,
+                                $dateKey,
+                                $attendanceTz
+                            );
+                        } elseif ($isRestDayRow) {
+                            $breakSchedule = AttendanceStatusService::firstScheduleWithBreaks($effectiveSchedule);
+                            $effectiveWorkedMinutes = $breakSchedule !== null
+                                ? AttendanceStatusService::getNetWorkedMinutes(
+                                    $correction->time_in,
+                                    $correction->time_out,
+                                    $breakSchedule,
+                                    $dateKey,
+                                    $attendanceTz
+                                )
+                                : (int) $correction->time_in->diffInMinutes($correction->time_out);
+                        } else {
+                            $effectiveWorkedMinutes = (int) $correction->time_in->diffInMinutes($correction->time_out);
+                        }
+                    }
             }
 
             // For regular clock-in/out logs (no correction covering both times), deduct the
             // schedule's unpaid break window so worked hours are consistent with Admin → Reports.
             if (! ($correction && $correction->approved && $correction->time_in && $correction->time_out)) {
-                if ($daySchedule && $effectiveTimeIn && $effectiveTimeOut && $effectiveWorkedMinutes !== null) {
+                if ($effectiveTimeIn && $effectiveTimeOut && $effectiveWorkedMinutes !== null) {
                     $tIn = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
                     $tOut = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
-                    $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                        $tIn, $tOut, $daySchedule, $dateKey, $attendanceTz
-                    );
+                    if ($daySchedule) {
+                        $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                            $tIn, $tOut, $daySchedule, $dateKey, $attendanceTz
+                        );
+                    } elseif ($isRestDayRow) {
+                        $breakSchedule = AttendanceStatusService::firstScheduleWithBreaks($effectiveSchedule);
+                        if ($breakSchedule !== null) {
+                            $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
+                                $tIn, $tOut, $breakSchedule, $dateKey, $attendanceTz
+                            );
+                        }
+                    }
                 }
             }
 
@@ -2554,10 +2581,6 @@ class AttendanceController extends Controller
             }
 
             $scheduleAssignedForRow = is_array($effectiveSchedule) && $effectiveSchedule !== [];
-            $isRestDayRow = $this->attendanceRollup->isScheduledRestDay(
-                $effectiveSchedule,
-                is_array($daySchedule) ? $daySchedule : null
-            );
             $holidayOnDate = ! $isOnLeave
                 ? $this->payrollComputation->getHolidayForUserDate($user, $dateKey)
                 : null;
@@ -2567,13 +2590,16 @@ class AttendanceController extends Controller
             } elseif ($holidayOnDate !== null) {
                 $status = 'holiday';
             } elseif ($isRestDayRow) {
-                // Rest day from schedule: no absent/late/undertime; suppress incidental punches.
-                $status = 'rest';
-                $effectiveTimeIn = null;
-                $effectiveTimeOut = null;
-                $effectiveWorkedMinutes = null;
-                $hasTimeIn = false;
-                $hasTimeOut = false;
+                if ($hasTimeIn || $hasTimeOut) {
+                    $status = $hasTimeIn ? 'present' : 'incomplete';
+                } else {
+                    $status = 'rest';
+                    $effectiveTimeIn = null;
+                    $effectiveTimeOut = null;
+                    $effectiveWorkedMinutes = null;
+                    $hasTimeIn = false;
+                    $hasTimeOut = false;
+                }
             }
 
             if (! $isOnLeave && ! $isRestDayRow && $status !== 'holiday' && ($daySchedule && ! empty($daySchedule['in']))) {
@@ -2854,6 +2880,7 @@ class AttendanceController extends Controller
                 'day_name' => $this->dayNameForDate($dateKey),
                 'status' => $status,
                 'is_rest_day' => $isRestDayRow || $status === 'rest',
+                'is_rest_day_worked' => $isRestDayRow && ($hasTimeIn || $hasTimeOut),
                 'holiday_name' => $holidayOnDate['name'] ?? null,
                 'holiday_type' => $holidayOnDate['type'] ?? null,
                 'schedule_label' => ($isRestDayRow || $status === 'rest') ? 'Rest Day' : null,
@@ -3153,7 +3180,7 @@ class AttendanceController extends Controller
     private function hydrateEmployeeSummaryPayrollImpact(User $user, array &$daysSlice, string $tz): void
     {
         foreach ($daysSlice as &$day) {
-            if (($day['status'] ?? '') === 'rest' || ! empty($day['is_rest_day'])) {
+            if (($day['status'] ?? '') === 'rest') {
                 $day['payroll_impact_minutes'] = 0;
                 $day['payroll_impact_hours'] = 0.0;
 
@@ -3163,7 +3190,9 @@ class AttendanceController extends Controller
             $scheduleIn = $day['schedule_in'] ?? null;
             $scheduleOut = $day['schedule_out'] ?? null;
             if (! $scheduleIn || ! $scheduleOut) {
-                continue;
+                if (empty($day['is_rest_day_worked'])) {
+                    continue;
+                }
             }
 
             $dateKey = (string) ($day['date'] ?? '');

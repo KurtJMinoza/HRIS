@@ -208,6 +208,7 @@ export function formatTimeHhMmSs(value) {
 /** Human-readable shift window for table column (uses schedule_in / schedule_out when present). */
 export function formatScheduleRange(row) {
   if (row?.schedule_label) return formatScheduleLabel12h(row.schedule_label)
+  if (row?.is_rest_day_worked) return 'Rest Day Worked'
   if (row?.status === 'rest' || row?.is_rest_day) return 'Rest Day'
   const a = row?.schedule_in
   const b = row?.schedule_out
@@ -399,7 +400,7 @@ export function buildAdminCorrectionHref(row, attendanceBasePath) {
 export function shouldOfferCorrection(row) {
   if (!row?.date) return false
   if (['leave', 'holiday', 'rest', 'upcoming'].includes(row.status)) return false
-  if (row.is_rest_day) return false
+  if (row.is_rest_day && !row.is_rest_day_worked) return false
   if (row.presence_issue === 'correction_pending') return false
   if (row.presence_filing?.status === 'pending' || row.presence_filing?.status === 'approved') return false
   if (row.has_correction && row.correction_approved !== false) return false
@@ -409,6 +410,7 @@ export function shouldOfferCorrection(row) {
 export function resolveAdminStatusLabel(row) {
   const rawStatus = row.status || ''
   if (rawStatus === 'holiday') return row.holiday_name || 'Holiday'
+  if (row.is_rest_day_worked) return 'Rest Day Worked'
   if (rawStatus === 'rest' || row.is_rest_day) return 'Rest Day'
   if (row.presence_label && (row.presence_issue === 'incomplete_pair' || row.presence_issue === 'correction_pending')) {
     return row.presence_label
@@ -431,6 +433,7 @@ export function resolveEmployeeStatusLabel(row) {
   if (row.status === 'holiday') {
     return row.holiday_name || 'Holiday'
   }
+  if (row.is_rest_day_worked) return 'Rest Day Worked'
   if (row.status === 'rest' || row.is_rest_day) return 'Rest Day'
   if (row.status === 'leave') {
     if (row.leave_pay_status === 'paid') return 'Paid leave'

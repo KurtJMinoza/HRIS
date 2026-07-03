@@ -572,4 +572,25 @@ class AttendanceStatusService
 
         return $anchor->copy()->addMinutes($mins);
     }
+
+    /**
+     * Find the first non-rest day schedule entry that has break_start/break_end/breaks defined.
+     * Used by modules that need break-deduction context even on rest days (rest day worked).
+     */
+    public static function firstScheduleWithBreaks(?array $effectiveSchedule): ?array
+    {
+        if (! is_array($effectiveSchedule)) {
+            return null;
+        }
+        foreach ($effectiveSchedule as $dayKey => $schedule) {
+            if (is_array($schedule) && (
+                ! empty($schedule['break_start']) ||
+                ! empty($schedule['break_end']) ||
+                ! empty($schedule['breaks'])
+            )) {
+                return $schedule;
+            }
+        }
+        return null;
+    }
 }
