@@ -381,7 +381,7 @@ class EmployeeOvertimeController extends Controller
         $isRestDay = $daySchedule === null;
 
         $holiday = \App\Models\Holiday::query()
-            ->whereDate('holiday_date', $dateYmd)
+            ->whereDate('date', $dateYmd)
             ->first();
 
         $holidayType = $holiday?->type ?? null;
