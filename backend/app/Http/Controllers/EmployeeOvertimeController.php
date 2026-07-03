@@ -13,6 +13,7 @@ use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
+use App\Support\EmployeeScheduleResolver;
 use App\Support\OvertimeModuleCache;
 use App\Support\PhPayrollReference;
 use Carbon\Carbon;
@@ -369,6 +370,39 @@ class EmployeeOvertimeController extends Controller
         }
 
         return 'Pending';
+    }
+
+    private function detectDefaultPhOtRule(User $user, string $dateYmd): string
+    {
+        $schedule = EmployeeScheduleResolver::resolve($user);
+        $carbonDate = Carbon::parse($dateYmd, $this->attendanceTimezone());
+        $dayKey = EmployeeScheduleResolver::dayKeyForDate($carbonDate);
+        $daySchedule = $schedule[$dayKey] ?? null;
+        $isRestDay = $daySchedule === null;
+
+        $holiday = \App\Models\Holiday::query()
+            ->whereDate('holiday_date', $dateYmd)
+            ->first();
+
+        $holidayType = $holiday?->type ?? null;
+
+        if ($isRestDay && $holidayType === 'regular') {
+            return 'RHRD';
+        }
+        if ($isRestDay && in_array($holidayType, ['special', 'company', 'special_working'], true)) {
+            return 'SHRD';
+        }
+        if ($holidayType === 'regular') {
+            return 'RH';
+        }
+        if (in_array($holidayType, ['special', 'company', 'special_working'], true)) {
+            return 'SH';
+        }
+        if ($isRestDay) {
+            return 'RD';
+        }
+
+        return 'ORD';
     }
 
     private function mapOvertimeRowForEmployee(Overtime $o, ?User $actor = null): array
@@ -1110,7 +1144,7 @@ class EmployeeOvertimeController extends Controller
 
         $payload = Cache::remember($cacheKey, now()->addMinutes(10), function () use ($user, $dateYmd): array {
             $phOtOptions = PhPayrollReference::otMultiplierDropdownOptions();
-            $defaultPhOtRule = 'ORD';
+            $defaultPhOtRule = $this->detectDefaultPhOtRule($user, $dateYmd);
             $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
             $detectedSegments = $this->mapDetectedSegmentsForFiling($detected);
 

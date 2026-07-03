@@ -961,6 +961,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [endTime, setEndTime] = useState('')
   const [category, setCategory] = useState('regular')
   const [phOtRule, setPhOtRule] = useState('ORD')
+  const phOtRuleUserSelectedRef = useRef(false)
   const [reason, setReason] = useState('')
   const [attachment, setAttachment] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -1325,9 +1326,15 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [fileOpen])
 
   useEffect(() => {
+    if (phOtRuleUserSelectedRef.current) return
     if (!otContext?.default_ph_ot_rule) return
     setPhOtRule(String(otContext.default_ph_ot_rule))
   }, [otContext])
+
+  function handlePhOtRuleChange(code) {
+    phOtRuleUserSelectedRef.current = true
+    setPhOtRule(code)
+  }
 
   const phRuleSelectOptions = useMemo(() => {
     const opts = otContext?.ph_ot_rule_options
@@ -2675,7 +2682,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
                 <div className="space-y-3">
                   <Label className={otModalLabelClass}>PH pay condition</Label>
-                  <Select value={phOtRule} onValueChange={setPhOtRule}>
+                  <Select value={phOtRule} onValueChange={handlePhOtRuleChange}>
                     <SelectTrigger className={cn(otModalSelectClass, 'justify-between [&>svg]:size-5 [&>svg]:text-foreground')}>
                       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                         <CalendarDays className="size-5 shrink-0 text-brand" aria-hidden />
