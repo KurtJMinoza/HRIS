@@ -423,16 +423,29 @@ function formatOvertimeTimeRange(row) {
 /** One line: step progress + current status (matches Correction Requests clarity). */
 function formatOvertimeStatusLine(row) {
   const primary = row.display_status || row.status || '—'
+  const waitingLabel = waitingForLabel(row.approval_progress)
+  const label = waitingLabel || primary
   const summary = approvalStepsSummary(row.approval_progress)
-  if (summary && primary && primary !== '—') {
-    return `${summary} — ${primary}`
+  if (summary && label && label !== '—') {
+    return `${summary} — ${label}`
   }
-  return primary
+  return label
+}
+
+function waitingForLabel(steps) {
+  if (!Array.isArray(steps)) return null
+  const current = steps.find((s) => s.status === 'current')
+  if (!current) return null
+  const label = current.label || current.approver_role_label || ''
+  return label ? `Waiting for ${label}` : null
 }
 
 function OvertimeStatusCell({ row }) {
   const summary = approvalStepsSummary(row.approval_progress)
   const primary = row.display_status || row.status || '—'
+  const waitingLabel = waitingForLabel(row.approval_progress)
+
+  const displayLabel = waitingLabel || primary
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
@@ -444,12 +457,12 @@ function OvertimeStatusCell({ row }) {
       <span
         className={cn(
           'inline-flex w-fit max-w-full items-start gap-1.5 rounded-full border border-transparent px-2.5 py-1.5 text-xs font-semibold leading-snug shadow-sm',
-          statusBadgeClass(row.display_status),
+          statusBadgeClass(primary),
         )}
         title={formatOvertimeStatusLine(row)}
       >
         <Timer className="mt-0.5 size-3.5 shrink-0 opacity-80" aria-hidden />
-        <span className="line-clamp-2 text-left">{primary}</span>
+        <span className="line-clamp-2 text-left">{displayLabel}</span>
       </span>
       {row.hr_wait_message ? (
         <p

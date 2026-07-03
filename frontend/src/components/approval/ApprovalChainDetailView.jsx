@@ -3,10 +3,27 @@ import { cn } from '@/lib/utils'
 import { profileImageUrl } from '@/api'
 import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
 
-function formatDateTime(iso) {
+export function formatDateTime(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   return d.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+export function formatElapsed(actedAt) {
+  if (!actedAt) return null
+  const now = Date.now()
+  const then = new Date(actedAt).getTime()
+  if (Number.isNaN(then)) return null
+  const diffMs = now - then
+  if (diffMs < 0) return null
+  const totalMinutes = Math.floor(diffMs / 60000)
+  if (totalMinutes < 1) return 'less than a minute'
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours < 1) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+  if (hours < 24) return `${hours}h ${minutes}m`
+  const days = Math.floor(hours / 24)
+  return `${days} ${days === 1 ? 'day' : 'days'}`
 }
 
 function humanStepStatus(status) {
@@ -14,13 +31,15 @@ function humanStepStatus(status) {
     case 'completed':
       return 'Completed'
     case 'current':
-      return 'Pending'
+      return 'Waiting for Approval'
     case 'pending':
-      return 'Pending'
+      return 'Waiting'
     case 'rejected':
       return 'Rejected'
     case 'skipped':
       return 'Skipped'
+    case 'cancelled':
+      return 'Cancelled'
     default:
       return status ? String(status) : '—'
   }
@@ -103,22 +122,30 @@ export function ApprovalChainDetailView({ steps }) {
                   </AvatarFallback>
                 </Avatar>
 
-                <div className="min-w-0 flex-1 space-y-1">
-                  <p className="text-[15px] font-semibold leading-snug text-foreground">{name}</p>
-                  {roleLine ? <p className="text-xs font-medium text-muted-foreground">{roleLine}</p> : null}
-                  {s?.is_self_approval ? (
-                    <span className="inline-flex w-fit rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/35 dark:text-amber-200">
-                      Self Approval
-                    </span>
-                  ) : null}
-                  <p className="text-xs leading-relaxed text-muted-foreground">{statusDateLine}</p>
-                  {remarks ? (
-                    <p className="pt-1 text-sm leading-relaxed text-foreground/90">
-                      <span className="font-semibold text-muted-foreground">Remarks: </span>
-                      {remarks}
-                    </p>
-                  ) : null}
-                </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="text-[15px] font-semibold leading-snug text-foreground">{name}</p>
+                    {roleLine ? <p className="text-xs font-medium text-muted-foreground">{roleLine}</p> : null}
+                    {s?.is_self_approval ? (
+                      <span className="inline-flex w-fit rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/35 dark:text-amber-200">
+                        Self Approval
+                      </span>
+                    ) : null}
+                    <p className="text-xs leading-relaxed text-muted-foreground">{statusDateLine}</p>
+                    {s.status === 'current' && s.received_at ? (() => {
+                      const elapsed = formatElapsed(s.received_at)
+                      return elapsed ? (
+                        <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                          Waiting since {elapsed}
+                        </p>
+                      ) : null
+                    })() : null}
+                    {remarks ? (
+                      <p className="pt-1 text-sm leading-relaxed text-foreground/90">
+                        <span className="font-semibold text-muted-foreground">Remarks: </span>
+                        {remarks}
+                      </p>
+                    ) : null}
+                  </div>
               </div>
             </div>
           </li>
