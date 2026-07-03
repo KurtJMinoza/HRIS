@@ -163,6 +163,18 @@ function formatPhRuleOption(opt) {
   return `${opt.day_type_label} - 1st 8h x${opt.first_8_multiplier} - OT x${opt.ot_multiplier}`
 }
 
+function formatPhPayRule(row) {
+  const label = row.ph_ot_rule_label
+  const f8 = row.first_8_multiplier
+  const ot = row.ot_multiplier
+  if (label && f8 != null && ot != null) {
+    return `${label} 1st 8h x${f8} / OT x${ot}`
+  }
+  if (label) return label
+  if (row.ph_ot_rule) return row.ph_ot_rule
+  return '—'
+}
+
 function roundHours1(n) {
   const x = typeof n === 'number' && Number.isFinite(n) ? n : 0
   return Math.round(x * 10) / 10
@@ -567,6 +579,10 @@ function OvertimeRequestMobileCard({
             <div className="col-span-2">
               <p className="font-semibold uppercase tracking-wide text-muted-foreground">Category</p>
               <p className="mt-0.5 text-foreground">{otTypeLabel(row.ot_type)}</p>
+            </div>
+            <div className="col-span-2">
+              <p className="font-semibold uppercase tracking-wide text-muted-foreground">PH pay rule</p>
+              <p className="mt-0.5 font-mono text-[13px] leading-snug text-foreground">{formatPhPayRule(row)}</p>
             </div>
             {row.reason ? (
               <div className="col-span-2">
@@ -2344,8 +2360,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
                       <col className={showRequesterColumn ? 'w-[7%]' : 'w-[8%]'} />
                       <col className={showRequesterColumn ? 'w-[8%]' : 'w-[10%]'} />
-                      <col className={showRequesterColumn ? 'w-[13%]' : 'w-[17%]'} />
-                      <col className={showRequesterColumn ? 'w-[13%]' : 'w-[16%]'} />
+                      <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
+                      <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
+                      <col className={showRequesterColumn ? 'w-[11%]' : 'w-[14%]'} />
                       <col className={showRequesterColumn ? 'w-[8%]' : 'w-[10%]'} />
                       <col className="w-[10%]" />
                     </colgroup>
@@ -2373,6 +2390,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                         <TableHead className={requestModuleThClass}>Time range</TableHead>
                         <TableHead className={requestModuleThClass}>OT hours</TableHead>
                         <TableHead className={requestModuleThClass}>Category</TableHead>
+                        <TableHead className={requestModuleThClass}>PH pay rule</TableHead>
                         <TableHead className={requestModuleThClass}>Reason / remarks</TableHead>
                         <TableHead className={requestModuleThClass}>Status</TableHead>
                         <TableHead className={requestModuleThRightClass}>Date requested</TableHead>
@@ -2424,6 +2442,9 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                             </TableCell>
                             <TableCell className={cn(requestModuleTdClass, 'text-muted-foreground')}>
                               {otTypeLabel(row.ot_type)}
+                            </TableCell>
+                            <TableCell className={cn(requestModuleTdMutedClass, 'text-[13px] leading-snug')}>
+                              {formatPhPayRule(row)}
                             </TableCell>
                             <TableCell className={requestModuleTdClass}>
                               <RemarksPreviewCell text={row.reason} />
