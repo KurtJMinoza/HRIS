@@ -2507,6 +2507,16 @@ class AttendanceController extends Controller
                 is_array($daySchedule) ? $daySchedule : null
             );
 
+            // Resolve a reference workday schedule for rest days so the same
+            // late/undertime/OT computation runs as for ordinary workdays.
+            // Only the payroll multiplier changes — attendance logic is identical.
+            $computationSchedule = null;
+            if ($isRestDayRow && ($hasTimeIn || $hasTimeOut) && (! is_array($daySchedule) || empty($daySchedule['in']))) {
+                $computationSchedule = AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule);
+            } else {
+                $computationSchedule = is_array($daySchedule) ? $daySchedule : null;
+            }
+
             if ($correction && $correction->approved) {
                 if ($correction->time_in) {
                     $effectiveTimeIn = $correction->time_in;
@@ -2515,25 +2525,19 @@ class AttendanceController extends Controller
                     $effectiveTimeOut = $correction->time_out;
                 }
                     if ($correction->time_in && $correction->time_out) {
-                        if ($daySchedule) {
+                        $scheduleForBreak = $computationSchedule ?: (
+                            $isRestDayRow
+                                ? AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule)
+                                : null
+                        );
+                        if ($scheduleForBreak) {
                             $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
                                 $correction->time_in,
                                 $correction->time_out,
-                                $daySchedule,
+                                $scheduleForBreak,
                                 $dateKey,
                                 $attendanceTz
                             );
-                        } elseif ($isRestDayRow) {
-                            $breakSchedule = AttendanceStatusService::firstScheduleWithBreaks($effectiveSchedule);
-                            $effectiveWorkedMinutes = $breakSchedule !== null
-                                ? AttendanceStatusService::getNetWorkedMinutes(
-                                    $correction->time_in,
-                                    $correction->time_out,
-                                    $breakSchedule,
-                                    $dateKey,
-                                    $attendanceTz
-                                )
-                                : (int) $correction->time_in->diffInMinutes($correction->time_out);
                         } else {
                             $effectiveWorkedMinutes = (int) $correction->time_in->diffInMinutes($correction->time_out);
                         }
@@ -2546,17 +2550,15 @@ class AttendanceController extends Controller
                 if ($effectiveTimeIn && $effectiveTimeOut && $effectiveWorkedMinutes !== null) {
                     $tIn = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
                     $tOut = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
-                    if ($daySchedule) {
+                    $scheduleForBreak = $computationSchedule ?: (
+                        $isRestDayRow
+                            ? AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule)
+                            : null
+                    );
+                    if ($scheduleForBreak) {
                         $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                            $tIn, $tOut, $daySchedule, $dateKey, $attendanceTz
+                            $tIn, $tOut, $scheduleForBreak, $dateKey, $attendanceTz
                         );
-                    } elseif ($isRestDayRow) {
-                        $breakSchedule = AttendanceStatusService::firstScheduleWithBreaks($effectiveSchedule);
-                        if ($breakSchedule !== null) {
-                            $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
-                                $tIn, $tOut, $breakSchedule, $dateKey, $attendanceTz
-                            );
-                        }
                     }
                 }
             }
@@ -2589,20 +2591,20 @@ class AttendanceController extends Controller
                 $status = 'leave';
             } elseif ($holidayOnDate !== null) {
                 $status = 'holiday';
-            } elseif ($isRestDayRow) {
-                if ($hasTimeIn || $hasTimeOut) {
-                    $status = $hasTimeIn ? 'present' : 'incomplete';
-                } else {
-                    $status = 'rest';
-                    $effectiveTimeIn = null;
-                    $effectiveTimeOut = null;
-                    $effectiveWorkedMinutes = null;
-                    $hasTimeIn = false;
-                    $hasTimeOut = false;
-                }
+            } elseif ($isRestDayRow && ! $hasTimeIn && ! $hasTimeOut) {
+                // Rest day without attendance — no computation needed.
+                $status = 'rest';
+                $effectiveTimeIn = null;
+                $effectiveTimeOut = null;
+                $effectiveWorkedMinutes = null;
+                $hasTimeIn = false;
+                $hasTimeOut = false;
             }
 
-            if (! $isOnLeave && ! $isRestDayRow && $status !== 'holiday' && ($daySchedule && ! empty($daySchedule['in']))) {
+            // Use computation schedule for all non-leave, non-holiday days
+            // (including rest days with attendance), so late/half-day/undertime/OT
+            // detection is IDENTICAL to ordinary workdays.
+            if (! $isOnLeave && $status !== 'holiday' && ($computationSchedule && ! empty($computationSchedule['in']))) {
                 if (! $effectiveTimeIn) {
                     if ($effectiveTimeOut) {
                         $status = 'incomplete';
@@ -2616,7 +2618,7 @@ class AttendanceController extends Controller
                 } else {
                     $timeInCarbon = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
                     $clockInResult = AttendanceStatusService::getClockInStatus(
-                        $daySchedule,
+                        $computationSchedule,
                         $dateKey,
                         $timeInCarbon
                     );
@@ -2637,10 +2639,10 @@ class AttendanceController extends Controller
                     }
                 }
 
-                if (! empty($daySchedule['in']) && ! empty($daySchedule['out'])) {
-                    $scheduledStart = Carbon::parse($dateKey.' '.$daySchedule['in'], $attendanceTz);
-                    $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $attendanceTz);
-                    $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule, $attendanceTz);
+                if (! empty($computationSchedule['in']) && ! empty($computationSchedule['out'])) {
+                    $scheduledStart = Carbon::parse($dateKey.' '.$computationSchedule['in'], $attendanceTz);
+                    $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $computationSchedule, $attendanceTz);
+                    $requiredMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $computationSchedule, $attendanceTz);
 
                     if ($effectiveWorkedMinutes !== null && $status !== 'halfday' && $scheduledEnd) {
                         $outCarbon = $effectiveTimeOut instanceof Carbon
@@ -2649,10 +2651,10 @@ class AttendanceController extends Controller
                         $inCarbon = $effectiveTimeIn instanceof Carbon
                             ? $effectiveTimeIn
                             : ($effectiveTimeIn ? Carbon::parse($effectiveTimeIn) : null);
-                        $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
+                        $earlyTimeout = isset($computationSchedule['early_timeout_minutes']) ? (int) $computationSchedule['early_timeout_minutes'] : null;
                         $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
                             $dateKey,
-                            $daySchedule,
+                            $computationSchedule,
                             $inCarbon,
                             $outCarbon,
                             $attendanceTz,
@@ -2701,7 +2703,7 @@ class AttendanceController extends Controller
                 $dateKey,
                 $todayDate,
                 $todayNow,
-                is_array($daySchedule) ? $daySchedule : null,
+                is_array($computationSchedule) ? $computationSchedule : (is_array($daySchedule) ? $daySchedule : null),
                 $status,
                 $effectiveTimeIn,
                 $effectiveTimeOut,
@@ -2729,7 +2731,7 @@ class AttendanceController extends Controller
                     ? AttendanceStatusService::resolveApprovedOvertimeVirtualEnd(
                         $otRow,
                         $dateKey,
-                        is_array($daySchedule) ? $daySchedule : null,
+                        is_array($computationSchedule) ? $computationSchedule : (is_array($daySchedule) ? $daySchedule : null),
                         $attendanceTz
                     )
                     : null;
@@ -2753,9 +2755,9 @@ class AttendanceController extends Controller
             $rawPostOtSegment = null;
             $rawOtMinutes = 0;
             if (
-                is_array($daySchedule)
-                && ! empty($daySchedule['in'])
-                && ! empty($daySchedule['out'])
+                is_array($computationSchedule)
+                && ! empty($computationSchedule['in'])
+                && ! empty($computationSchedule['out'])
                 && $effectiveTimeIn
                 && $effectiveTimeOut
                 && $effectiveWorkedMinutes !== null
@@ -2763,8 +2765,8 @@ class AttendanceController extends Controller
             ) {
                 $inCarbonForOt = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
                 $outCarbonForOt = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
-                $scheduledStartForOt = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $attendanceTz);
-                $scheduledEndForOt = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $attendanceTz);
+                $scheduledStartForOt = AttendanceStatusService::getScheduledStartForDate($dateKey, $computationSchedule, $attendanceTz);
+                $scheduledEndForOt = AttendanceStatusService::getScheduledEndForDate($dateKey, $computationSchedule, $attendanceTz);
 
                 if ($scheduledStartForOt && $inCarbonForOt->lessThan($scheduledStartForOt)) {
                     $preM = (int) $inCarbonForOt->diffInMinutes($scheduledStartForOt);
@@ -2781,8 +2783,8 @@ class AttendanceController extends Controller
                 }
 
                 if ($scheduledEndForOt) {
-                    $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
-                        ? (int) $daySchedule['overtime_buffer_minutes']
+                    $overtimeBuffer = isset($computationSchedule['overtime_buffer_minutes'])
+                        ? (int) $computationSchedule['overtime_buffer_minutes']
                         : (int) config('attendance.overtime_buffer_minutes', 15);
                     $postShiftOtStart = $scheduledEndForOt->copy()->addMinutes($overtimeBuffer);
                     if ($outCarbonForOt->greaterThan($postShiftOtStart)) {
@@ -2850,8 +2852,8 @@ class AttendanceController extends Controller
                 : null;
 
             $scheduledRegularMinutes = null;
-            if (is_array($daySchedule) && ! empty($daySchedule['in']) && ! empty($daySchedule['out'])) {
-                $scheduledRegularMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule, $attendanceTz);
+            if (is_array($computationSchedule) && ! empty($computationSchedule['in']) && ! empty($computationSchedule['out'])) {
+                $scheduledRegularMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $computationSchedule, $attendanceTz);
             }
             // Payroll impact is payslip-parity via computeDayPayroll — deferred to pagination hydrate only.
             $payrollImpactMinutes = 0;

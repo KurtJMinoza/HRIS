@@ -155,6 +155,15 @@ class AttendanceRollupService
 
         if ($status === 'rest' || ! empty($row['is_rest_day'])) {
             if (! empty($row['is_rest_day_worked'])) {
+                $late = (int) ($row['late_minutes'] ?? 0);
+                $under = (int) ($row['undertime_minutes'] ?? 0);
+                if ($under > 0) {
+                    return 'Rest Day Worked Undertime';
+                }
+                if ($late > 0) {
+                    return 'Rest Day Worked Late';
+                }
+
                 return 'Rest Day Worked';
             }
 
@@ -260,6 +269,15 @@ class AttendanceRollupService
 
         if ($status === 'rest' || ! empty($row['is_rest_day'])) {
             if (! empty($row['is_rest_day_worked'])) {
+                $under = (int) ($row['undertime_minutes'] ?? 0);
+                $late = (int) ($row['late_minutes'] ?? 0);
+                if ($under > 0) {
+                    return 'Rest Day Worked Undertime';
+                }
+                if ($late > 0) {
+                    return 'Rest Day Worked Late';
+                }
+
                 return 'Rest Day Worked';
             }
 

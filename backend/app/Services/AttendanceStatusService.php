@@ -593,4 +593,22 @@ class AttendanceStatusService
         }
         return null;
     }
+
+    /**
+     * Find the first workday schedule (non-rest day) with in/out defined.
+     * Used as a reference schedule for rest day attendance computation,
+     * so rest days use the same late/undertime/OT detection as workdays.
+     */
+    public static function firstWorkdaySchedule(?array $effectiveSchedule): ?array
+    {
+        if (! is_array($effectiveSchedule)) {
+            return null;
+        }
+        foreach ($effectiveSchedule as $dayKey => $schedule) {
+            if (is_array($schedule) && ! empty($schedule['in']) && ! empty($schedule['out'])) {
+                return $schedule;
+            }
+        }
+        return null;
+    }
 }

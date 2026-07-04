@@ -124,16 +124,26 @@ class AttendanceStatusResolver
             $in = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
             $out = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
             if ($out->greaterThan($in)) {
-                $effectiveWorkedMinutes = is_array($daySchedule)
-                    ? AttendanceStatusService::getNetWorkedMinutes($in, $out, $daySchedule, $dateKey, $nowTz->getTimezone()->getName())
+                $scheduleForBreak = is_array($daySchedule) ? $daySchedule : (
+                    $isRestDay ? AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule) : null
+                );
+                $effectiveWorkedMinutes = $scheduleForBreak !== null
+                    ? AttendanceStatusService::getNetWorkedMinutes($in, $out, $scheduleForBreak, $dateKey, $nowTz->getTimezone()->getName())
                     : (int) $in->diffInMinutes($out);
             }
+        }
+
+        // For rest days with clock times, use a reference workday schedule so
+        // late/undertime detection runs identically to ordinary workdays.
+        $computationSchedule = is_array($daySchedule) ? $daySchedule : null;
+        if ($isRestDay && ($hasTimeIn || $hasTimeOut) && (! is_array($daySchedule) || empty($daySchedule['in']))) {
+            $computationSchedule = AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule);
         }
 
         $metrics = $this->computeWorkdayMetrics(
             $dateKey,
             $nowTz,
-            $daySchedule,
+            $computationSchedule,
             $effectiveTimeIn,
             $effectiveTimeOut,
             $hasTimeIn,
@@ -206,7 +216,7 @@ class AttendanceStatusResolver
                 dateKey: $dateKey,
                 todayDate: $todayDate,
                 nowTz: $nowTz,
-                daySchedule: $daySchedule,
+                daySchedule: $computationSchedule,
                 effectiveTimeIn: $effectiveTimeIn,
                 effectiveTimeOut: $effectiveTimeOut,
                 hasTimeIn: $hasTimeIn,
@@ -238,7 +248,7 @@ class AttendanceStatusResolver
             dateKey: $dateKey,
             todayDate: $todayDate,
             nowTz: $nowTz,
-            daySchedule: $daySchedule,
+            daySchedule: $computationSchedule,
             effectiveTimeIn: $effectiveTimeIn,
             effectiveTimeOut: $effectiveTimeOut,
             hasTimeIn: $hasTimeIn,

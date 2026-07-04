@@ -86,18 +86,20 @@ class AttendanceDailySummaryService
         ));
         $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
 
+        $scheduleForOt = is_array($daySchedule) ? $daySchedule : (
+            $isRestDay ? AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule) : null
+        );
         $rawOtMinutes = 0;
         if (
             $effectiveTimeIn instanceof Carbon
             && $effectiveTimeOut instanceof Carbon
-            && is_array($daySchedule)
-            && ! empty($daySchedule['in'])
-            && ! empty($daySchedule['out'])
-            && ! $isRestDay
+            && is_array($scheduleForOt)
+            && ! empty($scheduleForOt['in'])
+            && ! empty($scheduleForOt['out'])
         ) {
             $rawOtMinutes = AttendanceStatusService::computeRawOvertimeBreakdown(
                 $dateKey,
-                $daySchedule,
+                $scheduleForOt,
                 $effectiveTimeIn,
                 $effectiveTimeOut,
                 $tz
@@ -141,7 +143,7 @@ class AttendanceDailySummaryService
             $out = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
             if ($out->greaterThan($in)) {
                 $scheduleForBreak = is_array($daySchedule) ? $daySchedule : (
-                    $isRestDayWorked ? $this->firstScheduleWithBreaks($effectiveSchedule) : null
+                    $isRestDayWorked ? AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule) : null
                 );
                 if ($scheduleForBreak !== null) {
                     $effectiveWorkedMinutes = AttendanceStatusService::getNetWorkedMinutes(
@@ -187,16 +189,15 @@ class AttendanceDailySummaryService
             $rawOtMinutes > 0
             && $effectiveTimeIn instanceof Carbon
             && $effectiveTimeOut instanceof Carbon
-            && is_array($daySchedule)
-            && ! empty($daySchedule['in'])
-            && ! empty($daySchedule['out'])
-            && ! $isRestDay
+            && is_array($scheduleForOt)
+            && ! empty($scheduleForOt['in'])
+            && ! empty($scheduleForOt['out'])
         ) {
             $otBreakdown = AttendanceStatusService::computeRawOvertimeBreakdown(
-                $dateKey, $daySchedule, $effectiveTimeIn, $effectiveTimeOut, $tz
+                $dateKey, $scheduleForOt, $effectiveTimeIn, $effectiveTimeOut, $tz
             );
-            $scheduledStartForOt = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $tz);
-            $scheduledEndForOt = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+            $scheduledStartForOt = AttendanceStatusService::getScheduledStartForDate($dateKey, $scheduleForOt, $tz);
+            $scheduledEndForOt = AttendanceStatusService::getScheduledEndForDate($dateKey, $scheduleForOt, $tz);
 
             if ($scheduledStartForOt && $otBreakdown['pre_minutes'] > 0) {
                 $rawPreOtSegment = [
@@ -209,8 +210,8 @@ class AttendanceDailySummaryService
             }
 
             if ($scheduledEndForOt && $otBreakdown['post_minutes'] > 0) {
-                $overtimeBuffer = isset($daySchedule['overtime_buffer_minutes'])
-                    ? (int) $daySchedule['overtime_buffer_minutes']
+                $overtimeBuffer = isset($scheduleForOt['overtime_buffer_minutes'])
+                    ? (int) $scheduleForOt['overtime_buffer_minutes']
                     : (int) config('attendance.overtime_buffer_minutes', 15);
                 $postShiftOtStart = $scheduledEndForOt->copy()->addMinutes($overtimeBuffer);
                 $rawPostOtSegment = [
@@ -232,7 +233,12 @@ class AttendanceDailySummaryService
 
         $statusLabel = $resolved['status_label'] ?? AttendanceStatusResolver::statusLabel($status);
         if ($isRestDayWorked) {
-            $statusLabel = 'Rest Day Worked';
+            $statusLabel = match ($status) {
+                'late' => 'Rest Day Worked Late',
+                'halfday', 'half_day' => 'Rest Day Worked Half Day',
+                'undertime' => 'Rest Day Worked Undertime',
+                default => 'Rest Day Worked',
+            };
         }
 
         return [

@@ -798,10 +798,10 @@ class EmployeeDashboardController extends Controller
             'absent' => 'Missed clock-in',
             'present' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present',
             'present_with_ot' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present with OT',
-            'late' => $hasTimeIn && ! $hasTimeOut ? 'Working' : ($lateLabel ?: 'Late'),
-            'halfday' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Half Day',
+            'late' => $isRestDayWorked ? 'Rest Day Worked Late' : ($hasTimeIn && ! $hasTimeOut ? 'Working' : ($lateLabel ?: 'Late')),
+            'halfday' => $isRestDayWorked ? 'Rest Day Worked Half Day' : ($hasTimeIn && ! $hasTimeOut ? 'Working' : 'Half Day'),
             'clocked_in' => 'Working',
-            'undertime' => 'Undertime',
+            'undertime' => $isRestDayWorked ? 'Rest Day Worked Undertime' : 'Undertime',
             'incomplete' => 'Incomplete',
         ];
 

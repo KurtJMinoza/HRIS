@@ -643,6 +643,13 @@ class PayrollComputationService
         $holiday = $holidayContext['holiday'];
         $calendarScopeMatch = $holidayContext['calendar_scope_match'];
 
+        // For rest days with clock times, use a reference workday schedule so
+        // late/undertime/break deduction runs identically to ordinary workdays.
+        $computationSchedule = is_array($daySchedule) ? $daySchedule : null;
+        if ($isRestDay && $worked && (! is_array($daySchedule) || empty($daySchedule['in']))) {
+            $computationSchedule = AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule);
+        }
+
         // Phase 2: Rules Engine – resolve rule code and multipliers (policy-aware)
         $holidayPolicy = $holiday !== null
             ? $this->holidayEligibility->resolveEffectivePolicy($policy, $holiday, $companyId)
@@ -684,8 +691,8 @@ class PayrollComputationService
         $ndEndHour = $ndConfig['end_hour'] ?? null;
 
         $hourlyRate = $this->hourlyRateFromDaily($dailyRate);
-        $requiredMinutes = $daySchedule
-            ? AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule, $tz)
+        $requiredMinutes = $computationSchedule
+            ? AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $computationSchedule, $tz)
             : 0;
 
         $conditions = [
@@ -876,7 +883,7 @@ class PayrollComputationService
         $timeOutTz = $timeOut->copy()->timezone($tz)->second(0);
 
         // Phase 4: Time Segmentation with ND Regular vs ND OT split (net of meal break when schedule has break)
-        $seg = $this->timeSegmentation->segment($timeInTz, $timeOutTz, $tz, $daySchedule, $dateKey, $ndStartHour, $ndEndHour);
+        $seg = $this->timeSegmentation->segment($timeInTz, $timeOutTz, $tz, $computationSchedule, $dateKey, $ndStartHour, $ndEndHour);
         $regSeg = (int) $seg['regular_minutes'];
         $ndReg = (int) ($seg['nd_regular_minutes'] ?? 0);
         $otDayMinutes = (int) $seg['overtime_minutes'] - (int) ($seg['nd_overtime_minutes'] ?? 0);
@@ -884,37 +891,37 @@ class PayrollComputationService
         $workedMinutes = (int) $seg['total_minutes'];
 
         $clockInResult = null;
-        if ($daySchedule) {
-            $clockInResult = AttendanceStatusService::getClockInStatus($daySchedule, $dateKey, $timeInTz);
-            $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
-            $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
+        if ($computationSchedule) {
+            $clockInResult = AttendanceStatusService::getClockInStatus($computationSchedule, $dateKey, $timeInTz);
+            $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $computationSchedule, $tz);
+            $earlyTimeout = isset($computationSchedule['early_timeout_minutes']) ? (int) $computationSchedule['early_timeout_minutes'] : null;
             $undertimeDeductionMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
-                $dateKey, $daySchedule, $timeInTz, $timeOutTz, $tz, $earlyTimeout
+                $dateKey, $computationSchedule, $timeInTz, $timeOutTz, $tz, $earlyTimeout
             );
         }
 
         // Tardiness / half-day: cap paid regular minutes (net of segmentation) before pay; OT after scheduled end unchanged.
         $paidReg = $regSeg;
-        if ($daySchedule && $clockInResult !== null) {
+        if ($computationSchedule && $clockInResult !== null) {
             $schedStatus = $clockInResult['status'] ?? '';
             if ($schedStatus === 'late') {
                 $bucketMin = (int) ($clockInResult['late_minutes'] ?? 0);
                 $cap = max(0, $requiredMinutes - $bucketMin);
                 $paidReg = min($regSeg, $cap);
             } elseif ($schedStatus === 'half_day') {
-                $paidReg = min($regSeg, AttendanceStatusService::getHalfDayRegularCapMinutes($daySchedule));
+                $paidReg = min($regSeg, AttendanceStatusService::getHalfDayRegularCapMinutes($computationSchedule));
             }
         }
 
         // Grace: full scheduled net regular pay when clock-in is within ±grace minutes of scheduled start
         // (same window as grace / Present), no fractional pay cut vs segmentation (e.g. 8:01 → 8.00h like 07:59).
-        if ($daySchedule && $clockInResult !== null
+        if ($computationSchedule && $clockInResult !== null
             && ($clockInResult['status'] ?? '') === 'on_time'
             && $requiredMinutes > 0
             && filter_var(config('attendance.grace_period_full_regular_pay', true), FILTER_VALIDATE_BOOL)) {
-            $schedStart = AttendanceStatusService::getScheduledStartForDate($dateKey, $daySchedule, $tz);
+            $schedStart = AttendanceStatusService::getScheduledStartForDate($dateKey, $computationSchedule, $tz);
             if ($schedStart) {
-                $graceM = AttendanceStatusService::getGraceMinutes($daySchedule);
+                $graceM = AttendanceStatusService::getGraceMinutes($computationSchedule);
                 $actualM = (int) $timeInTz->format('G') * 60 + (int) $timeInTz->format('i');
                 $schedM = (int) $schedStart->format('G') * 60 + (int) $schedStart->format('i');
                 $diffMin = $actualM - $schedM;
@@ -936,7 +943,7 @@ class PayrollComputationService
         // 7.98h-style drift from second-level punches or minute segmentation on an 8.00h schedule.
         if ($this->coversScheduledRegularShift(
             $dateKey,
-            $daySchedule,
+            $computationSchedule,
             $timeInTz,
             $timeOutTz,
             $requiredMinutes,
