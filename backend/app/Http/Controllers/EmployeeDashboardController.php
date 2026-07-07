@@ -242,7 +242,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 13) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 14) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -356,6 +356,9 @@ class EmployeeDashboardController extends Controller
 
         $absentCounts = ['leave' => 0, 'rest' => 0, 'holiday' => 0, 'absent' => 0];
 
+        $totalExpectedMinutes = 0;
+        $totalAbsentExpectedMinutes = 0;
+
         while ($cursor->lessThanOrEqualTo($to)) {
             $dateKey = $cursor->toDateString();
             $holidayOnDate = $holidayMap[$dateKey] ?? null;
@@ -364,6 +367,18 @@ class EmployeeDashboardController extends Controller
             $correctionCollection = $corrections->get($dateKey);
             $correction = $correctionCollection?->first();
             $otRecords = $overtimesByDate->get($dateKey)?->all() ?? [];
+
+            $dayKey = self::DAY_KEYS[(int) $cursor->format('w')];
+            $daySchedule = $scheduleAssigned && isset($effectiveSchedule[$dayKey]) ? $effectiveSchedule[$dayKey] : null;
+            $isRestDay = $this->attendanceRollup->isScheduledRestDay($effectiveSchedule, $daySchedule);
+            $isLeave = $leaveOnDate !== null;
+            $isHoliday = $holidayOnDate !== null;
+            $expectedDayMinutes = 0;
+            $isFutureDay = $dateKey > $todayDate;
+            if (! $isFutureDay && ! $isRestDay && ! $isLeave && ! $isHoliday && is_array($daySchedule)) {
+                $expectedDayMinutes = max(0, (int) ($daySchedule['expected_paid_minutes'] ?? 480));
+                $totalExpectedMinutes += $expectedDayMinutes;
+            }
 
             $summary = $this->dailySummary->computeForDate(
                 user: $user,
@@ -441,6 +456,7 @@ class EmployeeDashboardController extends Controller
                     $absentCounts['leave']++;
                 } else {
                     $absentCounts['absent']++;
+                    $totalAbsentExpectedMinutes += $expectedDayMinutes;
                 }
             }
 
@@ -478,9 +494,24 @@ class EmployeeDashboardController extends Controller
             ? round($extraMetrics['total_worked_minutes'] / 60, 2)
             : 0;
 
+        // Override expected_scheduled_hours and absent_hours with controller-computed values from schedule config
+        $monthSummary['expected_scheduled_hours'] = round($totalExpectedMinutes / 60, 2);
+        $monthSummary['absent_hours'] = round($totalAbsentExpectedMinutes / 60, 2);
+
+        // Ensure efficiency is computed from the latest values
+        $effExpected = (float) ($monthSummary['expected_scheduled_hours'] ?? 0);
+        $effPayroll = (float) ($monthSummary['payroll_impact_hours'] ?? 0);
+        $monthSummary['attendance_efficiency_percentage'] = $effExpected > 0
+            ? round(($effPayroll / $effExpected) * 100, 2)
+            : 0.0;
+
         $payload = [
             'year' => $year,
             'month' => $month,
+            'date_range' => [
+                'from' => $fromStr,
+                'to' => $toStr,
+            ],
             'schedule_assigned' => $scheduleAssigned,
             'days' => $days,
             'summary' => $monthSummary,
@@ -506,7 +537,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 13,
+                'schema_version' => 14,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,

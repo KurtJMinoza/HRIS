@@ -192,6 +192,23 @@ const ATTENDANCE_SUMMARY_SLICE_META = {
   absent: { label: 'Absent', color: '#ef4444' },
   late: { label: 'Late', color: '#f97316' },
   undertime: { label: 'Undertime', color: '#eab308' },
+  efficiency: { label: 'Efficiency', color: '#8b5cf6' },
+}
+
+function efficiencyBadgeClass(pct) {
+  if (pct == null || typeof pct !== 'number') return 'bg-gray-100 text-gray-700 border-gray-300'
+  if (pct >= 95) return 'bg-emerald-100 text-emerald-800 border-emerald-400'
+  if (pct >= 85) return 'bg-blue-100 text-blue-800 border-blue-400'
+  if (pct >= 75) return 'bg-amber-100 text-amber-800 border-amber-400'
+  return 'bg-red-100 text-red-800 border-red-400'
+}
+
+function efficiencyLabel(pct) {
+  if (pct == null || typeof pct !== 'number') return 'N/A'
+  if (pct >= 95) return 'Excellent'
+  if (pct >= 85) return 'Good'
+  if (pct >= 75) return 'Needs Attention'
+  return 'Poor'
 }
 
 const ATTENDANCE_SUMMARY_STATUS_STYLES = {
@@ -627,11 +644,32 @@ export default function EmployeeDashboard() {
     }
   }, [mergeSummary])
 
-  const loadAttendanceCalendar = useCallback(async (year, month, opts = {}) => {
-    const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`
+  const prefetchAdjacentMonths = useCallback(async (year, month) => {
+    const adjacents = [
+      { y: month === 0 ? year - 1 : year, m: month === 0 ? 11 : month - 1 },
+      { y: month === 11 ? year + 1 : year, m: month === 11 ? 0 : month + 1 },
+    ]
+    for (const { y, m } of adjacents) {
+      const mk = calendarMonthSelectKey(y, m)
+      if (calendarCacheRef.current.has(mk)) continue
+      try {
+        const data = await getEmployeeDashboardAttendanceCalendar({ month: mk })
+        if (data?.meta?.schema_version === 14) {
+          calendarCacheRef.current.set(mk, data)
+        }
+      } catch {
+        // Silently ignore pre-fetch errors
+      }
+    }
+  }, [])
+
+  const loadAttendanceCalendar = useCallback(async (year, month) => {
+    const monthKey = calendarMonthSelectKey(year, month)
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    if (cached && cached?.meta?.schema_version === 11 && opts.force !== true) {
+    const cacheValid = cached && cached?.meta?.schema_version === 14
+
+    if (cacheValid) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
       mergeSummary({
         ...(cached.summary || {}),
@@ -642,12 +680,12 @@ export default function EmployeeDashboard() {
       setMonthOtRequests(Array.isArray(cached.overtime_requests) ? cached.overtime_requests : [])
       setPrevSummary(null)
       setCalendarLoading(false)
-      return
+    } else {
+      setCalendarLoading(true)
     }
 
     const controller = new AbortController()
     calendarAbortRef.current = controller
-    setCalendarLoading(true)
     try {
       const data = await getEmployeeDashboardAttendanceCalendar({ month: monthKey, signal: controller.signal })
       calendarCacheRef.current.set(monthKey, data)
@@ -661,11 +699,14 @@ export default function EmployeeDashboard() {
       setMonthOtRequests(Array.isArray(data.overtime_requests) ? data.overtime_requests : [])
       setPrevSummary(null)
       setError(null)
+      void prefetchAdjacentMonths(year, month)
     } catch (e) {
       if (controller.signal.aborted) return
-      setDays([])
-      setAbsentCounts({ absent: 0, leave: 0, holiday: 0 })
-      setMonthOtRequests([])
+      if (!cacheValid) {
+        setDays([])
+        setAbsentCounts({ absent: 0, leave: 0, holiday: 0 })
+        setMonthOtRequests([])
+      }
       setError(e.message)
     } finally {
       if (calendarAbortRef.current === controller) {
@@ -673,7 +714,7 @@ export default function EmployeeDashboard() {
         setCalendarLoading(false)
       }
     }
-  }, [mergeSummary])
+  }, [mergeSummary, prefetchAdjacentMonths])
 
   const loadRecentRequests = useCallback(async () => {
     recentAbortRef.current?.abort()
@@ -1056,6 +1097,20 @@ export default function EmployeeDashboard() {
       late: summary?.late_count ?? 0,
       undertime: summary?.undertime_count ?? 0,
       scheduledDays,
+      efficiency: summary?.attendance_efficiency_percentage ?? 0,
+      expectedScheduledHours: summary?.expected_scheduled_hours ?? 0,
+      actualWorkedHours: summary?.actual_worked_hours ?? 0,
+      payrollImpactHours: summary?.payroll_impact_hours ?? 0,
+      lateMinutes: summary?.late_minutes ?? 0,
+      undertimeMinutes: summary?.undertime_minutes ?? 0,
+      absentHours: summary?.absent_hours ?? 0,
+      presentDays: summary?.present_days ?? 0,
+      absentDays: summary?.absent_days ?? 0,
+      lateDays: summary?.late_days ?? 0,
+      undertimeDays: summary?.undertime_days ?? 0,
+      restDays: summary?.rest_day_count ?? 0,
+      leaveDays: summary?.leave_count ?? 0,
+      holidayDays: summary?.holiday_count ?? 0,
     }
   }, [summary, absentCounts, days])
 
@@ -1068,7 +1123,7 @@ export default function EmployeeDashboard() {
       late: monthAttendanceMetrics.late,
       undertime: monthAttendanceMetrics.undertime,
     }
-    return ['present', 'absent', 'late', 'undertime'].map((id) => {
+    const slices = ['present', 'absent', 'late', 'undertime'].map((id) => {
       const count = counts[id]
       const meta = ATTENDANCE_SUMMARY_SLICE_META[id]
       return {
@@ -1080,6 +1135,17 @@ export default function EmployeeDashboard() {
         chartValue: count > 0 ? count : 0,
       }
     })
+    const effPct = monthAttendanceMetrics.efficiency
+    slices.push({
+      id: 'efficiency',
+      label: 'Efficiency',
+      color: ATTENDANCE_SUMMARY_SLICE_META.efficiency.color,
+      count: typeof effPct === 'number' && Number.isFinite(effPct) ? `${effPct.toFixed(2)}%` : '0.00%',
+      percent: '',
+      chartValue: 0,
+      efficiency: true,
+    })
+    return slices
   }, [monthAttendanceMetrics, attendanceSummaryBaseDays])
 
   const attendanceSummaryHasData = attendanceSummarySlices.some((slice) => slice.chartValue > 0)
@@ -1910,7 +1976,7 @@ export default function EmployeeDashboard() {
           <CardHeader className="space-y-2 pb-2">
             <div className="flex items-center justify-between gap-2">
               <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
-                Attendance Summary
+                Attendance Efficiency Details
               </CardTitle>
               <div className="rounded-lg bg-orange-500/10 p-2">
                 <CalendarDays className="size-4 text-orange-600 dark:text-orange-400" />
@@ -1997,7 +2063,7 @@ export default function EmployeeDashboard() {
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
-                          data={attendanceSummarySlices}
+                          data={attendanceSummarySlices.filter((s) => !s.efficiency)}
                           dataKey="chartValue"
                           nameKey="label"
                           cx="50%"
@@ -2007,7 +2073,7 @@ export default function EmployeeDashboard() {
                           paddingAngle={2}
                           stroke="none"
                         >
-                          {attendanceSummarySlices.map((slice) => (
+                          {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
                             <Cell key={slice.id} fill={slice.color} />
                           ))}
                         </Pie>
@@ -2032,8 +2098,11 @@ export default function EmployeeDashboard() {
                       />
                       <span className="min-w-0 flex-1 truncate text-[10px] text-foreground @sm:text-[11px]">{slice.label}</span>
                       <span className="shrink-0 text-[10px] font-bold tabular-nums text-foreground @sm:text-[11px]">
-                        {slice.count}{' '}
-                        <span className="font-semibold text-muted-foreground">({slice.percent}%)</span>
+                        {slice.efficiency ? (
+                          <span>{slice.count}</span>
+                        ) : (
+                          <>{slice.count}{' '}<span className="font-semibold text-muted-foreground">({slice.percent}%)</span></>
+                        )}
                       </span>
                     </div>
                   ))}
@@ -2737,7 +2806,7 @@ export default function EmployeeDashboard() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                  Attendance Summary
+                  Attendance Efficiency Details
                 </DialogTitle>
                 <DialogDescription className="mt-1.5 text-sm text-muted-foreground sm:text-base">
                   {getMonthLabel()}
@@ -2768,73 +2837,116 @@ export default function EmployeeDashboard() {
             </div>
           ) : (
             <div className="px-5 pb-6 sm:px-7 sm:pb-7">
-              <section className="grid gap-4 lg:grid-cols-[minmax(0,1.8fr)_minmax(17rem,0.95fr)]">
-                <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
-                  <div className="grid items-center gap-4 sm:grid-cols-[13rem_minmax(0,1fr)]">
-                    <div className="relative mx-auto h-48 w-48 shrink-0">
-                      {attendanceSummaryHasData ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={attendanceSummarySlices}
-                              dataKey="chartValue"
-                              nameKey="label"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius="64%"
-                              outerRadius="94%"
-                              paddingAngle={1.5}
-                              stroke="hsl(var(--background))"
-                              strokeWidth={2}
-                            >
-                              {attendanceSummarySlices.map((slice) => (
-                                <Cell key={slice.id} fill={slice.color} />
-                              ))}
-                            </Pie>
-                          </PieChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <div className="absolute inset-2 rounded-full border-[1.7rem] border-muted" />
-                      )}
-                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-3xl font-bold tabular-nums tracking-tight text-foreground">{attendanceSummaryBaseDays}</span>
-                        <span className="mt-1 text-xs font-medium text-muted-foreground">Total Days</span>
-                      </div>
-                    </div>
+              {/* Header Section */}
+              <div className="mb-5 flex flex-col gap-4 rounded-xl border border-border/70 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-black">Attendance Efficiency Details</h3>
+                    <div className="h-6 w-px bg-gray-200" />
+                    <span className="text-sm font-medium text-gray-500">{getMonthLabel()}</span>
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    {employeeDisplayName} &middot; {attendanceSummaryBaseDays} scheduled work day{attendanceSummaryBaseDays === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <div className="flex flex-col items-end">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Efficiency</span>
+                    <span className="text-2xl font-bold tabular-nums text-black">
+                      {Number(monthAttendanceMetrics.efficiency).toFixed(2)}%
+                    </span>
+                  </div>
+                  <span className={cn('inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold', efficiencyBadgeClass(monthAttendanceMetrics.efficiency))}>
+                    {efficiencyLabel(monthAttendanceMetrics.efficiency)}
+                  </span>
+                </div>
+              </div>
 
-                    <dl className="grid gap-x-7 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                      {attendanceSummarySlices.map((slice) => (
-                        <div key={slice.id} className="flex min-w-0 items-center gap-3">
-                          <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden />
-                          <dt className="min-w-0 flex-1 truncate font-medium text-muted-foreground">{slice.label}</dt>
-                          <dd className="shrink-0 font-semibold tabular-nums text-foreground">
-                            {slice.count} <span className="font-normal text-muted-foreground">({slice.percent}%)</span>
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
+              {/* Summary Cards */}
+              <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  { label: 'Expected Hours', value: `${Number(monthAttendanceMetrics.expectedScheduledHours).toFixed(2)}h`, cls: 'from-blue-50/80 to-background border-blue-200/70' },
+                  { label: 'Payroll Impact Hours', value: `${Number(monthAttendanceMetrics.payrollImpactHours).toFixed(2)}h`, cls: 'from-emerald-50/80 to-background border-emerald-200/70' },
+                  { label: 'Actual Worked Hours', value: `${Number(monthAttendanceMetrics.actualWorkedHours).toFixed(2)}h`, cls: 'from-violet-50/80 to-background border-violet-200/70' },
+                  { label: 'Lost Hours', value: `${(Number(monthAttendanceMetrics.expectedScheduledHours) - Number(monthAttendanceMetrics.payrollImpactHours)).toFixed(2)}h`, cls: 'from-amber-50/80 to-background border-amber-200/70' },
+                ].map((metric) => (
+                  <div key={metric.label} className={cn('flex items-center justify-between rounded-xl border bg-gradient-to-br p-4 shadow-sm', metric.cls)}>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{metric.label}</p>
+                      <p className="mt-1.5 text-xl font-bold tabular-nums text-black">{metric.value}</p>
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              <section className="mb-5 grid gap-5 lg:grid-cols-[1fr_1.2fr]">
+                {/* Attendance Metrics */}
+                <div className="rounded-xl border border-border/70 bg-white p-5 shadow-sm">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-black">Attendance Metrics</h4>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                    {[
+                      { label: 'Present days', value: monthAttendanceMetrics.presentDays, color: '#22c55e' },
+                      { label: 'Absent days', value: monthAttendanceMetrics.absentDays, color: '#ef4444' },
+                      { label: 'Late days', value: monthAttendanceMetrics.lateDays, color: '#f97316' },
+                      { label: 'Undertime days', value: monthAttendanceMetrics.undertimeDays, color: '#eab308' },
+                      { label: 'Rest days', value: monthAttendanceMetrics.restDays, color: '#94a3b8' },
+                      { label: 'Leave days', value: monthAttendanceMetrics.leaveDays, color: '#3b82f6' },
+                      { label: 'Holidays', value: monthAttendanceMetrics.holidayDays, color: '#06b6d4' },
+                    ].map((item) => (
+                      <div key={item.label} className="flex items-center justify-between border-b border-gray-100 pb-1.5 last:border-0">
+                        <span className="flex items-center gap-2 text-gray-600">
+                          <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
+                          {item.label}
+                        </span>
+                        <span className="font-semibold tabular-nums text-black">
+                          {item.value} <span className="font-normal text-muted-foreground">({formatAttendanceMetricPercent(item.value, attendanceSummaryBaseDays)}%)</span>
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                  {[
-                    { label: 'Total Hours', value: `${Number(summary?.total_hours || 0).toFixed(2)}h` },
-                    { label: 'Late (min)', value: summary?.late_minutes ?? 0 },
-                  ].map((metric) => (
-                    <div key={metric.label} className="flex min-h-28 items-center justify-between rounded-xl border border-orange-200/70 bg-gradient-to-br from-orange-50/80 to-background p-5 shadow-sm dark:border-orange-500/15 dark:from-orange-500/10 dark:to-background">
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">{metric.label}</p>
-                        <p className="mt-2 text-2xl font-bold tabular-nums tracking-tight text-foreground">{metric.value}</p>
-                      </div>
-                      <span className="flex size-14 items-center justify-center rounded-full bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
-                        <Clock className="size-6" aria-hidden />
-                      </span>
-                    </div>
-                  ))}
+                {/* Efficiency Breakdown */}
+                <div className="rounded-xl border border-border/70 bg-white p-5 shadow-sm">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-black">Efficiency Breakdown</h4>
+                  <div className="space-y-2.5 text-sm">
+                    {(() => {
+                      const exp = monthAttendanceMetrics.expectedScheduledHours
+                      const pi = monthAttendanceMetrics.payrollImpactHours
+                      const lateDed = monthAttendanceMetrics.lateMinutes / 60
+                      const underDed = monthAttendanceMetrics.undertimeMinutes / 60
+                      const absH = monthAttendanceMetrics.absentHours
+                      const finalEff = monthAttendanceMetrics.efficiency
+                      return (
+                        <>
+                          {[
+                            { label: 'Expected scheduled hours', value: `${exp.toFixed(2)}h`, highlight: false },
+                            { label: 'Less absent hours', value: `-${absH.toFixed(2)}h`, highlight: absH > 0 },
+                            { label: 'Less late deduction', value: `-${lateDed.toFixed(2)}h`, highlight: lateDed > 0 },
+                            { label: 'Less undertime deduction', value: `-${underDed.toFixed(2)}h`, highlight: underDed > 0 },
+                            { label: 'Actual payable hours', value: `${pi.toFixed(2)}h`, highlight: false },
+                          ].map((row) => (
+                            <div key={row.label} className={cn('flex items-center justify-between border-b border-gray-100 pb-1.5 last:border-0', row.highlight ? 'text-amber-700' : 'text-gray-600')}>
+                              <span>{row.label}</span>
+                              <span className={cn('font-semibold tabular-nums', row.highlight ? 'text-amber-800' : 'text-black')}>{row.value}</span>
+                            </div>
+                          ))}
+                          <div className="mt-3 flex items-center justify-between rounded-lg bg-gradient-to-r from-orange-50 to-amber-50 p-3 dark:from-orange-500/10 dark:to-amber-500/10">
+                            <span className="text-sm font-bold text-gray-800">Final Efficiency</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg font-extrabold tabular-nums text-black">{finalEff.toFixed(2)}%</span>
+                              <span className={cn('rounded-full border px-2 py-0.5 text-xs font-bold', efficiencyBadgeClass(finalEff))}>{efficiencyLabel(finalEff)}</span>
+                            </div>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </div>
                 </div>
               </section>
 
-              <section className="mt-5">
+              {/* Daily Breakdown */}
+              <section>
                 <div className="border-b border-border">
                   <div className="relative w-fit px-5 pb-3 text-sm font-semibold text-orange-600">
                     Daily Breakdown
@@ -2863,7 +2975,7 @@ export default function EmployeeDashboard() {
                       aria-label="Filter attendance records by status"
                     >
                       <option value="all">All statuses</option>
-                      {attendanceSummarySlices.map((slice) => (
+                      {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
                         <option key={slice.id} value={slice.id}>{slice.label}</option>
                       ))}
                     </select>
@@ -2879,18 +2991,16 @@ export default function EmployeeDashboard() {
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[60rem] border-collapse text-sm">
+                      <table className="w-full min-w-[80rem] border-collapse text-sm">
                         <thead className="bg-muted/25">
                           <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
-                            {['Date', 'Status', 'Time In', 'Time Out', 'Late (min)', 'Undertime'].map((label) => (
+                            {['Date', 'Day', 'Schedule', 'Time In', 'Time Out', 'Status', 'Late', 'Undertime', 'Payroll Impact', 'Remarks'].map((label) => (
                               <th key={label} className="h-11 whitespace-nowrap px-3 font-medium first:pl-4">
                                 <span className="inline-flex items-center gap-1.5">
                                   {label}
-                                  <ArrowUpDown className="size-3 opacity-55" aria-hidden />
                                 </span>
                               </th>
                             ))}
-                            <th className="h-11 px-3 font-medium">Remarks</th>
                             <th className="h-11 w-12 px-3" />
                           </tr>
                         </thead>
@@ -2898,10 +3008,13 @@ export default function EmployeeDashboard() {
                           {attendanceSummaryPagedDays.map((day) => {
                             const lateM = Number(day.late_minutes || 0)
                             const utM = Number(day.undertime_minutes || 0)
+                            const piHours = Number(day.payroll_impact_hours || 0)
                             const timeIn = day.formatted_time_in || formatTime(day.time_in)
                             const timeOut = day.formatted_time_out || formatTime(day.time_out)
                             const statusKey = attendanceSummaryStatusKey(day)
                             const statusLabel = attendanceSummaryStatusLabel(day)
+                            const scheduleLabel = day.schedule_label || (day.schedule_in && day.schedule_out ? `${formatTime(day.schedule_in)} - ${formatTime(day.schedule_out)}` : day.is_rest_day ? 'Rest Day' : '—')
+                            const dayName = day.date ? new Date(day.date + 'T12:00:00').toLocaleDateString('en-PH', { weekday: 'short' }) : '—'
                             return (
                               <tr key={day.date} className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/20">
                                 <td className="whitespace-nowrap px-3 py-3 pl-4 text-foreground">
@@ -2912,21 +3025,26 @@ export default function EmployeeDashboard() {
                                     <span className="font-medium">{formatYmdShort(day.date)}</span>
                                   </span>
                                 </td>
+                                <td className="whitespace-nowrap px-3 py-3 text-foreground">{dayName}</td>
+                                <td className="whitespace-nowrap px-3 py-3 text-xs text-foreground">{scheduleLabel}</td>
+                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeIn || '—'}</td>
+                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeOut || '—'}</td>
                                 <td className="whitespace-nowrap px-3 py-3">
-                                  <span className={cn('inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold', ATTENDANCE_SUMMARY_STATUS_STYLES[statusKey])}>
+                                  <span className={cn('inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold', ATTENDANCE_SUMMARY_STATUS_STYLES[statusKey] || 'border-gray-200 bg-gray-50 text-gray-700')}>
                                     <span className="size-2 rounded-full bg-current" aria-hidden />
                                     {statusLabel}
                                   </span>
                                 </td>
-                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeIn || '—'}</td>
-                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeOut || '—'}</td>
                                 <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', lateM > 0 ? 'font-medium text-orange-600' : 'text-muted-foreground')}>
-                                  {lateM > 0 ? lateM : '—'}
+                                  {lateM > 0 ? `${lateM}m` : '—'}
                                 </td>
                                 <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', utM > 0 ? 'font-medium text-amber-600' : 'text-muted-foreground')}>
-                                  {utM > 0 ? utM : '—'}
+                                  {utM > 0 ? `${utM}m` : '—'}
                                 </td>
-                                <td className="max-w-40 truncate px-3 py-3 text-foreground">{day.remarks || day.remark || 'Open'}</td>
+                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', piHours > 0 ? 'font-medium text-emerald-600' : 'text-muted-foreground')}>
+                                  {piHours > 0 ? `${piHours.toFixed(2)}h` : '—'}
+                                </td>
+                                <td className="max-w-32 truncate px-3 py-3 text-foreground">{day.remarks || day.remark || 'Open'}</td>
                                 <td className="px-3 py-3 text-right">
                                   <button
                                     type="button"

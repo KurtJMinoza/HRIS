@@ -12,8 +12,9 @@ use Illuminate\Support\Facades\Cache;
 class EmployeeDashboardCacheService
 {
     public const SUMMARY_TTL = 60;
-    public const CALENDAR_TTL = 120;
+    public const CALENDAR_TTL = 300;
     public const RECENT_TTL = 90;
+    public const ATTENDANCE_SUMMARY_TTL = 300;
 
     public static function summaryKey(int $employeeId, string $date): string
     {

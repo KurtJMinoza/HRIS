@@ -25,7 +25,7 @@ class AttendanceRollupService
 
     /**
      * @param  list<array<string, mixed>>  $days
-     * @return array{present_count:int,late_count:int,absent_count:int,leave_count:int,halfday_count:int,rest_day_count:int,holiday_count:int}
+     * @return array{present_count:int,late_count:int,absent_count:int,leave_count:int,halfday_count:int,rest_day_count:int,holiday_count:int,present_days:int,absent_days:int,late_days:int,undertime_days:int,rest_days:int,leave_days:int,holiday_days:int,scheduled_workdays:int,expected_scheduled_hours:float,actual_worked_hours:float,payroll_impact_hours:float,late_minutes:int,undertime_minutes:int,absent_hours:float,attendance_efficiency_percentage:float}
      */
     public function summarizeEmployeeDays(array $days): array
     {
@@ -36,6 +36,14 @@ class AttendanceRollupService
         $halfday = 0;
         $restDay = 0;
         $holiday = 0;
+
+        $scheduledWorkdays = 0;
+        $expectedScheduledHours = 0.0;
+        $actualWorkedHours = 0.0;
+        $payrollImpactHours = 0.0;
+        $lateMinutes = 0;
+        $undertimeMinutes = 0;
+        $absentHours = 0.0;
 
         foreach ($days as $day) {
             if (! is_array($day)) {
@@ -50,6 +58,33 @@ class AttendanceRollupService
                 $halfday++;
             }
 
+            $isRestDay = ! empty($day['is_rest_day']);
+            $isLeave = $status === 'leave';
+            $isHoliday = $status === 'holiday';
+
+            // Count scheduled workdays (non-rest, non-leave, non-holiday)
+            if (! $isRestDay && ! $isLeave && ! $isHoliday) {
+                $scheduledWorkdays++;
+            }
+
+            // Expected scheduled hours from day schedule
+            $dayExpectedHours = (float) ($day['scheduled_regular_hours'] ?? 0);
+            if ($dayExpectedHours <= 0 && ! $isRestDay) {
+                // Fallback: compute from worked + late + undertime
+                $dayExpectedHours = (float) ($day['expected_paid_minutes'] ?? 0) / 60;
+            }
+            if ($dayExpectedHours <= 0 && ! $isRestDay) {
+                $worked = (float) ($day['worked_hours'] ?? 0);
+                $lateH = (int) ($day['late_minutes'] ?? 0) / 60;
+                $underH = (int) ($day['undertime_minutes'] ?? 0) / 60;
+                if ($worked > 0 || $lateH > 0 || $underH > 0) {
+                    $dayExpectedHours = $worked + $lateH + $underH;
+                }
+            }
+            if ($dayExpectedHours > 0) {
+                $expectedScheduledHours += $dayExpectedHours;
+            }
+
             $label = $this->employeeDisplayLabel($day);
             if ($this->labelCountsAsHoliday($label, $day)) {
                 $holiday++;
@@ -57,13 +92,36 @@ class AttendanceRollupService
                 $restDay++;
             } elseif ($this->labelCountsAsPresent($label, $day)) {
                 $present++;
+                $actualWorkedHours += (float) ($day['worked_hours'] ?? 0);
+                $payrollImpactHours += (float) ($day['payroll_impact_hours'] ?? 0);
             } elseif ($this->labelCountsAsAbsent($label, $day)) {
                 $absent++;
+                $absentHours += $dayExpectedHours;
             } elseif ($this->labelCountsAsLate($label, $day)) {
                 $late++;
+                $actualWorkedHours += (float) ($day['worked_hours'] ?? 0);
+                $payrollImpactHours += (float) ($day['payroll_impact_hours'] ?? 0);
             } elseif ($this->labelCountsAsLeave($label, $day)) {
                 $leave++;
             }
+
+            // Aggregate late and undertime minutes
+            $lateMinutes += (int) ($day['late_minutes'] ?? 0);
+            $undertimeMinutes += (int) ($day['undertime_minutes'] ?? 0);
+        }
+
+        // Undertime days count
+        $undertimeDays = 0;
+        foreach ($days as $day) {
+            if (is_array($day) && (int) ($day['undertime_minutes'] ?? 0) > 0 && ($day['status'] ?? '') === 'undertime') {
+                $undertimeDays++;
+            }
+        }
+
+        // Attendance efficiency
+        $attendanceEfficiency = 0.0;
+        if ($expectedScheduledHours > 0) {
+            $attendanceEfficiency = round(($payrollImpactHours / $expectedScheduledHours) * 100, 2);
         }
 
         return [
@@ -74,6 +132,21 @@ class AttendanceRollupService
             'halfday_count' => $halfday,
             'rest_day_count' => $restDay,
             'holiday_count' => $holiday,
+            'present_days' => $present,
+            'absent_days' => $absent,
+            'late_days' => $late,
+            'undertime_days' => $undertimeDays,
+            'rest_days' => $restDay,
+            'leave_days' => $leave,
+            'holiday_days' => $holiday,
+            'scheduled_workdays' => $scheduledWorkdays,
+            'expected_scheduled_hours' => round($expectedScheduledHours, 2),
+            'actual_worked_hours' => round($actualWorkedHours, 2),
+            'payroll_impact_hours' => round($payrollImpactHours, 2),
+            'late_minutes' => $lateMinutes,
+            'undertime_minutes' => $undertimeMinutes,
+            'absent_hours' => round($absentHours, 2),
+            'attendance_efficiency_percentage' => $attendanceEfficiency,
         ];
     }
 
