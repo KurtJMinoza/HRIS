@@ -2862,22 +2862,34 @@ export default function EmployeeDashboard() {
                 </div>
               </div>
 
-              {/* Summary Cards */}
-              <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {[
-                  { label: 'Expected Hours', value: `${Number(monthAttendanceMetrics.expectedScheduledHours).toFixed(2)}h`, cls: 'from-blue-50/80 to-background border-blue-200/70' },
-                  { label: 'Payroll Impact Hours', value: `${Number(monthAttendanceMetrics.payrollImpactHours).toFixed(2)}h`, cls: 'from-emerald-50/80 to-background border-emerald-200/70' },
-                  { label: 'Actual Worked Hours', value: `${Number(monthAttendanceMetrics.actualWorkedHours).toFixed(2)}h`, cls: 'from-violet-50/80 to-background border-violet-200/70' },
-                  { label: 'Lost Hours', value: `${(Number(monthAttendanceMetrics.expectedScheduledHours) - Number(monthAttendanceMetrics.payrollImpactHours)).toFixed(2)}h`, cls: 'from-amber-50/80 to-background border-amber-200/70' },
-                ].map((metric) => (
-                  <div key={metric.label} className={cn('flex items-center justify-between rounded-xl border bg-gradient-to-br p-4 shadow-sm', metric.cls)}>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{metric.label}</p>
-                      <p className="mt-1.5 text-xl font-bold tabular-nums text-black">{metric.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </section>
+              {(() => {
+                const expDays = attendanceSummaryBaseDays
+                const pdDays = monthAttendanceMetrics.presentDays + monthAttendanceMetrics.lateDays
+                const lostDays = expDays - pdDays
+                const expHrs = Number(monthAttendanceMetrics.expectedScheduledHours)
+                const piHrs = Number(monthAttendanceMetrics.payrollImpactHours)
+                const awHrs = Number(monthAttendanceMetrics.actualWorkedHours)
+                const lostHrs = expHrs - piHrs
+                return (
+                  <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                      { label: 'Expected', days: expDays, hrs: expHrs, cls: 'from-blue-50/80 to-background border-blue-200/70' },
+                      { label: 'Payroll Impact', days: pdDays, hrs: piHrs, cls: 'from-emerald-50/80 to-background border-emerald-200/70' },
+                      { label: 'Actual Worked', days: pdDays, hrs: awHrs, cls: 'from-violet-50/80 to-background border-violet-200/70' },
+                      { label: 'Lost', days: lostDays, hrs: lostHrs, cls: 'from-amber-50/80 to-background border-amber-200/70' },
+                    ].map((metric) => (
+                      <div key={metric.label} className={cn('flex items-center justify-between rounded-xl border bg-gradient-to-br p-4 shadow-sm', metric.cls)}>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{metric.label}</p>
+                          <p className="mt-1.5 text-xl font-bold tabular-nums text-black">
+                            {metric.days} day{metric.days === 1 ? '' : 's'} <span className="text-sm font-normal text-muted-foreground">({metric.hrs.toFixed(2)}h)</span>
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </section>
+                )
+              })()}
 
               <section className="mb-5 grid gap-5 lg:grid-cols-[1fr_1.2fr]">
                 {/* Attendance Metrics */}
@@ -2911,20 +2923,27 @@ export default function EmployeeDashboard() {
                   <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-black">Efficiency Breakdown</h4>
                   <div className="space-y-2.5 text-sm">
                     {(() => {
-                      const exp = monthAttendanceMetrics.expectedScheduledHours
-                      const pi = monthAttendanceMetrics.payrollImpactHours
-                      const lateDed = monthAttendanceMetrics.lateMinutes / 60
-                      const underDed = monthAttendanceMetrics.undertimeMinutes / 60
-                      const absH = monthAttendanceMetrics.absentHours
+                      const expDays = attendanceSummaryBaseDays
+                      const expHrs = Number(monthAttendanceMetrics.expectedScheduledHours)
+                      const piHrs = Number(monthAttendanceMetrics.payrollImpactHours)
+                      const pdDays = monthAttendanceMetrics.presentDays + monthAttendanceMetrics.lateDays
+                      const absDays = monthAttendanceMetrics.absentDays
+                      const lateDays = monthAttendanceMetrics.lateDays
+                      const underDays = monthAttendanceMetrics.undertimeDays
+                      const absHrs = Number(monthAttendanceMetrics.absentHours)
+                      const lateDed = Number(monthAttendanceMetrics.lateMinutes) / 60
+                      const underDed = Number(monthAttendanceMetrics.undertimeMinutes) / 60
                       const finalEff = monthAttendanceMetrics.efficiency
+                      const fmt = (days, hrs) => `${days} day${days === 1 ? '' : 's'} (${hrs.toFixed(2)}h)`
+                      const fmtNeg = (days, hrs) => `${days} day${days === 1 ? '' : 's'} (-${hrs.toFixed(2)}h)`
                       return (
                         <>
                           {[
-                            { label: 'Expected scheduled hours', value: `${exp.toFixed(2)}h`, highlight: false },
-                            { label: 'Less absent hours', value: `-${absH.toFixed(2)}h`, highlight: absH > 0 },
-                            { label: 'Less late deduction', value: `-${lateDed.toFixed(2)}h`, highlight: lateDed > 0 },
-                            { label: 'Less undertime deduction', value: `-${underDed.toFixed(2)}h`, highlight: underDed > 0 },
-                            { label: 'Actual payable hours', value: `${pi.toFixed(2)}h`, highlight: false },
+                            { label: 'Expected scheduled', value: fmt(expDays, expHrs), highlight: false },
+                            { label: 'Less absent', value: fmtNeg(absDays, absHrs), highlight: absDays > 0 },
+                            { label: 'Less late deduction', value: fmtNeg(lateDays, lateDed), highlight: lateDays > 0 },
+                            { label: 'Less undertime deduction', value: fmtNeg(underDays, underDed), highlight: underDays > 0 },
+                            { label: 'Actual payable', value: fmt(pdDays, piHrs), highlight: false },
                           ].map((row) => (
                             <div key={row.label} className={cn('flex items-center justify-between border-b border-gray-100 pb-1.5 last:border-0', row.highlight ? 'text-amber-700' : 'text-gray-600')}>
                               <span>{row.label}</span>
