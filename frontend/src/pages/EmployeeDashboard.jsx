@@ -1975,165 +1975,97 @@ export default function EmployeeDashboard() {
         {/* Attendance Summary — beside Leave Overview, same footprint as Today's Time */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@xl:col-start-1 @xl:row-start-2">
         <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] @sm:min-h-[11.2rem] dark:bg-card/85">
-          <CardHeader className="space-y-2 pb-2">
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
-                Attendance Efficiency Details
-              </CardTitle>
-              <div className="rounded-lg bg-orange-500/10 p-2">
-                <CalendarDays className="size-4 text-orange-600 dark:text-orange-400" />
-              </div>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
+              Attendance Efficiency Details
+            </CardTitle>
+            <div className="rounded-lg bg-orange-500/10 p-2">
+              <CalendarDays className="size-4 text-orange-600 dark:text-orange-400" />
             </div>
-            <div
-              className={cn(
-                'flex min-w-0 items-center gap-0.5 rounded-lg border border-orange-500/25 p-0.5',
-                'bg-gradient-to-br from-orange-500/[0.08] via-background to-background',
-                'shadow-sm ring-1 ring-orange-500/10',
-              )}
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0 rounded-md text-orange-700 hover:bg-orange-500/10 hover:text-orange-800 dark:text-orange-400 dark:hover:bg-orange-500/15"
-                onClick={goPrevCalendarMonth}
-                aria-label="Previous month"
-              >
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex min-w-0 items-center gap-0.5 rounded-lg border border-orange-500/25 p-0.5 bg-gradient-to-br from-orange-500/[0.08] via-background to-background shadow-sm ring-1 ring-orange-500/10 mb-2">
+              <button type="button" className="flex size-7 shrink-0 items-center justify-center rounded-md text-orange-700 hover:bg-orange-500/10 dark:text-orange-400" onClick={goPrevCalendarMonth} aria-label="Previous month">
                 <ChevronLeft className="size-3.5" />
-              </Button>
+              </button>
               <Select value={attendanceMonthValue} onValueChange={handleAttendanceMonthSelect}>
-                <SelectTrigger
-                  size="sm"
-                  className={cn(
-                    'h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-transparent px-2 shadow-none',
-                    'text-xs font-semibold text-foreground ring-0 focus:ring-0 focus-visible:ring-0',
-                    'hover:bg-orange-500/5 data-[state=open]:bg-orange-500/8',
-                    '@sm:text-sm',
-                  )}
-                  aria-label="Select month for attendance summary"
-                >
+                <SelectTrigger size="sm" className="h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-transparent px-2 shadow-none text-xs font-semibold text-foreground ring-0 focus:ring-0 focus-visible:ring-0 hover:bg-orange-500/5 data-[state=open]:bg-orange-500/8 @sm:text-sm">
                   <CalendarDays className="size-3.5 shrink-0 text-orange-600 dark:text-orange-400" aria-hidden />
                   <SelectValue placeholder="Select month" />
                 </SelectTrigger>
-                <SelectContent
-                  position="popper"
-                  className="max-h-56 min-w-[var(--radix-select-trigger-width)] rounded-xl border-border/80 p-1.5 shadow-xl"
-                >
+                <SelectContent position="popper" className="max-h-56 min-w-[var(--radix-select-trigger-width)] rounded-xl border-border/80 p-1.5 shadow-xl">
                   {attendanceMonthOptions.map((option) => (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      className={cn(
-                        'cursor-pointer rounded-lg py-2.5 pl-8 pr-3 text-sm font-medium',
-                        'focus:bg-orange-500/10 focus:text-orange-800 dark:focus:text-orange-300',
-                        'data-[state=checked]:bg-orange-500/12 data-[state=checked]:font-semibold data-[state=checked]:text-orange-800 dark:data-[state=checked]:text-orange-300',
-                      )}
-                    >
+                    <SelectItem key={option.value} value={option.value} className="cursor-pointer rounded-lg py-2.5 pl-8 pr-3 text-sm font-medium focus:bg-orange-500/10 focus:text-orange-800 dark:focus:text-orange-300 data-[state=checked]:bg-orange-500/12 data-[state=checked]:font-semibold data-[state=checked]:text-orange-800 dark:data-[state=checked]:text-orange-300">
                       {option.label}
-                      {option.isCurrent ? (
-                        <span className="ml-1.5 text-xs font-normal text-muted-foreground">· Current</span>
-                      ) : null}
+                      {option.isCurrent ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">· Current</span> : null}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0 rounded-md text-orange-700 hover:bg-orange-500/10 hover:text-orange-800 disabled:opacity-40 dark:text-orange-400 dark:hover:bg-orange-500/15"
-                onClick={goNextCalendarMonth}
-                disabled={!canGoNextMonth || loading || calendarLoading}
-                aria-label="Next month"
-              >
+              <button type="button" className="flex size-7 shrink-0 items-center justify-center rounded-md text-orange-700 hover:bg-orange-500/10 disabled:opacity-40 dark:text-orange-400" onClick={goNextCalendarMonth} disabled={!canGoNextMonth || loading || calendarLoading} aria-label="Next month">
                 <ChevronRight className="size-3.5" />
-              </Button>
+              </button>
             </div>
-          </CardHeader>
-          <CardContent className="pt-0">
             {loading || calendarLoading ? (
               <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">Loading…</div>
             ) : (
               <button
                 type="button"
-                className="flex w-full flex-col gap-3 rounded-lg p-1 text-left transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/50"
+                className="w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded-lg"
                 onClick={() => setAttendanceSummaryModalOpen(true)}
                 aria-label={`View full attendance details for ${getMonthLabel()}`}
               >
-                <div className="flex items-center gap-3">
-                  <div className="relative h-24 w-24 shrink-0">
-                    {attendanceSummaryHasData ? (
-                      <>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={attendanceSummarySlices.filter((s) => !s.efficiency)}
-                              dataKey="chartValue"
-                              nameKey="label"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius="55%"
-                              outerRadius="90%"
-                              paddingAngle={2}
-                              stroke="hsl(var(--background))"
-                              strokeWidth={2}
-                            >
-                              {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
-                                <Cell key={slice.id} fill={slice.color} />
-                              ))}
-                            </Pie>
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                          <span className="text-lg font-bold tabular-nums leading-none text-foreground">{attendanceSummaryBaseDays}</span>
-                          <span className="text-[9px] font-medium text-muted-foreground">days</span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-[10px] text-muted-foreground">
-                        No data
-                      </div>
-                    )}
+                <div className="grid grid-cols-3 divide-x divide-border/40">
+                  <div className="flex flex-col items-center justify-center gap-1.5 py-4">
+                    <span className="text-3xl font-extrabold tabular-nums tracking-tight text-foreground">
+                      {Number(monthAttendanceMetrics.efficiency).toFixed(1)}
+                      <span className="ml-0.5 text-lg font-semibold text-muted-foreground">%</span>
+                    </span>
+                    <span className={cn('inline-flex items-center gap-1 rounded-full border py-0.5 pl-1 pr-2.5', efficiencyBadgeClass(monthAttendanceMetrics.efficiency))}>
+                      <span className="flex size-[15px] items-center justify-center rounded-full bg-white/60 text-[9px] font-bold" style={{ color: 'inherit' }}>
+                        {(() => {
+                          const e = monthAttendanceMetrics.efficiency
+                          if (e >= 90) return 'A'
+                          if (e >= 80) return 'B'
+                          if (e >= 70) return 'C'
+                          return 'D'
+                        })()}
+                      </span>
+                      <span className="text-[10px] font-semibold">{efficiencyLabel(monthAttendanceMetrics.efficiency)}</span>
+                    </span>
                   </div>
-                  <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center justify-center py-4">
+                    <div className="relative h-24 w-24">
+                      {attendanceSummaryHasData ? (
+                        <>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie data={attendanceSummarySlices.filter((s) => !s.efficiency)} dataKey="chartValue" nameKey="label" cx="50%" cy="50%" innerRadius="55%" outerRadius="90%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2}>
+                                {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
+                                  <Cell key={slice.id} fill={slice.color} />
+                                ))}
+                              </Pie>
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                            <span className="text-base font-bold tabular-nums leading-none text-foreground">{attendanceSummaryBaseDays}</span>
+                            <span className="mt-px text-[9px] font-medium text-muted-foreground">days</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-xs text-muted-foreground">No data</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col justify-center gap-1.5 py-4 pl-4 pr-2">
                     {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
-                      <div
-                        key={slice.id}
-                        className="flex w-full min-w-0 items-center gap-1.5 px-0.5 py-0.5"
-                      >
-                        <span
-                          className="size-2 shrink-0 rounded-full ring-1 ring-black/5"
-                          style={{ backgroundColor: slice.color }}
-                          aria-hidden
-                        />
-                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/80">{slice.label}</span>
-                        <span className="shrink-0 text-xs font-bold tabular-nums text-foreground">
-                          {slice.count}<span className="font-normal text-muted-foreground"> ({slice.percent}%)</span>
-                        </span>
+                      <div key={slice.id} className="grid grid-cols-[8px_1fr_28px_auto] items-center gap-x-2 gap-y-0">
+                        <span className="size-2 rounded-full ring-1 ring-black/5" style={{ backgroundColor: slice.color }} aria-hidden />
+                        <span className="text-xs text-muted-foreground">{slice.label}</span>
+                        <span className="text-xs font-semibold tabular-nums text-foreground text-right">{slice.count}</span>
+                        <span className="text-xs tabular-nums text-muted-foreground text-right w-12">({slice.percent}%)</span>
                       </div>
                     ))}
-                  </div>
-                </div>
-                <div className="-mx-1 flex items-center justify-between rounded-lg bg-gradient-to-r from-purple-50 to-violet-50 px-3 py-2 shadow-sm ring-1 ring-purple-200/60 dark:from-purple-500/10 dark:to-violet-500/10 dark:ring-purple-500/20">
-                  <div className="flex items-center gap-2">
-                    <div className="flex size-7 items-center justify-center rounded-full bg-purple-200/70 text-[10px] font-bold text-purple-700 dark:bg-purple-500/20 dark:text-purple-300">
-                      {(() => {
-                        const e = monthAttendanceMetrics.efficiency
-                        if (e >= 90) return 'A'
-                        if (e >= 80) return 'B'
-                        if (e >= 70) return 'C'
-                        return 'D'
-                      })()}
-                    </div>
-                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400">Efficiency</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-base font-extrabold tabular-nums text-purple-700 dark:text-purple-300">
-                      {Number(monthAttendanceMetrics.efficiency).toFixed(2)}%
-                    </span>
-                    <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-bold', efficiencyBadgeClass(monthAttendanceMetrics.efficiency))}>
-                      {efficiencyLabel(monthAttendanceMetrics.efficiency)}
-                    </span>
                   </div>
                 </div>
               </button>
