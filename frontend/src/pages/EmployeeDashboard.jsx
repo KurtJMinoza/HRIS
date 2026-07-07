@@ -197,18 +197,20 @@ const ATTENDANCE_SUMMARY_SLICE_META = {
 
 function efficiencyBadgeClass(pct) {
   if (pct == null || typeof pct !== 'number') return 'bg-gray-100 text-gray-700 border-gray-300'
-  if (pct >= 95) return 'bg-emerald-100 text-emerald-800 border-emerald-400'
-  if (pct >= 85) return 'bg-blue-100 text-blue-800 border-blue-400'
-  if (pct >= 75) return 'bg-amber-100 text-amber-800 border-amber-400'
+  if (pct >= 98) return 'bg-emerald-100 text-emerald-800 border-emerald-400'
+  if (pct >= 95) return 'bg-green-100 text-green-800 border-green-400'
+  if (pct >= 90) return 'bg-amber-100 text-amber-800 border-amber-400'
+  if (pct >= 85) return 'bg-orange-100 text-orange-800 border-orange-400'
   return 'bg-red-100 text-red-800 border-red-400'
 }
 
 function efficiencyLabel(pct) {
   if (pct == null || typeof pct !== 'number') return 'N/A'
+  if (pct >= 98) return 'Outstanding'
   if (pct >= 95) return 'Excellent'
+  if (pct >= 90) return 'Very Good'
   if (pct >= 85) return 'Good'
-  if (pct >= 75) return 'Needs Attention'
-  return 'Poor'
+  return 'Needs Improvement'
 }
 
 const ATTENDANCE_SUMMARY_STATUS_STYLES = {
@@ -2054,58 +2056,85 @@ export default function EmployeeDashboard() {
             ) : (
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded-lg text-left transition-colors hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/50"
+                className="flex w-full flex-col gap-3 rounded-lg p-1 text-left transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/50"
                 onClick={() => setAttendanceSummaryModalOpen(true)}
                 aria-label={`View full attendance details for ${getMonthLabel()}`}
               >
-                <div className="relative h-20 w-20 shrink-0">
-                  {attendanceSummaryHasData ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={attendanceSummarySlices.filter((s) => !s.efficiency)}
-                          dataKey="chartValue"
-                          nameKey="label"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius="52%"
-                          outerRadius="88%"
-                          paddingAngle={2}
-                          stroke="none"
-                        >
-                          {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
-                            <Cell key={slice.id} fill={slice.color} />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-[10px] text-muted-foreground">
-                      No data
-                    </div>
-                  )}
+                <div className="flex items-center gap-3">
+                  <div className="relative h-24 w-24 shrink-0">
+                    {attendanceSummaryHasData ? (
+                      <>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={attendanceSummarySlices.filter((s) => !s.efficiency)}
+                              dataKey="chartValue"
+                              nameKey="label"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius="55%"
+                              outerRadius="90%"
+                              paddingAngle={2}
+                              stroke="hsl(var(--background))"
+                              strokeWidth={2}
+                            >
+                              {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
+                                <Cell key={slice.id} fill={slice.color} />
+                              ))}
+                            </Pie>
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                          <span className="text-lg font-bold tabular-nums leading-none text-foreground">{attendanceSummaryBaseDays}</span>
+                          <span className="text-[9px] font-medium text-muted-foreground">days</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-[10px] text-muted-foreground">
+                        No data
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    {attendanceSummarySlices.filter((s) => !s.efficiency).map((slice) => (
+                      <div
+                        key={slice.id}
+                        className="flex w-full min-w-0 items-center gap-1.5 px-0.5 py-0.5"
+                      >
+                        <span
+                          className="size-2 shrink-0 rounded-full ring-1 ring-black/5"
+                          style={{ backgroundColor: slice.color }}
+                          aria-hidden
+                        />
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/80">{slice.label}</span>
+                        <span className="shrink-0 text-xs font-bold tabular-nums text-foreground">
+                          {slice.count}<span className="font-normal text-muted-foreground"> ({slice.percent}%)</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1 space-y-1">
-                  {attendanceSummarySlices.map((slice) => (
-                    <div
-                      key={slice.id}
-                      className="flex w-full min-w-0 items-center gap-1 px-0.5 py-0.5"
-                    >
-                      <span
-                        className="size-1.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: slice.color }}
-                        aria-hidden
-                      />
-                      <span className="min-w-0 flex-1 truncate text-[10px] text-foreground @sm:text-[11px]">{slice.label}</span>
-                      <span className="shrink-0 text-[10px] font-bold tabular-nums text-foreground @sm:text-[11px]">
-                        {slice.efficiency ? (
-                          <span>{slice.count}</span>
-                        ) : (
-                          <>{slice.count}{' '}<span className="font-semibold text-muted-foreground">({slice.percent}%)</span></>
-                        )}
-                      </span>
+                <div className="-mx-1 flex items-center justify-between rounded-lg bg-gradient-to-r from-purple-50 to-violet-50 px-3 py-2 shadow-sm ring-1 ring-purple-200/60 dark:from-purple-500/10 dark:to-violet-500/10 dark:ring-purple-500/20">
+                  <div className="flex items-center gap-2">
+                    <div className="flex size-7 items-center justify-center rounded-full bg-purple-200/70 text-[10px] font-bold text-purple-700 dark:bg-purple-500/20 dark:text-purple-300">
+                      {(() => {
+                        const e = monthAttendanceMetrics.efficiency
+                        if (e >= 90) return 'A'
+                        if (e >= 80) return 'B'
+                        if (e >= 70) return 'C'
+                        return 'D'
+                      })()}
                     </div>
-                  ))}
+                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400">Efficiency</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-extrabold tabular-nums text-purple-700 dark:text-purple-300">
+                      {Number(monthAttendanceMetrics.efficiency).toFixed(2)}%
+                    </span>
+                    <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-bold', efficiencyBadgeClass(monthAttendanceMetrics.efficiency))}>
+                      {efficiencyLabel(monthAttendanceMetrics.efficiency)}
+                    </span>
+                  </div>
                 </div>
               </button>
             )}
@@ -2918,40 +2947,33 @@ export default function EmployeeDashboard() {
                   </div>
                 </div>
 
-                {/* Efficiency Breakdown */}
+                {/* Attendance Efficiency Breakdown */}
                 <div className="rounded-xl border border-border/70 bg-white p-5 shadow-sm">
-                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-black">Efficiency Breakdown</h4>
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-black">Attendance Efficiency Breakdown</h4>
                   <div className="space-y-2.5 text-sm">
                     {(() => {
                       const expDays = attendanceSummaryBaseDays
-                      const expHrs = Number(monthAttendanceMetrics.expectedScheduledHours)
-                      const piHrs = Number(monthAttendanceMetrics.payrollImpactHours)
-                      const pdDays = monthAttendanceMetrics.presentDays + monthAttendanceMetrics.lateDays
+                      const pdDays = monthAttendanceMetrics.presentDays
                       const absDays = monthAttendanceMetrics.absentDays
                       const lateDays = monthAttendanceMetrics.lateDays
                       const underDays = monthAttendanceMetrics.undertimeDays
-                      const absHrs = Number(monthAttendanceMetrics.absentHours)
-                      const lateDed = Number(monthAttendanceMetrics.lateMinutes) / 60
-                      const underDed = Number(monthAttendanceMetrics.undertimeMinutes) / 60
                       const finalEff = monthAttendanceMetrics.efficiency
-                      const fmt = (days, hrs) => `${days} day${days === 1 ? '' : 's'} (${hrs.toFixed(2)}h)`
-                      const fmtNeg = (days, hrs) => `${days} day${days === 1 ? '' : 's'} (-${hrs.toFixed(2)}h)`
                       return (
                         <>
                           {[
-                            { label: 'Expected scheduled', value: fmt(expDays, expHrs), highlight: false },
-                            { label: 'Less absent', value: fmtNeg(absDays, absHrs), highlight: absDays > 0 },
-                            { label: 'Less late deduction', value: fmtNeg(lateDays, lateDed), highlight: lateDays > 0 },
-                            { label: 'Less undertime deduction', value: fmtNeg(underDays, underDed), highlight: underDays > 0 },
-                            { label: 'Actual payable', value: fmt(pdDays, piHrs), highlight: false },
+                            { label: 'Scheduled Work Days', value: expDays },
+                            { label: 'Present Days', value: pdDays },
+                            { label: 'Absent Days', value: absDays },
+                            { label: 'Late Days', value: lateDays },
+                            { label: 'Undertime Days', value: underDays },
                           ].map((row) => (
-                            <div key={row.label} className={cn('flex items-center justify-between border-b border-gray-100 pb-1.5 last:border-0', row.highlight ? 'text-amber-700' : 'text-gray-600')}>
+                            <div key={row.label} className="flex items-center justify-between border-b border-gray-100 pb-1.5 last:border-0 text-gray-600">
                               <span>{row.label}</span>
-                              <span className={cn('font-semibold tabular-nums', row.highlight ? 'text-amber-800' : 'text-black')}>{row.value}</span>
+                              <span className="font-semibold tabular-nums text-black">{row.value}</span>
                             </div>
                           ))}
                           <div className="mt-3 flex items-center justify-between rounded-lg bg-gradient-to-r from-orange-50 to-amber-50 p-3 dark:from-orange-500/10 dark:to-amber-500/10">
-                            <span className="text-sm font-bold text-gray-800">Final Efficiency</span>
+                            <span className="text-sm font-bold text-gray-800">Attendance Efficiency</span>
                             <div className="flex items-center gap-2">
                               <span className="text-lg font-extrabold tabular-nums text-black">{finalEff.toFixed(2)}%</span>
                               <span className={cn('rounded-full border px-2 py-0.5 text-xs font-bold', efficiencyBadgeClass(finalEff))}>{efficiencyLabel(finalEff)}</span>

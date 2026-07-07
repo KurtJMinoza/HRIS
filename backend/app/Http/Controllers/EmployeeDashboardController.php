@@ -498,11 +498,19 @@ class EmployeeDashboardController extends Controller
         $monthSummary['expected_scheduled_hours'] = round($totalExpectedMinutes / 60, 2);
         $monthSummary['absent_hours'] = round($totalAbsentExpectedMinutes / 60, 2);
 
-        // Ensure efficiency is computed from the latest values
-        $effExpected = (float) ($monthSummary['expected_scheduled_hours'] ?? 0);
-        $effPayroll = (float) ($monthSummary['payroll_impact_hours'] ?? 0);
-        $monthSummary['attendance_efficiency_percentage'] = $effExpected > 0
-            ? round(($effPayroll / $effExpected) * 100, 2)
+        // Days-based attendance efficiency (DOLE-friendly)
+        $schDays = (int) ($monthSummary['scheduled_workdays'] ?? $monthSummary['scheduled_days'] ?? 0);
+        $absDays = (int) ($monthSummary['absent_days'] ?? 0);
+        $lateDays = (int) ($monthSummary['late_days'] ?? 0);
+        $underDays = (int) ($monthSummary['undertime_days'] ?? 0);
+
+        $absentPenalty = $schDays > 0 ? ($absDays * (100 / $schDays)) : 0;
+        $latePenalty = $lateDays * 0.5;
+        $underPenalty = $underDays * 0.5;
+        $deduction = $absentPenalty + $latePenalty + $underPenalty;
+
+        $monthSummary['attendance_efficiency_percentage'] = $schDays > 0
+            ? round(max(0, 100 - $deduction), 2)
             : 0.0;
 
         $payload = [
