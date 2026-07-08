@@ -15,6 +15,7 @@ import {
   createAttendanceAttemptMeta,
   getKioskRecentAttendance,
   getPublicSettings,
+  getAttendanceGeofenceModuleStatus,
   companyLogoUrl,
 } from './api'
 import { playSuccess, playError } from '@/lib/attendanceSounds'
@@ -564,6 +565,7 @@ function SmartDTRPreview({ className }) {
     employeeProfileImage: null,
   })
   const [kioskFaceInError, setKioskFaceInError] = useState(false)
+  const [geofenceModuleEnabled, setGeofenceModuleEnabled] = useState(true)
   const lastScanRef = useRef({ text: null, at: 0 })
 
   const RECENT_VISIBLE_COUNT = 5
@@ -588,6 +590,7 @@ function SmartDTRPreview({ className }) {
 
   useEffect(() => {
     fetchRecent()
+    getAttendanceGeofenceModuleStatus().then((s) => setGeofenceModuleEnabled(s.enabled)).catch(() => {})
     const t = setInterval(fetchRecent, 30000)
     return () => clearInterval(t)
   }, [fetchRecent])
@@ -1107,7 +1110,7 @@ function SmartDTRPreview({ className }) {
                               />
                             </span>
                           ) : null}
-                          {locationUrl ? (
+                          {geofenceModuleEnabled && locationUrl ? (
                             <a
                               href={locationUrl}
                               target="_blank"
