@@ -600,7 +600,16 @@ export default function AdminPolicySettings() {
     getAdminHolidays({ year: new Date().getFullYear(), company_id: policyDetail?.company_id })
       .then((response) => {
         if (active) {
-          setHolidays((Array.isArray(response?.holidays) ? response.holidays : []).filter((holiday) => holiday?.id != null))
+          setHolidays((() => {
+            const raw = (Array.isArray(response?.holidays) ? response.holidays : []).filter((holiday) => holiday?.id != null)
+            const seen = new Set()
+            return raw.filter((holiday) => {
+              const key = `${holiday.date}|${holiday.name}`
+              if (seen.has(key)) return false
+              seen.add(key)
+              return true
+            })
+          })())
         }
       })
       .catch((error) => {
