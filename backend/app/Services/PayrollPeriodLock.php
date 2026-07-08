@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\PayrollPeriod;
 use App\Models\Payslip;
 use Carbon\Carbon;
 
@@ -39,29 +38,9 @@ final class PayrollPeriodLock
             }
         }
 
-        $fs = $from->toDateString();
-        $te = $to->toDateString();
-
-        $lockedUserId = Payslip::query()
-            ->whereIn('user_id', $userIds)
-            ->whereIn('status', Payslip::lockingStatuses())
-            ->whereDate('pay_period_start', '<=', $te)
-            ->whereDate('pay_period_end', '>=', $fs)
-            ->value('user_id');
-
-        if ($lockedUserId !== null) {
-            throw new \RuntimeException('This payroll period has already been finalized and is locked.');
-        }
-
-        $lockedPeriodUserId = PayrollPeriod::query()
-            ->whereIn('user_id', $userIds)
-            ->where('status', PayrollPeriod::STATUS_LOCKED)
-            ->whereDate('from_date', '<=', $te)
-            ->whereDate('to_date', '>=', $fs)
-            ->value('user_id');
-
-        if ($lockedPeriodUserId !== null) {
-            throw new \RuntimeException('This payroll period has already been finalized and is locked.');
+        $freeze = app(PayrollFreezeService::class);
+        foreach ($userIds as $userId) {
+            $freeze->assertMutableForUserWindow($userId, $from, $to);
         }
     }
 
@@ -100,7 +79,7 @@ final class PayrollPeriodLock
         $hasFinalized = $query->exists();
 
         if ($hasFinalized) {
-            throw new \RuntimeException('This payroll period has already been finalized and is locked.');
+            throw new \RuntimeException(PayrollFreezeService::LOCK_MESSAGE);
         }
     }
 }

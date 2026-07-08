@@ -12,6 +12,7 @@ use App\Services\EmailTriggerService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\OrgApprovalWorkflowService;
+use App\Services\PayrollFreezeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
 use App\Support\LeaveScheduleSupport;
@@ -136,7 +137,7 @@ class LeaveBulkApprovalService
 
             if (isset($lockedWindows[$id])) {
                 $skipped++;
-                $failedItems[] = ['request_id' => $id, 'reason' => $lockedWindows[$id]];
+                $failedItems[] = ['request_id' => $id, 'reason' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE];
 
                 continue;
             }

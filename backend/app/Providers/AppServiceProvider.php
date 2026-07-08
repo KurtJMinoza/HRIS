@@ -19,6 +19,8 @@ use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\PayrollBatchRun;
 use App\Models\PayrollEmployee;
+use App\Models\PayrollPeriod;
+use App\Models\Payslip;
 use App\Models\SectionUnit;
 use App\Models\Team;
 use App\Models\User;
@@ -29,6 +31,7 @@ use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
 use App\Services\HolidayPolicyCache;
 use App\Services\LegacyOrganizationMirrorService;
+use App\Services\PayrollFreezeService;
 use App\Support\AdminDashboardCache;
 use App\Support\EmployeeProfileCache;
 use App\Support\HeadAssignmentEmployeeSearchCache;
@@ -226,12 +229,14 @@ class AppServiceProvider extends ServiceProvider
                 $run->company_id !== null ? (int) $run->company_id : null,
                 ['payroll']
             );
+            PayrollFreezeService::invalidateCache();
         });
         PayrollBatchRun::deleted(function (PayrollBatchRun $run): void {
             AdminDashboardCache::invalidateForUserCompany(
                 $run->company_id !== null ? (int) $run->company_id : null,
                 ['payroll']
             );
+            PayrollFreezeService::invalidateCache();
         });
         PayrollEmployee::saved(function (PayrollEmployee $employee): void {
             $companyId = $employee->company_id
@@ -240,6 +245,7 @@ class AppServiceProvider extends ServiceProvider
                 $companyId !== null ? (int) $companyId : null,
                 ['payroll']
             );
+            PayrollFreezeService::invalidateCache();
         });
         PayrollEmployee::deleted(function (PayrollEmployee $employee): void {
             $companyId = $employee->company_id
@@ -248,6 +254,19 @@ class AppServiceProvider extends ServiceProvider
                 $companyId !== null ? (int) $companyId : null,
                 ['payroll']
             );
+            PayrollFreezeService::invalidateCache();
+        });
+        Payslip::saved(function (Payslip $payslip): void {
+            PayrollFreezeService::invalidateCache();
+        });
+        Payslip::deleted(function (Payslip $payslip): void {
+            PayrollFreezeService::invalidateCache();
+        });
+        PayrollPeriod::saved(function (PayrollPeriod $period): void {
+            PayrollFreezeService::invalidateCache();
+        });
+        PayrollPeriod::deleted(function (PayrollPeriod $period): void {
+            PayrollFreezeService::invalidateCache();
         });
 
         EmployeeGovernmentId::saved(function (EmployeeGovernmentId $record): void {

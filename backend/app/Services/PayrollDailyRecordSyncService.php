@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Models\Payslip;
 use App\Models\PayrollDailyRecord;
 use App\Models\User;
 use Carbon\Carbon;
@@ -16,6 +15,7 @@ class PayrollDailyRecordSyncService
     public function __construct(
         private readonly PayrollComputationService $payroll,
         private readonly ScheduleRateService $scheduleRates,
+        private readonly PayrollFreezeService $payrollFreezeService,
     ) {}
 
     /**
@@ -23,12 +23,7 @@ class PayrollDailyRecordSyncService
      */
     public function dateLockedForUser(int $userId, string $dateKey): bool
     {
-        return Payslip::query()
-            ->where('user_id', $userId)
-            ->whereIn('status', Payslip::lockingStatuses())
-            ->whereDate('pay_period_start', '<=', $dateKey)
-            ->whereDate('pay_period_end', '>=', $dateKey)
-            ->exists();
+        return $this->payrollFreezeService->isPayrollLocked($userId, $dateKey);
     }
 
     /**

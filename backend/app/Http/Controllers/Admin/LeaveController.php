@@ -20,6 +20,7 @@ use App\Services\LeaveApprovalService;
 use App\Services\LeaveCreditService;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
+use App\Services\PayrollFreezeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
 use App\Support\LeaveFilingRules;
@@ -973,8 +974,8 @@ class LeaveController extends Controller
                     Carbon::parse($leave->start_date)->startOfDay(),
                     Carbon::parse($leave->end_date)->startOfDay()
                 );
-            } catch (\RuntimeException $e) {
-                return response()->json(['message' => $e->getMessage()], 422);
+            } catch (\RuntimeException) {
+                return response()->json(['message' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE], 422);
             }
 
             $nextPending = DB::transaction(function () use ($leave, $actor, $notes, $roleLabel, $applyBypass, $request) {
@@ -1074,8 +1075,8 @@ class LeaveController extends Controller
                 Carbon::parse($leave->start_date)->startOfDay(),
                 Carbon::parse($leave->end_date)->startOfDay()
             );
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\RuntimeException) {
+            return response()->json(['message' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE], 422);
         }
 
         try {

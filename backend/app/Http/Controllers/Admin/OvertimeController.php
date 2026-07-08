@@ -21,6 +21,7 @@ use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeApprovalService;
 use App\Services\OvertimeService;
+use App\Services\PayrollFreezeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\ReportsCacheService;
 use App\Support\HrApprovalStages;
@@ -1065,6 +1066,13 @@ class OvertimeController extends Controller
 
         if (! $this->overtimeApprovalService->canApprove($actor, $overtime)) {
             return response()->json(['message' => 'You are not authorized to approve at this stage.'], 403);
+        }
+
+        try {
+            $d = Carbon::parse($overtime->date->toDateString())->startOfDay();
+            $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $overtime->user_id, $d, $d);
+        } catch (\RuntimeException) {
+            return response()->json(['message' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE], 422);
         }
 
         $currentApproval = $this->approvalWorkflowService->currentPendingRecord(

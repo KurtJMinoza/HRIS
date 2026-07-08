@@ -11,7 +11,10 @@ use App\Services\DataScopeService;
 use App\Services\EmailTriggerService;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
+use App\Services\PayrollFreezeService;
+use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
+use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
@@ -22,6 +25,7 @@ class OvertimeBulkApprovalService
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly DataScopeService $dataScopeService,
         private readonly EmailTriggerService $emailTrigger,
+        private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
     ) {}
 
     /**
@@ -69,6 +73,14 @@ class OvertimeBulkApprovalService
         $scopedEmployees = is_array($scopedEmployeeIds)
             ? array_fill_keys(array_map('intval', $scopedEmployeeIds), true)
             : null;
+        $lockedWindows = $this->payrollPeriodMutationGuard->lockedWindowErrors(
+            $records->map(fn (Overtime $overtime): array => [
+                'key' => (int) $overtime->id,
+                'user_id' => (int) $overtime->user_id,
+                'from' => Carbon::parse($overtime->date)->startOfDay(),
+                'to' => Carbon::parse($overtime->date)->startOfDay(),
+            ])->values()->all(),
+        );
 
         foreach ($ids as $id) {
             $overtime = $records->get($id);
@@ -109,6 +121,13 @@ class OvertimeBulkApprovalService
             if (! $authorization['allowed']) {
                 $skipped++;
                 $failedItems[] = ['request_id' => $id, 'reason' => 'You are not authorized to approve at this stage.'];
+
+                continue;
+            }
+
+            if (isset($lockedWindows[$id])) {
+                $skipped++;
+                $failedItems[] = ['request_id' => $id, 'reason' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE];
 
                 continue;
             }

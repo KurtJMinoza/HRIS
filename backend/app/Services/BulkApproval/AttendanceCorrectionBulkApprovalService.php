@@ -14,6 +14,7 @@ use App\Services\AttendanceCorrectionStatusService;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
+use App\Services\PayrollFreezeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\AttendanceCorrectionModuleCache;
 use App\Support\RequestModuleCacheInvalidator;
@@ -138,7 +139,7 @@ class AttendanceCorrectionBulkApprovalService
 
             if (isset($lockedWindows[$id])) {
                 $skipped++;
-                $failedItems[] = ['request_id' => $id, 'reason' => $lockedWindows[$id]];
+                $failedItems[] = ['request_id' => $id, 'reason' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE];
 
                 continue;
             }

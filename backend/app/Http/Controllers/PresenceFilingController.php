@@ -24,6 +24,7 @@ use App\Services\HrRoleResolver;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeService;
+use App\Services\PayrollFreezeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\PresenceFilingAttendanceLogSyncService;
 use App\Services\PresenceFilingCorrectionFormatter;
@@ -2096,8 +2097,8 @@ class PresenceFilingController extends Controller
             try {
                 $d = Carbon::parse($dateKey)->startOfDay();
                 $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $employee->id, $d, $d);
-            } catch (\RuntimeException $e) {
-                return response()->json(['message' => $e->getMessage()], 422);
+            } catch (\RuntimeException) {
+                return response()->json(['message' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE], 422);
             }
 
             $nextPending = DB::transaction(function () use ($correction, $actor, $validated, $employee, $dateKey, $roleLabel, $currentApproval) {
@@ -2217,8 +2218,8 @@ class PresenceFilingController extends Controller
         try {
             $d = Carbon::parse($dateKey)->startOfDay();
             $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $employee->id, $d, $d);
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\RuntimeException) {
+            return response()->json(['message' => PayrollFreezeService::APPROVAL_LOCK_MESSAGE], 422);
         }
 
         $oldStatus = $this->correctionStatusService->resolvedStatus($correction);

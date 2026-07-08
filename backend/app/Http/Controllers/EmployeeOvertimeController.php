@@ -13,6 +13,7 @@ use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
+use App\Services\PayrollPeriodMutationGuard;
 use App\Support\EmployeeScheduleResolver;
 use App\Support\OvertimeModuleCache;
 use App\Support\PhPayrollReference;
@@ -36,6 +37,7 @@ class EmployeeOvertimeController extends Controller
         private readonly OrgApprovalWorkflowService $approvalWorkflowService,
         private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
         private readonly NotificationService $notificationService,
+        private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
@@ -1220,6 +1222,12 @@ class EmployeeOvertimeController extends Controller
         ]);
 
         $dateYmd = Carbon::parse($validated['date'])->toDateString();
+        try {
+            $date = Carbon::parse($dateYmd)->startOfDay();
+            $this->payrollPeriodMutationGuard->assertMutableForUserWindow((int) $user->id, $date, $date);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
         $detectedSegments = collect($this->mapDetectedSegmentsForFiling($detected))
