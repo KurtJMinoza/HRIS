@@ -2799,21 +2799,21 @@ export default function EmployeeDashboard() {
           ) : (
             <div className="px-5 pb-6 sm:px-7 sm:pb-7">
               {/* Header Section */}
-              <div className="mb-5 flex flex-col gap-4 rounded-xl border border-border/70 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="mb-5 flex flex-col gap-4 rounded-xl border border-border/70 bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-black">Attendance Efficiency Details</h3>
-                    <div className="h-6 w-px bg-gray-200" />
-                    <span className="text-sm font-medium text-gray-500">{getMonthLabel()}</span>
+                    <h3 className="text-lg font-bold text-foreground">Attendance Efficiency Details</h3>
+                    <div className="h-6 w-px bg-border" />
+                    <span className="text-sm font-medium text-muted-foreground">{getMonthLabel()}</span>
                   </div>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     {employeeDisplayName} &middot; {attendanceSummaryBaseDays} scheduled work day{attendanceSummaryBaseDays === 1 ? '' : 's'}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
                   <div className="flex flex-col items-end">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Efficiency</span>
-                    <span className="text-2xl font-bold tabular-nums text-black">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Efficiency</span>
+                    <span className="text-2xl font-bold tabular-nums text-foreground">
                       {Number(monthAttendanceMetrics.efficiency).toFixed(2)}%
                     </span>
                   </div>
@@ -2834,15 +2834,15 @@ export default function EmployeeDashboard() {
                 return (
                   <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {[
-                      { label: 'Expected', days: expDays, hrs: expHrs, cls: 'from-blue-50/80 to-background border-blue-200/70' },
-                      { label: 'Payroll Impact', days: pdDays, hrs: piHrs, cls: 'from-emerald-50/80 to-background border-emerald-200/70' },
-                      { label: 'Actual Worked', days: pdDays, hrs: awHrs, cls: 'from-violet-50/80 to-background border-violet-200/70' },
-                      { label: 'Lost', days: lostDays, hrs: lostHrs, cls: 'from-amber-50/80 to-background border-amber-200/70' },
+                      { label: 'Expected', days: expDays, hrs: expHrs, cls: 'from-blue-50/80 to-background border-blue-200/70 dark:from-blue-500/10 dark:border-blue-500/20' },
+                      { label: 'Payroll Impact', days: pdDays, hrs: piHrs, cls: 'from-emerald-50/80 to-background border-emerald-200/70 dark:from-emerald-500/10 dark:border-emerald-500/20' },
+                      { label: 'Actual Worked', days: pdDays, hrs: awHrs, cls: 'from-violet-50/80 to-background border-violet-200/70 dark:from-violet-500/10 dark:border-violet-500/20' },
+                      { label: 'Lost', days: lostDays, hrs: lostHrs, cls: 'from-amber-50/80 to-background border-amber-200/70 dark:from-amber-500/10 dark:border-amber-500/20' },
                     ].map((metric) => (
                       <div key={metric.label} className={cn('flex items-center justify-between rounded-xl border bg-gradient-to-br p-4 shadow-sm', metric.cls)}>
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{metric.label}</p>
-                          <p className="mt-1.5 text-xl font-bold tabular-nums text-black">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-muted-foreground">{metric.label}</p>
+                          <p className="mt-1.5 text-xl font-bold tabular-nums text-black dark:text-foreground">
                             {metric.days} day{metric.days === 1 ? '' : 's'} <span className="text-sm font-normal text-muted-foreground">({metric.hrs.toFixed(2)}h)</span>
                           </p>
                         </div>
@@ -2854,8 +2854,8 @@ export default function EmployeeDashboard() {
 
               <section className="mb-5 grid gap-5 lg:grid-cols-[1fr_1.2fr]">
                 {/* Attendance Metrics */}
-                <div className="rounded-xl border border-border/70 bg-white p-5 shadow-sm">
-                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-black">Attendance Metrics</h4>
+                <div className="rounded-xl border border-border/70 bg-card p-5 shadow-sm">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground">Attendance Metrics</h4>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
                     {[
                       { label: 'Present days', value: monthAttendanceMetrics.presentDays, color: '#22c55e' },
@@ -2866,12 +2866,12 @@ export default function EmployeeDashboard() {
                       { label: 'Leave days', value: monthAttendanceMetrics.leaveDays, color: '#3b82f6' },
                       { label: 'Holidays', value: monthAttendanceMetrics.holidayDays, color: '#06b6d4' },
                     ].map((item) => (
-                      <div key={item.label} className="flex items-center justify-between border-b border-gray-100 pb-1.5 last:border-0">
-                        <span className="flex items-center gap-2 text-gray-600">
+                      <div key={item.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0">
+                        <span className="flex items-center gap-2 text-muted-foreground">
                           <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
                           {item.label}
                         </span>
-                        <span className="font-semibold tabular-nums text-black">
+                        <span className="font-semibold tabular-nums text-foreground">
                           {item.value} <span className="font-normal text-muted-foreground">({formatAttendanceMetricPercent(item.value, attendanceSummaryBaseDays)}%)</span>
                         </span>
                       </div>
@@ -2880,8 +2880,8 @@ export default function EmployeeDashboard() {
                 </div>
 
                 {/* Attendance Efficiency Breakdown */}
-                <div className="rounded-xl border border-border/70 bg-white p-5 shadow-sm">
-                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-black">Attendance Efficiency Breakdown</h4>
+                <div className="rounded-xl border border-border/70 bg-card p-5 shadow-sm">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground">Attendance Efficiency Breakdown</h4>
                   <div className="space-y-2.5 text-sm">
                     {(() => {
                       const expDays = attendanceSummaryBaseDays
@@ -2899,15 +2899,15 @@ export default function EmployeeDashboard() {
                             { label: 'Late Days', value: lateDays },
                             { label: 'Undertime Days', value: underDays },
                           ].map((row) => (
-                            <div key={row.label} className="flex items-center justify-between border-b border-gray-100 pb-1.5 last:border-0 text-gray-600">
+                            <div key={row.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0 text-muted-foreground">
                               <span>{row.label}</span>
-                              <span className="font-semibold tabular-nums text-black">{row.value}</span>
+                              <span className="font-semibold tabular-nums text-foreground">{row.value}</span>
                             </div>
                           ))}
                           <div className="mt-3 flex items-center justify-between rounded-lg bg-gradient-to-r from-orange-50 to-amber-50 p-3 dark:from-orange-500/10 dark:to-amber-500/10">
-                            <span className="text-sm font-bold text-gray-800">Attendance Efficiency</span>
+                            <span className="text-sm font-bold text-gray-800 dark:text-foreground">Attendance Efficiency</span>
                             <div className="flex items-center gap-2">
-                              <span className="text-lg font-extrabold tabular-nums text-black">{finalEff.toFixed(2)}%</span>
+                              <span className="text-lg font-extrabold tabular-nums text-black dark:text-foreground">{finalEff.toFixed(2)}%</span>
                               <span className={cn('rounded-full border px-2 py-0.5 text-xs font-bold', efficiencyBadgeClass(finalEff))}>{efficiencyLabel(finalEff)}</span>
                             </div>
                           </div>
@@ -3003,18 +3003,18 @@ export default function EmployeeDashboard() {
                                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeIn || '—'}</td>
                                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{timeOut || '—'}</td>
                                 <td className="whitespace-nowrap px-3 py-3">
-                                  <span className={cn('inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold', ATTENDANCE_SUMMARY_STATUS_STYLES[statusKey] || 'border-gray-200 bg-gray-50 text-gray-700')}>
+                                  <span className={cn('inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold', ATTENDANCE_SUMMARY_STATUS_STYLES[statusKey] || 'border-border bg-muted text-muted-foreground')}>
                                     <span className="size-2 rounded-full bg-current" aria-hidden />
                                     {statusLabel}
                                   </span>
                                 </td>
-                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', lateM > 0 ? 'font-medium text-orange-600' : 'text-muted-foreground')}>
+                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', lateM > 0 ? 'font-medium text-orange-600 dark:text-orange-400' : 'text-muted-foreground')}>
                                   {lateM > 0 ? `${lateM}m` : '—'}
                                 </td>
-                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', utM > 0 ? 'font-medium text-amber-600' : 'text-muted-foreground')}>
+                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', utM > 0 ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
                                   {utM > 0 ? `${utM}m` : '—'}
                                 </td>
-                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', piHours > 0 ? 'font-medium text-emerald-600' : 'text-muted-foreground')}>
+                                <td className={cn('whitespace-nowrap px-3 py-3 tabular-nums', piHours > 0 ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground')}>
                                   {piHours > 0 ? `${piHours.toFixed(2)}h` : '—'}
                                 </td>
                                 <td className="max-w-32 truncate px-3 py-3 text-foreground">{day.remarks || day.remark || 'Open'}</td>
