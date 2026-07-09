@@ -66,6 +66,7 @@ const pathToPermissions = {
     'can_view_subordinate_reports',
     'can_view_all_reports',
   ],
+  '/admin/evaluations': ['employees.view', 'evaluations.create', 'evaluations.review'],
   '/admin/loans-deductions': ['loans.view_own', 'loans.request', 'request-loan'],
   '/admin/email-notifications': ['email_notifications.view', 'email_notifications.manage', 'settings.manage'],
   '/admin/schedules': ['manage-schedules', 'schedule.view'],

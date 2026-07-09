@@ -8295,3 +8295,173 @@ export async function saveThirteenthMonthSettings(payload) {
   if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to save 13th Month Pay settings')
   return data
 }
+
+// ── Performance Evaluations ────────────────────────────────────────────
+
+export async function getEvaluationForms(params = {}) {
+  const qs = new URLSearchParams()
+  if (params.active_only) qs.set('active_only', '1')
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/evaluations/forms${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation forms')
+  return data
+}
+
+export async function createEvaluationForm(payload) {
+  const res = await authenticatedFetch('/admin/evaluations/forms', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to create evaluation form')
+  }
+  return data
+}
+
+export async function updateEvaluationForm(id, payload) {
+  const res = await authenticatedFetch(`/admin/evaluations/forms/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to update evaluation form')
+  }
+  return data
+}
+
+export async function deleteEvaluationForm(id) {
+  const res = await authenticatedFetch(`/admin/evaluations/forms/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete evaluation form')
+  return data
+}
+
+export async function getEvaluationCompanies() {
+  const res = await authenticatedFetch('/admin/evaluations/companies')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load companies')
+  return data
+}
+
+export async function getEvaluationEmployees(companyId) {
+  const res = await authenticatedFetch(`/admin/evaluations/employees?company_id=${companyId}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employees')
+  return data
+}
+
+export async function getEvaluations(params = {}) {
+  const qs = new URLSearchParams()
+  if (params.per_page) qs.set('per_page', String(params.per_page))
+  if (params.employee_id) qs.set('employee_id', String(params.employee_id))
+  if (params.evaluation_form_id) qs.set('evaluation_form_id', String(params.evaluation_form_id))
+  if (params.status) qs.set('status', params.status)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/evaluations${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluations')
+  return data
+}
+
+export async function createEvaluation(payload) {
+  const res = await authenticatedFetch('/admin/evaluations', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to create evaluation')
+  }
+  return data
+}
+
+export async function getEvaluation(id) {
+  const res = await authenticatedFetch(`/admin/evaluations/${id}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation')
+  return data
+}
+
+export async function updateEvaluation(id, payload) {
+  const res = await authenticatedFetch(`/admin/evaluations/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(firstValidationMessage(data) || data.message || 'Failed to update evaluation')
+  }
+  return data
+}
+
+export async function deleteEvaluation(id) {
+  const res = await authenticatedFetch(`/admin/evaluations/${id}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete evaluation')
+  return data
+}
+
+export async function submitEvaluation(id) {
+  const res = await authenticatedFetch(`/admin/evaluations/${id}/submit`, { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to submit evaluation')
+  return data
+}
+
+export async function reviewEvaluation(id) {
+  const res = await authenticatedFetch(`/admin/evaluations/${id}/review`, { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to review evaluation')
+  return data
+}
+
+export async function completeEvaluation(id) {
+  const res = await authenticatedFetch(`/admin/evaluations/${id}/complete`, { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to complete evaluation')
+  return data
+}
+
+export async function getEmployeeEvaluationHistory(employeeId) {
+  const res = await authenticatedFetch(`/admin/evaluations/employee/${employeeId}/history`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation history')
+  return data
+}
+
+export async function getEvaluationDashboardSummary() {
+  const res = await authenticatedFetch('/admin/evaluations/dashboard/summary')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation dashboard')
+  return data
+}
+
+export async function getEmployeeEvaluationWidget() {
+  const res = await authenticatedFetch('/employee/evaluations/widget')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation widget')
+  return data
+}
+
+// ── Evaluation Workflow Settings ──────────────────────────────────
+
+export async function getEvaluationWorkflowSettings() {
+  const res = await authenticatedFetch('/admin/evaluation-workflow-settings')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation workflow settings')
+  return data
+}
+
+export async function updateEvaluationWorkflowSettings(payload) {
+  const res = await authenticatedFetch('/admin/evaluation-workflow-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update evaluation workflow settings')
+  return data
+}

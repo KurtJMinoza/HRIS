@@ -9,6 +9,7 @@ import {
   CalendarClock,
   CalendarOff,
   CalendarRange,
+  ClipboardCheck,
   ClipboardList,
   FileText,
   HandCoins,
@@ -53,6 +54,14 @@ export const adminNavItems = [
       { to: '/admin/organizations/divisions', end: false, label: 'Divisions', icon: Layers },
       { to: '/admin/organizations/departments', end: false, label: 'Departments', icon: Layers },
       { to: '/admin/organizations/sections', end: false, label: 'Sections & Units', icon: Users },
+    ],
+  },
+
+  {
+    label: 'Performance',
+    icon: ClipboardCheck,
+    children: [          { to: '/admin/evaluations', end: false, label: 'Evaluations', icon: ClipboardCheck },
+          { to: '/admin/evaluation-workflow', end: false, label: 'Eval Workflow', icon: ClipboardCheck },
     ],
   },
 
