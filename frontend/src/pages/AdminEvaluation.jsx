@@ -98,8 +98,8 @@ export default function AdminEvaluation() {
   const [companies, setCompanies] = useState([])
   const [employees, setEmployees] = useState([])
   const [selectedCompany, setSelectedCompany] = useState('')
-  const [selectedEmployee, setSelectedEmployee] = useState('')
   const [selectedForm, setSelectedForm] = useState('')
+  const [employeeSearch, setEmployeeSearch] = useState('')
   const [evaluations, setEvaluations] = useState([])
   const [evalsLoading, setEvalsLoading] = useState(false)
   const [evalDialog, setEvalDialog] = useState(null)
@@ -329,10 +329,14 @@ export default function AdminEvaluation() {
     })
   }
 
-  const handleStartEvaluation = () => {
+  const handleEvaluateEmployee = (employee) => {
     const companyId = selectedCompany || scopeCompanyId
-    if (!companyId || !selectedEmployee || !selectedForm) {
-      toast({ variant: 'destructive', title: 'Selection required', description: 'Please select company, employee, and evaluation form.' })
+    if (!companyId) {
+      toast({ variant: 'destructive', title: 'Company required', description: 'Please select a company first.' })
+      return
+    }
+    if (!selectedForm) {
+      toast({ variant: 'destructive', title: 'Form required', description: 'Please choose an evaluation form before evaluating.' })
       return
     }
     const form = forms.find(f => f.id === Number(selectedForm))
@@ -340,7 +344,7 @@ export default function AdminEvaluation() {
     setEvalDialog({
       company_id: Number(companyId),
       evaluation_form_id: Number(selectedForm),
-      employee_id: Number(selectedEmployee),
+      employee_id: employee.id,
       form,
       scores: { sections: {} },
       remarks: '',
@@ -370,9 +374,6 @@ export default function AdminEvaluation() {
       await createEvaluation(payload)
       toast({ title: status === 'submitted' ? 'Evaluation submitted' : 'Draft saved' })
       setEvalDialog(null)
-      setSelectedCompany('')
-      setSelectedEmployee('')
-      setSelectedForm('')
       loadEvaluations()
       loadDashboard()
     } catch (e) {
@@ -445,6 +446,27 @@ export default function AdminEvaluation() {
       return name.includes(q) || formTitle.includes(q) || evaluatorName.includes(q)
     })
   }, [evaluations, evalSearch])
+
+  const evaluationsByEmployee = useMemo(() => {
+    const map = {}
+    for (const ev of evaluations) {
+      const eid = ev.employee_id ?? ev.employee?.id
+      if (!eid) continue
+      if (!map[eid]) map[eid] = []
+      map[eid].push(ev)
+    }
+    return map
+  }, [evaluations])
+
+  const filteredEmployees = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase()
+    if (!q) return employees
+    return employees.filter(e => {
+      const name = `${e.first_name || ''} ${e.middle_name || ''} ${e.last_name || ''} ${e.suffix || ''}`.toLowerCase()
+      const pos = (e.position || '').toLowerCase()
+      return name.includes(q) || pos.includes(q)
+    })
+  }, [employees, employeeSearch])
 
   const formsCount = forms.length
   const completedCount = useMemo(() => evaluations.filter(e => e.status === 'completed').length, [evaluations])
@@ -672,78 +694,162 @@ export default function AdminEvaluation() {
       {/* ───── EVALUATE TAB ───── */}
       {activeTab === 'evaluate' && (
         <div className="space-y-5">
+          {/* Toolbar: company/scope, form, search */}
           <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
             <CardHeader className="flex flex-col gap-3 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
               <CardTitle className="text-lg font-semibold @md:text-xl">Evaluate an Employee</CardTitle>
               <CardDescription className="text-sm @md:text-[15px]">
-                Select a company, employee, and evaluation form to begin.
+                Pick an evaluation form, then click <span className="font-semibold text-foreground">Evaluate</span> on an employee card below.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-5">
-              <div className="space-y-5">
-                <div className="grid gap-5 @sm:grid-cols-2 @lg:grid-cols-3">
-                  {!isOrgHead ? (
-                    <div className="space-y-2">
-                      <Label className="text-sm font-semibold">Company</Label>
-                      <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-                        <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder="Select company" /></SelectTrigger>
-                        <SelectContent>
-                          {companies.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ) : scopeMeta?.scope ? (
-                    <div className="space-y-2">
-                      <Label className="text-sm font-semibold">Scope</Label>
-                      <div className="flex h-11 items-center rounded-xl border border-border/80 bg-muted/30 px-4 text-sm font-medium text-foreground">
-                        {(() => {
-                          const s = scopeMeta.scope
-                          if (s.kind === 'all') return 'All Companies'
-                          if (s.kind === 'company' && s.company_names?.length) return s.company_names.join(', ')
-                          if (s.kind === 'area' && s.area_names?.length) return `Area: ${s.area_names.join(', ')}`
-                          if (s.kind === 'branch' && s.branch_names?.length) return `Branch: ${s.branch_names.join(', ')}`
-                          if (s.kind === 'division' && s.division_names?.length) return `Division: ${s.division_names.join(', ')}`
-                          if (s.kind === 'department' && s.department_names?.length) return `Department: ${s.department_names.join(', ')}`
-                          if (s.kind === 'section_unit' && s.section_unit_names?.length) return `Section/Unit: ${s.section_unit_names.join(', ')}`
-                          return scopeMeta.hr_role_label || 'My Scope'
-                        })()}
-                      </div>
-                    </div>
-                  ) : null}
+              <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
+                {!isOrgHead ? (
                   <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Employee</Label>
-                    <Select value={selectedEmployee} onValueChange={setSelectedEmployee} disabled={!isOrgHead && !selectedCompany}>
-                      <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder={!isOrgHead && !selectedCompany ? 'Select company first' : 'Select employee'} /></SelectTrigger>
+                    <Label className="text-sm font-semibold">Company</Label>
+                    <Select value={selectedCompany} onValueChange={setSelectedCompany}>
+                      <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder="Select company" /></SelectTrigger>
                       <SelectContent>
-                        {employees.map(e => (
-                          <SelectItem key={e.id} value={String(e.id)}>
-                            {e.first_name} {e.last_name}{e.suffix ? ` ${e.suffix}` : ''}{e.position ? ` — ${e.position}` : ''}
-                          </SelectItem>
-                        ))}
+                        {companies.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
+                ) : scopeMeta?.scope ? (
                   <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Evaluation Form</Label>
-                    <Select value={selectedForm} onValueChange={setSelectedForm}>
-                      <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder="Select form" /></SelectTrigger>
-                      <SelectContent>
-                        {forms.filter(f => f.is_active !== false).map(f => (
-                          <SelectItem key={f.id} value={String(f.id)}>{f.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label className="text-sm font-semibold">Scope</Label>
+                    <div className="flex h-11 items-center rounded-xl border border-border/80 bg-muted/30 px-4 text-sm font-medium text-foreground">
+                      {(() => {
+                        const s = scopeMeta.scope
+                        if (s.kind === 'all') return 'All Companies'
+                        if (s.kind === 'company' && s.company_names?.length) return s.company_names.join(', ')
+                        if (s.kind === 'area' && s.area_names?.length) return `Area: ${s.area_names.join(', ')}`
+                        if (s.kind === 'branch' && s.branch_names?.length) return `Branch: ${s.branch_names.join(', ')}`
+                        if (s.kind === 'division' && s.division_names?.length) return `Division: ${s.division_names.join(', ')}`
+                        if (s.kind === 'department' && s.department_names?.length) return `Department: ${s.department_names.join(', ')}`
+                        if (s.kind === 'section_unit' && s.section_unit_names?.length) return `Section/Unit: ${s.section_unit_names.join(', ')}`
+                        return scopeMeta.hr_role_label || 'My Scope'
+                      })()}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Evaluation Form</Label>
+                  <Select value={selectedForm} onValueChange={setSelectedForm}>
+                    <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder="Select form" /></SelectTrigger>
+                    <SelectContent>
+                      {forms.filter(f => f.is_active !== false).map(f => (
+                        <SelectItem key={f.id} value={String(f.id)}>{f.title}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Search Employee</Label>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      value={employeeSearch}
+                      onChange={(e) => setEmployeeSearch(e.target.value)}
+                      placeholder="Search by name or position"
+                      className="h-11 w-full rounded-xl border-border/80 bg-background pl-9 text-sm"
+                    />
                   </div>
                 </div>
-                <Button
-                  onClick={handleStartEvaluation}
-                  disabled={(!isOrgHead && !selectedCompany) || !selectedEmployee || !selectedForm}
-                  className={evalPrimaryButtonClass}
-                >
-                  <ClipboardCheck className="size-4" />
-                  Start Evaluation
-                </Button>
               </div>
+              {!selectedForm && (
+                <p className="mt-4 flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-2.5 text-xs font-medium text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-300">
+                  <FileText className="size-3.5 shrink-0" />
+                  Select an evaluation form to enable the Evaluate buttons.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Employee Cards */}
+          <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
+            <CardHeader className="flex flex-col gap-1 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-lg font-semibold @md:text-xl">Employees</CardTitle>
+                {filteredEmployees.length > 0 && (
+                  <Badge variant="outline" className="rounded-full text-xs font-medium">
+                    {filteredEmployees.length} {filteredEmployees.length === 1 ? 'employee' : 'employees'}
+                  </Badge>
+                )}
+              </div>
+              <CardDescription className="text-sm @md:text-[15px]">
+                Employees within your evaluation scope.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-5">
+              {!isOrgHead && !selectedCompany ? (
+                <div className="flex min-h-[min(34vh,320px)] flex-col items-center justify-center px-6 py-14 text-center">
+                  <div className="mb-5 flex size-20 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                    <Users className="size-9" strokeWidth={1.85} />
+                  </div>
+                  <p className="text-lg font-semibold tracking-tight text-foreground">Select a company</p>
+                  <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                    Choose a company above to load its employees for evaluation.
+                  </p>
+                </div>
+              ) : filteredEmployees.length === 0 ? (
+                <div className="flex min-h-[min(34vh,320px)] flex-col items-center justify-center px-6 py-14 text-center">
+                  <div className="mb-5 flex size-20 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                    <Users className="size-9" strokeWidth={1.85} />
+                  </div>
+                  <p className="text-lg font-semibold tracking-tight text-foreground">
+                    {employeeSearch.trim() ? 'No matching employees' : 'No employees found'}
+                  </p>
+                  <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                    {employeeSearch.trim()
+                      ? 'Try a different name or position.'
+                      : 'There are no employees within your evaluation scope.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-4 @sm:grid-cols-2 @xl:grid-cols-3 @4xl:grid-cols-4">
+                  {filteredEmployees.map(emp => {
+                    const empEvals = evaluationsByEmployee[emp.id]
+                    const latest = empEvals?.[0]
+                    const fullName = `${emp.first_name || ''} ${emp.last_name || ''}${emp.suffix ? ` ${emp.suffix}` : ''}`.trim()
+                    return (
+                      <div
+                        key={emp.id}
+                        className="group relative flex flex-col items-center rounded-2xl border border-border/70 bg-card p-5 text-center shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-lg dark:border-white/10 dark:hover:border-brand/40"
+                      >
+                        {latest && (
+                          <div className="absolute right-3 top-3">{statusBadge(latest.status)}</div>
+                        )}
+                        <Avatar className="size-20 shrink-0 ring-2 ring-border/60 ring-offset-2 ring-offset-card">
+                          <AvatarImage src={profileImageUrl(emp.profile_image)} />
+                          <AvatarFallback className="rounded-full bg-teal-500/20 text-lg font-bold text-teal-700 dark:text-teal-300">
+                            {initials(fullName)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <p className="mt-4 w-full truncate text-base font-bold text-foreground" title={fullName}>
+                          {fullName || '—'}
+                        </p>
+                        <p className="mt-0.5 w-full truncate text-xs text-muted-foreground" title={emp.position || ''}>
+                          {emp.position || 'No position'}
+                        </p>
+                        {empEvals?.length > 0 && (
+                          <p className="mt-2 text-[11px] font-medium text-muted-foreground">
+                            {empEvals.length} evaluation{empEvals.length !== 1 ? 's' : ''} on record
+                          </p>
+                        )}
+                        <Button
+                          onClick={() => handleEvaluateEmployee(emp)}
+                          disabled={!selectedForm}
+                          className={cn(evalPrimaryButtonClass, 'mt-4 h-10 w-full justify-center')}
+                        >
+                          <ClipboardCheck className="size-4" />
+                          Evaluate
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
 
