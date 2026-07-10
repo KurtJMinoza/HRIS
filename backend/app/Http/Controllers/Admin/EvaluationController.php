@@ -257,12 +257,12 @@ class EvaluationController extends Controller
             ->orderBy('last_name')
             ->select(['id', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image', 'position']);
 
-        if ($request->filled('company_id')) {
-            $query->where('company_id', $request->integer('company_id'));
-        }
-
         if ($scopedEmployeeIds !== null) {
+            // Scoped IDs already define the exact evaluatable set (including cross-company
+            // "shared" assignments), so the company_id filter must not narrow it further.
             $query->whereIn('id', $scopedEmployeeIds);
+        } elseif ($request->filled('company_id')) {
+            $query->where('company_id', $request->integer('company_id'));
         }
 
         return response()->json(['employees' => $query->get()]);
