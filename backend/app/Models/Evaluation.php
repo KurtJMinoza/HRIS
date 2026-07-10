@@ -2,9 +2,11 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use stdClass;
 
 class Evaluation extends Model
 {
@@ -37,12 +39,47 @@ class Evaluation extends Model
     protected function casts(): array
     {
         return [
-            'scores' => 'array',
             'overall_score' => 'decimal:2',
             'evaluated_at' => 'datetime',
             'submitted_at' => 'datetime',
             'reviewed_at' => 'datetime',
         ];
+    }
+
+    protected function scores(): Attribute
+    {
+        return Attribute::make(
+            get: fn (?string $value) => $value === null ? null : self::normalizeSurveyScores(json_decode($value, true)),
+            set: fn ($value) => json_encode($value),
+        );
+    }
+
+    /**
+     * PHP json_encode turns {"0":5,"1":5} into [5,5]. Force matrix answers to JSON
+     * objects so SurveyJS can restore radio selections in the view modal.
+     *
+     * @param  array<string, mixed>|null  $scores
+     * @return array<string, mixed>|null
+     */
+    private static function normalizeSurveyScores(?array $scores): ?array
+    {
+        if ($scores === null || !isset($scores['survey_data']) || !is_array($scores['survey_data'])) {
+            return $scores;
+        }
+
+        foreach ($scores['survey_data'] as $key => $val) {
+            if (!is_array($val) || !array_is_list($val)) {
+                continue;
+            }
+
+            $obj = new stdClass();
+            foreach ($val as $i => $cell) {
+                $obj->{(string) $i} = $cell;
+            }
+            $scores['survey_data'][$key] = $obj;
+        }
+
+        return $scores;
     }
 
     public function company(): BelongsTo

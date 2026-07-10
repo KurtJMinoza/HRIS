@@ -447,6 +447,7 @@ class EvaluationController extends Controller
         ]);
 
         if ($evaluation->scores && $evaluation->status === 'submitted') {
+            $evaluation->load('evaluationForm');
             $this->computeOverallRating($evaluation);
             $evaluation->save();
         }
@@ -536,6 +537,7 @@ class EvaluationController extends Controller
             return response()->json(['message' => 'Evaluation is already submitted.'], 422);
         }
 
+        $evaluation->load('evaluationForm');
         $this->computeOverallRating($evaluation);
 
         $workflowSettings = $this->evalWorkflowService->resolveSetting();
@@ -547,6 +549,8 @@ class EvaluationController extends Controller
             'status' => $newStatus,
             'submitted_at' => now(),
             'evaluated_at' => now(),
+            'overall_score' => $evaluation->overall_score,
+            'overall_rating' => $evaluation->overall_rating,
         ]);
 
         $this->sendNotification($evaluation, $useHierarchy ? 'submitted' : 'completed');
@@ -767,34 +771,137 @@ class EvaluationController extends Controller
     private function computeOverallRating(Evaluation $evaluation): void
     {
         $scores = $evaluation->scores;
-        if (!$scores || !isset($scores['sections'])) {
+        if (!$scores) {
             return;
         }
 
-        $totalWeight = 0;
-        $weightedSum = 0;
+        $evaluation->loadMissing('evaluationForm');
+        $surveyData = $scores['survey_data'] ?? null;
 
-        foreach ($scores['sections'] as $sectionTitle => $sectionScores) {
-            $sectionValues = array_filter($sectionScores, fn ($v) => is_numeric($v));
-            if (empty($sectionValues)) {
+        if (is_array($surveyData)) {
+            $computed = $this->computeWeightedScoreFromSurveyData($surveyData);
+            if ($computed !== null) {
+                $evaluation->overall_score = $computed['score'];
+                $evaluation->overall_rating = $computed['rating'];
+
+                return;
+            }
+
+            if (isset($surveyData['final_score']) && is_numeric($surveyData['final_score']) && (float) $surveyData['final_score'] > 0) {
+                $score = round((float) $surveyData['final_score'], 2);
+                $evaluation->overall_score = $score;
+
+                if (!empty($surveyData['overall_rating']) && is_string($surveyData['overall_rating'])) {
+                    $evaluation->overall_rating = $surveyData['overall_rating'];
+                } else {
+                    $maxScore = $this->getMaxScoreFromForm($evaluation->evaluationForm);
+                    $percentage = $maxScore > 0 ? ($score / $maxScore) * 100 : 0;
+                    $evaluation->overall_rating = $this->ratingLabelFromPercentage($percentage);
+                }
+
+                return;
+            }
+        }
+
+        $numericValues = [];
+        foreach ($scores['sections'] ?? [] as $sectionTitle => $sectionScores) {
+            if (!is_array($sectionScores) || str_contains((string) $sectionTitle, 'Summary')) {
                 continue;
             }
-            $avg = array_sum($sectionValues) / count($sectionValues);
-            $totalWeight++;
-            $weightedSum += $avg;
+
+            $numericValues = array_merge($numericValues, $this->collectNumericScores($sectionScores));
         }
 
-        if ($totalWeight === 0) {
+        if (empty($numericValues)) {
             return;
         }
 
-        $score = round($weightedSum / $totalWeight, 2);
+        $score = round(array_sum($numericValues) / count($numericValues), 2);
         $maxScore = $this->getMaxScoreFromForm($evaluation->evaluationForm);
 
         $evaluation->overall_score = $score;
 
         $percentage = $maxScore > 0 ? ($score / $maxScore) * 100 : 0;
-        $evaluation->overall_rating = match (true) {
+        $evaluation->overall_rating = $this->ratingLabelFromPercentage($percentage);
+    }
+
+    /**
+     * @param  array<string, mixed>  $surveyData
+     * @return array{score: float, rating: string}|null
+     */
+    private function computeWeightedScoreFromSurveyData(array $surveyData): ?array
+    {
+        $jobMatrices = ['quality_of_work', 'productivity', 'accountability', 'communication', 'problem_solving'];
+        $jobValues = [];
+        foreach ($jobMatrices as $name) {
+            $jobValues = array_merge($jobValues, $this->matrixNumericValues($surveyData[$name] ?? null));
+        }
+        $coreValues = $this->matrixNumericValues($surveyData['core_values'] ?? null);
+
+        if ($jobValues === [] && $coreValues === []) {
+            return null;
+        }
+
+        $jobAvg = $jobValues !== [] ? array_sum($jobValues) / count($jobValues) : 0.0;
+        $coreAvg = $coreValues !== [] ? array_sum($coreValues) / count($coreValues) : 0.0;
+        $score = round($jobAvg * 0.70 + $coreAvg * 0.30, 2);
+
+        return [
+            'score' => $score,
+            'rating' => $this->ratingLabelFromScore($score),
+        ];
+    }
+
+    /**
+     * @return list<float>
+     */
+    private function collectNumericScores(array $values): array
+    {
+        $numericValues = [];
+        foreach ($values as $value) {
+            if (is_numeric($value)) {
+                $numericValues[] = (float) $value;
+            } elseif (is_array($value)) {
+                $numericValues = array_merge($numericValues, $this->collectNumericScores($value));
+            }
+        }
+
+        return $numericValues;
+    }
+
+    /**
+     * @return list<float>
+     */
+    private function matrixNumericValues(mixed $raw): array
+    {
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        $vals = [];
+        foreach ($raw as $value) {
+            if (is_numeric($value)) {
+                $vals[] = (float) $value;
+            }
+        }
+
+        return $vals;
+    }
+
+    private function ratingLabelFromScore(float $score): string
+    {
+        return match (true) {
+            $score >= 4.5 => 'Outstanding',
+            $score >= 3.5 => 'Very Good',
+            $score >= 2.5 => 'Good',
+            $score >= 1.5 => 'Needs Improvement',
+            default => 'Unsatisfactory',
+        };
+    }
+
+    private function ratingLabelFromPercentage(float $percentage): string
+    {
+        return match (true) {
             $percentage >= 90 => 'Outstanding',
             $percentage >= 85 => 'Excellent',
             $percentage >= 80 => 'Very Good',
@@ -806,16 +913,54 @@ class EvaluationController extends Controller
 
     private function getMaxScoreFromForm(?EvaluationForm $form): int
     {
-        if (!$form || !$form->sections) {
+        if (!$form) {
             return 5;
         }
 
         $max = 0;
-        foreach ($form->sections as $section) {
-            foreach (($section['questions'] ?? []) as $question) {
-                if (($question['type'] ?? '') === 'rating') {
-                    $max = max($max, (int) ($question['max'] ?? 5));
+
+        if ($form->sections) {
+            foreach ($form->sections as $section) {
+                foreach (($section['questions'] ?? []) as $question) {
+                    if (($question['type'] ?? '') === 'rating') {
+                        $max = max($max, (int) ($question['max'] ?? 5));
+                    }
                 }
+            }
+        }
+
+        $surveyJson = $form->survey_json;
+        if (is_array($surveyJson) && !empty($surveyJson['pages'])) {
+            $walk = function (array $elements) use (&$walk, &$max): void {
+                foreach ($elements as $el) {
+                    if (!is_array($el)) {
+                        continue;
+                    }
+
+                    if (($el['type'] ?? '') === 'panel') {
+                        $walk($el['elements'] ?? []);
+                        continue;
+                    }
+
+                    if (($el['type'] ?? '') === 'rating') {
+                        $max = max($max, (int) ($el['rateMax'] ?? $el['rateCount'] ?? 5));
+                        continue;
+                    }
+
+                    if (($el['type'] ?? '') === 'matrix') {
+                        foreach ($el['columns'] ?? [] as $col) {
+                            if (is_numeric($col)) {
+                                $max = max($max, (int) $col);
+                            } elseif (is_array($col) && isset($col['value']) && is_numeric($col['value'])) {
+                                $max = max($max, (int) $col['value']);
+                            }
+                        }
+                    }
+                }
+            };
+
+            foreach ($surveyJson['pages'] as $page) {
+                $walk($page['elements'] ?? []);
             }
         }
 

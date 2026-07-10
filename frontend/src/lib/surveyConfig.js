@@ -1105,6 +1105,129 @@ export function countSurveyQuestions(surveyJson) {
   return count
 }
 
+function isScorableQuestion(q) {
+  return q && q.type !== 'panel' && q.type !== 'html'
+}
+
+function matrixRowKey(row, index) {
+  if (typeof row === 'string') return row
+  if (row && typeof row === 'object') return row.value ?? row.text ?? String(index)
+  return String(index)
+}
+
+function matrixRowLabel(row, index) {
+  if (typeof row === 'string') return row
+  if (row && typeof row === 'object') return row.text || row.value || `Row ${index}`
+  return `Row ${index}`
+}
+
+// SurveyJS matrix answers are keyed by row index ("0", "1", …), not row text.
+function matrixRowIndexKey(index) {
+  return String(index)
+}
+
+function matrixCellValue(raw, row, index) {
+  if (raw === undefined || raw === null) return undefined
+  // PHP/Laravel JSON turns {"0":5,"1":5} into [5,5] — treat lists as indexed rows
+  if (Array.isArray(raw)) {
+    const v = raw[index]
+    return v !== undefined && v !== null && v !== '' ? v : undefined
+  }
+  if (typeof raw !== 'object') return undefined
+  const idxKey = matrixRowIndexKey(index)
+  const textKey = matrixRowKey(row, index)
+  const label = matrixRowLabel(row, index)
+  if (raw[idxKey] !== undefined && raw[idxKey] !== null && raw[idxKey] !== '') return raw[idxKey]
+  if (raw[index] !== undefined && raw[index] !== null && raw[index] !== '') return raw[index]
+  if (raw[textKey] !== undefined && raw[textKey] !== null && raw[textKey] !== '') return raw[textKey]
+  if (raw[label] !== undefined && raw[label] !== null && raw[label] !== '') return raw[label]
+  return undefined
+}
+
+// String matrix rows use row text as data keys (radios stay blank with index keys).
+// Object rows { value: "0", text: "…" } work with both {matrix.0} expressions and display.
+function normalizeMatrixRowDefinitions(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows
+  return rows.map((row, i) => {
+    const idx = String(i)
+    if (typeof row === 'string') return { value: idx, text: row }
+    if (row && typeof row === 'object') {
+      const value = row.value ?? idx
+      const text = row.text ?? row.value ?? `Row ${i + 1}`
+      return { ...row, value: String(value), text }
+    }
+    return { value: idx, text: String(row) }
+  })
+}
+
+// SurveyJS 2.x expressions read matrix cells as {matrixName.0}, not {matrixName[0]}.
+export function normalizeSurveyJsonExpressions(surveyJson) {
+  if (!surveyJson || !Array.isArray(surveyJson.pages)) return surveyJson
+  const json = JSON.parse(JSON.stringify(surveyJson))
+  const walk = (elements) => {
+    for (const el of elements || []) {
+      if (!el) continue
+      if (el.type === 'panel') walk(el.elements)
+      else if (el.type === 'matrix' && Array.isArray(el.rows)) {
+        el.rows = normalizeMatrixRowDefinitions(el.rows)
+      } else if (el.type === 'expression' && typeof el.expression === 'string') {
+        el.expression = el.expression.replace(
+          /\{([a-zA-Z_][\w]*)\[(\d+)\]\}/g,
+          '{$1.$2}',
+        )
+      }
+    }
+  }
+  for (const page of json.pages) walk(page.elements)
+  return json
+}
+
+// SurveyJS matrix expressions use {name.0}, {name.1} — data must use index keys, not row text.
+export function normalizeAllMatrixData(surveyJson, data = {}) {
+  if (!data || typeof data !== 'object') return {}
+  const out = { ...data }
+  surveyQuestionWalk(surveyJson, (_sectionTitle, q) => {
+    if (q.type !== 'matrix' || out[q.name] === undefined || out[q.name] === null) return
+    const raw = out[q.name]
+    const rows = q.rows || []
+    const matrix = {}
+
+    // PHP json_encode compacts {"0":5,"1":5} → [5,5]; SurveyJS rejects arrays
+    if (Array.isArray(raw)) {
+      for (let i = 0; i < rows.length; i++) {
+        const v = raw[i]
+        if (v !== undefined && v !== null && v !== '') {
+          matrix[matrixRowIndexKey(i)] = Number(v) || v
+        }
+      }
+      if (Object.keys(matrix).length > 0) out[q.name] = matrix
+      return
+    }
+
+    if (typeof raw !== 'object') return
+
+    for (let i = 0; i < rows.length; i++) {
+      const cell = matrixCellValue(raw, rows[i], i)
+      if (cell !== undefined && cell !== null && cell !== '') {
+        matrix[matrixRowIndexKey(i)] = Number(cell) || cell
+      }
+    }
+    if (Object.keys(matrix).length > 0) out[q.name] = matrix
+  })
+  return out
+}
+
+// Re-apply normalized matrix keys so SurveyJS expression questions recalculate.
+export function syncModelDataForScoring(surveyJson, model) {
+  const data = normalizeAllMatrixData(surveyJson, { ...model.data })
+  for (const [name, value] of Object.entries(data)) {
+    if (value !== undefined && value !== null && value !== '') {
+      model.setValue(name, value)
+    }
+  }
+  return { ...model.data }
+}
+
 function surveyQuestionWalk(surveyJson, cb) {
   if (!surveyJson || !Array.isArray(surveyJson.pages)) return
   for (const page of surveyJson.pages) {
@@ -1113,12 +1236,12 @@ function surveyQuestionWalk(surveyJson, cb) {
     if (panels.length > 0) {
       for (const panel of panels) {
         for (const q of panel.elements || []) {
-          if (q && q.type !== 'panel') cb(panel.title || panel.name || 'Section', q)
+          if (isScorableQuestion(q)) cb(panel.title || panel.name || 'Section', q)
         }
       }
     } else {
       for (const q of elements) {
-        if (q && q.type !== 'panel') cb(page.title || page.name || 'Section', q)
+        if (isScorableQuestion(q)) cb(page.title || page.name || 'Section', q)
       }
     }
   }
@@ -1130,25 +1253,32 @@ function surveyQuestionWalk(surveyJson, cb) {
 // matrix row objects into per-row numeric entries so the view dialog never
 // sees an object). Expression values are also captured as-is.
 export function scoresFromSurvey(surveyJson, data = {}) {
+  const normalizedData = normalizeAllMatrixData(surveyJson, data)
   const sections = {}
   surveyQuestionWalk(surveyJson, (sectionTitle, q) => {
     if (!sections[sectionTitle]) sections[sectionTitle] = {}
-    const raw = data ? data[q.name] : undefined
+    const raw = normalizedData ? normalizedData[q.name] : undefined
+    const label = q.title || q.name
 
     // ── Matrix question: extract individual row values ──
-    if (q.type === 'matrix' && raw && typeof raw === 'object') {
+    if (q.type === 'matrix') {
       const rows = q.rows || []
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]
-        const rowTitle = typeof row === 'string' ? row : (row.text || row.value || `Row ${i}`)
-        sections[sectionTitle][rowTitle] = Number(raw[i]) || 0
+        const rowTitle = matrixRowLabel(row, i)
+        const cell = matrixCellValue(raw, row, i)
+        sections[sectionTitle][rowTitle] = cell === undefined || cell === '' ? null : Number(cell) || 0
+      }
+      // Keep a nested copy for older readers that expect question title as key
+      if (raw && typeof raw === 'object') {
+        sections[sectionTitle][label] = { ...raw }
       }
       return
     }
 
     // ── Rating question: store as number ──
     if (q.type === 'rating') {
-      sections[sectionTitle][q.title || q.name] = Number(raw) || 0
+      sections[sectionTitle][label] = raw === undefined || raw === '' || raw === null ? null : Number(raw) || 0
       return
     }
 
@@ -1156,19 +1286,23 @@ export function scoresFromSurvey(surveyJson, data = {}) {
     if (q.type === 'expression') {
       const val = raw
       if (typeof val === 'number') {
-        sections[sectionTitle][q.title || q.name] = Number(val.toFixed(2)) || 0
+        sections[sectionTitle][label] = Number(val.toFixed(2)) || 0
       } else {
-        sections[sectionTitle][q.title || q.name] = val ?? ''
+        sections[sectionTitle][label] = val ?? null
       }
       return
     }
 
-    // ── Everything else: text, comment, html (skip), signaturepad, radiogroup ──
-    sections[sectionTitle][q.title || q.name] = (typeof raw === 'string' || typeof raw === 'number')
+    // ── Everything else: text, comment, signaturepad, radiogroup, etc. ──
+    sections[sectionTitle][label] = (typeof raw === 'string' || typeof raw === 'number')
       ? raw
-      : (raw ?? '')
+      : (raw ?? null)
   })
-  return { sections }
+  return {
+    sections,
+    // ponytail: raw SurveyJS payload is the source of truth for view/re-score round-trips
+    survey_data: normalizedData && typeof normalizedData === 'object' ? { ...normalizedData } : {},
+  }
 }
 
 // Convert a legacy `scores` payload back into SurveyJS response data so a
@@ -1176,30 +1310,90 @@ export function scoresFromSurvey(surveyJson, data = {}) {
 // For matrix questions, individual row values are re-assembled into the
 // row-indexed object format that SurveyJS expects ({ '0': value, '1': value }).
 export function surveyDataFromScores(surveyJson, scores = {}) {
+  if (scores?.survey_data && typeof scores.survey_data === 'object' && Object.keys(scores.survey_data).length > 0) {
+    return normalizeAllMatrixData(surveyJson, { ...scores.survey_data })
+  }
+
   const data = {}
   const legacy = scores?.sections || {}
   surveyQuestionWalk(surveyJson, (sectionTitle, q) => {
-    // ── Matrix question: re-assemble row values into indexed object ──
+    // ── Matrix question: re-assemble row values using SurveyJS row keys ──
     if (q.type === 'matrix') {
       const rows = q.rows || []
       const matrixData = {}
-      let hasValue = false
+      const nested = legacy[sectionTitle]?.[q.title || q.name]
+      const nestedMatrix = nested && typeof nested === 'object' && !Array.isArray(nested) ? nested : null
+
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]
-        const rowTitle = typeof row === 'string' ? row : (row.text || row.value || `Row ${i}`)
-        const val = legacy[sectionTitle]?.[rowTitle]
-        if (val !== undefined && val !== '' && val !== 0) {
-          matrixData[i] = Number(val)
-          hasValue = true
+        const rowTitle = matrixRowLabel(row, i)
+        const rowKey = matrixRowKey(row, i)
+        const idxKey = matrixRowIndexKey(i)
+        const val =
+          legacy[sectionTitle]?.[rowTitle]
+          ?? legacy[sectionTitle]?.[rowKey]
+          ?? legacy[sectionTitle]?.[idxKey]
+          ?? legacy[sectionTitle]?.[i]
+          ?? nestedMatrix?.[rowTitle]
+          ?? nestedMatrix?.[rowKey]
+          ?? nestedMatrix?.[idxKey]
+          ?? nestedMatrix?.[i]
+
+        if (val !== undefined && val !== null && val !== '') {
+          matrixData[idxKey] = Number(val) || val
         }
       }
-      if (hasValue) data[q.name] = matrixData
+
+      if (Object.keys(matrixData).length > 0) data[q.name] = matrixData
       return
     }
 
     // ── Non-matrix: direct lookup ──
     const value = legacy[sectionTitle]?.[q.title || q.name]
-    if (value !== undefined && value !== '') data[q.name] = value
+    if (value !== undefined && value !== null && value !== '') data[q.name] = value
   })
-  return data
+  return normalizeAllMatrixData(surveyJson, data)
+}
+
+// ponytail: smallest runnable check — matrix row keys must round-trip by text, not index
+if (import.meta.env?.DEV) {
+  const sampleJson = {
+    pages: [{
+      title: 'Section',
+      elements: [{
+        type: 'matrix',
+        name: 'm1',
+        title: 'Criteria',
+        rows: ['Row A', 'Row B'],
+        columns: [1, 2, 3],
+      }],
+    }],
+  }
+  const sampleData = { m1: { 0: 4, 1: 5 } }
+  const scores = scoresFromSurvey(sampleJson, sampleData)
+  console.assert(scores.sections.Section['Row A'] === 4, 'matrix row A should score 4')
+  console.assert(scores.sections.Section['Row B'] === 5, 'matrix row B should score 5')
+  const restored = surveyDataFromScores(sampleJson, scores)
+  console.assert(restored.m1['0'] === 4, 'matrix row A should restore with index key')
+  const nestedScores = {
+    sections: {
+      Section: {
+        Criteria: { 'Row A': 4, 'Row B': 5 },
+      },
+    },
+  }
+  const nestedRestore = surveyDataFromScores(sampleJson, nestedScores)
+  console.assert(nestedRestore.m1['0'] === 4, 'nested Criteria matrix should restore')
+  const textKeyData = normalizeAllMatrixData(sampleJson, { m1: { 'Row A': 4, 'Row B': 5 } })
+  console.assert(textKeyData.m1['0'] === 4, 'text matrix keys should normalize to index keys')
+  const arrayKeyData = normalizeAllMatrixData(sampleJson, { m1: [4, 5] })
+  console.assert(arrayKeyData.m1['0'] === 4, 'PHP-style matrix arrays should normalize to index keys')
+  const fixed = normalizeSurveyJsonExpressions({
+    pages: [{ elements: [{ type: 'expression', name: 'e', expression: '({m[0]} + {m[1]}) / 2' }] }],
+  })
+  console.assert(fixed.pages[0].elements[0].expression === '({m.0} + {m.1}) / 2', 'expression syntax should normalize')
+  const rowFixed = normalizeSurveyJsonExpressions({
+    pages: [{ elements: [{ type: 'matrix', name: 'm1', rows: ['Row A', 'Row B'], columns: [1, 2, 3] }] }],
+  })
+  console.assert(rowFixed.pages[0].elements[0].rows[0].value === '0', 'matrix rows should get index value keys')
 }

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
-import { applyCuratedToolbox, loadTemplateIntoCreator, TEMPLATE_REGISTRY } from '@/lib/surveyConfig'
+import { applyCuratedToolbox, loadTemplateIntoCreator, normalizeSurveyJsonExpressions, TEMPLATE_REGISTRY } from '@/lib/surveyConfig'
 
 // ─── Creator Tab Names ─────────────────────────────────────────────
 // These are custom top-level navigation tabs. The SurveyJS Creator has its own
@@ -196,7 +196,7 @@ export default function EvaluationSurveyCreatorModal({
   if (currentJson && currentJson !== prevJsonRef.current && open && creatorRef.current) {
     prevJsonRef.current = currentJson
     try {
-      creatorRef.current.JSON = JSON.parse(JSON.stringify(currentJson))
+      creatorRef.current.JSON = JSON.parse(JSON.stringify(normalizeSurveyJsonExpressions(currentJson)))
     } catch {
       // ignore parse errors
     }
@@ -236,7 +236,7 @@ export default function EvaluationSurveyCreatorModal({
       title: formMeta.title || creatorJson.title || 'Untitled Evaluation Form',
       description: formMeta.description || creatorJson.description || '',
       is_active: formMeta.is_active,
-      survey_json: hasContent ? creatorJson : null,
+      survey_json: hasContent ? normalizeSurveyJsonExpressions(creatorJson) : null,
     }
 
     onSave?.(payload)

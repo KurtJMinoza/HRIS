@@ -126,6 +126,7 @@ export default function AdminEvaluation() {
   const [formPicker, setFormPicker] = useState(null)
   const [savingEval, setSavingEval] = useState(false)
   const [viewDialog, setViewDialog] = useState(null)
+  const surveyFormRef = useRef(null)
   const [dashboardSummary, setDashboardSummary] = useState(null)
   const [evalSearch, setEvalSearch] = useState('')
   const [scopeMeta, setScopeMeta] = useState(null)
@@ -428,11 +429,12 @@ export default function AdminEvaluation() {
   const handleSaveEvaluation = async (status) => {
     setSavingEval(true)
     try {
+      const scores = surveyFormRef.current?.getScores?.() ?? evalDialog.scores
       const payload = {
         company_id: evalDialog.company_id,
         evaluation_form_id: evalDialog.evaluation_form_id,
         employee_id: evalDialog.employee_id,
-        scores: evalDialog.scores,
+        scores,
         status,
       }
       await createEvaluation(payload)
@@ -1288,9 +1290,9 @@ export default function AdminEvaluation() {
               <div className="space-y-6">
                 {evalDialog?.form?.survey_json && Object.keys(evalDialog.form.survey_json).length > 0 ? (
                   <EvaluationSurveyForm
+                    ref={surveyFormRef}
                     surveyJson={evalDialog.form.survey_json}
                     initialScores={evalDialog.scores}
-                    onChange={(scores) => setEvalDialog(prev => ({ ...prev, scores }))}
                   />
                 ) : (
                   evalDialog?.form?.sections?.map((section, sIdx) => (
@@ -1401,6 +1403,7 @@ export default function AdminEvaluation() {
               {viewDialog.evaluation_form?.survey_json && Object.keys(viewDialog.evaluation_form.survey_json).length > 0 ? (
                 <div className="mb-4">
                   <EvaluationSurveyForm
+                    key={viewDialog.id}
                     surveyJson={viewDialog.evaluation_form.survey_json}
                     initialScores={viewDialog.scores}
                     readOnly={true}
