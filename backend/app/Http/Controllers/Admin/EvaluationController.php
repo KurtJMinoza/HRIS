@@ -30,7 +30,50 @@ class EvaluationController extends Controller
 
     public function scopeMeta(Request $request): JsonResponse
     {
+        return response()->json($this->buildScopeMeta($request->user()));
+    }
+
+    /**
+     * Consolidated payload for the evaluation module's initial load. Computes the
+     * (expensive) data scope a single time and reuses it across every dataset,
+     * collapsing what used to be 5 parallel requests into one round-trip.
+     */
+    public function bootstrap(Request $request): JsonResponse
+    {
         $user = $request->user();
+
+        $scopeMeta = $this->buildScopeMeta($user);
+        $scopedEmployeeIds = $scopeMeta['scoped_employee_ids'];
+
+        $forms = ($scopeMeta['can_manage_templates'] || $scopeMeta['can_evaluate'])
+            ? $this->buildFormsPayload($user, false)
+            : [];
+
+        $companiesQuery = Company::query()->orderBy('name');
+        $this->dataScopeService->restrictCompanyQuery($user, $companiesQuery);
+        $companies = $companiesQuery->get(['id', 'name']);
+
+        // Initial employee set for the module. For scoped org heads this is their
+        // fixed roster; for unrestricted Admin HR it is the full evaluatable roster
+        // (matching a company-less employees fetch). Company-specific narrowing
+        // still happens client-side via the lazy /employees endpoint.
+        $employees = $this->buildEmployeesPayload($scopedEmployeeIds, null);
+
+        return response()->json([
+            'scope_meta' => $scopeMeta,
+            'forms' => $forms,
+            'companies' => $companies,
+            'employees' => $employees,
+            'evaluations' => $this->buildEvaluationsQuery($scopedEmployeeIds)->paginate(50),
+            'dashboard' => $this->buildDashboardSummary($scopedEmployeeIds),
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildScopeMeta(User $user): array
+    {
         $permissions = $this->rbacService->getPermissionsForUser($user);
         $permSet = $permissions->map(fn ($p) => $p['slug'] ?? $p)->values()->all();
 
@@ -41,18 +84,15 @@ class EvaluationController extends Controller
         $canEvaluate = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.create', $permSet, true);
         $canReview = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.review', $permSet, true);
 
-        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
-        $scopeKind = $this->resolveScopeKind($user);
-
-        return response()->json([
+        return [
             'can_manage_templates' => $canManageTemplates,
             'can_evaluate' => $canEvaluate,
             'can_review' => $canReview,
             'hr_role' => $hrRole->value,
             'hr_role_label' => $hrRole->badgeLabel(),
-            'scope' => $scopeKind,
-            'scoped_employee_ids' => $scopedEmployeeIds,
-        ]);
+            'scope' => $this->resolveScopeKind($user),
+            'scoped_employee_ids' => $this->getEvaluationScopeEmployeeIds($user),
+        ];
     }
 
     private function getEvaluationScopeEmployeeIds(User $user): ?array
@@ -88,7 +128,16 @@ class EvaluationController extends Controller
 
     public function formsIndex(Request $request): JsonResponse
     {
-        $user = $request->user();
+        return response()->json([
+            'forms' => $this->buildFormsPayload($request->user(), $request->boolean('active_only')),
+        ]);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildFormsPayload(User $user, bool $activeOnly): array
+    {
         $query = EvaluationForm::query()
             ->with('createdBy:id,name,first_name,middle_name,last_name')
             ->withCount('evaluations')
@@ -102,25 +151,23 @@ class EvaluationController extends Controller
             }
         }
 
-        if ($request->boolean('active_only')) {
+        if ($activeOnly) {
             $query->where('is_active', true);
         }
 
-        return response()->json([
-            'forms' => $query->get()->map(fn (EvaluationForm $f) => [
-                'id' => $f->id,
-                'company_id' => $f->company_id,
-                'title' => $f->title,
-                'description' => $f->description,
-                'sections' => $f->sections,
-                'is_active' => $f->is_active,
-                'organization_scope' => $f->organization_scope,
-                'created_by' => $f->createdBy?->display_name,
-                'evaluations_count' => $f->evaluations_count,
-                'created_at' => $f->created_at?->toIso8601String(),
-                'updated_at' => $f->updated_at?->toIso8601String(),
-            ]),
-        ]);
+        return $query->get()->map(fn (EvaluationForm $f) => [
+            'id' => $f->id,
+            'company_id' => $f->company_id,
+            'title' => $f->title,
+            'description' => $f->description,
+            'sections' => $f->sections,
+            'is_active' => $f->is_active,
+            'organization_scope' => $f->organization_scope,
+            'created_by' => $f->createdBy?->display_name,
+            'evaluations_count' => $f->evaluations_count,
+            'created_at' => $f->created_at?->toIso8601String(),
+            'updated_at' => $f->updated_at?->toIso8601String(),
+        ])->all();
     }
 
     private function restrictFormsByScope(User $user, $query): void
@@ -247,10 +294,20 @@ class EvaluationController extends Controller
 
     public function employees(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($request->user());
+        $companyId = $request->filled('company_id') ? $request->integer('company_id') : null;
 
-        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
+        return response()->json([
+            'employees' => $this->buildEmployeesPayload($scopedEmployeeIds, $companyId),
+        ]);
+    }
 
+    /**
+     * @param  list<int>|null  $scopedEmployeeIds
+     * @return \Illuminate\Support\Collection<int, User>
+     */
+    private function buildEmployeesPayload(?array $scopedEmployeeIds, ?int $companyId)
+    {
         $query = User::query()
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
@@ -270,43 +327,25 @@ class EvaluationController extends Controller
             // Scoped IDs already define the exact evaluatable set (including cross-company
             // "shared" assignments), so the company_id filter must not narrow it further.
             $query->whereIn('id', $scopedEmployeeIds);
-        } elseif ($request->filled('company_id')) {
-            $query->where('company_id', $request->integer('company_id'));
+        } elseif ($companyId !== null) {
+            $query->where('company_id', $companyId);
         }
 
-        $employees = $query->get()->map(function (User $employee) {
+        return $query->get()->map(function (User $employee) {
             $employee->setAttribute('department_name', $employee->departmentRelation?->name);
             $employee->setAttribute('branch_name', $employee->branch?->name);
             $employee->setAttribute('company_name', $employee->company?->name);
 
             return $employee;
         });
-
-        return response()->json(['employees' => $employees]);
     }
 
     // ─── Evaluations CRUD ───────────────────────────────────────────
 
     public function index(Request $request): JsonResponse
     {
-        $user = $request->user();
-
-        $query = Evaluation::query()
-            ->with([
-                'evaluationForm:id,title',
-                'employee:id,first_name,middle_name,last_name,suffix,profile_image,position',
-                'evaluator:id,first_name,middle_name,last_name,suffix',
-                'reviewer:id,first_name,middle_name,last_name,suffix',
-                'company:id,name',
-                'branch:id,name',
-                'department:id,name',
-            ])
-            ->orderBy('created_at', 'desc');
-
-        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
-        if ($scopedEmployeeIds !== null) {
-            $query->whereIn('employee_id', $scopedEmployeeIds);
-        }
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($request->user());
+        $query = $this->buildEvaluationsQuery($scopedEmployeeIds);
 
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->integer('employee_id'));
@@ -323,6 +362,30 @@ class EvaluationController extends Controller
         $perPage = min($request->integer('per_page', 25), 100);
 
         return response()->json($query->paginate($perPage));
+    }
+
+    /**
+     * @param  list<int>|null  $scopedEmployeeIds
+     */
+    private function buildEvaluationsQuery(?array $scopedEmployeeIds): \Illuminate\Database\Eloquent\Builder
+    {
+        $query = Evaluation::query()
+            ->with([
+                'evaluationForm:id,title',
+                'employee:id,first_name,middle_name,last_name,suffix,profile_image,position',
+                'evaluator:id,first_name,middle_name,last_name,suffix',
+                'reviewer:id,first_name,middle_name,last_name,suffix',
+                'company:id,name',
+                'branch:id,name',
+                'department:id,name',
+            ])
+            ->orderBy('created_at', 'desc');
+
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('employee_id', $scopedEmployeeIds);
+        }
+
+        return $query;
     }
 
     public function store(Request $request): JsonResponse
@@ -601,30 +664,46 @@ class EvaluationController extends Controller
 
     public function dashboardSummary(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $query = Evaluation::query();
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($request->user());
 
-        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
+        return response()->json($this->buildDashboardSummary($scopedEmployeeIds));
+    }
+
+    /**
+     * @param  list<int>|null  $scopedEmployeeIds
+     * @return array<string, mixed>
+     */
+    private function buildDashboardSummary(?array $scopedEmployeeIds): array
+    {
+        $base = Evaluation::query();
         if ($scopedEmployeeIds !== null) {
-            $query->whereIn('employee_id', $scopedEmployeeIds);
+            $base->whereIn('employee_id', $scopedEmployeeIds);
         }
 
-        $employeesEvaluated = (clone $query)->whereIn('status', [
-            Evaluation::STATUS_SUBMITTED,
-            Evaluation::STATUS_UNDER_REVIEW,
-            Evaluation::STATUS_COMPLETED,
-        ])->count();
+        // Single pass for the status counts instead of two separate COUNT queries.
+        $statusCounts = (clone $base)
+            ->whereIn('status', [
+                Evaluation::STATUS_DRAFT,
+                Evaluation::STATUS_SUBMITTED,
+                Evaluation::STATUS_UNDER_REVIEW,
+                Evaluation::STATUS_COMPLETED,
+            ])
+            ->groupBy('status')
+            ->selectRaw('status, COUNT(*) as aggregate')
+            ->pluck('aggregate', 'status');
 
-        $pending = (clone $query)->where('status', Evaluation::STATUS_DRAFT)->count();
+        $employeesEvaluated = (int) ($statusCounts[Evaluation::STATUS_SUBMITTED] ?? 0)
+            + (int) ($statusCounts[Evaluation::STATUS_UNDER_REVIEW] ?? 0)
+            + (int) ($statusCounts[Evaluation::STATUS_COMPLETED] ?? 0);
+        $pending = (int) ($statusCounts[Evaluation::STATUS_DRAFT] ?? 0);
 
-        $avgScore = (clone $query)
+        $completed = (clone $base)
             ->where('status', Evaluation::STATUS_COMPLETED)
-            ->whereNotNull('overall_score')
-            ->avg('overall_score');
+            ->whereNotNull('overall_score');
 
-        $topPerformers = (clone $query)
-            ->where('status', Evaluation::STATUS_COMPLETED)
-            ->whereNotNull('overall_score')
+        $avgScore = (clone $completed)->avg('overall_score');
+
+        $topPerformers = $completed
             ->with('employee:id,first_name,middle_name,last_name,suffix,profile_image,position')
             ->orderByDesc('overall_score')
             ->take(5)
@@ -636,12 +715,12 @@ class EvaluationController extends Controller
                 'rating' => $e->overall_rating,
             ]);
 
-        return response()->json([
+        return [
             'employees_evaluated' => $employeesEvaluated,
             'pending_evaluations' => $pending,
             'average_score' => $avgScore ? round($avgScore, 2) : null,
             'top_performers' => $topPerformers,
-        ]);
+        ];
     }
 
     public function employeeDashboardWidget(Request $request): JsonResponse

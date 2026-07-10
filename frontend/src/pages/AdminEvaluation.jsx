@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
   ClipboardCheck, FileSpreadsheet, Plus, Loader2, Trash2, Pencil, Eye,
@@ -21,11 +21,11 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useToast } from '@/components/ui/use-toast'
 import {
   getEvaluationForms, createEvaluationForm, updateEvaluationForm, deleteEvaluationForm,
-  getEvaluationCompanies, getEvaluationEmployees,
+  getEvaluationEmployees,
   getEvaluations, createEvaluation, submitEvaluation, deleteEvaluation,
   reviewEvaluation, completeEvaluation,
   profileImageUrl, getEvaluationDashboardSummary,
-  getEvaluationScopeMeta,
+  getEvaluationBootstrap,
 } from '@/api'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -130,7 +130,6 @@ export default function AdminEvaluation() {
 
   // Role-based access: backend scopeMeta is the single source of truth
   const canManageTemplates = scopeMeta?.can_manage_templates ?? false
-  const canEvaluate = scopeMeta?.can_evaluate ?? false
   const canReview = scopeMeta?.can_review ?? false
   const hrRole = scopeMeta?.hr_role
   const isOrgHead = hrRole && !['admin', 'super_admin'].includes(hrRole)
@@ -157,14 +156,31 @@ export default function AdminEvaluation() {
     }
   }, [scopeMeta, isOrgHead, user])
 
-  const loadScopeMeta = useCallback(async () => {
+  const bootstrappedRef = useRef(false)
+  const lastEmployeeKeyRef = useRef(null)
+
+  // Single round-trip that resolves the (expensive) data scope once and returns
+  // scope meta, forms, companies, evaluations, dashboard, and the initial
+  // employee set together — replacing 5 separate on-mount requests.
+  const loadBootstrap = useCallback(async () => {
+    setFormsLoading(true)
+    setEvalsLoading(true)
     try {
-      const data = await getEvaluationScopeMeta()
-      setScopeMeta(data)
-    } catch {
-      // non-critical
+      const data = await getEvaluationBootstrap()
+      if (data.scope_meta) setScopeMeta(data.scope_meta)
+      setForms(data.forms || [])
+      setCompanies(data.companies || [])
+      setEvaluations(data.evaluations?.data || [])
+      setDashboardSummary(data.dashboard ?? null)
+      if (Array.isArray(data.employees)) setEmployees(data.employees)
+      bootstrappedRef.current = true
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Error', description: e.message })
+    } finally {
+      setFormsLoading(false)
+      setEvalsLoading(false)
     }
-  }, [])
+  }, [toast])
 
   const loadForms = useCallback(async () => {
     setFormsLoading(true)
@@ -175,15 +191,6 @@ export default function AdminEvaluation() {
       toast({ variant: 'destructive', title: 'Error', description: e.message })
     } finally {
       setFormsLoading(false)
-    }
-  }, [toast])
-
-  const loadCompanies = useCallback(async () => {
-    try {
-      const data = await getEvaluationCompanies()
-      setCompanies(data.companies || [])
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Error', description: e.message })
     }
   }, [toast])
 
@@ -217,22 +224,37 @@ export default function AdminEvaluation() {
     }
   }, [])
 
-  // Load forms if user has any evaluation permission (org heads can view active forms)
+  useEffect(() => { loadBootstrap() }, [loadBootstrap])
+
+  // Employees for the initial scope come from the bootstrap payload. This effect
+  // only refetches when the selection genuinely changes afterwards (e.g. an
+  // Admin HR user picks a specific company), avoiding a redundant scope recompute.
   useEffect(() => {
-    if (canManageTemplates || canEvaluate) {
-      loadForms()
+    if (!bootstrappedRef.current) return
+
+    let key, run
+    if (selectedCompany) {
+      key = `company:${selectedCompany}`
+      run = () => loadEmployees(selectedCompany)
+    } else if (isOrgHead && scopeMeta?.scope?.kind === 'all') {
+      key = 'scope:all'
+      run = () => loadEmployees(null)
+    } else if (isOrgHead && scopeCompanyId) {
+      key = `scope:${scopeCompanyId}`
+      run = () => loadEmployees(scopeCompanyId)
     } else {
-      setFormsLoading(false)
+      key = 'none'
+      run = () => setEmployees([])
     }
-  }, [canManageTemplates, canEvaluate, loadForms])
 
-  useEffect(() => { loadCompanies(); loadEvaluations(); loadDashboard(); loadScopeMeta() }, [loadCompanies, loadEvaluations, loadDashboard, loadScopeMeta])
-
-  useEffect(() => {
-    if (selectedCompany) loadEmployees(selectedCompany)
-    else if (isOrgHead && scopeMeta?.scope?.kind === 'all') loadEmployees(null)
-    else if (isOrgHead && scopeCompanyId) loadEmployees(scopeCompanyId)
-    else setEmployees([])
+    // Bootstrap already populated the default (non-company-selected) employee set.
+    if (lastEmployeeKeyRef.current === null && !selectedCompany) {
+      lastEmployeeKeyRef.current = key
+      return
+    }
+    if (lastEmployeeKeyRef.current === key) return
+    lastEmployeeKeyRef.current = key
+    run()
   }, [selectedCompany, loadEmployees, isOrgHead, scopeCompanyId, scopeMeta])
 
   const handleSaveForm = async () => {

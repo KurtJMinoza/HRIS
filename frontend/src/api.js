@@ -8305,6 +8305,13 @@ export async function getEvaluationScopeMeta() {
   return data
 }
 
+export async function getEvaluationBootstrap() {
+  const res = await authenticatedFetch('/admin/evaluations/bootstrap')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation module')
+  return data
+}
+
 export async function getEvaluationForms(params = {}) {
   const qs = new URLSearchParams()
   if (params.active_only) qs.set('active_only', '1')
