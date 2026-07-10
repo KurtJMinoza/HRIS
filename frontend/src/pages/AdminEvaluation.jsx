@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -42,6 +41,8 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import EvaluationSurveyCreatorModal from '@/components/EvaluationSurveyCreatorModal'
+import EvaluationSurveyForm from '@/components/EvaluationSurveyForm'
+import { surveyToSections } from '@/lib/surveyConfig'
 
 const SECTION_MAX_WEIGHT = 100
 const EMPLOYEES_PER_PAGE = 20
@@ -261,10 +262,14 @@ export default function AdminEvaluation() {
   const handleSaveForm = async (payload) => {
     setSavingForm(true)
     try {
+      const sections = payload.survey_json
+        ? surveyToSections(payload.survey_json)
+        : (payload.sections || [])
       const apiPayload = {
         company_id: payload.company_id,
         title: payload.title,
         description: payload.description || '',
+        sections,
         survey_json: payload.survey_json,
         is_active: payload.is_active,
       }
@@ -394,13 +399,19 @@ export default function AdminEvaluation() {
   const handlePickForm = (form) => {
     if (!formPicker) return
     const companyId = selectedCompany || scopeCompanyId
+    // Ensure sections are populated from survey_json if not already set
+    const formWithSections = {
+      ...form,
+      sections: form.sections?.length > 0
+        ? form.sections
+        : (form.survey_json ? surveyToSections(form.survey_json) : []),
+    }
     setEvalDialog({
       company_id: Number(companyId),
       evaluation_form_id: form.id,
       employee_id: formPicker.id,
-      form,
+      form: formWithSections,
       scores: { sections: {} },
-      remarks: '',
     })
     setFormPicker(null)
   }
@@ -422,7 +433,6 @@ export default function AdminEvaluation() {
         evaluation_form_id: evalDialog.evaluation_form_id,
         employee_id: evalDialog.employee_id,
         scores: evalDialog.scores,
-        remarks: evalDialog.remarks,
         status,
       }
       await createEvaluation(payload)
@@ -1243,7 +1253,7 @@ export default function AdminEvaluation() {
           showCloseButton
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
           closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
-          className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          className="!h-[95vh] !max-h-[95vh] !min-h-[95vh] !w-[95vw] !min-w-[95vw] !max-w-none !sm:max-w-none !lg:max-w-none !xl:max-w-none rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
           innerClassName="gap-0 overflow-hidden p-0 pr-0"
           aria-describedby="eval-dialog-desc"
         >
@@ -1274,63 +1284,59 @@ export default function AdminEvaluation() {
                   </div>
                 )
               })()}
-            </div>
-
-            <div className="px-8 py-7 @md:px-12">
+            </div>              <div className="px-8 py-7 @md:px-12">
               <div className="space-y-6">
-                {evalDialog?.form?.sections?.map((section, sIdx) => (
-                  <div key={sIdx} className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
-                    <div className="mb-1 flex items-center justify-between">
-                      <h4 className="text-sm font-bold text-foreground">{section.title}</h4>
-                      {section.weight > 0 && (
-                        <Badge variant="outline" className="rounded-full text-xs font-normal">{section.weight}% weight</Badge>
-                      )}
-                    </div>
-                    <div className="mt-4 space-y-4">
-                      {section.questions.map((q, qIdx) => (
-                        <div key={qIdx} className="flex items-center justify-between gap-4 rounded-xl bg-muted/30 px-4 py-3">
-                          <span className="text-sm font-medium text-foreground">{q.title}</span>
-                          {q.type === 'rating' ? (
-                            <div className="flex items-center gap-1.5">
-                              {Array.from({ length: q.max }, (_, i) => (
-                                <button
-                                  key={i}
-                                  type="button"
-                                  onClick={() => updateScore(section.title, q.title, i + 1)}
-                                  className={cn(
-                                    'size-10 rounded-xl text-sm font-bold transition-all',
-                                    (evalDialog.scores?.sections?.[section.title]?.[q.title] || 0) >= i + 1
-                                      ? 'bg-brand text-brand-foreground shadow-sm scale-110'
-                                      : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:scale-105',
-                                  )}
-                                >
-                                  {i + 1}
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <Textarea
-                              value={evalDialog.scores?.sections?.[section.title]?.[q.title] || ''}
-                              onChange={(e) => updateScore(section.title, q.title, e.target.value)}
-                              className="h-20 w-72 rounded-xl border-border/80 bg-background text-sm"
-                              placeholder="Enter feedback..."
-                            />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <div className="space-y-3">
-                  <Label className="text-sm font-semibold">Remarks</Label>
-                  <Textarea
-                    value={evalDialog?.remarks || ''}
-                    onChange={(e) => setEvalDialog(prev => ({ ...prev, remarks: e.target.value }))}
-                    rows={4}
-                    placeholder="Overall assessment and comments..."
-                    className="rounded-xl border-border/80 bg-background"
+                {evalDialog?.form?.survey_json && Object.keys(evalDialog.form.survey_json).length > 0 ? (
+                  <EvaluationSurveyForm
+                    surveyJson={evalDialog.form.survey_json}
+                    initialScores={evalDialog.scores}
+                    onChange={(scores) => setEvalDialog(prev => ({ ...prev, scores }))}
                   />
-                </div>
+                ) : (
+                  evalDialog?.form?.sections?.map((section, sIdx) => (
+                    <div key={sIdx} className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
+                      <div className="mb-1 flex items-center justify-between">
+                        <h4 className="text-sm font-bold text-foreground">{section.title}</h4>
+                        {section.weight > 0 && (
+                          <Badge variant="outline" className="rounded-full text-xs font-normal">{section.weight}% weight</Badge>
+                        )}
+                      </div>
+                      <div className="mt-4 space-y-4">
+                        {section.questions.map((q, qIdx) => (
+                          <div key={qIdx} className="flex items-center justify-between gap-4 rounded-xl bg-muted/30 px-4 py-3">
+                            <span className="text-sm font-medium text-foreground">{q.title}</span>
+                            {q.type === 'rating' ? (
+                              <div className="flex items-center gap-1.5">
+                                {Array.from({ length: q.max }, (_, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    onClick={() => updateScore(section.title, q.title, i + 1)}
+                                    className={cn(
+                                      'size-10 rounded-xl text-sm font-bold transition-all',
+                                      (evalDialog.scores?.sections?.[section.title]?.[q.title] || 0) >= i + 1
+                                        ? 'bg-brand text-brand-foreground shadow-sm scale-110'
+                                        : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:scale-105',
+                                    )}
+                                  >
+                                    {i + 1}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <Textarea
+                                value={evalDialog.scores?.sections?.[section.title]?.[q.title] || ''}
+                                onChange={(e) => updateScore(section.title, q.title, e.target.value)}
+                                className="h-20 w-72 rounded-xl border-border/80 bg-background text-sm"
+                                placeholder="Enter feedback..."
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )                }
               </div>
             </div>
           </div>
@@ -1355,20 +1361,24 @@ export default function AdminEvaluation() {
       <Dialog open={!!viewDialog} onOpenChange={(open) => !open && setViewDialog(null)}>
         <DialogContent
           showCloseButton
-          className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)}
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className="!h-[95vh] !max-h-[95vh] !min-h-[95vh] !w-[95vw] !min-w-[95vw] !max-w-none !sm:max-w-none !lg:max-w-none !xl:max-w-none rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
           aria-describedby="eval-view-desc"
         >
-          <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
-            <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Evaluation Details</DialogTitle>
-              <p id="eval-view-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
+          <div className="px-8 pb-4 pt-7 @md:px-12">
+            <DialogHeader className="space-y-3 text-left">
+              <DialogTitle className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">Evaluation Details</DialogTitle>
+              <p id="eval-view-desc" className="max-w-[42rem] text-base leading-relaxed text-muted-foreground @md:text-lg">
                 View the complete evaluation results and feedback.
               </p>
             </DialogHeader>
           </div>
-          {viewDialog && (
-            <div className={ADMIN_FORM_DIALOG_BODY_CLASS}>
-              <div className="mb-5 flex items-center gap-4 rounded-xl bg-muted/50 p-4">
+          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-4 @md:px-12">
+            {viewDialog && (
+              <div className="space-y-6">
+              <div className="flex items-center gap-4 rounded-xl bg-muted/50 p-4">
                 <Avatar className="size-12 shrink-0">
                   <AvatarImage src={profileImageUrl(viewDialog.employee?.profile_image)} />
                   <AvatarFallback className="rounded-full bg-teal-500/20 text-sm font-bold text-teal-700 dark:text-teal-300">
@@ -1388,7 +1398,15 @@ export default function AdminEvaluation() {
                 </div>
               </div>
 
-              {viewDialog.scores?.sections && Object.entries(viewDialog.scores.sections).map(([sectionTitle, questions]) => (
+              {viewDialog.evaluation_form?.survey_json && Object.keys(viewDialog.evaluation_form.survey_json).length > 0 ? (
+                <div className="mb-4">
+                  <EvaluationSurveyForm
+                    surveyJson={viewDialog.evaluation_form.survey_json}
+                    initialScores={viewDialog.scores}
+                    readOnly={true}
+                  />
+                </div>
+              ) : viewDialog.scores?.sections && Object.entries(viewDialog.scores.sections).map(([sectionTitle, questions]) => (
                 <div key={sectionTitle} className="mb-4 rounded-xl border border-border/70 bg-card p-4">
                   <h4 className="mb-3 text-sm font-bold text-foreground">{sectionTitle}</h4>
                   <div className="space-y-2">
@@ -1401,8 +1419,10 @@ export default function AdminEvaluation() {
                               <Star className="size-3.5 fill-current" />
                               {score}
                             </span>
-                          ) : (
+                          ) : typeof score === 'string' ? (
                             <span className="text-muted-foreground">{score || '—'}</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
                           )}
                         </span>
                       </div>
@@ -1432,10 +1452,14 @@ export default function AdminEvaluation() {
               </div>
             </div>
           )}
-          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
-            <Button variant="outline" size="sm" onClick={() => setViewDialog(null)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
+        </div>
+
+        <div className="sticky bottom-0 z-10 shrink-0 border-t border-border/50 bg-card/95 px-8 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-card/90 @md:px-12">
+          <div className="flex items-center justify-end gap-3">
+            <Button variant="outline" size="sm" onClick={() => setViewDialog(null)} className="h-11 rounded-xl px-6">Close</Button>
+          </div>
+        </div>
+      </DialogContent>
       </Dialog>
     </Motion.div>
   )

@@ -147,36 +147,34 @@ export const TEMPLATE_360_FEEDBACK = {
           type: 'text',
           name: 'employee_name',
           title: 'Employee Name',
-          readOnly: true,
-          placeholder: 'Auto-populated from HRIS',
+          isRequired: true,
+          placeholder: 'Enter employee full name',
         },
         {
           type: 'text',
           name: 'position',
           title: 'Position',
-          readOnly: true,
-          placeholder: 'Auto-populated from HRIS',
+          placeholder: 'Enter job title / position',
         },
         {
           type: 'text',
           name: 'department',
           title: 'Department / Business Unit',
-          readOnly: true,
-          placeholder: 'Auto-populated from HRIS',
+          placeholder: 'Enter department or business unit',
         },
         {
           type: 'text',
           name: 'evaluation_period',
           title: 'Evaluation Period',
-          readOnly: true,
+          isRequired: true,
           placeholder: 'e.g. Q1 2026',
         },
         {
           type: 'text',
           name: 'evaluator_name',
           title: 'Evaluator',
-          readOnly: true,
-          placeholder: 'Your name',
+          isRequired: true,
+          placeholder: 'Enter your full name',
         },
         {
           type: 'radiogroup',
@@ -271,22 +269,33 @@ export const TEMPLATE_360_FEEDBACK = {
           title: 'A. Quality of Work (15%)',
           elements: [
             {
-              type: 'matrix',
-              name: 'quality_of_work',
-              title: 'Criteria',
-              columns: [
-                { value: 1, text: '1' },
-                { value: 2, text: '2' },
-                { value: 3, text: '3' },
-                { value: 4, text: '4' },
-                { value: 5, text: '5' },
-              ],
-              rows: [
-                'Produces accurate, complete, and high-quality work.',
-                'Maintains attention to detail.',
-                'Consistently meets company standards.',
-              ],
-              isAllRowRequired: true,
+              type: 'rating',
+              name: 'quality_0',
+              title: 'Produces accurate, complete, and high-quality work.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              minRateDescription: '1 - Unsatisfactory',
+              maxRateDescription: '5 - Outstanding',
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'quality_1',
+              title: 'Maintains attention to detail.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'quality_2',
+              title: 'Consistently meets company standards.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
             },
           ],
         },
@@ -298,22 +307,31 @@ export const TEMPLATE_360_FEEDBACK = {
           title: 'B. Productivity & Results (15%)',
           elements: [
             {
-              type: 'matrix',
-              name: 'productivity',
-              title: 'Criteria',
-              columns: [
-                { value: 1, text: '1' },
-                { value: 2, text: '2' },
-                { value: 3, text: '3' },
-                { value: 4, text: '4' },
-                { value: 5, text: '5' },
-              ],
-              rows: [
-                'Meets assigned targets and objectives.',
-                'Completes work within deadlines.',
-                'Uses time efficiently.',
-              ],
-              isAllRowRequired: true,
+              type: 'rating',
+              name: 'productivity_0',
+              title: 'Meets assigned targets and objectives.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'productivity_1',
+              title: 'Completes work within deadlines.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'productivity_2',
+              title: 'Uses time efficiently.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
             },
           ],
         },
@@ -325,22 +343,31 @@ export const TEMPLATE_360_FEEDBACK = {
           title: 'C. Accountability & Reliability (15%)',
           elements: [
             {
-              type: 'matrix',
-              name: 'accountability',
-              title: 'Criteria',
-              columns: [
-                { value: 1, text: '1' },
-                { value: 2, text: '2' },
-                { value: 3, text: '3' },
-                { value: 4, text: '4' },
-                { value: 5, text: '5' },
-              ],
-              rows: [
-                'Takes ownership of assigned responsibilities.',
-                'Can be relied upon to complete tasks.',
-                'Follows company policies and procedures.',
-              ],
-              isAllRowRequired: true,
+              type: 'rating',
+              name: 'accountability_0',
+              title: 'Takes ownership of assigned responsibilities.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'accountability_1',
+              title: 'Can be relied upon to complete tasks.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'accountability_2',
+              title: 'Follows company policies and procedures.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
             },
           ],
         },
@@ -352,22 +379,31 @@ export const TEMPLATE_360_FEEDBACK = {
           title: 'D. Communication & Collaboration (15%)',
           elements: [
             {
-              type: 'matrix',
-              name: 'communication',
-              title: 'Criteria',
-              columns: [
-                { value: 1, text: '1' },
-                { value: 2, text: '2' },
-                { value: 3, text: '3' },
-                { value: 4, text: '4' },
-                { value: 5, text: '5' },
-              ],
-              rows: [
-                'Communicates effectively with others.',
-                'Cooperates with teammates and other departments.',
-                'Maintains professionalism in the workplace.',
-              ],
-              isAllRowRequired: true,
+              type: 'rating',
+              name: 'communication_0',
+              title: 'Communicates effectively with others.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'communication_1',
+              title: 'Cooperates with teammates and other departments.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'communication_2',
+              title: 'Maintains professionalism in the workplace.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
             },
           ],
         },
@@ -379,22 +415,31 @@ export const TEMPLATE_360_FEEDBACK = {
           title: 'E. Problem Solving & Initiative (10%)',
           elements: [
             {
-              type: 'matrix',
-              name: 'problem_solving',
-              title: 'Criteria',
-              columns: [
-                { value: 1, text: '1' },
-                { value: 2, text: '2' },
-                { value: 3, text: '3' },
-                { value: 4, text: '4' },
-                { value: 5, text: '5' },
-              ],
-              rows: [
-                'Identifies problems and recommends solutions.',
-                'Takes initiative without waiting for instructions.',
-                'Adapts positively to change.',
-              ],
-              isAllRowRequired: true,
+              type: 'rating',
+              name: 'problem_solving_0',
+              title: 'Identifies problems and recommends solutions.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'problem_solving_1',
+              title: 'Takes initiative without waiting for instructions.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
+            },
+            {
+              type: 'rating',
+              name: 'problem_solving_2',
+              title: 'Adapts positively to change.',
+              rateMin: 1,
+              rateMax: 5,
+              rateStep: 1,
+              isRequired: true,
             },
           ],
         },
@@ -418,26 +463,67 @@ export const TEMPLATE_360_FEEDBACK = {
 </div>`,
         },
         {
-          type: 'matrix',
-          name: 'core_values',
-          title: 'Core Value',
-          columns: [
-            { value: 1, text: '1' },
-            { value: 2, text: '2' },
-            { value: 3, text: '3' },
-            { value: 4, text: '4' },
-            { value: 5, text: '5' },
-          ],
-          rows: [
-            'Compassion – Treats people with respect, empathy, and care.',
-            'Leadership – Leads by example and inspires others.',
-            'Integrity – Demonstrates honesty, accountability, and ethical behavior.',
-            'Excellence – Strives for quality and continuous improvement.',
-            'Nurtureship – Develops and supports the growth of others.',
-            'Teamwork – Works collaboratively and promotes unity.',
-            'Sense of Urgency – Responds promptly and completes work on time.',
-          ],
-          isAllRowRequired: true,
+          type: 'rating',
+          name: 'core_value_0',
+          title: 'Compassion – Treats people with respect, empathy, and care.',
+          rateMin: 1,
+          rateMax: 5,
+          rateStep: 1,
+          isRequired: true,
+        },
+        {
+          type: 'rating',
+          name: 'core_value_1',
+          title: 'Leadership – Leads by example and inspires others.',
+          rateMin: 1,
+          rateMax: 5,
+          rateStep: 1,
+          isRequired: true,
+        },
+        {
+          type: 'rating',
+          name: 'core_value_2',
+          title: 'Integrity – Demonstrates honesty, accountability, and ethical behavior.',
+          rateMin: 1,
+          rateMax: 5,
+          rateStep: 1,
+          isRequired: true,
+        },
+        {
+          type: 'rating',
+          name: 'core_value_3',
+          title: 'Excellence – Strives for quality and continuous improvement.',
+          rateMin: 1,
+          rateMax: 5,
+          rateStep: 1,
+          isRequired: true,
+        },
+        {
+          type: 'rating',
+          name: 'core_value_4',
+          title: 'Nurtureship – Develops and supports the growth of others.',
+          rateMin: 1,
+          rateMax: 5,
+          rateStep: 1,
+          isRequired: true,
+        },
+        {
+          type: 'rating',
+          name: 'core_value_5',
+          title: 'Teamwork – Works collaboratively and promotes unity.',
+          rateMin: 1,
+          rateMax: 5,
+          rateStep: 1,
+          isRequired: true,
+        },
+        {
+          type: 'rating',
+          name: 'core_value_6',
+          title: 'Sense of Urgency – Responds promptly and completes work on time.',
+          rateMin: 1,
+          rateMax: 5,
+          rateStep: 1,
+          isRequired: true,
         },
       ],
     },
@@ -508,35 +594,35 @@ export const TEMPLATE_360_FEEDBACK = {
           type: 'expression',
           name: 'quality_score',
           title: 'A. Quality of Work (15%)',
-          expression: '({quality_of_work[0]} + {quality_of_work[1]} + {quality_of_work[2]}) / 3',
+          expression: '({quality_0} + {quality_1} + {quality_2}) / 3',
           displayStyle: 'decimal',
         },
         {
           type: 'expression',
           name: 'productivity_score',
           title: 'B. Productivity & Results (15%)',
-          expression: '({productivity[0]} + {productivity[1]} + {productivity[2]}) / 3',
+          expression: '({productivity_0} + {productivity_1} + {productivity_2}) / 3',
           displayStyle: 'decimal',
         },
         {
           type: 'expression',
           name: 'accountability_score',
           title: 'C. Accountability & Reliability (15%)',
-          expression: '({accountability[0]} + {accountability[1]} + {accountability[2]}) / 3',
+          expression: '({accountability_0} + {accountability_1} + {accountability_2}) / 3',
           displayStyle: 'decimal',
         },
         {
           type: 'expression',
           name: 'communication_score',
           title: 'D. Communication & Collaboration (15%)',
-          expression: '({communication[0]} + {communication[1]} + {communication[2]}) / 3',
+          expression: '({communication_0} + {communication_1} + {communication_2}) / 3',
           displayStyle: 'decimal',
         },
         {
           type: 'expression',
           name: 'problem_solving_score',
           title: 'E. Problem Solving & Initiative (10%)',
-          expression: '({problem_solving[0]} + {problem_solving[1]} + {problem_solving[2]}) / 3',
+          expression: '({problem_solving_0} + {problem_solving_1} + {problem_solving_2}) / 3',
           displayStyle: 'decimal',
         },
 
@@ -545,7 +631,7 @@ export const TEMPLATE_360_FEEDBACK = {
           type: 'expression',
           name: 'core_values_score',
           title: 'Core Values (30%)',
-          expression: '({core_values[0]} + {core_values[1]} + {core_values[2]} + {core_values[3]} + {core_values[4]} + {core_values[5]} + {core_values[6]}) / 7',
+          expression: '({core_value_0} + {core_value_1} + {core_value_2} + {core_value_3} + {core_value_4} + {core_value_5} + {core_value_6}) / 7',
           displayStyle: 'decimal',
         },
 
@@ -554,7 +640,7 @@ export const TEMPLATE_360_FEEDBACK = {
           type: 'expression',
           name: 'job_performance_score',
           title: 'Job Performance Score (average of all 15 criteria)',
-          expression: '({quality_of_work[0]} + {quality_of_work[1]} + {quality_of_work[2]} + {productivity[0]} + {productivity[1]} + {productivity[2]} + {accountability[0]} + {accountability[1]} + {accountability[2]} + {communication[0]} + {communication[1]} + {communication[2]} + {problem_solving[0]} + {problem_solving[1]} + {problem_solving[2]}) / 15',
+          expression: '({quality_0} + {quality_1} + {quality_2} + {productivity_0} + {productivity_1} + {productivity_2} + {accountability_0} + {accountability_1} + {accountability_2} + {communication_0} + {communication_1} + {communication_2} + {problem_solving_0} + {problem_solving_1} + {problem_solving_2}) / 15',
           displayStyle: 'decimal',
         },
 
@@ -583,6 +669,15 @@ export const TEMPLATE_360_FEEDBACK = {
           title: '★ TOTAL PERFORMANCE SCORE',
           expression: '{weighted_job_score} + {weighted_core_score}',
           displayStyle: 'decimal',
+        },
+
+        // Overall Percentage (score / 5 × 100)
+        {
+          type: 'expression',
+          name: 'overall_percentage',
+          title: '★ OVERALL PERCENTAGE',
+          expression: '({final_score} / 5) * 100',
+          displayStyle: 'percent',
         },
 
         // Automatic Rating
@@ -1031,23 +1126,78 @@ function surveyQuestionWalk(surveyJson, cb) {
 
 // Build the legacy `scores` payload ({ sections: { [section]: { [question]: value } } })
 // from a SurveyJS definition and its current response data.
+// Handles both individual rating questions and matrix questions (converting
+// matrix row objects into per-row numeric entries so the view dialog never
+// sees an object). Expression values are also captured as-is.
 export function scoresFromSurvey(surveyJson, data = {}) {
   const sections = {}
   surveyQuestionWalk(surveyJson, (sectionTitle, q) => {
     if (!sections[sectionTitle]) sections[sectionTitle] = {}
     const raw = data ? data[q.name] : undefined
-    sections[sectionTitle][q.title || q.name] =
-      q.type === 'rating' ? (Number(raw) || 0) : (raw ?? '')
+
+    // ── Matrix question: extract individual row values ──
+    if (q.type === 'matrix' && raw && typeof raw === 'object') {
+      const rows = q.rows || []
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        const rowTitle = typeof row === 'string' ? row : (row.text || row.value || `Row ${i}`)
+        sections[sectionTitle][rowTitle] = Number(raw[i]) || 0
+      }
+      return
+    }
+
+    // ── Rating question: store as number ──
+    if (q.type === 'rating') {
+      sections[sectionTitle][q.title || q.name] = Number(raw) || 0
+      return
+    }
+
+    // ── Expression question: use the computed value (could be number or string) ──
+    if (q.type === 'expression') {
+      const val = raw
+      if (typeof val === 'number') {
+        sections[sectionTitle][q.title || q.name] = Number(val.toFixed(2)) || 0
+      } else {
+        sections[sectionTitle][q.title || q.name] = val ?? ''
+      }
+      return
+    }
+
+    // ── Everything else: text, comment, html (skip), signaturepad, radiogroup ──
+    sections[sectionTitle][q.title || q.name] = (typeof raw === 'string' || typeof raw === 'number')
+      ? raw
+      : (raw ?? '')
   })
   return { sections }
 }
 
 // Convert a legacy `scores` payload back into SurveyJS response data so a
 // previously saved (draft) evaluation can be pre-filled into the survey.
+// For matrix questions, individual row values are re-assembled into the
+// row-indexed object format that SurveyJS expects ({ '0': value, '1': value }).
 export function surveyDataFromScores(surveyJson, scores = {}) {
   const data = {}
   const legacy = scores?.sections || {}
   surveyQuestionWalk(surveyJson, (sectionTitle, q) => {
+    // ── Matrix question: re-assemble row values into indexed object ──
+    if (q.type === 'matrix') {
+      const rows = q.rows || []
+      const matrixData = {}
+      let hasValue = false
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        const rowTitle = typeof row === 'string' ? row : (row.text || row.value || `Row ${i}`)
+        const val = legacy[sectionTitle]?.[rowTitle]
+        if (val !== undefined && val !== '' && val !== 0) {
+          matrixData[i] = Number(val)
+          hasValue = true
+        }
+      }
+      if (hasValue) data[q.name] = matrixData
+      return
+    }
+
+    // ── Non-matrix: direct lookup ──
     const value = legacy[sectionTitle]?.[q.title || q.name]
     if (value !== undefined && value !== '') data[q.name] = value
   })

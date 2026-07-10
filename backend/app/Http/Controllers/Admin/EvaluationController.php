@@ -375,7 +375,7 @@ class EvaluationController extends Controller
     {
         $query = Evaluation::query()
             ->with([
-                'evaluationForm:id,title',
+                'evaluationForm:id,title,survey_json',
                 'employee:id,first_name,middle_name,last_name,suffix,profile_image,position',
                 'evaluator:id,first_name,middle_name,last_name,suffix',
                 'reviewer:id,first_name,middle_name,last_name,suffix',

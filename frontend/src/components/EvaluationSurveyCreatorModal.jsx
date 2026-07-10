@@ -39,12 +39,12 @@ const CREATOR_VIEW_TABS = new Set(['designer', 'logic', 'theme'])
 
 // ─── Template Selector Component ───────────────────────────────────
 
-function TemplateSelector({ creator }) {
+function TemplateSelector({ onSelect }) {
   const [open, setOpen] = useState(false)
 
   const handleSelect = (templateId) => {
-    const loaded = loadTemplateIntoCreator(creator, templateId)
-    if (loaded) setOpen(false)
+    onSelect(templateId)
+    setOpen(false)
   }
 
   return (
@@ -228,11 +228,13 @@ export default function EvaluationSurveyCreatorModal({
     const creatorJson = creatorRef.current?.JSON || {}
     const hasContent = creatorJson.pages?.length > 0
 
+    // Build a clean payload — only carry over essential fields from value,
+    // DON'T spread the whole value object (which may contain empty {} or stale arrays).
     const payload = {
-      ...value,
+      id: value?.id ?? null,
+      company_id: value?.company_id || null,
       title: formMeta.title || creatorJson.title || 'Untitled Evaluation Form',
       description: formMeta.description || creatorJson.description || '',
-      company_id: value?.company_id || null,
       is_active: formMeta.is_active,
       survey_json: hasContent ? creatorJson : null,
     }
@@ -280,7 +282,13 @@ export default function EvaluationSurveyCreatorModal({
                       </Badge>
                     </>
                   )}
-                  <TemplateSelector creator={creatorRef.current} />
+                  <TemplateSelector onSelect={(templateId) => {
+                    loadTemplateIntoCreator(creatorRef.current, templateId)
+                    // Trigger a re-render so badges/stats update
+                    setPreviewKey(k => k + 1)
+                    // Switch to designer tab so the template is visible
+                    if (activeNavTab !== 'designer') setActiveNavTab('designer')
+                  }} />
                 </div>
               </div>
             </DialogHeader>
