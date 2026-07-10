@@ -3,7 +3,7 @@ import { motion as Motion } from 'framer-motion'
 import {
   ClipboardCheck, FileSpreadsheet, Plus, Loader2, Trash2, Pencil, Eye,
   XCircle, Clock, Star, Users, FileText, RefreshCw, Search, TrendingUp,
-  List,
+  List, Building2, CalendarClock, IdCard, CheckCircle2, ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -43,6 +43,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 
 const SECTION_MAX_WEIGHT = 100
+const EMPLOYEES_PER_PAGE = 20
+const EVALUATED_STATUSES = ['submitted', 'under_review', 'completed']
 
 const evalCardClass =
   'rounded-[18px] border border-border/70 bg-card shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
@@ -56,6 +58,22 @@ const STATUS_COLORS = {
   submitted: { bg: 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-200', icon: FileText },
   under_review: { bg: 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-200', icon: Clock },
   completed: { bg: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200', icon: ClipboardCheck },
+}
+
+const STATUS_META = {
+  draft: { dot: 'bg-gray-400', label: 'Draft' },
+  submitted: { dot: 'bg-blue-500', label: 'Submitted' },
+  under_review: { dot: 'bg-amber-500', label: 'Under Review' },
+  completed: { dot: 'bg-emerald-500', label: 'Completed' },
+}
+
+const RATING_STYLES = {
+  'Outstanding': { text: 'text-emerald-700 dark:text-emerald-400', bar: 'bg-emerald-500', ring: 'ring-emerald-500/25', chip: 'bg-emerald-50 dark:bg-emerald-500/10', pct: 100 },
+  'Excellent': { text: 'text-teal-700 dark:text-teal-400', bar: 'bg-teal-500', ring: 'ring-teal-500/25', chip: 'bg-teal-50 dark:bg-teal-500/10', pct: 92 },
+  'Very Good': { text: 'text-sky-700 dark:text-sky-400', bar: 'bg-sky-500', ring: 'ring-sky-500/25', chip: 'bg-sky-50 dark:bg-sky-500/10', pct: 84 },
+  'Good': { text: 'text-indigo-700 dark:text-indigo-400', bar: 'bg-indigo-500', ring: 'ring-indigo-500/25', chip: 'bg-indigo-50 dark:bg-indigo-500/10', pct: 77 },
+  'Satisfactory': { text: 'text-amber-700 dark:text-amber-400', bar: 'bg-amber-500', ring: 'ring-amber-500/25', chip: 'bg-amber-50 dark:bg-amber-500/10', pct: 71 },
+  'Needs Improvement': { text: 'text-rose-700 dark:text-rose-400', bar: 'bg-rose-500', ring: 'ring-rose-500/25', chip: 'bg-rose-50 dark:bg-rose-500/10', pct: 55 },
 }
 
 function initials(name) {
@@ -98,11 +116,12 @@ export default function AdminEvaluation() {
   const [companies, setCompanies] = useState([])
   const [employees, setEmployees] = useState([])
   const [selectedCompany, setSelectedCompany] = useState('')
-  const [selectedForm, setSelectedForm] = useState('')
   const [employeeSearch, setEmployeeSearch] = useState('')
+  const [empPage, setEmpPage] = useState(1)
   const [evaluations, setEvaluations] = useState([])
   const [evalsLoading, setEvalsLoading] = useState(false)
   const [evalDialog, setEvalDialog] = useState(null)
+  const [formPicker, setFormPicker] = useState(null)
   const [savingEval, setSavingEval] = useState(false)
   const [viewDialog, setViewDialog] = useState(null)
   const [dashboardSummary, setDashboardSummary] = useState(null)
@@ -330,25 +349,36 @@ export default function AdminEvaluation() {
   }
 
   const handleEvaluateEmployee = (employee) => {
+    const empEvals = evaluationsByEmployee[employee.id]
+    if (empEvals?.some(e => EVALUATED_STATUSES.includes(e.status))) {
+      toast({ variant: 'destructive', title: 'Already evaluated', description: 'This employee has already been evaluated and cannot be evaluated again.' })
+      return
+    }
     const companyId = selectedCompany || scopeCompanyId
     if (!companyId) {
       toast({ variant: 'destructive', title: 'Company required', description: 'Please select a company first.' })
       return
     }
-    if (!selectedForm) {
-      toast({ variant: 'destructive', title: 'Form required', description: 'Please choose an evaluation form before evaluating.' })
+    const activeForms = forms.filter(f => f.is_active !== false)
+    if (activeForms.length === 0) {
+      toast({ variant: 'destructive', title: 'No forms', description: 'No active evaluation forms available.' })
       return
     }
-    const form = forms.find(f => f.id === Number(selectedForm))
-    if (!form) return
+    setFormPicker(employee)
+  }
+
+  const handlePickForm = (form) => {
+    if (!formPicker) return
+    const companyId = selectedCompany || scopeCompanyId
     setEvalDialog({
       company_id: Number(companyId),
-      evaluation_form_id: Number(selectedForm),
-      employee_id: employee.id,
+      evaluation_form_id: form.id,
+      employee_id: formPicker.id,
       form,
       scores: { sections: {} },
       remarks: '',
     })
+    setFormPicker(null)
   }
 
   const updateScore = (sectionTitle, questionTitle, value) => {
@@ -467,6 +497,21 @@ export default function AdminEvaluation() {
       return name.includes(q) || pos.includes(q)
     })
   }, [employees, employeeSearch])
+
+  const totalEmpPages = Math.max(1, Math.ceil(filteredEmployees.length / EMPLOYEES_PER_PAGE))
+
+  useEffect(() => {
+    setEmpPage(1)
+  }, [employeeSearch, selectedCompany])
+
+  useEffect(() => {
+    if (empPage > totalEmpPages) setEmpPage(totalEmpPages)
+  }, [empPage, totalEmpPages])
+
+  const pagedEmployees = useMemo(() => {
+    const start = (empPage - 1) * EMPLOYEES_PER_PAGE
+    return filteredEmployees.slice(start, start + EMPLOYEES_PER_PAGE)
+  }, [filteredEmployees, empPage])
 
   const formsCount = forms.length
   const completedCount = useMemo(() => evaluations.filter(e => e.status === 'completed').length, [evaluations])
@@ -694,92 +739,44 @@ export default function AdminEvaluation() {
       {/* ───── EVALUATE TAB ───── */}
       {activeTab === 'evaluate' && (
         <div className="space-y-5">
-          {/* Toolbar: company/scope, form, search */}
+          {/* Employee Cards */}
           <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
             <CardHeader className="flex flex-col gap-3 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
-              <CardTitle className="text-lg font-semibold @md:text-xl">Evaluate an Employee</CardTitle>
-              <CardDescription className="text-sm @md:text-[15px]">
-                Pick an evaluation form, then click <span className="font-semibold text-foreground">Evaluate</span> on an employee card below.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="p-5">
-              <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3">
-                {!isOrgHead ? (
-                  <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Company</Label>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-lg font-semibold @md:text-xl">Employees</CardTitle>
+                    {filteredEmployees.length > 0 && (
+                      <Badge variant="outline" className="rounded-full text-xs font-medium">
+                        {filteredEmployees.length} {filteredEmployees.length === 1 ? 'employee' : 'employees'}
+                      </Badge>
+                    )}
+                  </div>
+                  <CardDescription className="mt-1 text-sm @md:text-[15px]">
+                    Click <span className="font-semibold text-foreground">Evaluate</span> on an employee, then choose the evaluation form.
+                  </CardDescription>
+                </div>
+                <div className="flex w-full flex-wrap items-center gap-2 @sm:w-auto">
+                  {!isOrgHead && (
                     <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-                      <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder="Select company" /></SelectTrigger>
+                      <SelectTrigger className="h-10 w-full rounded-xl border-border/80 bg-background @sm:w-[200px]"><SelectValue placeholder="Select company" /></SelectTrigger>
                       <SelectContent>
                         {companies.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                  </div>
-                ) : scopeMeta?.scope ? (
-                  <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Scope</Label>
-                    <div className="flex h-11 items-center rounded-xl border border-border/80 bg-muted/30 px-4 text-sm font-medium text-foreground">
-                      {(() => {
-                        const s = scopeMeta.scope
-                        if (s.kind === 'all') return 'All Companies'
-                        if (s.kind === 'company' && s.company_names?.length) return s.company_names.join(', ')
-                        if (s.kind === 'area' && s.area_names?.length) return `Area: ${s.area_names.join(', ')}`
-                        if (s.kind === 'branch' && s.branch_names?.length) return `Branch: ${s.branch_names.join(', ')}`
-                        if (s.kind === 'division' && s.division_names?.length) return `Division: ${s.division_names.join(', ')}`
-                        if (s.kind === 'department' && s.department_names?.length) return `Department: ${s.department_names.join(', ')}`
-                        if (s.kind === 'section_unit' && s.section_unit_names?.length) return `Section/Unit: ${s.section_unit_names.join(', ')}`
-                        return scopeMeta.hr_role_label || 'My Scope'
-                      })()}
-                    </div>
-                  </div>
-                ) : null}
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Evaluation Form</Label>
-                  <Select value={selectedForm} onValueChange={setSelectedForm}>
-                    <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder="Select form" /></SelectTrigger>
-                    <SelectContent>
-                      {forms.filter(f => f.is_active !== false).map(f => (
-                        <SelectItem key={f.id} value={String(f.id)}>{f.title}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Search Employee</Label>
-                  <div className="relative">
+                  )}
+                  <div className="relative w-full @sm:w-64">
                     <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       type="search"
                       value={employeeSearch}
                       onChange={(e) => setEmployeeSearch(e.target.value)}
                       placeholder="Search by name or position"
-                      className="h-11 w-full rounded-xl border-border/80 bg-background pl-9 text-sm"
+                      className="h-10 w-full rounded-xl border-border/80 bg-background pl-9 text-sm"
                     />
                   </div>
                 </div>
               </div>
-              {!selectedForm && (
-                <p className="mt-4 flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-2.5 text-xs font-medium text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-300">
-                  <FileText className="size-3.5 shrink-0" />
-                  Select an evaluation form to enable the Evaluate buttons.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Employee Cards */}
-          <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
-            <CardHeader className="flex flex-col gap-1 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="text-lg font-semibold @md:text-xl">Employees</CardTitle>
-                {filteredEmployees.length > 0 && (
-                  <Badge variant="outline" className="rounded-full text-xs font-medium">
-                    {filteredEmployees.length} {filteredEmployees.length === 1 ? 'employee' : 'employees'}
-                  </Badge>
-                )}
-              </div>
-              <CardDescription className="text-sm @md:text-[15px]">
-                Employees within your evaluation scope.
-              </CardDescription>
             </CardHeader>
             <CardContent className="p-5">
               {!isOrgHead && !selectedCompany ? (
@@ -789,7 +786,7 @@ export default function AdminEvaluation() {
                   </div>
                   <p className="text-lg font-semibold tracking-tight text-foreground">Select a company</p>
                   <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-                    Choose a company above to load its employees for evaluation.
+                    Choose a company to load its employees for evaluation.
                   </p>
                 </div>
               ) : filteredEmployees.length === 0 ? (
@@ -808,46 +805,165 @@ export default function AdminEvaluation() {
                 </div>
               ) : (
                 <div className="grid gap-4 @sm:grid-cols-2 @xl:grid-cols-3 @4xl:grid-cols-4">
-                  {filteredEmployees.map(emp => {
+                  {pagedEmployees.map(emp => {
                     const empEvals = evaluationsByEmployee[emp.id]
                     const latest = empEvals?.[0]
+                    const isEvaluated = empEvals?.some(e => EVALUATED_STATUSES.includes(e.status))
                     const fullName = `${emp.first_name || ''} ${emp.last_name || ''}${emp.suffix ? ` ${emp.suffix}` : ''}`.trim()
+                    const deptLabel = emp.department_name || emp.branch_name
+                    const orgLabel = emp.company_name || deptLabel
+                    const lastDate = latest?.evaluated_at || latest?.updated_at || latest?.created_at
+                    const scored = empEvals?.find(e => e.overall_score != null)
+                    const rating = scored?.overall_rating
+                    const ratingStyle = rating ? RATING_STYLES[rating] : null
+                    const statusDot = latest ? (STATUS_META[latest.status]?.dot || 'bg-gray-400') : 'bg-slate-300 dark:bg-slate-600'
+                    const statusLabel = latest ? (STATUS_META[latest.status]?.label || 'Draft') : 'Not started'
                     return (
                       <div
                         key={emp.id}
-                        className="group relative flex flex-col items-center rounded-2xl border border-border/70 bg-card p-5 text-center shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-lg dark:border-white/10 dark:hover:border-brand/40"
+                        className="group flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_1px_3px_rgba(15,23,42,0.06),0_1px_2px_-1px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[0_16px_36px_-18px_rgba(15,23,42,0.32)] dark:border-white/10 dark:shadow-none dark:hover:border-white/20"
                       >
-                        {latest && (
-                          <div className="absolute right-3 top-3">{statusBadge(latest.status)}</div>
-                        )}
-                        <Avatar className="size-20 shrink-0 ring-2 ring-border/60 ring-offset-2 ring-offset-card">
-                          <AvatarImage src={profileImageUrl(emp.profile_image)} />
-                          <AvatarFallback className="rounded-full bg-teal-500/20 text-lg font-bold text-teal-700 dark:text-teal-300">
-                            {initials(fullName)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <p className="mt-4 w-full truncate text-base font-bold text-foreground" title={fullName}>
-                          {fullName || '—'}
-                        </p>
-                        <p className="mt-0.5 w-full truncate text-xs text-muted-foreground" title={emp.position || ''}>
-                          {emp.position || 'No position'}
-                        </p>
-                        {empEvals?.length > 0 && (
-                          <p className="mt-2 text-[11px] font-medium text-muted-foreground">
-                            {empEvals.length} evaluation{empEvals.length !== 1 ? 's' : ''} on record
+                        {/* Cover band */}
+                        <div className="relative h-[62px] bg-linear-to-br from-brand/15 via-brand/5 to-brand/12 dark:from-brand/20 dark:via-brand/8 dark:to-brand/15">
+                          <div className="absolute inset-0 opacity-40 [background-image:radial-gradient(circle_at_1px_1px,rgba(100,116,139,0.28)_1px,transparent_0)] [background-size:13px_13px]" />
+                          <div className="absolute inset-x-3 top-2.5 flex items-center justify-between gap-2">
+                            <span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-card/75 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ring-1 ring-inset ring-border/60 backdrop-blur-sm">
+                              <Building2 className="size-2.5 shrink-0" />
+                              <span className="max-w-[8.5rem] truncate">{orgLabel || 'Unassigned'}</span>
+                            </span>
+                            <span className={cn(
+                              'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset backdrop-blur-sm',
+                              isEvaluated
+                                ? 'bg-emerald-50/90 text-emerald-700 ring-emerald-600/25 dark:bg-emerald-500/15 dark:text-emerald-300'
+                                : 'bg-card/75 text-muted-foreground ring-border/60',
+                            )}>
+                              <span className={cn('size-1.5 rounded-full', isEvaluated ? 'bg-emerald-500' : statusDot)} />
+                              {isEvaluated ? 'Evaluated' : statusLabel}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Body */}
+                        <div className="flex flex-1 flex-col px-4 pb-4">
+                          <div className="-mt-8 mb-2.5 flex items-end justify-between gap-2">
+                            <Avatar className="size-16 rounded-2xl ring-4 ring-card shadow-md">
+                              <AvatarImage src={profileImageUrl(emp.profile_image)} alt={fullName} className="rounded-2xl object-cover" />
+                              <AvatarFallback className="rounded-2xl bg-linear-to-br from-slate-100 to-slate-200 text-base font-bold text-slate-600 dark:from-slate-700 dark:to-slate-800 dark:text-slate-200">
+                                {initials(fullName)}
+                              </AvatarFallback>
+                            </Avatar>
+                            {ratingStyle && (
+                              <span className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold ring-1 ring-inset', ratingStyle.chip, ratingStyle.text, ratingStyle.ring)}>
+                                <Star className="size-3 fill-current" />
+                                {rating}
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="truncate text-base font-bold leading-tight text-foreground" title={fullName}>
+                            {fullName || '—'}
                           </p>
-                        )}
-                        <Button
-                          onClick={() => handleEvaluateEmployee(emp)}
-                          disabled={!selectedForm}
-                          className={cn(evalPrimaryButtonClass, 'mt-4 h-10 w-full justify-center')}
-                        >
-                          <ClipboardCheck className="size-4" />
-                          Evaluate
-                        </Button>
+                          <p className="mt-1 truncate text-[13px] leading-tight text-muted-foreground" title={emp.position || ''}>
+                            {emp.position || 'No position'}
+                          </p>
+
+                          {/* Performance panel */}
+                          <div className="mt-3.5 rounded-xl border border-border/60 bg-muted/25 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                            {scored ? (
+                              <>
+                                <div className="flex items-end justify-between">
+                                  <div className="flex flex-col">
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">Overall Score</span>
+                                    <span className="text-2xl font-black leading-none tabular-nums text-foreground">{scored.overall_score}</span>
+                                  </div>
+                                  <span className={cn('text-xs font-bold', ratingStyle?.text)}>{rating}</span>
+                                </div>
+                                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-border/70 dark:bg-white/10">
+                                  <div className={cn('h-full rounded-full transition-all', ratingStyle?.bar || 'bg-brand')} style={{ width: `${ratingStyle?.pct ?? 60}%` }} />
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+                                <Clock className="size-4 shrink-0 opacity-70" />
+                                {latest ? 'Evaluation in progress' : 'Awaiting first evaluation'}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Meta row */}
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <div className="min-w-0 rounded-lg bg-muted/40 px-2.5 py-1.5 dark:bg-white/[0.04]">
+                              <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+                                <IdCard className="size-2.5" /> Emp. ID
+                              </p>
+                              <p className="mt-0.5 truncate text-xs font-semibold text-foreground">{emp.employee_code || '—'}</p>
+                            </div>
+                            <div className="min-w-0 rounded-lg bg-muted/40 px-2.5 py-1.5 dark:bg-white/[0.04]">
+                              <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+                                <CalendarClock className="size-2.5" /> Last Eval
+                              </p>
+                              <p className="mt-0.5 truncate text-xs font-semibold text-foreground">{lastDate ? formatDate(lastDate) : 'Never'}</p>
+                            </div>
+                          </div>
+
+                          {/* Action */}
+                          <div className="mt-4">
+                            {isEvaluated ? (
+                              <Button
+                                disabled
+                                variant="outline"
+                                className="h-9 w-full cursor-not-allowed justify-center gap-2 rounded-lg border-emerald-600/25 bg-emerald-50/60 text-sm font-medium text-emerald-700 disabled:opacity-100 dark:border-emerald-500/25 dark:bg-emerald-500/10 dark:text-emerald-400"
+                              >
+                                <CheckCircle2 className="size-4" />
+                                Evaluation Completed
+                              </Button>
+                            ) : (
+                              <Button
+                                onClick={() => handleEvaluateEmployee(emp)}
+                                className={cn(evalPrimaryButtonClass, 'group/btn h-9 w-full justify-center')}
+                              >
+                                <ClipboardCheck className="size-4" />
+                                {latest ? 'Continue Evaluation' : 'Evaluate'}
+                                <ChevronRight className="size-4 opacity-70 transition-transform duration-200 group-hover/btn:translate-x-0.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )
                   })}
+                </div>
+              )}
+              {filteredEmployees.length > EMPLOYEES_PER_PAGE && (
+                <div className="mt-5 flex flex-col items-center justify-between gap-3 border-t border-border/50 pt-4 @sm:flex-row">
+                  <p className="text-xs text-muted-foreground">
+                    Showing <span className="font-semibold text-foreground">{(empPage - 1) * EMPLOYEES_PER_PAGE + 1}</span>
+                    –<span className="font-semibold text-foreground">{Math.min(empPage * EMPLOYEES_PER_PAGE, filteredEmployees.length)}</span>
+                    {' '}of <span className="font-semibold text-foreground">{filteredEmployees.length}</span> employees
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 rounded-lg"
+                      onClick={() => setEmpPage(p => Math.max(1, p - 1))}
+                      disabled={empPage <= 1}
+                    >
+                      Previous
+                    </Button>
+                    <span className="px-2 text-xs font-medium text-muted-foreground">
+                      Page {empPage} of {totalEmpPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 rounded-lg"
+                      onClick={() => setEmpPage(p => Math.min(totalEmpPages, p + 1))}
+                      disabled={empPage >= totalEmpPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -1285,6 +1401,49 @@ export default function AdminEvaluation() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ───── FORM PICKER DIALOG ───── */}
+      <Dialog open={!!formPicker} onOpenChange={(open) => !open && setFormPicker(null)}>
+        <DialogContent showCloseButton className={adminFormDialogContentClass(ADMIN_FORM_DIALOG_MAX_W_LG)} aria-describedby="eval-formpick-desc">
+          <DialogHeader className="space-y-1.5 px-6 pt-6 text-left">
+            <DialogTitle className="text-xl font-bold tracking-tight">Select Evaluation Form</DialogTitle>
+            <DialogDescription id="eval-formpick-desc" className="text-sm text-muted-foreground">
+              Choose the form to use{formPicker ? ` for ${[formPicker.first_name, formPicker.last_name].filter(Boolean).join(' ')}` : ''}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className={cn(ADMIN_FORM_DIALOG_BODY_CLASS, 'space-y-3')}>
+            {forms.filter(f => f.is_active !== false).length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">No active evaluation forms available.</div>
+            ) : (
+              forms.filter(f => f.is_active !== false).map(f => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => handlePickForm(f)}
+                  className="group flex w-full items-center gap-4 rounded-2xl border border-border/70 bg-card p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand/40 hover:shadow-md dark:border-white/10"
+                >
+                  <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+                    <FileSpreadsheet className="size-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold text-foreground">{f.title}</p>
+                    {f.description && <p className="mt-0.5 truncate text-xs text-muted-foreground">{f.description}</p>}
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <Badge variant="outline" className="rounded-full text-[11px] font-normal">
+                        {f.sections?.length || 0} section{(f.sections?.length || 0) !== 1 ? 's' : ''}
+                      </Badge>
+                    </div>
+                  </div>
+                  <ClipboardCheck className="size-5 shrink-0 text-muted-foreground transition-colors group-hover:text-brand" />
+                </button>
+              ))
+            )}
+          </div>
+          <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>
+            <Button variant="outline" size="sm" onClick={() => setFormPicker(null)}>Cancel</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

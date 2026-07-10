@@ -255,7 +255,16 @@ class EvaluationController extends Controller
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->orderBy('last_name')
-            ->select(['id', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image', 'position']);
+            ->with([
+                'departmentRelation:id,name',
+                'branch:id,name',
+                'company:id,name',
+            ])
+            ->select([
+                'id', 'first_name', 'middle_name', 'last_name', 'suffix',
+                'profile_image', 'position', 'employee_code',
+                'department_id', 'branch_id', 'company_id',
+            ]);
 
         if ($scopedEmployeeIds !== null) {
             // Scoped IDs already define the exact evaluatable set (including cross-company
@@ -265,7 +274,15 @@ class EvaluationController extends Controller
             $query->where('company_id', $request->integer('company_id'));
         }
 
-        return response()->json(['employees' => $query->get()]);
+        $employees = $query->get()->map(function (User $employee) {
+            $employee->setAttribute('department_name', $employee->departmentRelation?->name);
+            $employee->setAttribute('branch_name', $employee->branch?->name);
+            $employee->setAttribute('company_name', $employee->company?->name);
+
+            return $employee;
+        });
+
+        return response()->json(['employees' => $employees]);
     }
 
     // ─── Evaluations CRUD ───────────────────────────────────────────
@@ -326,6 +343,16 @@ class EvaluationController extends Controller
         $scopedIds = $this->getEvaluationScopeEmployeeIds($user);
         if ($scopedIds !== null && !in_array((int) $employee->id, $scopedIds, true)) {
             return response()->json(['message' => 'You are not authorized to evaluate this employee.'], 403);
+        }
+
+        $alreadyEvaluated = Evaluation::query()
+            ->where('employee_id', $validated['employee_id'])
+            ->whereIn('status', ['submitted', 'under_review', 'completed'])
+            ->exists();
+        if ($alreadyEvaluated) {
+            return response()->json([
+                'message' => 'This employee has already been evaluated and cannot be evaluated again.',
+            ], 422);
         }
 
         $branchId = null;
