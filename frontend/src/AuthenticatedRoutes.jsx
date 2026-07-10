@@ -4,7 +4,7 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { HrPanelLayout } from '@/layouts/HrPanelLayout'
 import { EmployeeDashboardLayout } from '@/layouts/EmployeeDashboardLayout'
 import { HR_PANEL_CHILD_ROUTES } from '@/routes/hrPanelChildRoutes'
-import { MyScheduleRouteFallback } from '@/components/skeletons/RoutePageFallbacks.jsx'
+import { DataTableRouteFallback, MyScheduleRouteFallback } from '@/components/skeletons/RoutePageFallbacks.jsx'
 
 const EmployeeDashboard = lazy(() => import('@/pages/EmployeeDashboard'))
 const EmployeeAttendance = lazy(() => import('@/pages/EmployeeAttendance'))
@@ -20,6 +20,7 @@ const MySchedule = lazy(() => import('@/pages/MySchedule'))
 const AdminPayslipViewPage = lazy(() => import('@/pages/AdminPayslipViewPage'))
 const EmployeeLoansDeductionsPage = lazy(() => import('@/pages/EmployeeLoansDeductionsPage'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
+const AdminEvaluation = lazy(() => import('@/pages/AdminEvaluation'))
 
 function routeFallback(label = 'Loading...') {
   return <div className="p-6 text-muted-foreground">{label}</div>
@@ -70,6 +71,14 @@ function authenticatedRoutes() {
       <Route path="correction-requests" element={withSuspense(<EmployeeCorrectionRequests />)} />
       <Route path="schedule" element={withSuspense(<MySchedule />, <MyScheduleRouteFallback />)} />
       <Route path="qr" element={withSuspense(<EmployeeMyQr />)} />
+      <Route
+        path="evaluations"
+        element={(
+          <ProtectedRoute role="employee" permissions={['evaluations.create', 'evaluations.view', 'evaluations.review']}>
+            {withSuspense(<AdminEvaluation />, <DataTableRouteFallback titleWidth="w-72" />)}
+          </ProtectedRoute>
+        )}
+      />
       <Route path="reports" element={withSuspense(<EmployeeReportsPage />, routeFallback('Loading reports...'))} />
       <Route path="requests" element={withSuspense(<EmployeeLeave />)} />
       <Route path="loans-deductions" element={withSuspense(<EmployeeLoansDeductionsPage />, <MyScheduleRouteFallback />)} />

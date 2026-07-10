@@ -164,6 +164,20 @@ export const employeeNavItems = [
   },
 
   {
+    label: 'Performance',
+    icon: ClipboardCheck,
+    children: [
+      {
+        to: '/employee/evaluations',
+        end: false,
+        label: 'Evaluations',
+        icon: ClipboardCheck,
+        requiredPermissions: ['evaluations.create', 'evaluations.view', 'evaluations.review'],
+      },
+    ],
+  },
+
+  {
     to: '/employee/reports',
     end: false,
     label: 'Reports',

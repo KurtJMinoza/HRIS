@@ -262,6 +262,54 @@ class DataScopeService
     /**
      * @return \Illuminate\Support\Collection<int, int>
      */
+    public function getCompanyScopeIds(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->companyIdsForCompanyHead($actor);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public function getAreaScopeIds(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->areaIdsForAreaScope($actor);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public function getBranchScopeIds(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->branchIdsForBranchScope($actor);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public function getDepartmentScopeIds(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->departmentIdsForDepartmentScope($actor);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public function getDivisionScopeIds(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->divisionIdsForDivisionScope($actor);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public function getSectionUnitScopeIds(User $actor): \Illuminate\Support\Collection
+    {
+        return $this->sectionUnitIdsForSectionScope($actor);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, int>
+     */
     private function branchIdsForBranchScope(User $actor): \Illuminate\Support\Collection
     {
         return $this->leadershipAssignments->branchIdsLedBy($actor);
@@ -479,6 +527,39 @@ class DataScopeService
                 ...$ids,
                 ...$this->employeeIdsForOrgColumn('department_id', $departmentIds),
                 ...$this->assignmentEmployeeIdsForOrgColumn('department_id', $departmentIds),
+            ];
+        } elseif ($role === HrRole::AreaHead) {
+            $areaIds = $this->areaIdsForAreaScope($actor)->all();
+            $branchIds = Branch::query()
+                ->whereIn('area_id', $areaIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $departmentIds = Department::query()
+                ->whereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $divisionIds = Division::query()
+                ->whereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $sectionIds = SectionUnit::query()
+                ->whereIn('branch_id', $branchIds)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $ids = [
+                ...$ids,
+                ...$this->employeeIdsForOrgColumn('branch_id', $branchIds),
+                ...$this->employeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->employeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->employeeIdsForOrgColumn('section_unit_id', $sectionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('branch_id', $branchIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('division_id', $divisionIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('department_id', $departmentIds),
+                ...$this->assignmentEmployeeIdsForOrgColumn('section_unit_id', $sectionIds),
             ];
         } elseif ($role === HrRole::DivisionHead) {
             $divisionIds = $this->divisionIdsForDivisionScope($actor)->all();

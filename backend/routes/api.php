@@ -777,8 +777,9 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
         // ─── Performance Evaluations ─────────────────────────────────
-        Route::middleware('permission:employees.view')->group(function () {
+        Route::middleware('permission:employees.view|evaluations.view|evaluations.create|evaluations.review')->group(function () {
             Route::get('/admin/evaluations', [EvaluationController::class, 'index']);
+            Route::get('/admin/evaluations/scope-meta', [EvaluationController::class, 'scopeMeta']);
             Route::get('/admin/evaluations/forms', [EvaluationController::class, 'formsIndex']);
             Route::post('/admin/evaluations/forms', [EvaluationController::class, 'formsStore']);
             Route::get('/admin/evaluations/forms/{id}', [EvaluationController::class, 'formsShow']);

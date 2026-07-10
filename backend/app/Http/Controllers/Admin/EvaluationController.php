@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Enums\HrRole;
 use App\Models\Company;
 use App\Models\Evaluation;
 use App\Models\EvaluationForm;
@@ -11,6 +12,7 @@ use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\EvaluationWorkflowSettingService;
 use App\Services\HrRoleResolver;
+use App\Services\RbacService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,18 +23,84 @@ class EvaluationController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly EvaluationWorkflowSettingService $evalWorkflowService,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly RbacService $rbacService,
     ) {}
+
+    // ─── Scope Meta ───────────────────────────────────────────────
+
+    public function scopeMeta(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $permissions = $this->rbacService->getPermissionsForUser($user);
+        $permSet = $permissions->map(fn ($p) => $p['slug'] ?? $p)->values()->all();
+
+        $isAdmin = $user->isAdmin();
+        $hrRole = $this->hrRoleResolver->resolve($user);
+
+        $canManageTemplates = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.templates.manage', $permSet, true);
+        $canEvaluate = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.create', $permSet, true);
+        $canReview = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.review', $permSet, true);
+
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
+        $scopeKind = $this->resolveScopeKind($user);
+
+        return response()->json([
+            'can_manage_templates' => $canManageTemplates,
+            'can_evaluate' => $canEvaluate,
+            'can_review' => $canReview,
+            'hr_role' => $hrRole->value,
+            'hr_role_label' => $hrRole->badgeLabel(),
+            'scope' => $scopeKind,
+            'scoped_employee_ids' => $scopedEmployeeIds,
+        ]);
+    }
+
+    private function getEvaluationScopeEmployeeIds(User $user): ?array
+    {
+        $hrRole = $this->hrRoleResolver->resolve($user);
+
+        if ($hrRole === HrRole::AdminHr) {
+            return null;
+        }
+
+        $ids = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($user);
+        if ($ids === null) {
+            return null;
+        }
+
+        return array_values(array_filter($ids, fn ($id) => (int) $id !== (int) $user->id));
+    }
+
+    private function resolveScopeKind(User $user): ?array
+    {
+        $hrRole = $this->hrRoleResolver->resolve($user);
+
+        if ($hrRole === HrRole::AdminHr) {
+            return [
+                'kind' => 'all',
+            ];
+        }
+
+        return $this->dataScopeService->getAttendanceScopeMeta($user);
+    }
 
     // ─── Evaluation Forms ───────────────────────────────────────────
 
     public function formsIndex(Request $request): JsonResponse
     {
+        $user = $request->user();
         $query = EvaluationForm::query()
             ->with('createdBy:id,name,first_name,middle_name,last_name')
             ->withCount('evaluations')
             ->orderBy('created_at', 'desc');
 
-        $this->dataScopeService->restrictCompanyQuery($request->user(), $query, 'evaluation_forms');
+        if (!$user->isAdmin()) {
+            $hrRole = $this->hrRoleResolver->resolve($user);
+            if ($hrRole !== HrRole::AdminHr) {
+                $query->where('is_active', true);
+                $this->restrictFormsByScope($user, $query);
+            }
+        }
 
         if ($request->boolean('active_only')) {
             $query->where('is_active', true);
@@ -46,12 +114,41 @@ class EvaluationController extends Controller
                 'description' => $f->description,
                 'sections' => $f->sections,
                 'is_active' => $f->is_active,
+                'organization_scope' => $f->organization_scope,
                 'created_by' => $f->createdBy?->display_name,
                 'evaluations_count' => $f->evaluations_count,
                 'created_at' => $f->created_at?->toIso8601String(),
                 'updated_at' => $f->updated_at?->toIso8601String(),
             ]),
         ]);
+    }
+
+    private function restrictFormsByScope(User $user, $query): void
+    {
+        $hrRole = $this->hrRoleResolver->resolve($user);
+
+        $orgIds = match ($hrRole) {
+            HrRole::CompanyHead => ['company_ids' => $this->dataScopeService->getCompanyScopeIds($user)],
+            HrRole::AreaHead => ['area_ids' => $this->dataScopeService->getAreaScopeIds($user)],
+            HrRole::BranchHead => ['branch_ids' => $this->dataScopeService->getBranchScopeIds($user)],
+            HrRole::DivisionHead => ['division_ids' => $this->dataScopeService->getDivisionScopeIds($user)],
+            HrRole::DepartmentHead => ['department_ids' => $this->dataScopeService->getDepartmentScopeIds($user)],
+            HrRole::SectionUnitHead => ['section_unit_ids' => $this->dataScopeService->getSectionUnitScopeIds($user)],
+            default => null,
+        };
+
+        if ($orgIds === null) {
+            return;
+        }
+
+        $query->where(function ($q) use ($orgIds) {
+            $q->whereNull('organization_scope');
+            foreach ($orgIds as $key => $ids) {
+                foreach ($ids as $id) {
+                    $q->orWhereJsonContains('organization_scope->' . $key, $id);
+                }
+            }
+        });
     }
 
     public function formsStore(Request $request): JsonResponse
@@ -67,6 +164,7 @@ class EvaluationController extends Controller
             'sections.*.questions.*.title' => ['required', 'string', 'max:255'],
             'sections.*.questions.*.type' => ['required', 'string', 'in:rating,text'],
             'sections.*.questions.*.max' => ['required_if:sections.*.questions.*.type,rating', 'integer', 'min:1', 'max:100'],
+            'organization_scope' => ['nullable', 'array'],
         ]);
 
         $form = EvaluationForm::create([
@@ -74,6 +172,7 @@ class EvaluationController extends Controller
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
             'sections' => $validated['sections'],
+            'organization_scope' => $validated['organization_scope'] ?? null,
             'created_by' => $request->user()->id,
         ]);
 
@@ -107,6 +206,7 @@ class EvaluationController extends Controller
             'sections.*.questions.*.type' => ['required_with:sections', 'string', 'in:rating,text'],
             'sections.*.questions.*.max' => ['required_if:sections.*.questions.*.type,rating', 'integer', 'min:1', 'max:100'],
             'is_active' => ['sometimes', 'boolean'],
+            'organization_scope' => ['nullable', 'array'],
         ]);
 
         $form->update($validated);
@@ -147,22 +247,33 @@ class EvaluationController extends Controller
 
     public function employees(Request $request): JsonResponse
     {
-        $request->validate(['company_id' => ['required', 'integer', 'exists:companies,id']]);
+        $user = $request->user();
 
-        $employees = User::query()
-            ->where('company_id', $request->integer('company_id'))
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
+
+        $query = User::query()
             ->whereIn('role', User::ROSTER_ELIGIBLE_ROLES)
             ->where('is_active', true)
             ->orderBy('last_name')
-            ->get(['id', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image', 'position']);
+            ->select(['id', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image', 'position']);
 
-        return response()->json(['employees' => $employees]);
+        if ($request->filled('company_id')) {
+            $query->where('company_id', $request->integer('company_id'));
+        }
+
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('id', $scopedEmployeeIds);
+        }
+
+        return response()->json(['employees' => $query->get()]);
     }
 
     // ─── Evaluations CRUD ───────────────────────────────────────────
 
     public function index(Request $request): JsonResponse
     {
+        $user = $request->user();
+
         $query = Evaluation::query()
             ->with([
                 'evaluationForm:id,title',
@@ -175,7 +286,10 @@ class EvaluationController extends Controller
             ])
             ->orderBy('created_at', 'desc');
 
-        $this->dataScopeService->restrictCompanyQuery($request->user(), $query);
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('employee_id', $scopedEmployeeIds);
+        }
 
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->integer('employee_id'));
@@ -205,8 +319,15 @@ class EvaluationController extends Controller
             'status' => ['sometimes', 'string', 'in:draft,submitted'],
         ]);
 
-        // Resolve org assignment for branch/department
-        $employee = User::find($validated['employee_id']);
+        $user = $request->user();
+
+        $employee = User::findOrFail($validated['employee_id']);
+
+        $scopedIds = $this->getEvaluationScopeEmployeeIds($user);
+        if ($scopedIds !== null && !in_array((int) $employee->id, $scopedIds, true)) {
+            return response()->json(['message' => 'You are not authorized to evaluate this employee.'], 403);
+        }
+
         $branchId = null;
         $departmentId = null;
         if ($employee) {
@@ -223,7 +344,7 @@ class EvaluationController extends Controller
             'department_id' => $departmentId,
             'evaluation_form_id' => $validated['evaluation_form_id'],
             'employee_id' => $validated['employee_id'],
-            'evaluator_id' => $request->user()->id,
+            'evaluator_id' => $user->id,
             'scores' => $validated['scores'] ?? null,
             'remarks' => $validated['remarks'] ?? null,
             'status' => $validated['status'] ?? 'draft',
@@ -251,7 +372,7 @@ class EvaluationController extends Controller
         ], 201);
     }
 
-    public function show(int $id): JsonResponse
+    public function show(Request $request, int $id): JsonResponse
     {
         $evaluation = Evaluation::with([
             'evaluationForm',
@@ -263,12 +384,16 @@ class EvaluationController extends Controller
             'department:id,name',
         ])->findOrFail($id);
 
+        $this->ensureEvaluationInScope($request->user(), $evaluation);
+
         return response()->json(['evaluation' => $evaluation]);
     }
 
     public function update(Request $request, int $id): JsonResponse
     {
         $evaluation = Evaluation::findOrFail($id);
+
+        $this->ensureEvaluationInScope($request->user(), $evaluation);
 
         if ($evaluation->status === Evaluation::STATUS_SUBMITTED) {
             return response()->json(['message' => 'Cannot update a submitted evaluation.'], 422);
@@ -294,9 +419,12 @@ class EvaluationController extends Controller
         ]);
     }
 
-    public function destroy(int $id): JsonResponse
+    public function destroy(Request $request, int $id): JsonResponse
     {
         $evaluation = Evaluation::findOrFail($id);
+
+        $this->ensureEvaluationInScope($request->user(), $evaluation);
+
         $evaluation->delete();
 
         return response()->json(['message' => 'Evaluation deleted successfully.']);
@@ -304,9 +432,11 @@ class EvaluationController extends Controller
 
     // ─── Workflow Actions ────────────────────────────────────────────
 
-    public function submit(int $id): JsonResponse
+    public function submit(Request $request, int $id): JsonResponse
     {
         $evaluation = Evaluation::findOrFail($id);
+
+        $this->ensureEvaluationInScope($request->user(), $evaluation);
 
         if ($evaluation->status === Evaluation::STATUS_SUBMITTED) {
             return response()->json(['message' => 'Evaluation is already submitted.'], 422);
@@ -314,12 +444,9 @@ class EvaluationController extends Controller
 
         $this->computeOverallRating($evaluation);
 
-        // Check workflow settings to determine if hierarchy approval is needed
         $workflowSettings = $this->evalWorkflowService->resolveSetting();
         $useHierarchy = (bool) ($workflowSettings['use_hierarchy_approval'] ?? false);
 
-        // When hierarchy approval is enabled, move to submitted for review chain
-        // Otherwise, move directly to completed
         $newStatus = $useHierarchy ? Evaluation::STATUS_SUBMITTED : Evaluation::STATUS_COMPLETED;
 
         $evaluation->update([
@@ -345,9 +472,11 @@ class EvaluationController extends Controller
         ]);
     }
 
-    public function review(int $id): JsonResponse
+    public function review(Request $request, int $id): JsonResponse
     {
         $evaluation = Evaluation::findOrFail($id);
+
+        $this->ensureEvaluationInScope($request->user(), $evaluation);
 
         if ($evaluation->status !== Evaluation::STATUS_SUBMITTED) {
             return response()->json(['message' => 'Only submitted evaluations can be reviewed.'], 422);
@@ -375,9 +504,11 @@ class EvaluationController extends Controller
         ]);
     }
 
-    public function complete(int $id): JsonResponse
+    public function complete(Request $request, int $id): JsonResponse
     {
         $evaluation = Evaluation::findOrFail($id);
+
+        $this->ensureEvaluationInScope($request->user(), $evaluation);
 
         if (!in_array($evaluation->status, [Evaluation::STATUS_SUBMITTED, Evaluation::STATUS_UNDER_REVIEW])) {
             return response()->json(['message' => 'Only submitted or reviewed evaluations can be completed.'], 422);
@@ -404,6 +535,13 @@ class EvaluationController extends Controller
 
     public function employeeHistory(Request $request, int $employeeId): JsonResponse
     {
+        $user = $request->user();
+
+        $scopedIds = $this->getEvaluationScopeEmployeeIds($user);
+        if ($scopedIds !== null && !in_array((int) $employeeId, $scopedIds, true)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
         $query = Evaluation::query()
             ->with([
                 'evaluationForm:id,title',
@@ -412,8 +550,6 @@ class EvaluationController extends Controller
             ])
             ->where('employee_id', $employeeId)
             ->orderBy('created_at', 'desc');
-
-        $this->dataScopeService->restrictCompanyQuery($request->user(), $query);
 
         $evaluations = $query->get();
 
@@ -441,7 +577,10 @@ class EvaluationController extends Controller
         $user = $request->user();
         $query = Evaluation::query();
 
-        $this->dataScopeService->restrictCompanyQuery($user, $query);
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
+        if ($scopedEmployeeIds !== null) {
+            $query->whereIn('employee_id', $scopedEmployeeIds);
+        }
 
         $employeesEvaluated = (clone $query)->whereIn('status', [
             Evaluation::STATUS_SUBMITTED,
@@ -456,7 +595,6 @@ class EvaluationController extends Controller
             ->whereNotNull('overall_score')
             ->avg('overall_score');
 
-        // Top performers: completed evaluations with highest scores
         $topPerformers = (clone $query)
             ->where('status', Evaluation::STATUS_COMPLETED)
             ->whereNotNull('overall_score')
@@ -484,9 +622,7 @@ class EvaluationController extends Controller
         $user = $request->user();
 
         $evaluation = Evaluation::query()
-            ->with([
-                'evaluator:id,first_name,middle_name,last_name,suffix',
-            ])
+            ->with(['evaluator:id,first_name,middle_name,last_name,suffix'])
             ->where('employee_id', $user->id)
             ->orderBy('created_at', 'desc')
             ->first();
@@ -509,6 +645,14 @@ class EvaluationController extends Controller
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
+
+    private function ensureEvaluationInScope(User $user, Evaluation $evaluation): void
+    {
+        $scopedIds = $this->getEvaluationScopeEmployeeIds($user);
+        if ($scopedIds !== null && !in_array((int) $evaluation->employee_id, $scopedIds, true)) {
+            abort(403, 'Forbidden.');
+        }
+    }
 
     private function computeOverallRating(Evaluation $evaluation): void
     {
@@ -539,7 +683,6 @@ class EvaluationController extends Controller
 
         $evaluation->overall_score = $score;
 
-        // Convert score to rating label
         $percentage = $maxScore > 0 ? ($score / $maxScore) * 100 : 0;
         $evaluation->overall_rating = match (true) {
             $percentage >= 90 => 'Outstanding',
@@ -576,6 +719,7 @@ class EvaluationController extends Controller
             $role = $evaluation->evaluator->role;
             $labels = [
                 'company_head' => 'Company Head',
+                'area_head' => 'Area Head',
                 'branch_head' => 'Branch Manager',
                 'department_head' => 'Department Head',
                 'division_head' => 'Division Head',
@@ -635,43 +779,70 @@ class EvaluationController extends Controller
             return [];
         }
 
-        // Load workflow settings to determine which hierarchy steps are enabled
-        $settings = $this->evalWorkflowService->resolveSetting();
         $stepFlags = $this->evalWorkflowService->hierarchyStepFlags();
-
         $ids = [];
-        $companyId = $evaluation->company_id;
 
-        // Use organization assignments to find org heads based on enabled steps
         $assignment = $employee->organizationAssignments()->first();
         if ($assignment) {
-            $stepMap = [
-                'section_unit' => 'include_section_head',
-                'department' => 'include_department_head',
-                'division' => 'include_division_head',
-                'branch' => 'include_branch_head',
-                'area' => 'include_area_head',
-                'company' => 'include_company_head',
-            ];
-
-            foreach ($stepMap as $orgType => $flagKey) {
-                if (!($stepFlags[$flagKey] ?? false)) {
-                    continue;
+            if ($stepFlags['include_section_head'] ?? false) {
+                $sectionUnitId = $assignment->section_unit_id ?? $employee->section_unit_id;
+                if ($sectionUnitId) {
+                    $section = \App\Models\SectionUnit::find($sectionUnitId);
+                    if ($section && $section->section_unit_head_id) {
+                        $ids[] = $section->section_unit_head_id;
+                    }
                 }
-                $leaderIds = $assignment->getLeaderIdsByType($orgType);
-                foreach ($leaderIds as $leaderId) {
-                    if ($leaderId) {
-                        $ids[] = $leaderId;
+            }
+
+            if ($stepFlags['include_department_head'] ?? false) {
+                $departmentId = $assignment->department_id ?? $employee->department_id;
+                if ($departmentId) {
+                    $department = \App\Models\Department::find($departmentId);
+                    if ($department && $department->department_head_id) {
+                        $ids[] = $department->department_head_id;
+                    }
+                }
+            }
+
+            if ($stepFlags['include_division_head'] ?? false) {
+                $divisionId = $assignment->division_id ?? $employee->division_id;
+                if ($divisionId) {
+                    $division = \App\Models\Division::find($divisionId);
+                    if ($division && $division->division_head_id) {
+                        $ids[] = $division->division_head_id;
+                    }
+                }
+            }
+
+            if ($stepFlags['include_branch_head'] ?? false) {
+                $branchId = $assignment->branch_id ?? $employee->branch_id;
+                if ($branchId) {
+                    $branch = \App\Models\Branch::find($branchId);
+                    if ($branch && $branch->branch_manager_id) {
+                        $ids[] = $branch->branch_manager_id;
+                    }
+                }
+            }
+
+            if ($stepFlags['include_area_head'] ?? false) {
+                $branchId = $assignment->branch_id ?? $employee->branch_id;
+                if ($branchId) {
+                    $branch = \App\Models\Branch::find($branchId);
+                    if ($branch && $branch->area_id) {
+                        $area = \App\Models\Area::find($branch->area_id);
+                        if ($area && $area->area_manager_employee_id) {
+                            $ids[] = $area->area_manager_employee_id;
+                        }
                     }
                 }
             }
         }
 
-        // Include company head if company_head step is enabled
         if ($stepFlags['include_company_head'] ?? false) {
+            $companyId = $evaluation->company_id;
             $company = Company::find($companyId);
-            if ($company && $company->head_id) {
-                $ids[] = $company->head_id;
+            if ($company && $company->company_head_id) {
+                $ids[] = $company->company_head_id;
             }
         }
 

@@ -8298,6 +8298,13 @@ export async function saveThirteenthMonthSettings(payload) {
 
 // ── Performance Evaluations ────────────────────────────────────────────
 
+export async function getEvaluationScopeMeta() {
+  const res = await authenticatedFetch('/admin/evaluations/scope-meta')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation scope meta')
+  return data
+}
+
 export async function getEvaluationForms(params = {}) {
   const qs = new URLSearchParams()
   if (params.active_only) qs.set('active_only', '1')
@@ -8347,7 +8354,8 @@ export async function getEvaluationCompanies() {
 }
 
 export async function getEvaluationEmployees(companyId) {
-  const res = await authenticatedFetch(`/admin/evaluations/employees?company_id=${companyId}`)
+  const qs = companyId !== undefined && companyId !== null ? `?company_id=${companyId}` : ''
+  const res = await authenticatedFetch(`/admin/evaluations/employees${qs}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load employees')
   return data
