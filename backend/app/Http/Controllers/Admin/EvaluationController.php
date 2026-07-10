@@ -161,6 +161,7 @@ class EvaluationController extends Controller
             'title' => $f->title,
             'description' => $f->description,
             'sections' => $f->sections,
+            'survey_json' => $f->survey_json,
             'is_active' => $f->is_active,
             'organization_scope' => $f->organization_scope,
             'created_by' => $f->createdBy?->display_name,
@@ -201,16 +202,17 @@ class EvaluationController extends Controller
     public function formsStore(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'company_id' => ['required', 'integer', 'exists:companies,id'],
+            'company_id' => ['nullable', 'integer', 'exists:companies,id'],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
-            'sections' => ['required', 'array', 'min:1'],
-            'sections.*.title' => ['required', 'string', 'max:255'],
-            'sections.*.weight' => ['required', 'numeric', 'min:0', 'max:100'],
-            'sections.*.questions' => ['required', 'array', 'min:1'],
-            'sections.*.questions.*.title' => ['required', 'string', 'max:255'],
-            'sections.*.questions.*.type' => ['required', 'string', 'in:rating,text'],
+            'sections' => ['sometimes', 'array'],
+            'sections.*.title' => ['required_with:sections', 'string', 'max:255'],
+            'sections.*.weight' => ['required_with:sections', 'numeric', 'min:0', 'max:100'],
+            'sections.*.questions' => ['required_with:sections', 'array'],
+            'sections.*.questions.*.title' => ['required_with:sections', 'string', 'max:255'],
+            'sections.*.questions.*.type' => ['required_with:sections', 'string', 'in:rating,text'],
             'sections.*.questions.*.max' => ['required_if:sections.*.questions.*.type,rating', 'integer', 'min:1', 'max:100'],
+            'survey_json' => ['nullable', 'array'],
             'organization_scope' => ['nullable', 'array'],
         ]);
 
@@ -218,7 +220,8 @@ class EvaluationController extends Controller
             'company_id' => $validated['company_id'],
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
-            'sections' => $validated['sections'],
+            'sections' => $validated['sections'] ?? null,
+            'survey_json' => $validated['survey_json'] ?? null,
             'organization_scope' => $validated['organization_scope'] ?? null,
             'created_by' => $request->user()->id,
         ]);
@@ -245,13 +248,14 @@ class EvaluationController extends Controller
         $validated = $request->validate([
             'title' => ['sometimes', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:5000'],
-            'sections' => ['sometimes', 'array', 'min:1'],
+            'sections' => ['sometimes', 'array'],
             'sections.*.title' => ['required_with:sections', 'string', 'max:255'],
             'sections.*.weight' => ['required_with:sections', 'numeric', 'min:0', 'max:100'],
-            'sections.*.questions' => ['required_with:sections', 'array', 'min:1'],
+            'sections.*.questions' => ['required_with:sections', 'array'],
             'sections.*.questions.*.title' => ['required_with:sections', 'string', 'max:255'],
             'sections.*.questions.*.type' => ['required_with:sections', 'string', 'in:rating,text'],
             'sections.*.questions.*.max' => ['required_if:sections.*.questions.*.type,rating', 'integer', 'min:1', 'max:100'],
+            'survey_json' => ['nullable', 'array'],
             'is_active' => ['sometimes', 'boolean'],
             'organization_scope' => ['nullable', 'array'],
         ]);

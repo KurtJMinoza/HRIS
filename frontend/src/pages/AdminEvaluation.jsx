@@ -41,6 +41,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+import EvaluationSurveyCreatorModal from '@/components/EvaluationSurveyCreatorModal'
 
 const SECTION_MAX_WEIGHT = 100
 const EMPLOYEES_PER_PAGE = 20
@@ -257,24 +258,21 @@ export default function AdminEvaluation() {
     run()
   }, [selectedCompany, loadEmployees, isOrgHead, scopeCompanyId, scopeMeta])
 
-  const handleSaveForm = async () => {
-    if (!formDialog.title?.trim() || !formDialog.sections?.length) {
-      toast({ variant: 'destructive', title: 'Validation', description: 'Title and at least one section are required.' })
-      return
-    }
+  const handleSaveForm = async (payload) => {
     setSavingForm(true)
     try {
-      const payload = {
-        company_id: formDialog.company_id,
-        title: formDialog.title,
-        description: formDialog.description || '',
-        sections: formDialog.sections,
+      const apiPayload = {
+        company_id: payload.company_id,
+        title: payload.title,
+        description: payload.description || '',
+        survey_json: payload.survey_json,
+        is_active: payload.is_active,
       }
-      if (formDialog.id) {
-        await updateEvaluationForm(formDialog.id, payload)
+      if (payload.id) {
+        await updateEvaluationForm(payload.id, apiPayload)
         toast({ title: 'Form updated' })
       } else {
-        await createEvaluationForm(payload)
+        await createEvaluationForm(apiPayload)
         toast({ title: 'Form created' })
       }
       setFormDialog(null)
@@ -303,7 +301,9 @@ export default function AdminEvaluation() {
         company_id: form.company_id,
         title: form.title,
         description: form.description || '',
+        survey_json: form.survey_json || {},
         sections: form.sections || [],
+        is_active: form.is_active ?? true,
       })
     } else {
       setFormDialog({
@@ -311,7 +311,9 @@ export default function AdminEvaluation() {
         company_id: '',
         title: '',
         description: '',
-        sections: [{ title: '', weight: 0, questions: [{ title: '', type: 'rating', max: 5 }] }],
+        survey_json: {},
+        sections: [],
+        is_active: true,
       })
     }
   }
@@ -1183,248 +1185,14 @@ export default function AdminEvaluation() {
         </Card>
       )}
 
-      {/* ───── FORM DIALOG (Full-screen, matches overtime modal) ───── */}
-      <Dialog open={!!formDialog} onOpenChange={(open) => !open && setFormDialog(null)}>
-        <DialogContent
-          showCloseButton
-          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-4 top-4 size-10 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted @md:right-7 @md:top-7 @md:size-14 dark:border-white/10 dark:bg-card/90"
-          className="max-h-[92vh] max-w-[min(96vw,90rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
-          innerClassName="gap-0 overflow-hidden p-0 pr-0"
-          aria-describedby="eval-form-desc"
-        >
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-5 pb-5 pt-6 text-left dark:to-brand/10 @md:px-12 @md:pb-6 @md:pt-8">
-              <AgcBrandLogo className="mb-5 h-8 @md:mb-7 @md:h-10" />
-              <div className="relative z-10 max-w-[43rem] space-y-3 pr-12 @md:pr-0">
-                <DialogTitle className="text-xl font-bold tracking-tight text-foreground @md:text-3xl">
-                  {formDialog?.id ? 'Edit Evaluation Form' : 'New Evaluation Form'}
-                </DialogTitle>
-                <DialogDescription id="eval-form-desc" className="          max-w-[42rem] text-base leading-relaxed text-muted-foreground @md:text-lg">
-                  Configure sections, questions, and scoring weights for this evaluation template. All fields marked with a label are required.
-                </DialogDescription>
-              </div>
-            </DialogHeader>
-
-            {formDialog && (
-              <div className="px-5 py-6 @md:px-12 @md:py-8">
-                <div className="grid gap-6 @lg:grid-cols-5 @lg:gap-8">
-                  {/* ─── Left Column: Basic Information ─── */}
-                  <div className="space-y-5 @lg:col-span-2">
-                    <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-                      <div className="border-b border-border/40 bg-muted/30 px-5 py-3.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="flex size-8 items-center justify-center rounded-lg bg-brand/10 text-brand">
-                            <FileText className="size-4" />
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-bold text-foreground">Basic Information</h3>
-                            <p className="text-[11px] text-muted-foreground">Evaluation template metadata</p>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="space-y-5 p-5">
-                        <div className="space-y-2">
-                          <Label className="text-sm font-semibold">Company <span className="text-destructive">*</span></Label>
-                          <Select value={String(formDialog.company_id)} onValueChange={(v) => setFormDialog(prev => ({ ...prev, company_id: Number(v) }))}>
-                            <SelectTrigger className="h-11 rounded-xl border-border/80 bg-background"><SelectValue placeholder="Select company" /></SelectTrigger>
-                            <SelectContent>
-                              {companies.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-semibold">Title <span className="text-destructive">*</span></Label>
-                          <Input
-                            value={formDialog.title}
-                            onChange={(e) => setFormDialog(prev => ({ ...prev, title: e.target.value }))}
-                            placeholder="e.g. Q1 Performance Review"
-                            className="h-11 rounded-xl border-border/80 bg-background"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-semibold">Description</Label>
-                          <Textarea
-                            value={formDialog.description}
-                            onChange={(e) => setFormDialog(prev => ({ ...prev, description: e.target.value }))}
-                            rows={4}
-                            placeholder="Brief description of this evaluation form..."
-                            className="rounded-xl border-border/80 bg-background"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Quick stats card */}
-                    <div className="rounded-2xl border border-border/70 bg-muted/20 p-5">
-                      <div className="flex items-center gap-2.5 text-sm font-semibold text-foreground">
-                        <Star className="size-4 text-brand" />
-                        Form Summary
-                      </div>
-                      <div className="mt-3 grid grid-cols-2 gap-3">
-                        <div className="rounded-xl bg-card px-4 py-3 text-center shadow-sm">
-                          <p className="text-2xl font-black tabular-nums text-foreground">{formDialog.sections.length}</p>
-                          <p className="text-[11px] font-medium text-muted-foreground">Sections</p>
-                        </div>
-                        <div className="rounded-xl bg-card px-4 py-3 text-center shadow-sm">
-                          <p className="text-2xl font-black tabular-nums text-foreground">
-                            {formDialog.sections.reduce((sum, s) => sum + s.questions.length, 0)}
-                          </p>
-                          <p className="text-[11px] font-medium text-muted-foreground">Questions</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ─── Right Column: Sections & Questions ─── */}
-                  <div className="space-y-5 @lg:col-span-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-sm font-bold text-foreground">Sections &amp; Questions</h3>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          Define the structure, scoring sections, and questions for this evaluation.
-                        </p>
-                      </div>
-                      <Button variant="outline" size="sm" onClick={addSection} className="gap-1.5 rounded-xl border-brand/30 text-brand hover:bg-brand/10">
-                        <Plus className="h-3.5 w-3.5" />
-                        Add Section
-                      </Button>
-                    </div>
-
-                    {formDialog.sections.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border/60 bg-muted/15 px-6 py-14 text-center">
-                        <div className="mb-4 flex size-14 items-center justify-center rounded-full bg-brand/10 text-brand">
-                          <FileSpreadsheet className="size-7" strokeWidth={1.5} />
-                        </div>
-                        <p className="text-base font-semibold text-foreground">No sections yet</p>
-                        <p className="mt-1.5 max-w-xs text-sm text-muted-foreground">
-                          Click "Add Section" to start building your evaluation structure.
-                        </p>
-                        <Button variant="outline" size="sm" onClick={addSection} className="mt-5 gap-1.5 rounded-xl">
-                          <Plus className="h-3.5 w-3.5" />
-                          Add First Section
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {formDialog.sections.map((section, sIdx) => (
-                          <div
-                            key={sIdx}
-                            className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm transition-all duration-200 hover:shadow-md"
-                          >
-                            {/* Section Header */}
-                            <div className="flex items-center gap-3 border-b border-border/40 bg-muted/20 px-5 py-3.5">
-                              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand text-xs font-bold">
-                                {sIdx + 1}
-                              </div>
-                              <Input
-                                value={section.title}
-                                onChange={(e) => updateSection(sIdx, 'title', e.target.value)}
-                                placeholder="Section title (e.g. Technical Skills)"
-                                className="h-9 flex-1 rounded-lg border-border/70 bg-background text-sm font-semibold"
-                              />
-                              <div className="flex items-center gap-2">
-                                <div className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-3 py-1.5">
-                                  <span className="text-[11px] font-medium text-muted-foreground">Weight</span>
-                                  <Input
-                                    type="number"
-                                    value={section.weight}
-                                    onChange={(e) => updateSection(sIdx, 'weight', Number(e.target.value))}
-                                    className="h-8 w-14 border-0 bg-transparent text-right text-sm font-bold tabular-nums text-foreground shadow-none focus-visible:ring-0"
-                                    min={0}
-                                    max={SECTION_MAX_WEIGHT}
-                                  />
-                                  <span className="text-xs text-muted-foreground">%</span>
-                                </div>
-                                <Button variant="ghost" size="icon" className="size-8 shrink-0 text-destructive/70 hover:bg-destructive/10 hover:text-destructive" onClick={() => removeSection(sIdx)} title="Remove section">
-                                  <Trash2 className="size-4" />
-                                </Button>
-                              </div>
-                            </div>
-
-                            {/* Questions */}
-                            <div className="p-4">
-                              <div className="mb-3 flex items-center justify-between">
-                                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                  Questions ({section.questions.length})
-                                </span>
-                                <Button variant="ghost" size="sm" onClick={() => addQuestion(sIdx)} className="gap-1 rounded-lg text-xs font-semibold text-brand hover:bg-brand/10">
-                                  <Plus className="h-3.5 w-3.5" />
-                                  Add Question
-                                </Button>
-                              </div>
-
-                              {section.questions.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-border/50 bg-muted/10 px-4 py-6 text-center">
-                                  <p className="text-sm text-muted-foreground">No questions yet. Click "Add Question" above.</p>
-                                </div>
-                              ) : (
-                                <div className="space-y-2.5">
-                                  {section.questions.map((q, qIdx) => (
-                                    <div
-                                      key={qIdx}
-                                      className="group flex items-center gap-2.5 rounded-xl border border-border/50 bg-muted/15 px-4 py-3 transition-all hover:border-border/80 hover:bg-muted/25"
-                                    >
-                                      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-[11px] font-bold text-muted-foreground">
-                                        {qIdx + 1}
-                                      </span>
-                                      <Input
-                                        value={q.title}
-                                        onChange={(e) => updateQuestion(sIdx, qIdx, 'title', e.target.value)}
-                                        placeholder="Question text"
-                                        className="h-9 flex-1 rounded-lg border-border/60 bg-background text-sm"
-                                      />
-                                      <div className="flex items-center gap-2">
-                                        <Select value={q.type} onValueChange={(v) => updateQuestion(sIdx, qIdx, 'type', v)}>
-                                          <SelectTrigger className="h-9 w-24 rounded-lg border-border/60 bg-background text-xs"><SelectValue /></SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="rating">⭐ Rating</SelectItem>
-                                            <SelectItem value="text">📝 Text</SelectItem>
-                                          </SelectContent>
-                                        </Select>
-                                        {q.type === 'rating' && (
-                                          <div className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-background px-2.5 py-1.5">
-                                            <span className="text-[11px] text-muted-foreground">Max</span>
-                                            <Input
-                                              type="number"
-                                              value={q.max}
-                                              onChange={(e) => updateQuestion(sIdx, qIdx, 'max', Number(e.target.value))}
-                                              className="h-8 w-10 border-0 bg-transparent text-center text-sm font-bold tabular-nums text-foreground shadow-none focus-visible:ring-0"
-                                              min={1}
-                                              max={100}
-                                            />
-                                          </div>
-                                        )}
-                                      </div>
-                                      <Button variant="ghost" size="icon" className="size-7 shrink-0 text-destructive/60 opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" onClick={() => removeQuestion(sIdx, qIdx)} title="Remove question">
-                                        <XCircle className="size-4" />
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="sticky bottom-0 z-10 shrink-0 border-t border-border/50 bg-card/95 px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-card/90 @md:px-12">
-            <div className="flex items-center justify-end gap-3">
-              <Button variant="outline" size="sm" onClick={() => setFormDialog(null)} className="h-11 rounded-xl px-6">Cancel</Button>
-              <Button onClick={handleSaveForm} disabled={savingForm} size="sm" className={cn(ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS, 'h-11 gap-2 rounded-xl px-6')}>
-                {savingForm ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-                {formDialog?.id ? 'Update Form' : 'Create Form'}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* ───── SURVEYJS CREATOR MODAL ───── */}
+      <EvaluationSurveyCreatorModal
+        open={!!formDialog}
+        value={formDialog}
+        saving={savingForm}
+        onCancel={() => setFormDialog(null)}
+        onSave={handleSaveForm}
+      />
 
       {/* ───── FORM PICKER DIALOG ───── */}
       <Dialog open={!!formPicker} onOpenChange={(open) => !open && setFormPicker(null)}>

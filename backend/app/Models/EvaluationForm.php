@@ -16,6 +16,7 @@ class EvaluationForm extends Model
         'title',
         'description',
         'sections',
+        'survey_json',
         'is_active',
         'organization_scope',
         'created_by',
@@ -25,6 +26,7 @@ class EvaluationForm extends Model
     {
         return [
             'sections' => 'array',
+            'survey_json' => 'array',
             'is_active' => 'boolean',
             'organization_scope' => 'array',
         ];
