@@ -48,7 +48,6 @@ use App\Http\Controllers\Admin\ScheduleController;
 use App\Http\Controllers\Admin\ScheduleRequestController;
 use App\Http\Controllers\Admin\SectionUnitController;
 use App\Http\Controllers\Admin\EvaluationController;
-use App\Http\Controllers\Admin\EvaluationWorkflowSettingsController;
 use App\Http\Controllers\Admin\ThirteenthMonthPaySettingsController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AuthController;
@@ -793,18 +792,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::patch('/admin/evaluations/{id}', [EvaluationController::class, 'update']);
             Route::delete('/admin/evaluations/{id}', [EvaluationController::class, 'destroy']);
             Route::post('/admin/evaluations/{id}/submit', [EvaluationController::class, 'submit']);
-            Route::post('/admin/evaluations/{id}/review', [EvaluationController::class, 'review']);
-            Route::post('/admin/evaluations/{id}/complete', [EvaluationController::class, 'complete']);
             Route::get('/admin/evaluations/employee/{employeeId}/history', [EvaluationController::class, 'employeeHistory']);
             Route::get('/admin/evaluations/dashboard/summary', [EvaluationController::class, 'dashboardSummary']);
         });
         Route::get('/employee/evaluations/widget', [EvaluationController::class, 'employeeDashboardWidget']);
-
-        // ─── Evaluation Workflow Settings ───────────────────────────────
-        Route::middleware('permission:approval.workflow.manage')->group(function () {
-            Route::get('/admin/evaluation-workflow-settings', [EvaluationWorkflowSettingsController::class, 'index']);
-            Route::put('/admin/evaluation-workflow-settings', [EvaluationWorkflowSettingsController::class, 'update']);
-        });
 
         // Employee status management and regularization approval (HR)
         Route::middleware('permission:employees.view')->group(function () {

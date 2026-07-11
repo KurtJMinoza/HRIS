@@ -1,4 +1,4 @@
-import { Eye, Send, Trash2, ClipboardPen, BadgeCheck } from 'lucide-react'
+import { Eye, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -38,12 +38,9 @@ export function EvalActionButton({ label, onClick, tone = 'default', children, c
  */
 export default function EvaluationRowActions({
   evaluation,
-  canReview = false,
   onView,
   onSubmit,
   onDelete,
-  onReview,
-  onComplete,
   className,
 }) {
   if (!evaluation) return null
@@ -63,23 +60,6 @@ export default function EvaluationRowActions({
             <Trash2 className="size-4" />
           </EvalActionButton>
         </>
-      )}
-
-      {evaluation.status === 'submitted' && canReview && (
-        <>
-          <EvalActionButton label="Start review" tone="warning" onClick={() => onReview?.(evaluation.id)}>
-            <ClipboardPen className="size-4" />
-          </EvalActionButton>
-          <EvalActionButton label="Mark complete" tone="success" onClick={() => onComplete?.(evaluation.id)}>
-            <BadgeCheck className="size-4" />
-          </EvalActionButton>
-        </>
-      )}
-
-      {evaluation.status === 'under_review' && (
-        <EvalActionButton label="Mark complete" tone="success" onClick={() => onComplete?.(evaluation.id)}>
-          <BadgeCheck className="size-4" />
-        </EvalActionButton>
       )}
     </div>
   )

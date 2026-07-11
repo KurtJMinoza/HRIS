@@ -12,7 +12,6 @@ use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\EvaluationPrefillService;
 use App\Services\EvaluationScoringService;
-use App\Services\EvaluationWorkflowSettingService;
 use App\Services\HrRoleResolver;
 use App\Services\RbacService;
 use Illuminate\Http\JsonResponse;
@@ -25,7 +24,6 @@ class EvaluationController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly EvaluationScoringService $evaluationScoringService,
         private readonly EvaluationPrefillService $evaluationPrefillService,
-        private readonly EvaluationWorkflowSettingService $evalWorkflowService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly RbacService $rbacService,
     ) {}
@@ -454,6 +452,9 @@ class EvaluationController extends Controller
             $hrRole,
         );
 
+        $submitNow = ($validated['status'] ?? 'draft') === 'submitted';
+        $status = $submitNow ? Evaluation::STATUS_COMPLETED : Evaluation::STATUS_DRAFT;
+
         $evaluation = Evaluation::create([
             'company_id' => $validated['company_id'],
             'branch_id' => $branchId,
@@ -463,12 +464,12 @@ class EvaluationController extends Controller
             'evaluator_id' => $user->id,
             'scores' => $scores,
             'remarks' => $validated['remarks'] ?? null,
-            'status' => $validated['status'] ?? 'draft',
-            'submitted_at' => isset($validated['status']) && $validated['status'] === 'submitted' ? now() : null,
-            'evaluated_at' => isset($validated['status']) && $validated['status'] === 'submitted' ? now() : null,
+            'status' => $status,
+            'submitted_at' => $submitNow ? now() : null,
+            'evaluated_at' => $submitNow ? now() : null,
         ]);
 
-        if ($evaluation->scores && $evaluation->status === 'submitted') {
+        if ($evaluation->scores && $submitNow) {
             $evaluation->load('evaluationForm');
             $this->computeOverallRating($evaluation);
             $evaluation->save();
@@ -512,7 +513,7 @@ class EvaluationController extends Controller
 
         $this->ensureEvaluationInScope($request->user(), $evaluation);
 
-        if ($evaluation->status === Evaluation::STATUS_SUBMITTED) {
+        if ($evaluation->status !== Evaluation::STATUS_DRAFT) {
             return response()->json(['message' => 'Cannot update a submitted evaluation.'], 422);
         }
 
@@ -567,93 +568,25 @@ class EvaluationController extends Controller
 
         $this->ensureEvaluationInScope($request->user(), $evaluation);
 
-        if ($evaluation->status === Evaluation::STATUS_SUBMITTED) {
+        if ($evaluation->status !== Evaluation::STATUS_DRAFT) {
             return response()->json(['message' => 'Evaluation is already submitted.'], 422);
         }
 
         $evaluation->load('evaluationForm');
         $this->computeOverallRating($evaluation);
 
-        $workflowSettings = $this->evalWorkflowService->resolveSetting();
-        $useHierarchy = (bool) ($workflowSettings['use_hierarchy_approval'] ?? false);
-
-        $newStatus = $useHierarchy ? Evaluation::STATUS_SUBMITTED : Evaluation::STATUS_COMPLETED;
-
         $evaluation->update([
-            'status' => $newStatus,
+            'status' => Evaluation::STATUS_COMPLETED,
             'submitted_at' => now(),
             'evaluated_at' => now(),
             'overall_score' => $evaluation->overall_score,
             'overall_rating' => $evaluation->overall_rating,
         ]);
 
-        $this->sendNotification($evaluation, $useHierarchy ? 'submitted' : 'completed');
-
-        return response()->json([
-            'message' => $useHierarchy ? 'Evaluation submitted successfully.' : 'Evaluation submitted and completed.',
-            'evaluation' => $evaluation->fresh([
-                'evaluationForm:id,title',
-                'employee:id,first_name,middle_name,last_name,suffix,profile_image,position',
-                'evaluator:id,first_name,middle_name,last_name,suffix',
-                'company:id,name',
-            ]),
-            'workflow' => [
-                'use_hierarchy_approval' => $useHierarchy,
-                'status' => $newStatus,
-            ],
-        ]);
-    }
-
-    public function review(Request $request, int $id): JsonResponse
-    {
-        $evaluation = Evaluation::findOrFail($id);
-
-        $this->ensureEvaluationInScope($request->user(), $evaluation);
-
-        if ($evaluation->status !== Evaluation::STATUS_SUBMITTED) {
-            return response()->json(['message' => 'Only submitted evaluations can be reviewed.'], 422);
-        }
-
-        $evaluation->update([
-            'status' => Evaluation::STATUS_UNDER_REVIEW,
-            'reviewed_at' => now(),
-            'reviewed_by' => request()->user()->id,
-        ]);
-
-        $this->sendNotification($evaluation, 'reviewed');
-
-        return response()->json([
-            'message' => 'Evaluation is now under review.',
-            'evaluation' => $evaluation->fresh([
-                'evaluationForm:id,title',
-                'employee:id,first_name,middle_name,last_name,suffix,profile_image,position',
-                'evaluator:id,first_name,middle_name,last_name,suffix',
-                'reviewer:id,first_name,middle_name,last_name,suffix',
-                'company:id,name',
-                'branch:id,name',
-                'department:id,name',
-            ]),
-        ]);
-    }
-
-    public function complete(Request $request, int $id): JsonResponse
-    {
-        $evaluation = Evaluation::findOrFail($id);
-
-        $this->ensureEvaluationInScope($request->user(), $evaluation);
-
-        if (!in_array($evaluation->status, [Evaluation::STATUS_SUBMITTED, Evaluation::STATUS_UNDER_REVIEW])) {
-            return response()->json(['message' => 'Only submitted or reviewed evaluations can be completed.'], 422);
-        }
-
-        $evaluation->update([
-            'status' => Evaluation::STATUS_COMPLETED,
-        ]);
-
         $this->sendNotification($evaluation, 'completed');
 
         return response()->json([
-            'message' => 'Evaluation completed successfully.',
+            'message' => 'Evaluation submitted and completed.',
             'evaluation' => $evaluation->fresh([
                 'evaluationForm:id,title',
                 'employee:id,first_name,middle_name,last_name,suffix,profile_image,position',
@@ -991,7 +924,6 @@ class EvaluationController extends Controller
         $message = "{$label} for {$employeeName}";
 
         $notifyUserIds = collect([$employee?->id, $evaluator?->id])
-            ->merge($this->getOrgHeadUserIds($evaluation))
             ->filter()
             ->unique()
             ->values()
@@ -1013,82 +945,5 @@ class EvaluationController extends Controller
                 'priority' => 'normal',
             ]);
         }
-    }
-
-    private function getOrgHeadUserIds(Evaluation $evaluation): array
-    {
-        $employee = $evaluation->employee;
-        if (!$employee) {
-            return [];
-        }
-
-        $stepFlags = $this->evalWorkflowService->hierarchyStepFlags();
-        $ids = [];
-
-        $assignment = $employee->organizationAssignments()->first();
-        if ($assignment) {
-            if ($stepFlags['include_section_head'] ?? false) {
-                $sectionUnitId = $assignment->section_unit_id ?? $employee->section_unit_id;
-                if ($sectionUnitId) {
-                    $section = \App\Models\SectionUnit::find($sectionUnitId);
-                    if ($section && $section->section_unit_head_id) {
-                        $ids[] = $section->section_unit_head_id;
-                    }
-                }
-            }
-
-            if ($stepFlags['include_department_head'] ?? false) {
-                $departmentId = $assignment->department_id ?? $employee->department_id;
-                if ($departmentId) {
-                    $department = \App\Models\Department::find($departmentId);
-                    if ($department && $department->department_head_id) {
-                        $ids[] = $department->department_head_id;
-                    }
-                }
-            }
-
-            if ($stepFlags['include_division_head'] ?? false) {
-                $divisionId = $assignment->division_id ?? $employee->division_id;
-                if ($divisionId) {
-                    $division = \App\Models\Division::find($divisionId);
-                    if ($division && $division->division_head_id) {
-                        $ids[] = $division->division_head_id;
-                    }
-                }
-            }
-
-            if ($stepFlags['include_branch_head'] ?? false) {
-                $branchId = $assignment->branch_id ?? $employee->branch_id;
-                if ($branchId) {
-                    $branch = \App\Models\Branch::find($branchId);
-                    if ($branch && $branch->branch_manager_id) {
-                        $ids[] = $branch->branch_manager_id;
-                    }
-                }
-            }
-
-            if ($stepFlags['include_area_head'] ?? false) {
-                $branchId = $assignment->branch_id ?? $employee->branch_id;
-                if ($branchId) {
-                    $branch = \App\Models\Branch::find($branchId);
-                    if ($branch && $branch->area_id) {
-                        $area = \App\Models\Area::find($branch->area_id);
-                        if ($area && $area->area_manager_employee_id) {
-                            $ids[] = $area->area_manager_employee_id;
-                        }
-                    }
-                }
-            }
-        }
-
-        if ($stepFlags['include_company_head'] ?? false) {
-            $companyId = $evaluation->company_id;
-            $company = Company::find($companyId);
-            if ($company && $company->company_head_id) {
-                $ids[] = $company->company_head_id;
-            }
-        }
-
-        return array_unique(array_filter($ids));
     }
 }

@@ -61,7 +61,6 @@ export const adminNavItems = [
     label: 'Performance',
     icon: ClipboardCheck,
     children: [          { to: '/admin/evaluations', end: false, label: 'Evaluations', icon: ClipboardCheck },
-          { to: '/admin/evaluation-workflow', end: false, label: 'Eval Workflow', icon: ClipboardCheck },
     ],
   },
 

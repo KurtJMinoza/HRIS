@@ -8426,20 +8426,6 @@ export async function submitEvaluation(id) {
   return data
 }
 
-export async function reviewEvaluation(id) {
-  const res = await authenticatedFetch(`/admin/evaluations/${id}/review`, { method: 'POST' })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to review evaluation')
-  return data
-}
-
-export async function completeEvaluation(id) {
-  const res = await authenticatedFetch(`/admin/evaluations/${id}/complete`, { method: 'POST' })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to complete evaluation')
-  return data
-}
-
 export async function getEmployeeEvaluationHistory(employeeId) {
   const res = await authenticatedFetch(`/admin/evaluations/employee/${employeeId}/history`)
   const data = await res.json().catch(() => ({}))
@@ -8458,25 +8444,5 @@ export async function getEmployeeEvaluationWidget() {
   const res = await authenticatedFetch('/employee/evaluations/widget')
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation widget')
-  return data
-}
-
-// ── Evaluation Workflow Settings ──────────────────────────────────
-
-export async function getEvaluationWorkflowSettings() {
-  const res = await authenticatedFetch('/admin/evaluation-workflow-settings')
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation workflow settings')
-  return data
-}
-
-export async function updateEvaluationWorkflowSettings(payload) {
-  const res = await authenticatedFetch('/admin/evaluation-workflow-settings', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Failed to update evaluation workflow settings')
   return data
 }

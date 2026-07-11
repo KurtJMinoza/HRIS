@@ -50,7 +50,6 @@ const AdminRecruitment = lazy(() => import('@/pages/AdminRecruitment'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 const AdminEmailNotifications = lazy(() => import('@/pages/AdminEmailNotifications'))
 const AdminEvaluation = lazy(() => import('@/pages/AdminEvaluation'))
-const AdminEvaluationWorkflowSettings = lazy(() => import('@/pages/AdminEvaluationWorkflowSettings'))
 
 function withSuspense(node, fallback) {
   return (
@@ -198,11 +197,6 @@ export const HR_PANEL_CHILD_ROUTES = [
     key="hr-eval"
     path="evaluations"
     element={withSuspense(<AdminEvaluation />, <DataTableRouteFallback titleWidth="w-72" />)}
-  />,
-  <Route
-    key="hr-eval-workflow"
-    path="evaluation-workflow"
-    element={withSuspense(<AdminEvaluationWorkflowSettings />, <DataTableRouteFallback titleWidth="w-72" />)}
   />,
   <Route key="hr-qr" path="qr" element={<EmployeeMyQr />} />,
   <Route key="hr-re" path="reports" element={withSuspense(<AdminReports />, <DataTableRouteFallback titleWidth="w-72" />)} />,

@@ -23,7 +23,6 @@ import {
   getEvaluationForms, createEvaluationForm, updateEvaluationForm, deleteEvaluationForm,
   getEvaluationEmployees,
   getEvaluations, createEvaluation, submitEvaluation, deleteEvaluation,
-  reviewEvaluation, completeEvaluation,
   profileImageUrl, getEvaluationDashboardSummary,
   getEvaluationBootstrap,
 } from '@/api'
@@ -139,7 +138,6 @@ export default function AdminEvaluation() {
 
   // Role-based access: backend scopeMeta is the single source of truth
   const canManageTemplates = scopeMeta?.can_manage_templates ?? false
-  const canReview = scopeMeta?.can_review ?? false
   const hrRole = scopeMeta?.hr_role
   const isOrgHead = hrRole && !['admin', 'super_admin'].includes(hrRole)
   const [activeTab, setActiveTab] = useState('evaluate')
@@ -482,36 +480,6 @@ export default function AdminEvaluation() {
     }
   }
 
-  const handleReviewEvaluation = async (id) => {
-    try {
-      await reviewEvaluation(id)
-      toast({ title: 'Evaluation moved to review' })
-      loadEvaluations()
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Error', description: e.message })
-    }
-  }
-
-  const handleCompleteEvaluation = async (id) => {
-    try {
-      await completeEvaluation(id)
-      toast({ title: 'Evaluation completed' })
-      loadEvaluations()
-      loadDashboard()
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Error', description: e.message })
-    }
-  }
-
-  const permissionCheck = (perm) => {
-    if (!user) return false
-    if (user.role === 'admin' || user.role === 'superadmin') return true
-    const perms = user.permissions || []
-    if (perm === 'evaluate' && (perms.includes('evaluations.create') || perms.includes('evaluate'))) return true
-    if (perm === 'review' && (perms.includes('evaluations.review') || perms.includes('review_evaluations'))) return true
-    return false
-  }
-
   const filteredEvaluations = useMemo(() => {
     return evaluations.filter(ev => {
       if (!evalSearch.trim()) return true
@@ -571,8 +539,7 @@ export default function AdminEvaluation() {
   const formsCount = forms.length
   const completedCount = useMemo(() => evaluations.filter(e => e.status === 'completed').length, [evaluations])
   const pendingCount = useMemo(() => evaluations.filter(e => e.status === 'draft').length, [evaluations])
-  const submittedCount = useMemo(() => evaluations.filter(e => e.status === 'submitted' || e.status === 'under_review').length, [evaluations])
-  const activeEvalsCount = pendingCount + submittedCount
+  const activeEvalsCount = pendingCount
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -1052,7 +1019,6 @@ export default function AdminEvaluation() {
                       </div>
                       <EvaluationRowActions
                         evaluation={ev}
-                        canReview={canReview}
                         onView={setViewDialog}
                         onSubmit={handleSubmitEvaluation}
                         onDelete={handleDeleteEvaluation}
@@ -1074,7 +1040,7 @@ export default function AdminEvaluation() {
               <CardTitle className="text-lg font-semibold @md:text-xl">Evaluation Results</CardTitle>
               <CardDescription className="text-sm @md:text-[15px]">
                 View all evaluations and their statuses.
-                {evaluations.length > 0 && ` ${completedCount} completed, ${submittedCount} in progress.`}
+                {evaluations.length > 0 && ` ${completedCount} completed, ${pendingCount} draft${pendingCount === 1 ? '' : 's'}.`}
               </CardDescription>
             </div>
             <div className="relative w-full max-w-xs">
@@ -1172,12 +1138,9 @@ export default function AdminEvaluation() {
                           <td className="px-5 py-4 text-right align-middle">
                             <EvaluationRowActions
                               evaluation={ev}
-                              canReview={canReview}
                               onView={setViewDialog}
                               onSubmit={handleSubmitEvaluation}
                               onDelete={handleDeleteEvaluation}
-                              onReview={handleReviewEvaluation}
-                              onComplete={handleCompleteEvaluation}
                             />
                           </td>
                         </tr>
