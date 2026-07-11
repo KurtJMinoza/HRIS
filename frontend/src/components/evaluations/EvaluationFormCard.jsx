@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
-import { countSurveyQuestions, surveyToSections } from '@/lib/surveyConfig'
+import { countSurveyQuestions, surveyToSections, normalizeSurveyJsonStructure } from '@/lib/surveyConfig'
 
 const ACCENTS = [
   { band: 'from-amber-500/20 via-amber-500/8 to-orange-500/12', icon: 'bg-amber-500/15 text-amber-700 dark:text-amber-300', ring: 'ring-amber-500/25' },
@@ -34,8 +34,8 @@ function formatShortDate(dateStr) {
 }
 
 export function getFormStats(form) {
-  const survey = form?.survey_json
-  if (survey && typeof survey === 'object' && Object.keys(survey).length > 0) {
+  const survey = normalizeSurveyJsonStructure(form?.survey_json)
+  if (survey) {
     const sections = surveyToSections(survey)
     return {
       sectionCount: sections.length || survey.pages?.length || 0,

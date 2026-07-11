@@ -925,6 +925,127 @@ export function loadTemplateIntoCreator(creator, templateId) {
   }
 }
 
+/** Minimal survey shell for "start from scratch" — one empty page, no prefilled questions. */
+export const EMPTY_CREATOR_SURVEY_JSON = {
+  titleLocation: 'top',
+  showQuestionNumbers: 'off',
+  pageNextText: 'Next →',
+  pagePrevText: '← Previous',
+  completeText: 'Submit Evaluation',
+  pages: [{ name: 'page1', title: 'Page 1', elements: [] }],
+}
+
+export function hasSurveyPages(surveyJson) {
+  return Boolean(surveyJson && Array.isArray(surveyJson.pages) && surveyJson.pages.length > 0)
+}
+
+/** SurveyJS Creator single-page mode stores questions on `elements` instead of `pages`. */
+export function normalizeSurveyJsonStructure(surveyJson) {
+  if (!surveyJson || typeof surveyJson !== 'object') return null
+
+  const json = JSON.parse(JSON.stringify(surveyJson))
+
+  if ((!json.pages || json.pages.length === 0) && Array.isArray(json.elements) && json.elements.length > 0) {
+    json.pages = [{
+      name: 'page1',
+      title: json.title || 'Page 1',
+      elements: json.elements,
+    }]
+    delete json.elements
+  }
+
+  return hasSurveyPages(json) ? json : null
+}
+
+export function hasSurveyContent(surveyJson) {
+  const normalized = normalizeSurveyJsonStructure(surveyJson)
+  return normalized != null && countSurveyQuestions(normalized) > 0
+}
+
+export function flushCreatorBeforeSave(creator) {
+  if (!creator) return
+  try {
+    creator.selectElement?.(null)
+  } catch {
+    // property grid may not be open
+  }
+}
+
+/** Read the latest survey JSON from a SurveyJS Creator (designer state can lag behind .JSON). */
+export function getCreatorSurveyJson(creator) {
+  if (!creator) return null
+
+  const candidates = []
+
+  try {
+    const fromSurvey = creator.survey?.toJSON?.()
+    if (fromSurvey) candidates.push(fromSurvey)
+  } catch {
+    // survey model may not be ready
+  }
+
+  try {
+    const fromJson = creator.JSON
+    if (fromJson) candidates.push(fromJson)
+  } catch {
+    // ignore
+  }
+
+  if (typeof creator.text === 'string' && creator.text.trim()) {
+    try {
+      candidates.push(JSON.parse(creator.text))
+    } catch {
+      // ignore invalid JSON text
+    }
+  }
+
+  for (const candidate of candidates) {
+    const normalized = normalizeSurveyJsonStructure(candidate)
+    if (normalized) return normalized
+  }
+
+  return null
+}
+
+export function setCreatorSurveyJson(creator, surveyJson) {
+  if (!creator) return
+  const structured = normalizeSurveyJsonStructure(surveyJson)
+  const next = structured
+    ? normalizeSurveyJsonExpressions(structured)
+    : JSON.parse(JSON.stringify(EMPTY_CREATOR_SURVEY_JSON))
+  creator.JSON = next
+}
+
+export function resolveEvaluationFormSurvey(form) {
+  const surveyJson = normalizeSurveyJsonStructure(form?.survey_json)
+  const sections = hasSurveyContent(surveyJson)
+    ? surveyToSections(surveyJson)
+    : (Array.isArray(form?.sections) ? form.sections : [])
+
+  return {
+    ...form,
+    survey_json: surveyJson,
+    sections,
+  }
+}
+
+const CREATOR_VIEW_TAB_MAP = {
+  designer: 'designer',
+  logic: 'logic',
+  theme: 'theme',
+}
+
+export function setCreatorActiveView(creator, navTabId) {
+  if (!creator) return
+  const view = CREATOR_VIEW_TAB_MAP[navTabId]
+  if (!view) return
+  try {
+    creator.activeTab = view
+  } catch {
+    // older creator builds may not expose activeTab
+  }
+}
+
 // ─── Legacy Compatibility Helpers (unchanged) ──────────────────────
 
 // A sensible starter template for a new evaluation form.
@@ -1379,7 +1500,10 @@ if (import.meta.env?.DEV) {
   }
   const sampleData = { m1: { 0: 4, 1: 5 } }
   const scores = scoresFromSurvey(sampleJson, sampleData)
-  console.assert(scores.sections.Section['Row A'] === 4, 'matrix row A should score 4')
+  console.assert(hasSurveyPages(EMPTY_CREATOR_SURVEY_JSON) === true, 'empty creator shell should have one page')
+  console.assert(hasSurveyPages(null) === false, 'null survey should not count as pages')
+  const singlePage = normalizeSurveyJsonStructure({ elements: [{ type: 'text', name: 'q1', title: 'Hello' }] })
+  console.assert(hasSurveyContent(singlePage) === true, 'root-level elements should normalize to pages')
   console.assert(scores.sections.Section['Row B'] === 5, 'matrix row B should score 5')
   const restored = surveyDataFromScores(sampleJson, scores)
   console.assert(restored.m1['0'] === 4, 'matrix row A should restore with index key')

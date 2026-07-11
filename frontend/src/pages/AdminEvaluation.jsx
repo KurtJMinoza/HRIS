@@ -47,7 +47,7 @@ import EvaluationSurveyForm from '@/components/EvaluationSurveyForm'
 import EvaluationFormCard from '@/components/evaluations/EvaluationFormCard'
 import EvaluationRowActions from '@/components/evaluations/EvaluationRowActions'
 import EvaluationAssignWizard from '@/components/evaluations/EvaluationAssignWizard'
-import { surveyToSections, buildEvaluationPrefillContext, buildPrefilledSurveyData } from '@/lib/surveyConfig'
+import { surveyToSections, buildEvaluationPrefillContext, buildPrefilledSurveyData, resolveEvaluationFormSurvey, hasSurveyContent } from '@/lib/surveyConfig'
 import { evalDisplayRating, evalOverallPercentage, ratingLabelFromPercentage } from '@/lib/evaluationScoring'
 
 const SECTION_MAX_WEIGHT = 100
@@ -479,8 +479,8 @@ export default function AdminEvaluation() {
         company_id: payload.company_id,
         title: payload.title,
         description: payload.description || '',
-        sections,
-        survey_json: payload.survey_json,
+        sections: sections.length > 0 ? sections : undefined,
+        survey_json: payload.survey_json || undefined,
         is_active: payload.is_active,
       }
       if (payload.id) {
@@ -516,7 +516,7 @@ export default function AdminEvaluation() {
         company_id: form.company_id,
         title: form.title,
         description: form.description || '',
-        survey_json: form.survey_json || {},
+        survey_json: form.survey_json || null,
         sections: form.sections || [],
         is_active: form.is_active ?? true,
       })
@@ -526,7 +526,7 @@ export default function AdminEvaluation() {
         company_id: '',
         title: '',
         description: '',
-        survey_json: {},
+        survey_json: null,
         sections: [],
         is_active: true,
       })
@@ -609,19 +609,13 @@ export default function AdminEvaluation() {
   const handlePickForm = (form) => {
     if (!formPicker) return
     const companyId = selectedCompany || scopeCompanyId
-    // Ensure sections are populated from survey_json if not already set
-    const formWithSections = {
-      ...form,
-      sections: form.sections?.length > 0
-        ? form.sections
-        : (form.survey_json ? surveyToSections(form.survey_json) : []),
-    }
+    const formWithSections = resolveEvaluationFormSurvey(form)
     const prefillContext = buildEvaluationPrefillContext({
       employee: formPicker,
       evaluator: user,
       hrRole,
     })
-    const survey_data = buildPrefilledSurveyData(form.survey_json, prefillContext)
+    const survey_data = buildPrefilledSurveyData(formWithSections.survey_json, prefillContext)
     setEvalDialog({
       company_id: Number(companyId),
       evaluation_form_id: form.id,
@@ -643,18 +637,12 @@ export default function AdminEvaluation() {
 
   const handleOpenPendingEvaluation = (evaluation) => {
     const form = evaluation.evaluation_form || forms.find(f => f.id === evaluation.evaluation_form_id)
-    const formWithSections = {
-      ...form,
-      sections: form?.sections?.length > 0
-        ? form.sections
-        : (form?.survey_json ? surveyToSections(form.survey_json) : []),
-    }
     setEvalDialog({
       id: evaluation.id,
       company_id: evaluation.company_id,
       evaluation_form_id: evaluation.evaluation_form_id,
       employee_id: evaluation.employee_id,
-      form: formWithSections,
+      form: resolveEvaluationFormSurvey(form || {}),
       scores: evaluation.scores || { sections: {}, survey_data: {} },
       employee: evaluation.employee,
     })
@@ -889,8 +877,8 @@ export default function AdminEvaluation() {
         </div>
       </div>
 
-      {/* Admin summary — visible on every tab */}
-      {canViewDashboard && dashboardSummary && (
+      {/* Dashboard tab — summary stats and performance leaders */}
+      {activeTab === 'dashboard' && canViewDashboard && dashboardSummary && (
         <div className="space-y-6">
           <div className="grid w-full gap-3 @sm:grid-cols-2 @lg:grid-cols-5">
             <Card className={cn(evalCardClass, 'overflow-hidden')}>
@@ -1914,7 +1902,7 @@ export default function AdminEvaluation() {
               })()}
             </div>              <div className="px-8 py-7 @md:px-12">
               <div className="space-y-6">
-                {evalDialog?.form?.survey_json && Object.keys(evalDialog.form.survey_json).length > 0 ? (
+                {hasSurveyContent(evalDialog?.form?.survey_json) ? (
                   <EvaluationSurveyForm
                     ref={surveyFormRef}
                     surveyJson={evalDialog.form.survey_json}
@@ -2031,7 +2019,7 @@ export default function AdminEvaluation() {
                 </div>
               </div>
 
-              {viewDialog.evaluation_form?.survey_json && Object.keys(viewDialog.evaluation_form.survey_json).length > 0 ? (
+              {hasSurveyContent(viewDialog.evaluation_form?.survey_json) ? (
                 <div className="mb-4">
                   <EvaluationSurveyForm
                     key={viewDialog.id}

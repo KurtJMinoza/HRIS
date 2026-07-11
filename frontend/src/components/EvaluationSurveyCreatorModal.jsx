@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
-import { applyCuratedToolbox, loadTemplateIntoCreator, normalizeSurveyJsonExpressions, TEMPLATE_REGISTRY } from '@/lib/surveyConfig'
+import { applyCuratedToolbox, loadTemplateIntoCreator, getCreatorSurveyJson, setCreatorSurveyJson, setCreatorActiveView, flushCreatorBeforeSave, hasSurveyContent, normalizeSurveyJsonStructure, normalizeSurveyJsonExpressions, countSurveyQuestions, TEMPLATE_REGISTRY } from '@/lib/surveyConfig'
 import { applyWeightedSummaryExpressions } from '@/lib/evaluationScoring'
 
 // ─── Creator Tab Names ─────────────────────────────────────────────
@@ -123,8 +123,9 @@ export default function EvaluationSurveyCreatorModal({
     description: '',
     is_active: true,
   }))
-  // Track preview updates: increment every time we switch to preview
-  const [previewKey, setPreviewKey] = useState(0)
+  // Bump when creator content changes so footer badges / preview stay in sync.
+  const [creatorRevision, setCreatorRevision] = useState(0)
+  const formSessionKey = value?.id ?? 'new'
 
   // Initialize form meta from the incoming value
   const prevValueRef = useRef(value)
@@ -142,9 +143,6 @@ export default function EvaluationSurveyCreatorModal({
     const c = new SurveyCreator({
       showEmbeddedSurveyTab: false,
       showTranslationTab: true,
-      // Disable the Creator's own tab bar — we control navigation via our custom NAV_TABS.
-      // For Logic and Theme, the Creator still renders the correct editor panel when
-      // its component is visible, even without the tab button being shown.
       showJSONEditorTab: false,
       showLogicTab: true,
       showThemeTab: true,
@@ -156,16 +154,36 @@ export default function EvaluationSurveyCreatorModal({
       showPagesToolbar: true,
       showToolbox: true,
       showPropertyGrid: true,
-      // Hide the Creator's internal tab bar so only our custom nav tabs are visible
       showTabs: false,
     })
-
-    c.JSON = value?.survey_json || {}
 
     creatorRef.current = c
     return c
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Load saved JSON (or a blank page) whenever the modal opens for a form session.
+  useEffect(() => {
+    if (!open || !creatorRef.current) return
+    setCreatorSurveyJson(creatorRef.current, value?.survey_json)
+    setActiveNavTab('designer')
+    setCreatorRevision(r => r + 1)
+  }, [open, formSessionKey])
+
+  // Keep SurveyJS internal view in sync with our nav tabs without remounting the creator.
+  useEffect(() => {
+    if (!open || !creatorRef.current || !CREATOR_VIEW_TABS.has(activeNavTab)) return
+    setCreatorActiveView(creatorRef.current, activeNavTab)
+  }, [open, activeNavTab])
+
+  // Track designer edits — creator.JSON alone can be stale until the model flushes.
+  useEffect(() => {
+    const c = creatorRef.current
+    if (!c || !open) return
+    const onModified = () => setCreatorRevision(r => r + 1)
+    c.onModified?.add(onModified)
+    return () => c.onModified?.remove(onModified)
+  }, [open, creator])
 
   // Apply curated toolbox after the Creator mounts in DOM
   const toolboxAppliedRef = useRef(false)
@@ -191,59 +209,51 @@ export default function EvaluationSurveyCreatorModal({
     }
   }, [activeNavTab])
 
-  // Update JSON when the parent value changes (e.g. editing an existing form)
-  const prevJsonRef = useRef(null)
-  const currentJson = value?.survey_json
-  if (currentJson && currentJson !== prevJsonRef.current && open && creatorRef.current) {
-    prevJsonRef.current = currentJson
-    try {
-      creatorRef.current.JSON = JSON.parse(JSON.stringify(normalizeSurveyJsonExpressions(currentJson)))
-    } catch {
-      // ignore parse errors
-    }
-  }
-
   // Refresh preview model when switching to preview tab
   const previewModel = useMemo(() => {
     if (activeNavTab !== 'preview') return null
-    const json = creatorRef.current?.JSON
-    if (!json || !json.pages?.length) return null
+    const json = getCreatorSurveyJson(creatorRef.current)
+    if (!json || !hasSurveyContent(json)) return null
     const m = new Model(JSON.parse(JSON.stringify(json)))
     m.showTitle = false
     m.showCompletedPage = false
     m.showPreviewButton = false
     return m
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeNavTab, previewKey])
+  }, [activeNavTab, creatorRevision])
 
   // Handle tab switch – refresh preview if needed
   const handleTabChange = useCallback((tab) => {
     setActiveNavTab(tab)
-    if (tab === 'preview' && creatorRef.current) {
-      setPreviewKey(k => k + 1)
-    }
   }, [])
 
   // Collect form payload on save
   const handleSave = useCallback(() => {
-    const creatorJson = creatorRef.current?.JSON || {}
-    const hasContent = creatorJson.pages?.length > 0
+    flushCreatorBeforeSave(creatorRef.current)
+    const creatorJson = getCreatorSurveyJson(creatorRef.current)
+    const hasContent = hasSurveyContent(creatorJson)
 
-    // Build a clean payload — only carry over essential fields from value,
-    // DON'T spread the whole value object (which may contain empty {} or stale arrays).
     const payload = {
       id: value?.id ?? null,
       company_id: value?.company_id || null,
-      title: formMeta.title || creatorJson.title || 'Untitled Evaluation Form',
-      description: formMeta.description || creatorJson.description || '',
+      title: formMeta.title || creatorJson?.title || 'Untitled Evaluation Form',
+      description: formMeta.description || creatorJson?.description || '',
       is_active: formMeta.is_active,
-      survey_json: hasContent ? applyWeightedSummaryExpressions(normalizeSurveyJsonExpressions(creatorJson)) : null,
+      survey_json: hasContent
+        ? applyWeightedSummaryExpressions(normalizeSurveyJsonExpressions(creatorJson))
+        : null,
     }
 
     onSave?.(payload)
   }, [formMeta, onSave, value])
 
-  const surveyHasQuestions = creatorRef.current?.JSON?.pages?.length > 0
+  const liveSurveyJson = useMemo(
+    () => normalizeSurveyJsonStructure(getCreatorSurveyJson(creatorRef.current)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [creatorRevision, open, formSessionKey],
+  )
+  const questionCount = countSurveyQuestions(liveSurveyJson)
+  const surveyHasQuestions = questionCount > 0
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onCancel?.()}>
@@ -276,18 +286,16 @@ export default function EvaluationSurveyCreatorModal({
                   {surveyHasQuestions && (
                     <>
                       <Badge variant="outline" className="rounded-full text-[10px] font-normal">
-                        {creatorRef.current?.JSON?.pages?.length || 0} pages
+                        {liveSurveyJson?.pages?.length || 0} pages
                       </Badge>
                       <Badge variant="outline" className="rounded-full text-[10px] font-normal">
-                        {countQuestions(creatorRef.current?.JSON)} questions
+                        {questionCount} questions
                       </Badge>
                     </>
                   )}
                   <TemplateSelector onSelect={(templateId) => {
                     loadTemplateIntoCreator(creatorRef.current, templateId)
-                    // Trigger a re-render so badges/stats update
-                    setPreviewKey(k => k + 1)
-                    // Switch to designer tab so the template is visible
+                    setCreatorRevision(r => r + 1)
                     if (activeNavTab !== 'designer') setActiveNavTab('designer')
                   }} />
                 </div>
@@ -367,12 +375,10 @@ export default function EvaluationSurveyCreatorModal({
               }
             `}</style>
 
-            {/* Creator Component — conditionally mounted only for designer/logic/theme tabs.
-                Using conditional mount (not hidden CSS) to prevent DOM conflicts between
-                SurveyJS internal DOM management and React reconciliation when the dialog closes. */}
-            {CREATOR_VIEW_TABS.has(activeNavTab) && (
-              <div className="survey-creator-host h-full w-full overflow-hidden">
-                <SurveyCreatorComponent key={activeNavTab} creator={creator} />
+            {/* Keep creator mounted while modal is open so designer edits stay in the survey model. */}
+            {open && (
+              <div className={cn('survey-creator-host h-full w-full overflow-hidden', !CREATOR_VIEW_TABS.has(activeNavTab) && 'hidden')}>
+                <SurveyCreatorComponent key={formSessionKey} creator={creator} />
               </div>
             )}
 
@@ -401,7 +407,7 @@ export default function EvaluationSurveyCreatorModal({
             {activeNavTab === 'json' && (
               <div className="h-full overflow-y-auto bg-slate-950 p-6">
                 <pre className="text-xs leading-relaxed text-slate-300 font-mono whitespace-pre-wrap">
-                  {JSON.stringify(creatorRef.current?.JSON || {}, null, 2)}
+                  {JSON.stringify(liveSurveyJson || {}, null, 2)}
                 </pre>
               </div>
             )}
@@ -414,7 +420,7 @@ export default function EvaluationSurveyCreatorModal({
                 {surveyHasQuestions ? (
                   <span className="flex items-center gap-1 text-emerald-600">
                     <CheckCircle2 className="size-3.5" />
-                    Form has {countQuestions(creatorRef.current?.JSON)} question{countQuestions(creatorRef.current?.JSON) !== 1 ? 's' : ''}
+                    Form has {questionCount} question{questionCount !== 1 ? 's' : ''}
                   </span>
                 ) : (
                   <span className="flex items-center gap-1">
@@ -452,21 +458,3 @@ export default function EvaluationSurveyCreatorModal({
   )
 }
 
-// ─── Helper: Count questions in a survey JSON ──────────────────────
-
-function countQuestions(surveyJson) {
-  if (!surveyJson || !Array.isArray(surveyJson.pages)) return 0
-  let count = 0
-  const walk = (elements) => {
-    for (const el of elements || []) {
-      if (!el) continue
-      if (el.type === 'panel' || el.type === 'paneldynamic') {
-        walk(el.elements)
-      } else if (el.type !== 'html') {
-        count += 1
-      }
-    }
-  }
-  for (const page of surveyJson.pages) walk(page.elements)
-  return count
-}

@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'rea
 import { Model } from 'survey-core'
 import { Survey } from 'survey-react-ui'
 import 'survey-core/survey-core.min.css'
-import { normalizeSurveyJsonExpressions, scoresFromSurvey, surveyDataFromScores, syncModelDataForScoring, unlockEvaluationPrefillQuestions } from '@/lib/surveyConfig'
+import { normalizeSurveyJsonStructure, normalizeSurveyJsonExpressions, scoresFromSurvey, surveyDataFromScores, syncModelDataForScoring, unlockEvaluationPrefillQuestions } from '@/lib/surveyConfig'
 import { applyWeightedSummaryExpressions } from '@/lib/evaluationScoring'
 
 function applySurveyDataToModel(model, surveyJson, scores, suppressNotifyRef) {
@@ -27,7 +27,9 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
   const suppressNotifyRef = useRef(false)
 
   const normalizedJson = useMemo(() => {
-    let json = normalizeSurveyJsonExpressions(surveyJson)
+    let json = normalizeSurveyJsonStructure(surveyJson)
+    if (!json) return { pages: [] }
+    json = normalizeSurveyJsonExpressions(json)
     json = applyWeightedSummaryExpressions(json)
     if (!readOnly) json = unlockEvaluationPrefillQuestions(json)
     return json
@@ -52,6 +54,13 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedJson, readOnly])
 
+  const modelKey = useMemo(() => {
+    const title = normalizedJson?.title || ''
+    const pages = Array.isArray(normalizedJson?.pages) ? normalizedJson.pages.length : 0
+    const questions = model.getAllQuestions().map(q => q.name).join('|')
+    return `${readOnly ? 'readonly' : 'edit'}:${title}:${pages}:${questions}`
+  }, [model, normalizedJson, readOnly])
+
   useImperativeHandle(ref, () => ({
     getScores: () => scoresFromSurvey(normalizedJson, syncModelDataForScoring(normalizedJson, model)),
   }), [model, normalizedJson])
@@ -71,6 +80,14 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
     return () => model.onValueChanged.remove(handler)
   }, [model, normalizedJson])
 
+  useEffect(() => () => {
+    try {
+      model.dispose?.()
+    } catch {
+      // SurveyJS may already be disposed by its React wrapper.
+    }
+  }, [model])
+
   if (model.getAllQuestions().length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-border/60 bg-muted/15 px-6 py-10 text-center text-sm text-muted-foreground">
@@ -81,7 +98,7 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
 
   return (
     <div className="evaluation-survey-form rounded-2xl border border-border/70 bg-card p-6 shadow-sm [&_.sd-root-modern]:--sjs-font-family:inherit">
-      <Survey model={model} />
+      <Survey key={modelKey} model={model} />
     </div>
   )
 })

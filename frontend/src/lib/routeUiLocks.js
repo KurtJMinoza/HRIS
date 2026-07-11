@@ -4,7 +4,4 @@ export function releaseRouteUiLocks() {
   document.body.style.pointerEvents = ''
   document.body.style.overflow = ''
   document.body.removeAttribute('data-scroll-locked')
-  document.querySelectorAll('[data-slot="sheet-overlay"], [data-slot="dialog-overlay"]').forEach((el) => {
-    el.remove()
-  })
 }

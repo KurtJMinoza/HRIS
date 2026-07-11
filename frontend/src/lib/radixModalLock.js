@@ -41,11 +41,6 @@ export function forceClearBlockingOverlays() {
   if (typeof document === 'undefined') return
   resetRadixModalLock()
   clearStaleOverlays()
-  document.querySelectorAll(
-    '[data-slot="sheet-overlay"], [data-slot="dialog-overlay"], [data-slot="sheet-content"], [data-slot="dialog-content"]',
-  ).forEach((el) => {
-    el.remove()
-  })
 }
 
 /** Ask open HR panel pages to close sheets/dialogs before the router switches routes. */
