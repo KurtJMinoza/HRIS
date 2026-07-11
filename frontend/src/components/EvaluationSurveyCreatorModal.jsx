@@ -20,6 +20,7 @@ import {
 import { cn } from '@/lib/utils'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { applyCuratedToolbox, loadTemplateIntoCreator, normalizeSurveyJsonExpressions, TEMPLATE_REGISTRY } from '@/lib/surveyConfig'
+import { applyWeightedSummaryExpressions } from '@/lib/evaluationScoring'
 
 // ─── Creator Tab Names ─────────────────────────────────────────────
 // These are custom top-level navigation tabs. The SurveyJS Creator has its own
@@ -236,7 +237,7 @@ export default function EvaluationSurveyCreatorModal({
       title: formMeta.title || creatorJson.title || 'Untitled Evaluation Form',
       description: formMeta.description || creatorJson.description || '',
       is_active: formMeta.is_active,
-      survey_json: hasContent ? normalizeSurveyJsonExpressions(creatorJson) : null,
+      survey_json: hasContent ? applyWeightedSummaryExpressions(normalizeSurveyJsonExpressions(creatorJson)) : null,
     }
 
     onSave?.(payload)

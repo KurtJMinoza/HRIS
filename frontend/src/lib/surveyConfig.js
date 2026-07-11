@@ -1,6 +1,7 @@
 import { Serializer } from 'survey-core'
 import 'survey-core/survey-core.min.css'
 import 'survey-creator-core/survey-creator-core.min.css'
+import { applyWeightedSummaryExpressions } from '@/lib/evaluationScoring'
 
 // ─── Custom Properties ─────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ export const BLANK_SURVEY_JSON = {
 //   • Scoring Summary with weighted formula & auto-rating
 //   • Signatures (evaluator + HR)
 
-export const TEMPLATE_360_FEEDBACK = {
+export const TEMPLATE_360_FEEDBACK_RAW = {
   title: '360-DEGREE PERFORMANCE FEEDBACK SURVEY',
   description: 'Multi-rater feedback from supervisors, peers, and subordinates — the classic 360-degree assessment for AMALGATED GROUP OF COMPANIES.',
   showQuestionNumbers: 'off',
@@ -589,106 +590,6 @@ export const TEMPLATE_360_FEEDBACK = {
 <p style="font-size:0.85rem;color:#64748b;margin-bottom:0.75rem;">The scores below are automatically calculated based on your ratings above.</p>`,
         },
 
-        // ── Section Scores ──
-        {
-          type: 'expression',
-          name: 'quality_score',
-          title: 'A. Quality of Work (15%)',
-          expression: '({quality_0} + {quality_1} + {quality_2}) / 3',
-          displayStyle: 'decimal',
-        },
-        {
-          type: 'expression',
-          name: 'productivity_score',
-          title: 'B. Productivity & Results (15%)',
-          expression: '({productivity_0} + {productivity_1} + {productivity_2}) / 3',
-          displayStyle: 'decimal',
-        },
-        {
-          type: 'expression',
-          name: 'accountability_score',
-          title: 'C. Accountability & Reliability (15%)',
-          expression: '({accountability_0} + {accountability_1} + {accountability_2}) / 3',
-          displayStyle: 'decimal',
-        },
-        {
-          type: 'expression',
-          name: 'communication_score',
-          title: 'D. Communication & Collaboration (15%)',
-          expression: '({communication_0} + {communication_1} + {communication_2}) / 3',
-          displayStyle: 'decimal',
-        },
-        {
-          type: 'expression',
-          name: 'problem_solving_score',
-          title: 'E. Problem Solving & Initiative (10%)',
-          expression: '({problem_solving_0} + {problem_solving_1} + {problem_solving_2}) / 3',
-          displayStyle: 'decimal',
-        },
-
-        // Core Values Score
-        {
-          type: 'expression',
-          name: 'core_values_score',
-          title: 'Core Values (30%)',
-          expression: '({core_value_0} + {core_value_1} + {core_value_2} + {core_value_3} + {core_value_4} + {core_value_5} + {core_value_6}) / 7',
-          displayStyle: 'decimal',
-        },
-
-        // Overall Job Performance average (all 15 ratings)
-        {
-          type: 'expression',
-          name: 'job_performance_score',
-          title: 'Job Performance Score (average of all 15 criteria)',
-          expression: '({quality_0} + {quality_1} + {quality_2} + {productivity_0} + {productivity_1} + {productivity_2} + {accountability_0} + {accountability_1} + {accountability_2} + {communication_0} + {communication_1} + {communication_2} + {problem_solving_0} + {problem_solving_1} + {problem_solving_2}) / 15',
-          displayStyle: 'decimal',
-        },
-
-        // Weighted Job Performance (× 0.70)
-        {
-          type: 'expression',
-          name: 'weighted_job_score',
-          title: 'Job Performance Score × 70%',
-          expression: '{job_performance_score} * 0.70',
-          displayStyle: 'decimal',
-        },
-
-        // Weighted Core Values (× 0.30)
-        {
-          type: 'expression',
-          name: 'weighted_core_score',
-          title: 'Core Values Score × 30%',
-          expression: '{core_values_score} * 0.30',
-          displayStyle: 'decimal',
-        },
-
-        // Final Score
-        {
-          type: 'expression',
-          name: 'final_score',
-          title: '★ TOTAL PERFORMANCE SCORE',
-          expression: '{weighted_job_score} + {weighted_core_score}',
-          displayStyle: 'decimal',
-        },
-
-        // Overall Percentage (score / 5 × 100)
-        {
-          type: 'expression',
-          name: 'overall_percentage',
-          title: '★ OVERALL PERCENTAGE',
-          expression: '({final_score} / 5) * 100',
-          displayStyle: 'percent',
-        },
-
-        // Automatic Rating
-        {
-          type: 'expression',
-          name: 'overall_rating',
-          title: 'Overall Performance Level',
-          expression: "if({final_score} >= 4.5, 'Outstanding', if({final_score} >= 3.5, 'Very Good', if({final_score} >= 2.5, 'Good', if({final_score} >= 1.5, 'Needs Improvement', 'Unsatisfactory'))))",
-        },
-
-        // Separator
         { type: 'html', name: 'sep3', html: '<hr style="margin:1rem 0;border:none;border-top:1px solid #e2e8f0;" />' },
 
         // ── Performance Rating Guide ──
@@ -700,16 +601,17 @@ export const TEMPLATE_360_FEEDBACK = {
   <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
     <thead>
       <tr style="border-bottom:1px solid #e2e8f0;">
-        <th style="padding:0.3rem 0.5rem;text-align:left;font-weight:600;color:#475569;">Final Score</th>
+        <th style="padding:0.3rem 0.5rem;text-align:left;font-weight:600;color:#475569;">Overall Percentage</th>
+        <th style="padding:0.3rem 0.5rem;text-align:left;font-weight:600;color:#475569;">Rating (1–5)</th>
         <th style="padding:0.3rem 0.5rem;text-align:left;font-weight:600;color:#475569;">Performance Level</th>
       </tr>
     </thead>
     <tbody>
-      <tr><td style="padding:0.3rem 0.5rem;font-weight:600;color:#16a34a;">4.50 – 5.00</td><td style="padding:0.3rem 0.5rem;">Outstanding</td></tr>
-      <tr style="background:#f1f5f9;"><td style="padding:0.3rem 0.5rem;font-weight:600;color:#0284c7;">3.50 – 4.49</td><td style="padding:0.3rem 0.5rem;">Very Good</td></tr>
-      <tr><td style="padding:0.3rem 0.5rem;font-weight:600;color:#f59e0b;">2.50 – 3.49</td><td style="padding:0.3rem 0.5rem;">Good</td></tr>
-      <tr style="background:#f1f5f9;"><td style="padding:0.3rem 0.5rem;font-weight:600;color:#f97316;">1.50 – 2.49</td><td style="padding:0.3rem 0.5rem;">Needs Improvement</td></tr>
-      <tr><td style="padding:0.3rem 0.5rem;font-weight:600;color:#dc2626;">1.00 – 1.49</td><td style="padding:0.3rem 0.5rem;">Unsatisfactory</td></tr>
+      <tr><td style="padding:0.3rem 0.5rem;font-weight:600;color:#16a34a;">90.00% – 100.00%</td><td style="padding:0.3rem 0.5rem;">4.50 – 5.00</td><td style="padding:0.3rem 0.5rem;">Outstanding</td></tr>
+      <tr style="background:#f1f5f9;"><td style="padding:0.3rem 0.5rem;font-weight:600;color:#0284c7;">70.00% – 89.99%</td><td style="padding:0.3rem 0.5rem;">3.50 – 4.49</td><td style="padding:0.3rem 0.5rem;">Very Good</td></tr>
+      <tr><td style="padding:0.3rem 0.5rem;font-weight:600;color:#f59e0b;">50.00% – 69.99%</td><td style="padding:0.3rem 0.5rem;">2.50 – 3.49</td><td style="padding:0.3rem 0.5rem;">Good</td></tr>
+      <tr style="background:#f1f5f9;"><td style="padding:0.3rem 0.5rem;font-weight:600;color:#f97316;">30.00% – 49.99%</td><td style="padding:0.3rem 0.5rem;">1.50 – 2.49</td><td style="padding:0.3rem 0.5rem;">Needs Improvement</td></tr>
+      <tr><td style="padding:0.3rem 0.5rem;font-weight:600;color:#dc2626;">20.00% – 29.99%</td><td style="padding:0.3rem 0.5rem;">1.00 – 1.49</td><td style="padding:0.3rem 0.5rem;">Unsatisfactory</td></tr>
     </tbody>
   </table>
 </div>`,
@@ -760,6 +662,8 @@ export const TEMPLATE_360_FEEDBACK = {
   </p>
 </div>`,
 }
+
+export const TEMPLATE_360_FEEDBACK = applyWeightedSummaryExpressions(TEMPLATE_360_FEEDBACK_RAW)
 
 // ─── Other Template Presets ────────────────────────────────────────
 

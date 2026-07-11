@@ -10,6 +10,7 @@ use App\Models\EvaluationForm;
 use App\Models\HrisNotification;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EvaluationScoringService;
 use App\Services\EvaluationWorkflowSettingService;
 use App\Services\HrRoleResolver;
 use App\Services\RbacService;
@@ -21,6 +22,7 @@ class EvaluationController extends Controller
 {
     public function __construct(
         private readonly DataScopeService $dataScopeService,
+        private readonly EvaluationScoringService $evaluationScoringService,
         private readonly EvaluationWorkflowSettingService $evalWorkflowService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly RbacService $rbacService,
@@ -216,6 +218,10 @@ class EvaluationController extends Controller
             'organization_scope' => ['nullable', 'array'],
         ]);
 
+        if (array_key_exists('survey_json', $validated) && is_array($validated['survey_json'])) {
+            $validated['survey_json'] = $this->evaluationScoringService->applyWeightedSummaryExpressions($validated['survey_json']);
+        }
+
         $form = EvaluationForm::create([
             'company_id' => $validated['company_id'],
             'title' => $validated['title'],
@@ -259,6 +265,10 @@ class EvaluationController extends Controller
             'is_active' => ['sometimes', 'boolean'],
             'organization_scope' => ['nullable', 'array'],
         ]);
+
+        if (array_key_exists('survey_json', $validated) && is_array($validated['survey_json'])) {
+            $validated['survey_json'] = $this->evaluationScoringService->applyWeightedSummaryExpressions($validated['survey_json']);
+        }
 
         $form->update($validated);
 
@@ -786,21 +796,6 @@ class EvaluationController extends Controller
 
                 return;
             }
-
-            if (isset($surveyData['final_score']) && is_numeric($surveyData['final_score']) && (float) $surveyData['final_score'] > 0) {
-                $score = round((float) $surveyData['final_score'], 2);
-                $evaluation->overall_score = $score;
-
-                if (!empty($surveyData['overall_rating']) && is_string($surveyData['overall_rating'])) {
-                    $evaluation->overall_rating = $surveyData['overall_rating'];
-                } else {
-                    $maxScore = $this->getMaxScoreFromForm($evaluation->evaluationForm);
-                    $percentage = $maxScore > 0 ? ($score / $maxScore) * 100 : 0;
-                    $evaluation->overall_rating = $this->ratingLabelFromPercentage($percentage);
-                }
-
-                return;
-            }
         }
 
         $numericValues = [];
@@ -827,28 +822,19 @@ class EvaluationController extends Controller
 
     /**
      * @param  array<string, mixed>  $surveyData
-     * @return array{score: float, rating: string}|null
+     * @return array{score: float, rating: string, percentage: float}|null
      */
     private function computeWeightedScoreFromSurveyData(array $surveyData): ?array
     {
-        $jobMatrices = ['quality_of_work', 'productivity', 'accountability', 'communication', 'problem_solving'];
-        $jobValues = [];
-        foreach ($jobMatrices as $name) {
-            $jobValues = array_merge($jobValues, $this->matrixNumericValues($surveyData[$name] ?? null));
-        }
-        $coreValues = $this->matrixNumericValues($surveyData['core_values'] ?? null);
-
-        if ($jobValues === [] && $coreValues === []) {
+        $result = $this->evaluationScoringService->computeFromSurveyData($surveyData);
+        if ($result === null) {
             return null;
         }
 
-        $jobAvg = $jobValues !== [] ? array_sum($jobValues) / count($jobValues) : 0.0;
-        $coreAvg = $coreValues !== [] ? array_sum($coreValues) / count($coreValues) : 0.0;
-        $score = round($jobAvg * 0.70 + $coreAvg * 0.30, 2);
-
         return [
-            'score' => $score,
-            'rating' => $this->ratingLabelFromScore($score),
+            'score' => $result['overall_score'],
+            'rating' => $result['overall_rating'],
+            'percentage' => $result['overall_percentage'],
         ];
     }
 
@@ -872,43 +858,9 @@ class EvaluationController extends Controller
     /**
      * @return list<float>
      */
-    private function matrixNumericValues(mixed $raw): array
-    {
-        if (!is_array($raw)) {
-            return [];
-        }
-
-        $vals = [];
-        foreach ($raw as $value) {
-            if (is_numeric($value)) {
-                $vals[] = (float) $value;
-            }
-        }
-
-        return $vals;
-    }
-
-    private function ratingLabelFromScore(float $score): string
-    {
-        return match (true) {
-            $score >= 4.5 => 'Outstanding',
-            $score >= 3.5 => 'Very Good',
-            $score >= 2.5 => 'Good',
-            $score >= 1.5 => 'Needs Improvement',
-            default => 'Unsatisfactory',
-        };
-    }
-
     private function ratingLabelFromPercentage(float $percentage): string
     {
-        return match (true) {
-            $percentage >= 90 => 'Outstanding',
-            $percentage >= 85 => 'Excellent',
-            $percentage >= 80 => 'Very Good',
-            $percentage >= 75 => 'Good',
-            $percentage >= 70 => 'Satisfactory',
-            default => 'Needs Improvement',
-        };
+        return $this->evaluationScoringService->ratingLabelFromPercentage($percentage);
     }
 
     private function getMaxScoreFromForm(?EvaluationForm $form): int

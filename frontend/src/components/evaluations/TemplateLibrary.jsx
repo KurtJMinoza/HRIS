@@ -234,38 +234,56 @@ const PRESET_TEMPLATES = [
 
 // ─── Template Card ─────────────────────────────────────────────────
 
+function plural(count, singular, pluralForm) {
+  return `${count} ${count === 1 ? singular : (pluralForm ?? `${singular}s`)}`
+}
+
 function TemplateCard({ template, onUse }) {
   const Icon = template.icon
+  const questionCount = template.sections.reduce((sum, s) => sum + s.questions.length, 0)
 
   return (
-    <div className="group flex flex-col rounded-xl border border-border/70 bg-card p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-md">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-xl', template.bg, template.color)}>
-            <Icon className="size-5" />
-          </span>
-          <div className="min-w-0">
-            <h4 className="truncate text-sm font-bold text-foreground">{template.name}</h4>
-            <p className="text-[11px] text-muted-foreground">{template.category}</p>
-          </div>
+    <div className="group flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-lg dark:border-white/10">
+      <div className={cn('relative h-12 bg-linear-to-br', template.band || 'from-muted/40 to-muted/10')}>
+        <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_1px_1px,rgba(100,116,139,0.25)_1px,transparent_0)] [background-size:12px_12px]" />
+        <div className="absolute inset-x-3 top-2.5">
+          <Badge variant="outline" className="rounded-full border-0 bg-card/80 px-2 py-0 text-[10px] font-semibold text-muted-foreground ring-1 ring-inset ring-border/60 backdrop-blur-sm">
+            {template.type}
+          </Badge>
         </div>
       </div>
-      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-        {template.description}
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <Badge variant="outline" className="rounded-full text-[10px] font-normal">{template.sections.length} sections</Badge>
-        <Badge variant="outline" className="rounded-full text-[10px] font-normal">
-          {template.sections.reduce((sum, s) => sum + s.questions.length, 0)} questions
-        </Badge>
-        <span className="text-[10px] font-medium text-muted-foreground/60">{template.type}</span>
-      </div>
-      <div className="mt-auto pt-3">
+
+      <div className="flex flex-1 flex-col p-4 pt-3">
+        <div className="-mt-8 mb-3 flex items-end gap-3">
+          <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-xl ring-4 ring-card shadow-sm', template.bg, template.color)}>
+            <Icon className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1 pb-0.5">
+            <h4 className="line-clamp-2 text-sm font-bold leading-snug text-foreground">{template.name}</h4>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">{template.category}</p>
+          </div>
+        </div>
+
+        <p className="line-clamp-2 min-h-[2.25rem] text-xs leading-relaxed text-muted-foreground">
+          {template.description}
+        </p>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="rounded-lg bg-muted/30 px-2.5 py-1.5 text-center dark:bg-white/[0.04]">
+            <p className="text-sm font-bold tabular-nums text-foreground">{template.sections.length}</p>
+            <p className="text-[10px] text-muted-foreground">{plural(template.sections.length, 'Section')}</p>
+          </div>
+          <div className="rounded-lg bg-muted/30 px-2.5 py-1.5 text-center dark:bg-white/[0.04]">
+            <p className="text-sm font-bold tabular-nums text-foreground">{questionCount}</p>
+            <p className="text-[10px] text-muted-foreground">{plural(questionCount, 'Question')}</p>
+          </div>
+        </div>
+
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="h-8 w-full gap-1.5 rounded-lg border-brand/35 text-xs text-brand hover:bg-brand/10"
+          className="mt-4 h-9 w-full gap-1.5 rounded-lg border-brand/35 text-xs font-semibold text-brand hover:bg-brand/10"
           onClick={() => onUse?.(template)}
         >
           <Copy className="size-3.5" />
@@ -278,24 +296,24 @@ function TemplateCard({ template, onUse }) {
 
 // ─── Saved Template Component ──────────────────────────────────────
 
-function SavedTemplateCard({ form, onDuplicate, index }) {
+function SavedTemplateCard({ form, onDuplicate }) {
   const sections = Array.isArray(form.sections) ? form.sections : []
   const totalQuestions = sections.reduce((sum, s) => sum + (s.questions?.length || 0), 0)
 
   return (
-    <div className="group flex items-center gap-3 rounded-lg border border-border/70 bg-card p-3 transition-all hover:border-brand/30 hover:shadow-sm">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+    <div className="group flex items-center gap-3 rounded-xl border border-border/70 bg-card p-3.5 transition-all hover:border-brand/30 hover:shadow-sm dark:border-white/10">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-inset ring-brand/20">
         <FileText className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-foreground">{form.title}</p>
-        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-          <span>{sections.length} sections</span>
-          <span>·</span>
-          <span>{totalQuestions} questions</span>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+          <span>{plural(sections.length, 'section')}</span>
+          <span className="text-border">·</span>
+          <span>{plural(totalQuestions, 'question')}</span>
           {form.updated_at && (
             <>
-              <span>·</span>
+              <span className="text-border">·</span>
               <span>{
                 (() => {
                   try { return formatDistanceToNow(new Date(form.updated_at), { addSuffix: true }) }
@@ -306,8 +324,9 @@ function SavedTemplateCard({ form, onDuplicate, index }) {
           )}
         </div>
       </div>
-      <Button type="button" variant="ghost" size="icon-sm" className="size-8 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" onClick={() => onDuplicate?.(form)} title="Duplicate this template">
+      <Button type="button" variant="outline" size="sm" className="h-8 shrink-0 gap-1.5 rounded-lg text-xs opacity-0 transition-opacity group-hover:opacity-100" onClick={() => onDuplicate?.(form)} title="Duplicate this template">
         <Copy className="size-3.5" />
+        Duplicate
       </Button>
     </div>
   )
@@ -429,7 +448,7 @@ export default function TemplateLibrary({
               <p className="py-4 text-center text-xs text-muted-foreground">No saved forms match your search.</p>
             ) : (
               filteredSaved.map((form, idx) => (
-                <SavedTemplateCard key={form.id || idx} form={form} onDuplicate={onDuplicateForm} index={idx} />
+                <SavedTemplateCard key={form.id || idx} form={form} onDuplicate={onDuplicateForm} />
               ))
             )}
           </div>

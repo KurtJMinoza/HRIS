@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
-  ClipboardCheck, FileSpreadsheet, Plus, Loader2, Trash2, Pencil, Eye,
+  ClipboardCheck, FileSpreadsheet, Plus, Loader2,
   XCircle, Clock, Star, Users, FileText, RefreshCw, Search, TrendingUp,
   List, Building2, CalendarClock, IdCard, CheckCircle2, ChevronRight,
 } from 'lucide-react'
@@ -17,6 +17,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/use-toast'
 import {
   getEvaluationForms, createEvaluationForm, updateEvaluationForm, deleteEvaluationForm,
@@ -42,6 +43,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import EvaluationSurveyCreatorModal from '@/components/EvaluationSurveyCreatorModal'
 import EvaluationSurveyForm from '@/components/EvaluationSurveyForm'
+import EvaluationFormCard from '@/components/evaluations/EvaluationFormCard'
+import EvaluationRowActions from '@/components/evaluations/EvaluationRowActions'
 import { surveyToSections } from '@/lib/surveyConfig'
 
 const SECTION_MAX_WEIGHT = 100
@@ -105,6 +108,17 @@ function formatDateFull(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-PH', {
     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
   })
+}
+
+function evalOverallPercentage(ev) {
+  const pct = ev?.scores?.survey_data?.overall_percentage
+  if (pct !== undefined && pct !== null && pct !== '') {
+    return Math.round(Number(pct) * 100) / 100
+  }
+  if (ev?.overall_score != null) {
+    return Math.round(Number(ev.overall_score) * 20 * 100) / 100
+  }
+  return null
 }
 
 export default function AdminEvaluation() {
@@ -556,6 +570,7 @@ export default function AdminEvaluation() {
   const activeEvalsCount = pendingCount + submittedCount
 
   return (
+    <TooltipProvider delayDuration={200}>
     <Motion.div
       className="flex w-full min-w-0 flex-col gap-6 @md:gap-8"
       initial={{ opacity: 0, y: 10 }}
@@ -740,31 +755,12 @@ export default function AdminEvaluation() {
             ) : (
               <div className="grid gap-5 p-5 @md:grid-cols-2 @xl:grid-cols-3">
                 {forms.map(form => (
-                  <div
+                  <EvaluationFormCard
                     key={form.id}
-                    className="group rounded-2xl border border-border/70 bg-card p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-lg dark:border-white/10 dark:hover:border-brand/40"
-                  >
-                    <div className="mb-3 flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <h3 className="truncate text-base font-bold text-foreground">{form.title}</h3>
-                        {form.description && (
-                          <p className="mt-1 text-sm leading-5 text-muted-foreground line-clamp-2">{form.description}</p>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                        <Button variant="ghost" size="icon" className="size-8" onClick={() => openFormDialog(form)}><Pencil className="size-4" /></Button>
-                        <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => handleDeleteForm(form.id)}><Trash2 className="size-4" /></Button>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline" className="rounded-full text-xs font-normal">{form.sections?.length || 0} sections</Badge>
-                      <Badge variant="outline" className="rounded-full text-xs font-normal">{form.evaluations_count || 0} evaluations</Badge>
-                      {!form.is_active && <Badge className="rounded-full bg-gray-100 text-xs font-normal text-gray-600 dark:bg-gray-800 dark:text-gray-400">Inactive</Badge>}
-                    </div>
-                    {form.created_by && (
-                      <p className="mt-3 text-xs text-muted-foreground border-t border-border/40 pt-3">Created by {form.created_by}</p>
-                    )}
-                  </div>
+                    form={form}
+                    onEdit={openFormDialog}
+                    onDelete={handleDeleteForm}
+                  />
                 ))}
               </div>
             )}
@@ -1032,16 +1028,13 @@ export default function AdminEvaluation() {
                           <p className="truncate text-xs text-muted-foreground">{ev.evaluation_form?.title}</p>
                         </div>
                       </div>
-                      <div className="flex shrink-0 gap-2">
-                        <Button variant="outline" size="sm" className="h-9 gap-1.5 border-emerald-500/40 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300" onClick={() => handleSubmitEvaluation(ev.id)}>
-                          <ClipboardCheck className="size-3.5" />
-                          Submit
-                        </Button>
-                        <Button variant="ghost" size="sm" className="h-9 gap-1.5 text-destructive hover:bg-destructive/10" onClick={() => handleDeleteEvaluation(ev.id)}>
-                          <Trash2 className="size-3.5" />
-                          Delete
-                        </Button>
-                      </div>
+                      <EvaluationRowActions
+                        evaluation={ev}
+                        canReview={canReview}
+                        onView={setViewDialog}
+                        onSubmit={handleSubmitEvaluation}
+                        onDelete={handleDeleteEvaluation}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1145,7 +1138,16 @@ export default function AdminEvaluation() {
                           <td className="px-5 py-4 align-middle text-muted-foreground">{ev.evaluation_form?.title || '—'}</td>
                           <td className="px-5 py-4 align-middle text-muted-foreground">{evaluator.first_name} {evaluator.last_name}</td>
                           <td className="px-5 py-4 align-middle font-bold tabular-nums text-foreground">
-                            {ev.overall_score != null ? `${ev.overall_score}` : '—'}
+                            {ev.overall_score != null ? (
+                              <div>
+                                <span>{ev.overall_score}</span>
+                                {evalOverallPercentage(ev) != null && (
+                                  <span className="mt-0.5 block text-[11px] font-medium text-muted-foreground">
+                                    {evalOverallPercentage(ev)}%
+                                  </span>
+                                )}
+                              </div>
+                            ) : '—'}
                           </td>
                           <td className="px-5 py-4 align-middle text-muted-foreground">
                             {ev.overall_rating || '—'}
@@ -1155,36 +1157,15 @@ export default function AdminEvaluation() {
                             {formatDate(ev.evaluated_at)}
                           </td>
                           <td className="px-5 py-4 text-right align-middle">
-                            <div className="inline-flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                              <Button variant="ghost" size="icon" className="size-8" onClick={() => setViewDialog(ev)} title="View details">
-                                <Eye className="size-4" />
-                              </Button>
-                              {ev.status === 'draft' && (
-                                <>
-                                  <Button variant="ghost" size="icon" className="size-8 text-emerald-600" onClick={() => handleSubmitEvaluation(ev.id)} title="Submit">
-                                    <ClipboardCheck className="size-4" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" className="size-8 text-destructive" onClick={() => handleDeleteEvaluation(ev.id)} title="Delete">
-                                    <Trash2 className="size-4" />
-                                  </Button>
-                                </>
-                              )}
-                              {ev.status === 'submitted' && canReview && (
-                                <>
-                                  <Button variant="ghost" size="icon" className="size-8 text-amber-600" onClick={() => handleReviewEvaluation(ev.id)} title="Review">
-                                    <Eye className="size-4" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" className="size-8 text-emerald-600" onClick={() => handleCompleteEvaluation(ev.id)} title="Complete">
-                                    <ClipboardCheck className="size-4" />
-                                  </Button>
-                                </>
-                              )}
-                              {ev.status === 'under_review' && (
-                                <Button variant="ghost" size="icon" className="size-8 text-emerald-600" onClick={() => handleCompleteEvaluation(ev.id)} title="Complete">
-                                  <ClipboardCheck className="size-4" />
-                                </Button>
-                              )}
-                            </div>
+                            <EvaluationRowActions
+                              evaluation={ev}
+                              canReview={canReview}
+                              onView={setViewDialog}
+                              onSubmit={handleSubmitEvaluation}
+                              onDelete={handleDeleteEvaluation}
+                              onReview={handleReviewEvaluation}
+                              onComplete={handleCompleteEvaluation}
+                            />
                           </td>
                         </tr>
                       )
@@ -1392,8 +1373,13 @@ export default function AdminEvaluation() {
                   <p className="text-xs text-muted-foreground">{viewDialog.evaluation_form?.title}</p>
                 </div>
                 <div className="text-right shrink-0">
+                  {evalOverallPercentage(viewDialog) != null && (
+                    <p className="text-2xl font-black tabular-nums text-foreground">{evalOverallPercentage(viewDialog)}%</p>
+                  )}
                   {viewDialog.overall_score != null && (
-                    <p className="text-2xl font-black tabular-nums text-foreground">{viewDialog.overall_score}</p>
+                    <p className="text-sm font-semibold tabular-nums text-muted-foreground">
+                      {viewDialog.overall_score} / 5
+                    </p>
                   )}
                   <p className="text-xs font-semibold text-muted-foreground">{viewDialog.overall_rating || '—'}</p>
                   <div className="mt-1">{statusBadge(viewDialog.status)}</div>
@@ -1465,5 +1451,6 @@ export default function AdminEvaluation() {
       </DialogContent>
       </Dialog>
     </Motion.div>
+    </TooltipProvider>
   )
 }
