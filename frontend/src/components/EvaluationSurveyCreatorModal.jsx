@@ -375,9 +375,9 @@ export default function EvaluationSurveyCreatorModal({
               }
             `}</style>
 
-            {/* Keep creator mounted while modal is open so designer edits stay in the survey model. */}
-            {open && (
-              <div className={cn('survey-creator-host h-full w-full overflow-hidden', !CREATOR_VIEW_TABS.has(activeNavTab) && 'hidden')}>
+            {/* Survey model lives on the creator instance — unmount UI on preview/json tabs only. */}
+            {open && CREATOR_VIEW_TABS.has(activeNavTab) && creator && !creator.isCreatorDisposed && (
+              <div className="survey-creator-host h-full w-full overflow-hidden">
                 <SurveyCreatorComponent key={formSessionKey} creator={creator} />
               </div>
             )}
@@ -385,7 +385,7 @@ export default function EvaluationSurveyCreatorModal({
             {/* Preview Tab — standalone Survey rendering */}
             {activeNavTab === 'preview' && (
               <div className="h-full overflow-y-auto bg-muted/10 px-6 py-6">
-                {previewModel && previewModel.getAllQuestions().length > 0 ? (
+                {previewModel && !previewModel.isDisposed && previewModel.getAllQuestions().length > 0 ? (
                   <div className="mx-auto max-w-3xl rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
                     <Survey model={previewModel} />
                   </div>

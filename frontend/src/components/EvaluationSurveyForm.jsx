@@ -54,13 +54,6 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedJson, readOnly])
 
-  const modelKey = useMemo(() => {
-    const title = normalizedJson?.title || ''
-    const pages = Array.isArray(normalizedJson?.pages) ? normalizedJson.pages.length : 0
-    const questions = model.getAllQuestions().map(q => q.name).join('|')
-    return `${readOnly ? 'readonly' : 'edit'}:${title}:${pages}:${questions}`
-  }, [model, normalizedJson, readOnly])
-
   useImperativeHandle(ref, () => ({
     getScores: () => scoresFromSurvey(normalizedJson, syncModelDataForScoring(normalizedJson, model)),
   }), [model, normalizedJson])
@@ -80,14 +73,6 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
     return () => model.onValueChanged.remove(handler)
   }, [model, normalizedJson])
 
-  useEffect(() => () => {
-    try {
-      model.dispose?.()
-    } catch {
-      // SurveyJS may already be disposed by its React wrapper.
-    }
-  }, [model])
-
   if (model.getAllQuestions().length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-border/60 bg-muted/15 px-6 py-10 text-center text-sm text-muted-foreground">
@@ -96,9 +81,11 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
     )
   }
 
+  if (model.isDisposed) return null
+
   return (
     <div className="evaluation-survey-form rounded-2xl border border-border/70 bg-card p-6 shadow-sm [&_.sd-root-modern]:--sjs-font-family:inherit">
-      <Survey key={modelKey} model={model} />
+      <Survey model={model} />
     </div>
   )
 })
