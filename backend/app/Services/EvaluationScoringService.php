@@ -111,6 +111,33 @@ class EvaluationScoringService
     }
 
     /**
+     * Resolve overall % from stored survey result, recompute from answers, or derive from equivalent.
+     *
+     * @param  array<string, mixed>|null  $scores
+     */
+    public function resolveOverallPercentage(?array $scores, mixed $overallScore = null): ?float
+    {
+        $surveyData = is_array($scores) ? ($scores['survey_data'] ?? null) : null;
+
+        if (is_array($surveyData) && isset($surveyData['overall_percentage']) && $surveyData['overall_percentage'] !== '') {
+            return round((float) $surveyData['overall_percentage'], 2);
+        }
+
+        if (is_array($surveyData)) {
+            $computed = $this->computeFromSurveyData($surveyData);
+            if ($computed !== null) {
+                return $computed['overall_percentage'];
+            }
+        }
+
+        if ($overallScore !== null && $overallScore !== '') {
+            return round((float) $overallScore * 20, 2);
+        }
+
+        return null;
+    }
+
+    /**
      * @param  array<string, mixed>  $surveyJson
      * @return array<string, mixed>
      */

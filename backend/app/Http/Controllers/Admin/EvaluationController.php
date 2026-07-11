@@ -10,6 +10,7 @@ use App\Models\EvaluationForm;
 use App\Models\HrisNotification;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EvaluationPrefillService;
 use App\Services\EvaluationScoringService;
 use App\Services\EvaluationWorkflowSettingService;
 use App\Services\HrRoleResolver;
@@ -23,6 +24,7 @@ class EvaluationController extends Controller
     public function __construct(
         private readonly DataScopeService $dataScopeService,
         private readonly EvaluationScoringService $evaluationScoringService,
+        private readonly EvaluationPrefillService $evaluationPrefillService,
         private readonly EvaluationWorkflowSettingService $evalWorkflowService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly RbacService $rbacService,
@@ -416,6 +418,7 @@ class EvaluationController extends Controller
         $user = $request->user();
 
         $employee = User::findOrFail($validated['employee_id']);
+        $form = EvaluationForm::findOrFail($validated['evaluation_form_id']);
 
         $scopedIds = $this->getEvaluationScopeEmployeeIds($user);
         if ($scopedIds !== null && !in_array((int) $employee->id, $scopedIds, true)) {
@@ -442,6 +445,15 @@ class EvaluationController extends Controller
             }
         }
 
+        $hrRole = $this->hrRoleResolver->resolve($user)?->value;
+        $scores = $this->evaluationPrefillService->mergePrefill(
+            $validated['scores'] ?? [],
+            $form->survey_json,
+            $employee,
+            $user,
+            $hrRole,
+        );
+
         $evaluation = Evaluation::create([
             'company_id' => $validated['company_id'],
             'branch_id' => $branchId,
@@ -449,7 +461,7 @@ class EvaluationController extends Controller
             'evaluation_form_id' => $validated['evaluation_form_id'],
             'employee_id' => $validated['employee_id'],
             'evaluator_id' => $user->id,
-            'scores' => $validated['scores'] ?? null,
+            'scores' => $scores,
             'remarks' => $validated['remarks'] ?? null,
             'status' => $validated['status'] ?? 'draft',
             'submitted_at' => isset($validated['status']) && $validated['status'] === 'submitted' ? now() : null,
@@ -508,6 +520,18 @@ class EvaluationController extends Controller
             'scores' => ['nullable', 'array'],
             'remarks' => ['nullable', 'string', 'max:10000'],
         ]);
+
+        if (array_key_exists('scores', $validated)) {
+            $evaluation->load(['employee', 'evaluator', 'evaluationForm']);
+            $hrRole = $this->hrRoleResolver->resolve($request->user())?->value;
+            $validated['scores'] = $this->evaluationPrefillService->mergePrefill(
+                $validated['scores'],
+                $evaluation->evaluationForm?->survey_json,
+                $evaluation->employee,
+                $evaluation->evaluator ?? $request->user(),
+                $hrRole,
+            );
+        }
 
         $evaluation->update($validated);
 
@@ -717,20 +741,32 @@ class EvaluationController extends Controller
 
         $completed = (clone $base)
             ->where('status', Evaluation::STATUS_COMPLETED)
-            ->whereNotNull('overall_score');
+            ->whereNotNull('overall_score')
+            ->with('employee:id,first_name,middle_name,last_name,suffix,profile_image,position')
+            ->get();
 
-        $avgScore = (clone $completed)->avg('overall_score');
+        $percentages = $completed
+            ->map(fn (Evaluation $e) => $this->evaluationScoringService->resolveOverallPercentage($e->scores, $e->overall_score))
+            ->filter(fn (?float $pct) => $pct !== null);
+
+        $avgScore = $percentages->isEmpty() ? null : round($percentages->avg(), 2);
 
         $topPerformers = $completed
-            ->with('employee:id,first_name,middle_name,last_name,suffix,profile_image,position')
-            ->orderByDesc('overall_score')
+            ->map(function (Evaluation $e) {
+                $pct = $this->evaluationScoringService->resolveOverallPercentage($e->scores, $e->overall_score);
+                return $pct === null ? null : ['evaluation' => $e, 'percentage' => $pct];
+            })
+            ->filter()
+            ->sortByDesc('percentage')
             ->take(5)
-            ->get()
-            ->map(fn (Evaluation $e) => [
-                'id' => $e->id,
-                'employee' => $e->employee ? trim($e->employee->first_name . ' ' . $e->employee->last_name) : 'Unknown',
-                'score' => $e->overall_score,
-                'rating' => $e->overall_rating,
+            ->values()
+            ->map(fn (array $row) => [
+                'id' => $row['evaluation']->id,
+                'employee' => $row['evaluation']->employee
+                    ? trim($row['evaluation']->employee->first_name . ' ' . $row['evaluation']->employee->last_name)
+                    : 'Unknown',
+                'score' => $row['percentage'],
+                'rating' => $row['evaluation']->overall_rating,
             ]);
 
         return [

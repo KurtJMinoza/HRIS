@@ -45,7 +45,8 @@ import EvaluationSurveyCreatorModal from '@/components/EvaluationSurveyCreatorMo
 import EvaluationSurveyForm from '@/components/EvaluationSurveyForm'
 import EvaluationFormCard from '@/components/evaluations/EvaluationFormCard'
 import EvaluationRowActions from '@/components/evaluations/EvaluationRowActions'
-import { surveyToSections } from '@/lib/surveyConfig'
+import { surveyToSections, buildEvaluationPrefillContext, buildPrefilledSurveyData } from '@/lib/surveyConfig'
+import { evalDisplayRating, evalOverallPercentage, ratingLabelFromPercentage } from '@/lib/evaluationScoring'
 
 const SECTION_MAX_WEIGHT = 100
 const EMPLOYEES_PER_PAGE = 20
@@ -73,12 +74,14 @@ const STATUS_META = {
 }
 
 const RATING_STYLES = {
-  'Outstanding': { text: 'text-emerald-700 dark:text-emerald-400', bar: 'bg-emerald-500', ring: 'ring-emerald-500/25', chip: 'bg-emerald-50 dark:bg-emerald-500/10', pct: 100 },
-  'Excellent': { text: 'text-teal-700 dark:text-teal-400', bar: 'bg-teal-500', ring: 'ring-teal-500/25', chip: 'bg-teal-50 dark:bg-teal-500/10', pct: 92 },
-  'Very Good': { text: 'text-sky-700 dark:text-sky-400', bar: 'bg-sky-500', ring: 'ring-sky-500/25', chip: 'bg-sky-50 dark:bg-sky-500/10', pct: 84 },
-  'Good': { text: 'text-indigo-700 dark:text-indigo-400', bar: 'bg-indigo-500', ring: 'ring-indigo-500/25', chip: 'bg-indigo-50 dark:bg-indigo-500/10', pct: 77 },
-  'Satisfactory': { text: 'text-amber-700 dark:text-amber-400', bar: 'bg-amber-500', ring: 'ring-amber-500/25', chip: 'bg-amber-50 dark:bg-amber-500/10', pct: 71 },
-  'Needs Improvement': { text: 'text-rose-700 dark:text-rose-400', bar: 'bg-rose-500', ring: 'ring-rose-500/25', chip: 'bg-rose-50 dark:bg-rose-500/10', pct: 55 },
+  'Outstanding': { text: 'text-emerald-700 dark:text-emerald-400', bar: 'bg-emerald-500', ring: 'ring-emerald-500/25', chip: 'bg-emerald-50 dark:bg-emerald-500/10' },
+  'Very Good': { text: 'text-sky-700 dark:text-sky-400', bar: 'bg-sky-500', ring: 'ring-sky-500/25', chip: 'bg-sky-50 dark:bg-sky-500/10' },
+  'Good': { text: 'text-indigo-700 dark:text-indigo-400', bar: 'bg-indigo-500', ring: 'ring-indigo-500/25', chip: 'bg-indigo-50 dark:bg-indigo-500/10' },
+  'Needs Improvement': { text: 'text-rose-700 dark:text-rose-400', bar: 'bg-rose-500', ring: 'ring-rose-500/25', chip: 'bg-rose-50 dark:bg-rose-500/10' },
+  'Unsatisfactory': { text: 'text-red-700 dark:text-red-400', bar: 'bg-red-500', ring: 'ring-red-500/25', chip: 'bg-red-50 dark:bg-red-500/10' },
+  // legacy labels from older evaluations
+  'Excellent': { text: 'text-teal-700 dark:text-teal-400', bar: 'bg-teal-500', ring: 'ring-teal-500/25', chip: 'bg-teal-50 dark:bg-teal-500/10' },
+  'Satisfactory': { text: 'text-amber-700 dark:text-amber-400', bar: 'bg-amber-500', ring: 'ring-amber-500/25', chip: 'bg-amber-50 dark:bg-amber-500/10' },
 }
 
 function initials(name) {
@@ -108,17 +111,6 @@ function formatDateFull(dateStr) {
   return new Date(dateStr).toLocaleDateString('en-PH', {
     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
   })
-}
-
-function evalOverallPercentage(ev) {
-  const pct = ev?.scores?.survey_data?.overall_percentage
-  if (pct !== undefined && pct !== null && pct !== '') {
-    return Math.round(Number(pct) * 100) / 100
-  }
-  if (ev?.overall_score != null) {
-    return Math.round(Number(ev.overall_score) * 20 * 100) / 100
-  }
-  return null
 }
 
 export default function AdminEvaluation() {
@@ -421,12 +413,18 @@ export default function AdminEvaluation() {
         ? form.sections
         : (form.survey_json ? surveyToSections(form.survey_json) : []),
     }
+    const prefillContext = buildEvaluationPrefillContext({
+      employee: formPicker,
+      evaluator: user,
+      hrRole,
+    })
+    const survey_data = buildPrefilledSurveyData(form.survey_json, prefillContext)
     setEvalDialog({
       company_id: Number(companyId),
       evaluation_form_id: form.id,
       employee_id: formPicker.id,
       form: formWithSections,
-      scores: { sections: {} },
+      scores: { sections: {}, survey_data },
     })
     setFormPicker(null)
   }
@@ -535,6 +533,13 @@ export default function AdminEvaluation() {
       if (!map[eid]) map[eid] = []
       map[eid].push(ev)
     }
+    for (const list of Object.values(map)) {
+      list.sort((a, b) => {
+        const ta = new Date(a.evaluated_at || a.updated_at || a.created_at).getTime()
+        const tb = new Date(b.evaluated_at || b.updated_at || b.created_at).getTime()
+        return tb - ta
+      })
+    }
     return map
   }, [evaluations])
 
@@ -639,11 +644,15 @@ export default function AdminEvaluation() {
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground">Average Score</p>
+                  <p className="text-xs font-medium text-muted-foreground">Average Performance</p>
                   <p className="mt-1 text-4xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">
                     {dashboardSummary.average_score != null ? `${dashboardSummary.average_score}%` : '—'}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">Overall rating</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {dashboardSummary.average_score != null
+                      ? ratingLabelFromPercentage(dashboardSummary.average_score)
+                      : 'Completed evaluations'}
+                  </p>
                 </div>
                 <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 dark:bg-emerald-500/20">
                   <TrendingUp className="size-5 text-emerald-600 dark:text-emerald-400" />
@@ -845,9 +854,14 @@ export default function AdminEvaluation() {
                     const deptLabel = emp.department_name || emp.branch_name
                     const orgLabel = emp.company_name || deptLabel
                     const lastDate = latest?.evaluated_at || latest?.updated_at || latest?.created_at
-                    const scored = empEvals?.find(e => e.overall_score != null)
-                    const rating = scored?.overall_rating
+                    const scored = empEvals?.find(e =>
+                      EVALUATED_STATUSES.includes(e.status)
+                      && (evalOverallPercentage(e) != null || e.overall_score != null),
+                    )
+                    const scorePct = scored ? evalOverallPercentage(scored) : null
+                    const rating = scored ? evalDisplayRating(scored) : null
                     const ratingStyle = rating ? RATING_STYLES[rating] : null
+                    const scoredFormTitle = scored?.evaluation_form?.title
                     const statusDot = latest ? (STATUS_META[latest.status]?.dot || 'bg-gray-400') : 'bg-slate-300 dark:bg-slate-600'
                     const statusLabel = latest ? (STATUS_META[latest.status]?.label || 'Draft') : 'Not started'
                     return (
@@ -901,17 +915,25 @@ export default function AdminEvaluation() {
 
                           {/* Performance panel */}
                           <div className="mt-3.5 rounded-xl border border-border/60 bg-muted/25 p-3 dark:border-white/10 dark:bg-white/[0.03]">
-                            {scored ? (
+                            {scored && scorePct != null ? (
                               <>
                                 <div className="flex items-end justify-between">
-                                  <div className="flex flex-col">
-                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">Overall Score</span>
-                                    <span className="text-2xl font-black leading-none tabular-nums text-foreground">{scored.overall_score}</span>
+                                  <div className="flex min-w-0 flex-col">
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">Overall Performance</span>
+                                    <span className="text-2xl font-black leading-none tabular-nums text-foreground">{scorePct}%</span>
+                                    {scoredFormTitle && (
+                                      <span className="mt-1 truncate text-[10px] text-muted-foreground" title={scoredFormTitle}>
+                                        {scoredFormTitle}
+                                      </span>
+                                    )}
                                   </div>
-                                  <span className={cn('text-xs font-bold', ratingStyle?.text)}>{rating}</span>
+                                  <span className={cn('shrink-0 text-xs font-bold', ratingStyle?.text)}>{rating}</span>
                                 </div>
                                 <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-border/70 dark:bg-white/10">
-                                  <div className={cn('h-full rounded-full transition-all', ratingStyle?.bar || 'bg-brand')} style={{ width: `${ratingStyle?.pct ?? 60}%` }} />
+                                  <div
+                                    className={cn('h-full rounded-full transition-all', ratingStyle?.bar || 'bg-brand')}
+                                    style={{ width: `${Math.min(100, Math.max(0, scorePct))}%` }}
+                                  />
                                 </div>
                               </>
                             ) : (
@@ -1099,7 +1121,7 @@ export default function AdminEvaluation() {
                       <th className="px-5 py-4 font-bold">Employee</th>
                       <th className="px-5 py-4 font-bold">Form</th>
                       <th className="px-5 py-4 font-bold">Evaluator</th>
-                      <th className="px-5 py-4 font-bold">Score</th>
+                      <th className="px-5 py-4 font-bold">Overall %</th>
                       <th className="px-5 py-4 font-bold">Rating</th>
                       <th className="px-5 py-4 font-bold">Status</th>
                       <th className="px-5 py-4 font-bold">Date</th>
@@ -1138,19 +1160,10 @@ export default function AdminEvaluation() {
                           <td className="px-5 py-4 align-middle text-muted-foreground">{ev.evaluation_form?.title || '—'}</td>
                           <td className="px-5 py-4 align-middle text-muted-foreground">{evaluator.first_name} {evaluator.last_name}</td>
                           <td className="px-5 py-4 align-middle font-bold tabular-nums text-foreground">
-                            {ev.overall_score != null ? (
-                              <div>
-                                <span>{ev.overall_score}</span>
-                                {evalOverallPercentage(ev) != null && (
-                                  <span className="mt-0.5 block text-[11px] font-medium text-muted-foreground">
-                                    {evalOverallPercentage(ev)}%
-                                  </span>
-                                )}
-                              </div>
-                            ) : '—'}
+                            {evalOverallPercentage(ev) != null ? `${evalOverallPercentage(ev)}%` : '—'}
                           </td>
                           <td className="px-5 py-4 align-middle text-muted-foreground">
-                            {ev.overall_rating || '—'}
+                            {evalDisplayRating(ev) || '—'}
                           </td>
                           <td className="px-5 py-4 align-middle">{statusBadge(ev.status)}</td>
                           <td className="px-5 py-4 align-middle text-muted-foreground tabular-nums">
@@ -1376,12 +1389,12 @@ export default function AdminEvaluation() {
                   {evalOverallPercentage(viewDialog) != null && (
                     <p className="text-2xl font-black tabular-nums text-foreground">{evalOverallPercentage(viewDialog)}%</p>
                   )}
-                  {viewDialog.overall_score != null && (
-                    <p className="text-sm font-semibold tabular-nums text-muted-foreground">
-                      {viewDialog.overall_score} / 5
-                    </p>
-                  )}
-                  <p className="text-xs font-semibold text-muted-foreground">{viewDialog.overall_rating || '—'}</p>
+                  <p className={cn(
+                    'text-xs font-bold',
+                    RATING_STYLES[evalDisplayRating(viewDialog)]?.text || 'text-muted-foreground',
+                  )}>
+                    {evalDisplayRating(viewDialog) || '—'}
+                  </p>
                   <div className="mt-1">{statusBadge(viewDialog.status)}</div>
                 </div>
               </div>
@@ -1437,7 +1450,12 @@ export default function AdminEvaluation() {
               <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-xl bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
                 <span>Evaluator: <span className="font-medium text-foreground">{viewDialog.evaluator?.first_name} {viewDialog.evaluator?.last_name}</span></span>
                 {viewDialog.evaluated_at && <span>Evaluated: <span className="font-medium text-foreground">{formatDateFull(viewDialog.evaluated_at)}</span></span>}
-                {viewDialog.overall_score != null && <span>Score: <span className="font-medium tabular-nums text-foreground">{viewDialog.overall_score}</span></span>}
+                {evalOverallPercentage(viewDialog) != null && (
+                  <span>
+                    Overall: <span className="font-medium tabular-nums text-foreground">{evalOverallPercentage(viewDialog)}%</span>
+                    {evalDisplayRating(viewDialog) ? ` · ${evalDisplayRating(viewDialog)}` : ''}
+                  </span>
+                )}
               </div>
             </div>
           )}

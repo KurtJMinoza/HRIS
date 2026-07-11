@@ -139,6 +139,32 @@ export function ratingLabelFromPercentage(percentage) {
   return 'Unsatisfactory'
 }
 
+/** Overall % from stored survey result, or recomputed from answers when missing. */
+export function evalOverallPercentage(ev) {
+  const stored = ev?.scores?.survey_data?.overall_percentage
+  if (stored !== undefined && stored !== null && stored !== '') {
+    return Math.round(Number(stored) * 100) / 100
+  }
+
+  const surveyData = ev?.scores?.survey_data ?? ev?.scores
+  const computed = computeWeightedScoresFromSurveyData(surveyData)
+  if (computed?.overall_percentage != null) {
+    return computed.overall_percentage
+  }
+
+  if (ev?.overall_score != null) {
+    return Math.round(Number(ev.overall_score) * 20 * 100) / 100
+  }
+  return null
+}
+
+/** Rating label from evaluation record or derived from overall %. */
+export function evalDisplayRating(ev) {
+  if (ev?.overall_rating) return ev.overall_rating
+  const pct = evalOverallPercentage(ev)
+  return pct != null ? ratingLabelFromPercentage(pct) : null
+}
+
 /** @returns {{ overall_percentage: number, overall_score: number, overall_rating: string, section_scores: Record<string, number> } | null} */
 export function computeWeightedScoresFromSurveyData(surveyData) {
   if (!surveyData || typeof surveyData !== 'object') return null

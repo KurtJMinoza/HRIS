@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'rea
 import { Model } from 'survey-core'
 import { Survey } from 'survey-react-ui'
 import 'survey-core/survey-core.min.css'
-import { normalizeSurveyJsonExpressions, scoresFromSurvey, surveyDataFromScores, syncModelDataForScoring } from '@/lib/surveyConfig'
+import { normalizeSurveyJsonExpressions, scoresFromSurvey, surveyDataFromScores, syncModelDataForScoring, unlockEvaluationPrefillQuestions } from '@/lib/surveyConfig'
 
 function applySurveyDataToModel(model, surveyJson, scores, suppressNotifyRef) {
   suppressNotifyRef.current = true
@@ -25,10 +25,11 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
   onChangeRef.current = onChange
   const suppressNotifyRef = useRef(false)
 
-  const normalizedJson = useMemo(
-    () => normalizeSurveyJsonExpressions(surveyJson),
-    [surveyJson],
-  )
+  const normalizedJson = useMemo(() => {
+    let json = normalizeSurveyJsonExpressions(surveyJson)
+    if (!readOnly) json = unlockEvaluationPrefillQuestions(json)
+    return json
+  }, [surveyJson, readOnly])
 
   const model = useMemo(() => {
     const m = new Model(normalizedJson && Object.keys(normalizedJson).length ? normalizedJson : { pages: [] })

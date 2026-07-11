@@ -683,9 +683,9 @@ export const PROBATIONARY_EVALUATION_TEMPLATE = {
           name: 'header',
           html: '<h2 style="text-align:center;">AMALGAMATED GROUP OF COMPANIES</h2><h3 style="text-align:center;">PROBATIONARY EVALUATION</h3><p style="text-align:center;color:#dc2626;font-weight:bold;">STRICTLY CONFIDENTIAL</p>',
         },
-        { type: 'text', name: 'employee_name', title: 'Employee Name', readOnly: true },
-        { type: 'text', name: 'position', title: 'Position', readOnly: true },
-        { type: 'text', name: 'department', title: 'Department', readOnly: true },
+        { type: 'text', name: 'employee_name', title: 'Employee Name', isRequired: true },
+        { type: 'text', name: 'position', title: 'Position' },
+        { type: 'text', name: 'department', title: 'Department' },
         { type: 'text', name: 'probation_start', title: 'Probation Start Date', readOnly: true, inputType: 'date' },
         { type: 'text', name: 'probation_end', title: 'Probation End Date', readOnly: true, inputType: 'date' },
       ],
@@ -1132,6 +1132,110 @@ export function syncModelDataForScoring(surveyJson, model) {
   return { ...model.data }
 }
 
+/** Standard header fields auto-filled when an evaluator opens a form. */
+export const EVALUATION_PREFILL_QUESTION_NAMES = [
+  'employee_name',
+  'position',
+  'department',
+  'evaluation_period',
+  'evaluator_name',
+  'relationship',
+]
+
+export function formatEvaluationPersonName(person) {
+  if (!person) return ''
+  const stored = person.name || person.display_name || person.employee_name
+  if (stored && typeof stored === 'string') return stored.trim()
+  return [person.first_name, person.middle_name, person.last_name, person.suffix]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function getDefaultEvaluationPeriod(date = new Date()) {
+  const month = date.getMonth() + 1
+  const quarter = Math.ceil(month / 3)
+  return `Q${quarter} ${date.getFullYear()}`
+}
+
+function defaultRelationshipForHrRole(hrRole) {
+  if (!hrRole) return null
+  const supervisorRoles = new Set([
+    'admin_hr',
+    'company_head',
+    'area_head',
+    'branch_head',
+    'department_head',
+    'division_head',
+    'section_unit_head',
+  ])
+  return supervisorRoles.has(hrRole) ? 'Immediate Supervisor' : null
+}
+
+export function buildEvaluationPrefillContext({ employee, evaluator, hrRole } = {}) {
+  const department =
+    employee?.department_name
+    || employee?.department?.name
+    || employee?.department
+    || employee?.branch_name
+    || employee?.branch?.name
+    || employee?.company_name
+    || ''
+
+  return {
+    employeeName: formatEvaluationPersonName(employee),
+    position: employee?.position ? String(employee.position).trim() : '',
+    department: String(department).trim(),
+    evaluationPeriod: getDefaultEvaluationPeriod(),
+    evaluatorName: formatEvaluationPersonName(evaluator),
+    relationship: defaultRelationshipForHrRole(hrRole),
+  }
+}
+
+export function collectSurveyQuestionNames(surveyJson) {
+  const names = new Set()
+  surveyQuestionWalk(surveyJson, (_, q) => {
+    if (q?.name) names.add(q.name)
+  })
+  return names
+}
+
+/** Merge auto-fill values into survey_data for questions that exist on the form. */
+export function buildPrefilledSurveyData(surveyJson, context, existingData = {}) {
+  const names = collectSurveyQuestionNames(surveyJson)
+  const data = { ...(existingData && typeof existingData === 'object' ? existingData : {}) }
+  const mapping = {
+    employee_name: context?.employeeName,
+    position: context?.position,
+    department: context?.department,
+    evaluation_period: context?.evaluationPeriod,
+    evaluator_name: context?.evaluatorName,
+    relationship: context?.relationship,
+  }
+
+  for (const [name, value] of Object.entries(mapping)) {
+    if (!names.has(name)) continue
+    if (value === null || value === undefined || value === '') continue
+    const current = data[name]
+    if (current === null || current === undefined || current === '') {
+      data[name] = value
+    }
+  }
+  return data
+}
+
+/** Saved templates may mark header fields readOnly; unlock them for editable prefill. */
+export function unlockEvaluationPrefillQuestions(surveyJson) {
+  if (!surveyJson?.pages) return surveyJson
+  const json = JSON.parse(JSON.stringify(surveyJson))
+  const names = new Set(EVALUATION_PREFILL_QUESTION_NAMES)
+  surveyQuestionWalk(json, (_, q) => {
+    if (q?.name && names.has(q.name)) delete q.readOnly
+  })
+  return json
+}
+
 function surveyQuestionWalk(surveyJson, cb) {
   if (!surveyJson || !Array.isArray(surveyJson.pages)) return
   for (const page of surveyJson.pages) {
@@ -1300,4 +1404,19 @@ if (import.meta.env?.DEV) {
     pages: [{ elements: [{ type: 'matrix', name: 'm1', rows: ['Row A', 'Row B'], columns: [1, 2, 3] }] }],
   })
   console.assert(rowFixed.pages[0].elements[0].rows[0].value === '0', 'matrix rows should get index value keys')
+
+  const prefillJson = {
+    pages: [{
+      elements: [
+        { type: 'text', name: 'employee_name', title: 'Employee Name' },
+        { type: 'text', name: 'evaluator_name', title: 'Evaluator' },
+      ],
+    }],
+  }
+  const prefillData = buildPrefilledSurveyData(prefillJson, {
+    employeeName: 'Jane Doe',
+    evaluatorName: 'John Head',
+  })
+  console.assert(prefillData.employee_name === 'Jane Doe', 'employee_name should prefill')
+  console.assert(prefillData.evaluator_name === 'John Head', 'evaluator_name should prefill')
 }
