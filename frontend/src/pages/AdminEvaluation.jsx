@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
   ClipboardCheck, FileSpreadsheet, Plus, Loader2,
-  XCircle, Clock, Star, Users, FileText, RefreshCw, Search, TrendingUp,
+  XCircle, Clock, Star, Users, FileText, RefreshCw, Search,
   List, Building2, CalendarClock, IdCard, CheckCircle2, ChevronRight,
   LayoutDashboard, UserCheck, AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -161,6 +162,120 @@ function EvalEmployeeAvatar({ employee, className }) {
         {initials(name)}
       </AvatarFallback>
     </Avatar>
+  )
+}
+
+function PerformanceLeadersSection({ dashboardSummary }) {
+  const leaders = dashboardSummary.top_performers ?? []
+
+  if (dashboardSummary.average_score == null && leaders.length === 0) return null
+
+  const showPosition = leaders.some(p => p.position?.trim())
+  const topScore = leaders[0]?.score ?? null
+
+  return (
+    <Card className={cn(evalCardClass, 'overflow-hidden')}>
+      <CardHeader className="space-y-5 border-b border-border/50 px-5 py-5 @sm:px-6">
+        <div className="flex flex-col gap-1">
+          <CardTitle className="text-base font-semibold tracking-tight">Performance Overview</CardTitle>
+          <CardDescription>
+            Completed evaluations ranked by overall score
+          </CardDescription>
+        </div>
+
+        {dashboardSummary.average_score != null && (
+          <div className="grid grid-cols-3 divide-x divide-border/50 rounded-lg border border-border/50 bg-muted/10">
+            <div className="px-4 py-3.5 text-center">
+              <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Average</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums tracking-tight text-foreground">
+                {dashboardSummary.average_score}%
+              </p>
+            </div>
+            <div className="px-4 py-3.5 text-center">
+              <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Evaluations</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums tracking-tight text-foreground">
+                {leaders.length}
+              </p>
+            </div>
+            <div className="px-4 py-3.5 text-center">
+              <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Highest</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums tracking-tight text-foreground">
+                {topScore != null ? `${topScore}%` : '—'}
+              </p>
+            </div>
+          </div>
+        )}
+      </CardHeader>
+
+      {leaders.length > 0 && (
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border/50 hover:bg-transparent">
+                <TableHead className="h-10 w-14 pl-6 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">#</TableHead>
+                <TableHead className="h-10 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Employee</TableHead>
+                {showPosition && (
+                  <TableHead className="hidden h-10 @md:table-cell text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Position</TableHead>
+                )}
+                <TableHead className="h-10 w-28 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Overall %</TableHead>
+                <TableHead className="h-10 pr-6 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Rating</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {leaders.map((performer, index) => {
+                const rank = index + 1
+
+                return (
+                  <TableRow
+                    key={performer.id ?? `${performer.employee}-${index}`}
+                    className="border-border/40 transition-colors hover:bg-muted/20"
+                  >
+                    <TableCell className="pl-6 py-3.5 text-sm tabular-nums text-muted-foreground">
+                      {rank}
+                    </TableCell>
+                    <TableCell className="py-3.5">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar className="size-8 shrink-0 rounded-full">
+                          <AvatarImage src={profileImageUrl(performer.profile_image)} alt={performer.employee} className="object-cover" />
+                          <AvatarFallback className="rounded-full bg-muted text-[10px] font-medium text-muted-foreground">
+                            {initials(performer.employee)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-foreground">{performer.employee}</p>
+                          {showPosition && (
+                            <p className="truncate text-xs text-muted-foreground @md:hidden">{performer.position}</p>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    {showPosition && (
+                      <TableCell className="hidden max-w-[220px] truncate py-3.5 text-sm text-muted-foreground @md:table-cell">
+                        {performer.position}
+                      </TableCell>
+                    )}
+                    <TableCell className="py-3.5 text-right">
+                      <span className="text-sm font-semibold tabular-nums text-foreground">
+                        {performer.score != null ? `${performer.score}%` : '—'}
+                      </span>
+                    </TableCell>
+                    <TableCell className="py-3.5 pr-6 text-right">
+                      {performer.rating ? (
+                        <span className={cn('text-sm font-medium', RATING_STYLES[performer.rating]?.text || 'text-muted-foreground')}>
+                          {performer.rating}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      )}
+    </Card>
   )
 }
 
@@ -844,21 +959,7 @@ export default function AdminEvaluation() {
               </CardContent>
             </Card>
           </div>
-          {dashboardSummary.average_score != null && (
-            <Card className={evalCardClass}>
-              <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
-                <div>
-                  <p className="text-sm text-muted-foreground">Average Performance (completed evaluations)</p>
-                  <p className="text-2xl font-bold text-emerald-600">{dashboardSummary.average_score}%</p>
-                </div>
-                {dashboardSummary.top_performers?.length > 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    Top: {dashboardSummary.top_performers.slice(0, 3).map(p => p.employee).join(', ')}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          )}
+          <PerformanceLeadersSection dashboardSummary={dashboardSummary} />
         </div>
       )}
 

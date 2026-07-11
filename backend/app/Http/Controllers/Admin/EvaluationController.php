@@ -959,14 +959,16 @@ class EvaluationController extends Controller
             })
             ->filter()
             ->sortByDesc('percentage')
-            ->take(5)
             ->values()
             ->map(fn (array $row) => [
                 'id' => $row['evaluation']->id,
+                'employee_id' => $row['evaluation']->employee_id,
                 'employee' => $row['evaluation']->employee
                     ? trim($row['evaluation']->employee->first_name . ' ' . $row['evaluation']->employee->last_name)
                     : 'Unknown',
-                'score' => $row['percentage'],
+                'profile_image' => $row['evaluation']->employee?->profile_image,
+                'position' => $row['evaluation']->employee?->position,
+                'score' => round($row['percentage'], 2),
                 'rating' => $row['evaluation']->overall_rating,
             ]);
 
