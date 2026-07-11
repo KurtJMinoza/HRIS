@@ -4,6 +4,7 @@ import {
   ClipboardCheck, FileSpreadsheet, Plus, Loader2,
   XCircle, Clock, Star, Users, FileText, RefreshCw, Search, TrendingUp,
   List, Building2, CalendarClock, IdCard, CheckCircle2, ChevronRight,
+  LayoutDashboard, UserCheck, AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,9 +23,9 @@ import { useToast } from '@/components/ui/use-toast'
 import {
   getEvaluationForms, createEvaluationForm, updateEvaluationForm, deleteEvaluationForm,
   getEvaluationEmployees,
-  getEvaluations, createEvaluation, submitEvaluation, deleteEvaluation,
+  getEvaluations, createEvaluation, submitEvaluation, updateEvaluation,
   profileImageUrl, getEvaluationDashboardSummary,
-  getEvaluationBootstrap,
+  getEvaluationBootstrap, getEvaluationAssignments,
 } from '@/api'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -44,6 +45,7 @@ import EvaluationSurveyCreatorModal from '@/components/EvaluationSurveyCreatorMo
 import EvaluationSurveyForm from '@/components/EvaluationSurveyForm'
 import EvaluationFormCard from '@/components/evaluations/EvaluationFormCard'
 import EvaluationRowActions from '@/components/evaluations/EvaluationRowActions'
+import EvaluationAssignWizard from '@/components/evaluations/EvaluationAssignWizard'
 import { surveyToSections, buildEvaluationPrefillContext, buildPrefilledSurveyData } from '@/lib/surveyConfig'
 import { evalDisplayRating, evalOverallPercentage, ratingLabelFromPercentage } from '@/lib/evaluationScoring'
 
@@ -112,6 +114,77 @@ function formatDateFull(dateStr) {
   })
 }
 
+function employeeFullName(emp) {
+  if (!emp) return '—'
+  return [emp.first_name, emp.middle_name, emp.last_name, emp.suffix].filter(Boolean).join(' ')
+}
+
+const ASSIGNMENT_STATUS_META = {
+  pending: { label: 'Pending', status: 'draft' },
+  in_progress: { label: 'In Progress', status: 'submitted' },
+  completed: { label: 'Completed', status: 'completed' },
+  cancelled: { label: 'Cancelled', status: 'draft' },
+}
+
+const EVALUATOR_ROLE_LABELS = {
+  immediate_supervisor: 'Immediate Supervisor',
+  section_head: 'Section Head',
+  department_head: 'Department Head',
+  division_head: 'Division Head',
+  area_head: 'Area Head',
+  branch_head: 'Branch Head',
+  company_head: 'Company Head',
+  hr: 'HR',
+  self: 'Self Evaluation',
+  custom: 'Custom Evaluator',
+}
+
+function assignmentStatusBadge(status, overdue = false) {
+  if (overdue) {
+    return (
+      <Badge className="gap-1 rounded-full border-0 bg-amber-100 px-3 py-1 font-semibold text-amber-700 dark:bg-amber-900/50 dark:text-amber-200">
+        <AlertTriangle className="size-3" />
+        Overdue
+      </Badge>
+    )
+  }
+  const meta = ASSIGNMENT_STATUS_META[status] || ASSIGNMENT_STATUS_META.pending
+  return statusBadge(meta.status)
+}
+
+function EvalEmployeeAvatar({ employee, className }) {
+  const name = employeeFullName(employee)
+  return (
+    <Avatar className={cn('shrink-0 ring-2 ring-background shadow-sm', className || 'size-11')}>
+      <AvatarImage src={profileImageUrl(employee?.profile_image)} alt={name} className="object-cover" />
+      <AvatarFallback className="bg-linear-to-br from-teal-100 to-slate-200 text-xs font-bold text-teal-800 dark:from-teal-900/40 dark:to-slate-800 dark:text-teal-200">
+        {initials(name)}
+      </AvatarFallback>
+    </Avatar>
+  )
+}
+
+function AssignmentProgressBar({ completed, total }) {
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-muted-foreground">Progress</span>
+        <span className="font-semibold tabular-nums text-foreground">{completed} / {total} completed</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn('h-full rounded-full transition-all', pct === 100 ? 'bg-emerald-500' : 'bg-brand')}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+const ASSIGNMENT_DETAIL_MODAL_CLASS =
+  'max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card'
+
 export default function AdminEvaluation() {
   const { user } = useAuth()
   const { toast } = useToast()
@@ -126,6 +199,11 @@ export default function AdminEvaluation() {
   const [employeeSearch, setEmployeeSearch] = useState('')
   const [empPage, setEmpPage] = useState(1)
   const [evaluations, setEvaluations] = useState([])
+  const [assignments, setAssignments] = useState([])
+  const [myPendingEvaluations, setMyPendingEvaluations] = useState([])
+  const [assignWizardOpen, setAssignWizardOpen] = useState(false)
+  const [assignmentDetail, setAssignmentDetail] = useState(null)
+  const [assignmentDetailOpen, setAssignmentDetailOpen] = useState(false)
   const [evalsLoading, setEvalsLoading] = useState(false)
   const [evalDialog, setEvalDialog] = useState(null)
   const [formPicker, setFormPicker] = useState(null)
@@ -134,22 +212,28 @@ export default function AdminEvaluation() {
   const surveyFormRef = useRef(null)
   const [dashboardSummary, setDashboardSummary] = useState(null)
   const [evalSearch, setEvalSearch] = useState('')
+  const [assignmentSearch, setAssignmentSearch] = useState('')
+  const [myEvalSearch, setMyEvalSearch] = useState('')
   const [scopeMeta, setScopeMeta] = useState(null)
 
   // Role-based access: backend scopeMeta is the single source of truth
   const canManageTemplates = scopeMeta?.can_manage_templates ?? false
+  const canAssign = scopeMeta?.can_assign ?? scopeMeta?.can_manage_templates ?? false
+  const canEvaluate = scopeMeta?.can_evaluate ?? false
+  const canViewDashboard = scopeMeta?.can_view_dashboard ?? false
   const hrRole = scopeMeta?.hr_role
-  const isOrgHead = hrRole && !['admin', 'super_admin'].includes(hrRole)
-  const [activeTab, setActiveTab] = useState('evaluate')
+  const isOrgHead = hrRole && !['admin', 'super_admin', 'admin_hr'].includes(hrRole)
+  const [activeTab, setActiveTab] = useState('dashboard')
   const [scopeCompanyId, setScopeCompanyId] = useState(null)
 
-  // When scopeMeta loads, switch non-org-head admin users to the 'forms' tab by default;
-  // for org heads (including admin_hr), auto-load their scoped employees
   useEffect(() => {
-    if (scopeMeta?.can_manage_templates && !isOrgHead && activeTab === 'evaluate') {
-      setActiveTab('forms')
-    }
-  }, [scopeMeta, isOrgHead, activeTab])
+    if (!scopeMeta) return
+    if (canViewDashboard) setActiveTab('dashboard')
+    else if (canAssign) setActiveTab('assignments')
+    else if (canManageTemplates) setActiveTab('templates')
+    else if (canEvaluate) setActiveTab('my-evaluations')
+    else setActiveTab('results')
+  }, [scopeMeta, canViewDashboard, canAssign, canManageTemplates, canEvaluate])
 
   // For org heads: determine their company from scope meta or their user record
   useEffect(() => {
@@ -178,6 +262,8 @@ export default function AdminEvaluation() {
       setForms(data.forms || [])
       setCompanies(data.companies || [])
       setEvaluations(data.evaluations?.data || [])
+      setAssignments(data.assignments?.data || [])
+      setMyPendingEvaluations(data.my_pending_evaluations || [])
       setDashboardSummary(data.dashboard ?? null)
       if (Array.isArray(data.employees)) setEmployees(data.employees)
       bootstrappedRef.current = true
@@ -222,14 +308,18 @@ export default function AdminEvaluation() {
     }
   }, [toast])
 
-  const loadDashboard = useCallback(async () => {
+  const loadAssignments = useCallback(async () => {
     try {
-      const data = await getEvaluationDashboardSummary()
-      setDashboardSummary(data)
-    } catch {
-      // non-critical
+      const data = await getEvaluationAssignments({ per_page: 50 })
+      setAssignments(data.data || [])
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Error', description: e.message })
     }
-  }, [])
+  }, [toast])
+
+  const refreshAll = useCallback(() => {
+    loadBootstrap()
+  }, [loadBootstrap])
 
   useEffect(() => { loadBootstrap() }, [loadBootstrap])
 
@@ -436,22 +526,47 @@ export default function AdminEvaluation() {
     })
   }
 
+  const handleOpenPendingEvaluation = (evaluation) => {
+    const form = evaluation.evaluation_form || forms.find(f => f.id === evaluation.evaluation_form_id)
+    const formWithSections = {
+      ...form,
+      sections: form?.sections?.length > 0
+        ? form.sections
+        : (form?.survey_json ? surveyToSections(form.survey_json) : []),
+    }
+    setEvalDialog({
+      id: evaluation.id,
+      company_id: evaluation.company_id,
+      evaluation_form_id: evaluation.evaluation_form_id,
+      employee_id: evaluation.employee_id,
+      form: formWithSections,
+      scores: evaluation.scores || { sections: {}, survey_data: {} },
+      employee: evaluation.employee,
+    })
+  }
+
   const handleSaveEvaluation = async (status) => {
     setSavingEval(true)
     try {
       const scores = surveyFormRef.current?.getScores?.() ?? evalDialog.scores
-      const payload = {
-        company_id: evalDialog.company_id,
-        evaluation_form_id: evalDialog.evaluation_form_id,
-        employee_id: evalDialog.employee_id,
-        scores,
-        status,
+      if (evalDialog.id) {
+        await updateEvaluation(evalDialog.id, { scores })
+        if (status === 'submitted') {
+          await submitEvaluation(evalDialog.id)
+        }
+      } else {
+        const payload = {
+          company_id: evalDialog.company_id,
+          evaluation_form_id: evalDialog.evaluation_form_id,
+          employee_id: evalDialog.employee_id,
+          scores,
+          status,
+        }
+        await createEvaluation(payload)
       }
-      await createEvaluation(payload)
       toast({ title: status === 'submitted' ? 'Evaluation submitted' : 'Draft saved' })
       setEvalDialog(null)
-      loadEvaluations()
-      loadDashboard()
+      loadBootstrap()
     } catch (e) {
       toast({ variant: 'destructive', title: 'Error', description: e.message })
     } finally {
@@ -464,21 +579,21 @@ export default function AdminEvaluation() {
       await submitEvaluation(id)
       toast({ title: 'Evaluation submitted' })
       loadEvaluations()
-      loadDashboard()
+      loadBootstrap()
     } catch (e) {
       toast({ variant: 'destructive', title: 'Error', description: e.message })
     }
   }
 
-  const handleDeleteEvaluation = async (id) => {
-    try {
-      await deleteEvaluation(id)
-      toast({ title: 'Evaluation deleted' })
-      loadEvaluations()
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Error', description: e.message })
-    }
-  }
+  const openAssignmentDetail = useCallback((assignment) => {
+    setAssignmentDetail(assignment)
+    setAssignmentDetailOpen(true)
+  }, [])
+
+  const closeAssignmentDetail = useCallback(() => {
+    setAssignmentDetailOpen(false)
+    window.setTimeout(() => setAssignmentDetail(null), 300)
+  }, [])
 
   const filteredEvaluations = useMemo(() => {
     return evaluations.filter(ev => {
@@ -492,6 +607,31 @@ export default function AdminEvaluation() {
       return name.includes(q) || formTitle.includes(q) || evaluatorName.includes(q)
     })
   }, [evaluations, evalSearch])
+
+  const filteredAssignments = useMemo(() => {
+    return assignments.filter(a => {
+      if (!assignmentSearch.trim()) return true
+      const q = assignmentSearch.toLowerCase()
+      const emp = a.employee || {}
+      const name = employeeFullName(emp).toLowerCase()
+      const position = (emp.position || '').toLowerCase()
+      const formTitle = (a.evaluation_form?.title || '').toLowerCase()
+      return name.includes(q) || position.includes(q) || formTitle.includes(q)
+    })
+  }, [assignments, assignmentSearch])
+
+  const filteredMyPendingEvaluations = useMemo(() => {
+    return myPendingEvaluations.filter(ev => {
+      if (!myEvalSearch.trim()) return true
+      const q = myEvalSearch.toLowerCase()
+      const emp = ev.employee || {}
+      const name = employeeFullName(emp).toLowerCase()
+      const position = (emp.position || '').toLowerCase()
+      const formTitle = (ev.evaluation_form?.title || '').toLowerCase()
+      const role = (EVALUATOR_ROLE_LABELS[ev.evaluator_role] || ev.evaluator_role || '').toLowerCase()
+      return name.includes(q) || position.includes(q) || formTitle.includes(q) || role.includes(q)
+    })
+  }, [myPendingEvaluations, myEvalSearch])
 
   const evaluationsByEmployee = useMemo(() => {
     const map = {}
@@ -553,9 +693,9 @@ export default function AdminEvaluation() {
       <div className="flex w-full flex-col gap-5 pb-1 @lg:flex-row @lg:items-end @lg:justify-between">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-brand">Performance</p>
-          <h1 className="mt-3 text-3xl font-bold tracking-tight text-foreground @sm:text-4xl">Evaluations</h1>
+          <h1 className="mt-3 text-3xl font-bold tracking-tight text-foreground @sm:text-4xl">Performance Evaluation</h1>
           <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">
-            Manage evaluation forms, evaluate employees, and review results across teams.
+            Templates, assignments, and consolidated results — one module for the full evaluation cycle.
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-3 @lg:w-auto @lg:justify-end">
@@ -563,91 +703,34 @@ export default function AdminEvaluation() {
             type="button"
             variant="outline"
             className={cn(evalOutlineButtonClass, 'flex-1 @lg:flex-initial')}
-            onClick={() => { if (canManageTemplates) loadForms(); loadEvaluations(); loadDashboard() }}
+            onClick={refreshAll}
             disabled={formsLoading || evalsLoading}
           >
             {formsLoading || evalsLoading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Refresh
           </Button>
+          {canManageTemplates && (
+            <Button
+              type="button"
+              className={cn(evalPrimaryButtonClass, 'flex-1 @lg:flex-initial')}
+              onClick={() => openFormDialog(null)}
+            >
+              <Plus className="size-4" />
+              New Form
+            </Button>
+          )}
+          {canAssign && (
+            <Button
+              type="button"
+              className={cn(evalPrimaryButtonClass, 'flex-1 @lg:flex-initial')}
+              onClick={() => setAssignWizardOpen(true)}
+            >
+              <Plus className="size-4" />
+              Assign Evaluation
+            </Button>
+          )}
         </div>
       </div>
-
-      {/* Dashboard Summary Cards */}
-      {dashboardSummary && (
-        <div className="grid w-full gap-3 @sm:grid-cols-2 @lg:grid-cols-4">
-          <Card className={cn(evalCardClass, 'overflow-hidden')}>
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Employees Evaluated</p>
-                  <p className="mt-1 text-4xl font-black tracking-tight text-foreground">{dashboardSummary.employees_evaluated || 0}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Total evaluated</p>
-                </div>
-                <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/15 dark:bg-blue-500/20">
-                  <Users className="size-5 text-blue-600 dark:text-blue-400" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className={cn(evalCardClass, 'overflow-hidden', pendingCount > 0 && 'border-amber-400/60 shadow-[0_0_18px_rgba(245,158,11,0.12)] dark:border-amber-500/40')}>
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Pending</p>
-                  <p className={`mt-1 text-4xl font-black tracking-tight ${pendingCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'}`}>
-                    {dashboardSummary.pending_evaluations || 0}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">Awaiting submission</p>
-                </div>
-                <div className={`flex size-10 items-center justify-center rounded-xl ${pendingCount > 0 ? 'bg-amber-500/20 animate-pulse' : 'bg-amber-500/10'}`}>
-                  <Clock className={`size-5 ${pendingCount > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-amber-500/50'}`} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className={cn(evalCardClass, 'overflow-hidden')}>
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Average Performance</p>
-                  <p className="mt-1 text-4xl font-black tracking-tight text-emerald-600 dark:text-emerald-400">
-                    {dashboardSummary.average_score != null ? `${dashboardSummary.average_score}%` : '—'}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {dashboardSummary.average_score != null
-                      ? ratingLabelFromPercentage(dashboardSummary.average_score)
-                      : 'Completed evaluations'}
-                  </p>
-                </div>
-                <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 dark:bg-emerald-500/20">
-                  <TrendingUp className="size-5 text-emerald-600 dark:text-emerald-400" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className={cn(evalCardClass, 'overflow-hidden')}>
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Top Performers</p>
-                  <p className="mt-1 text-4xl font-black tracking-tight text-foreground">{dashboardSummary.top_performers?.length || 0}</p>
-                  <p className="mt-1 text-xs text-muted-foreground truncate">
-                    {dashboardSummary.top_performers?.length > 0
-                      ? dashboardSummary.top_performers.slice(0, 2).map(p => p.employee).join(', ')
-                      : 'Highest rated'}
-                  </p>
-                </div>
-                <div className="flex size-10 items-center justify-center rounded-xl bg-violet-500/15 dark:bg-violet-500/20">
-                  <Star className="size-5 text-violet-600 dark:text-violet-400" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       {/* Tab Navigation — matches AdminLeave & AdminHoliday pill style */}
       <div className="flex flex-wrap gap-2">
@@ -657,10 +740,18 @@ export default function AdminEvaluation() {
           aria-label="Evaluation views"
         >
           {[
-            ...(canManageTemplates
-              ? [{ value: 'forms', label: 'Evaluation Forms', icon: FileSpreadsheet }]
+            ...(canViewDashboard
+              ? [{ value: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }]
               : []),
-            { value: 'evaluate', label: 'Evaluate', icon: ClipboardCheck },
+            ...(canManageTemplates
+              ? [{ value: 'templates', label: 'Templates', icon: FileSpreadsheet }]
+              : []),
+            ...(canAssign
+              ? [{ value: 'assignments', label: 'Assignments', icon: ClipboardCheck }]
+              : []),
+            ...(canEvaluate && !canAssign
+              ? [{ value: 'my-evaluations', label: 'My Evaluations', icon: UserCheck }]
+              : []),
             { value: 'results', label: 'Results', icon: List },
           ].map(({ value, label, icon: Icon }) => (
             <button
@@ -683,25 +774,107 @@ export default function AdminEvaluation() {
         </div>
       </div>
 
-      {/* ───── FORMS TAB ───── */}
-      {activeTab === 'forms' && (
+      {/* Admin summary — visible on every tab */}
+      {canViewDashboard && dashboardSummary && (
+        <div className="space-y-6">
+          <div className="grid w-full gap-3 @sm:grid-cols-2 @lg:grid-cols-5">
+            <Card className={cn(evalCardClass, 'overflow-hidden')}>
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Total Templates</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-foreground">{dashboardSummary.total_templates ?? formsCount}</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-violet-500/15">
+                    <FileSpreadsheet className="size-5 text-violet-600 dark:text-violet-400" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className={cn(evalCardClass, 'overflow-hidden')}>
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Active Assignments</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-foreground">{dashboardSummary.active_assignments ?? 0}</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/15">
+                    <UserCheck className="size-5 text-blue-600 dark:text-blue-400" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className={cn(evalCardClass, 'overflow-hidden')}>
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Completed</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-emerald-600">{dashboardSummary.completed_assignments ?? completedCount}</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/15">
+                    <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className={cn(evalCardClass, 'overflow-hidden')}>
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Pending</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-amber-600">{dashboardSummary.pending_assignments ?? pendingCount}</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/15">
+                    <Clock className="size-5 text-amber-600 dark:text-amber-400" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className={cn(evalCardClass, 'overflow-hidden', (dashboardSummary.overdue_assignments ?? 0) > 0 && 'border-rose-400/60')}>
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">Overdue</p>
+                    <p className="mt-1 text-4xl font-black tracking-tight text-rose-600">{dashboardSummary.overdue_assignments ?? 0}</p>
+                  </div>
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-rose-500/15">
+                    <AlertTriangle className="size-5 text-rose-600 dark:text-rose-400" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+          {dashboardSummary.average_score != null && (
+            <Card className={evalCardClass}>
+              <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
+                <div>
+                  <p className="text-sm text-muted-foreground">Average Performance (completed evaluations)</p>
+                  <p className="text-2xl font-bold text-emerald-600">{dashboardSummary.average_score}%</p>
+                </div>
+                {dashboardSummary.top_performers?.length > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Top: {dashboardSummary.top_performers.slice(0, 3).map(p => p.employee).join(', ')}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* ───── TEMPLATES TAB ───── */}
+      {activeTab === 'templates' && (
         <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
           <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="min-w-0">
-                <CardTitle className="text-lg font-semibold @md:text-xl">Evaluation Forms</CardTitle>
-                <CardDescription className="text-sm @md:text-[15px]">
-                  Create and manage customizable evaluation templates.
-                </CardDescription>
-              </div>
-              <Button onClick={() => openFormDialog(null)} className={evalPrimaryButtonClass}>
-                <Plus className="size-4" />
-                New Form
-              </Button>
+            <div className="min-w-0">
+              <CardTitle className="text-lg font-semibold @md:text-xl">Templates</CardTitle>
+              <CardDescription className="text-sm @md:text-[15px]">
+                Reusable SurveyJS evaluation forms. HR manages templates; heads only fill assigned evaluations.
+              </CardDescription>
+              {forms.length > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">{forms.length} form{forms.length !== 1 ? 's' : ''} created</p>
+              )}
             </div>
-            {forms.length > 0 && (
-              <p className="text-xs text-muted-foreground">{forms.length} form{forms.length !== 1 ? 's' : ''} created</p>
-            )}
           </CardHeader>
           <CardContent className="p-0">
             {formsLoading ? (
@@ -744,8 +917,266 @@ export default function AdminEvaluation() {
         </Card>
       )}
 
-      {/* ───── EVALUATE TAB ───── */}
-      {activeTab === 'evaluate' && (
+      {/* ───── ASSIGNMENTS TAB (HR) ───── */}
+      {activeTab === 'assignments' && canAssign && (
+        <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
+          <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
+            <div className="min-w-0">
+              <CardTitle className="text-lg font-semibold @md:text-xl">Assignments</CardTitle>
+              <CardDescription className="text-sm @md:text-[15px]">
+                Assign evaluations to employees with flexible evaluator selection.
+                {assignments.length > 0 && ` ${assignments.length} assignment${assignments.length === 1 ? '' : 's'}.`}
+              </CardDescription>
+            </div>
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={assignmentSearch}
+                onChange={(e) => setAssignmentSearch(e.target.value)}
+                placeholder="Search employees, forms..."
+                className="h-10 w-full rounded-xl border-border/60 bg-background/70 pl-9 text-sm shadow-sm dark:bg-background/35"
+              />
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {assignments.length === 0 ? (
+              <div className="flex min-h-[min(42vh,360px)] flex-col items-center justify-center px-6 py-16 text-center">
+                <div className="mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                  <ClipboardCheck className="size-11" strokeWidth={1.85} />
+                </div>
+                <p className="text-xl font-semibold tracking-tight text-foreground">No assignments yet</p>
+                <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
+                  Create an assignment to start an evaluation cycle for your team.
+                </p>
+                <Button onClick={() => setAssignWizardOpen(true)} className={cn(ADMIN_FORM_DIALOG_PRIMARY_BUTTON_CLASS, 'mt-7 h-11 rounded-xl px-6')}>
+                  <Plus className="size-4" />
+                  Assign Evaluation
+                </Button>
+              </div>
+            ) : (
+              <div className="min-w-0 flex-1 overflow-x-auto">
+                <table className="w-full min-w-[min(100%,900px)] text-sm">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[24%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[8%]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-border/70 bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-5 py-4 font-bold">Employee</th>
+                      <th className="px-5 py-4 font-bold">Template</th>
+                      <th className="px-5 py-4 font-bold">Evaluators</th>
+                      <th className="px-5 py-4 font-bold">Progress</th>
+                      <th className="px-5 py-4 font-bold">Deadline</th>
+                      <th className="px-5 py-4 font-bold">Status</th>
+                      <th className="px-5 py-4 text-right font-bold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-[13px]">
+                    {filteredAssignments.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-sm text-muted-foreground">
+                          No assignments match your search.
+                        </td>
+                      </tr>
+                    ) : filteredAssignments.map((a, idx) => {
+                      const emp = a.employee || {}
+                      const name = employeeFullName(emp)
+                      const evals = a.evaluations || []
+                      const completed = evals.filter(e => e.status === 'completed').length
+                      const total = evals.length
+                      const overdue = a.status !== 'completed' && a.end_date && new Date(a.end_date) < new Date()
+                      return (
+                        <tr
+                          key={a.id}
+                          className={cn(
+                            'group cursor-pointer border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/20',
+                            idx % 2 === 1 && 'bg-muted/10 dark:bg-muted/5',
+                          )}
+                          onClick={() => openAssignmentDetail(a)}
+                        >
+                          <td className="px-5 py-4 align-middle">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="size-9 shrink-0">
+                                <AvatarImage src={profileImageUrl(emp.profile_image)} />
+                                <AvatarFallback className="rounded-full bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
+                                  {initials(name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0">
+                                <p className="truncate font-semibold text-foreground">{name}</p>
+                                {emp.position && (
+                                  <p className="truncate text-xs text-muted-foreground">{emp.position}</p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 align-middle text-muted-foreground">{a.evaluation_form?.title || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-muted-foreground">
+                            {total} evaluator{total !== 1 ? 's' : ''}
+                          </td>
+                          <td className="px-5 py-4 align-middle font-semibold tabular-nums text-foreground">
+                            {completed} / {total} completed
+                          </td>
+                          <td className="px-5 py-4 align-middle text-muted-foreground tabular-nums">
+                            {formatDate(a.end_date)}
+                          </td>
+                          <td className="px-5 py-4 align-middle">{assignmentStatusBadge(a.status, overdue)}</td>
+                          <td className="px-5 py-4 text-right align-middle">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-9 rounded-lg"
+                              onClick={(e) => { e.stopPropagation(); openAssignmentDetail(a) }}
+                            >
+                              View
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ───── MY EVALUATIONS (Heads / Employees) ───── */}
+      {activeTab === 'my-evaluations' && !canAssign && (
+        <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
+          <CardHeader className="flex flex-col gap-4 border-b border-border/40 bg-muted/10 px-4 py-4 @sm:px-6 @sm:py-5 dark:border-border/50 dark:bg-muted/20">
+            <div className="min-w-0">
+              <CardTitle className="text-lg font-semibold @md:text-xl">My Evaluations</CardTitle>
+              <CardDescription className="text-sm @md:text-[15px]">
+                Evaluations assigned to you. Open and submit when ready.
+                {myPendingEvaluations.length > 0 && ` ${myPendingEvaluations.length} pending.`}
+              </CardDescription>
+            </div>
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                value={myEvalSearch}
+                onChange={(e) => setMyEvalSearch(e.target.value)}
+                placeholder="Search employees, forms..."
+                className="h-10 w-full rounded-xl border-border/60 bg-background/70 pl-9 text-sm shadow-sm dark:bg-background/35"
+              />
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {myPendingEvaluations.length === 0 ? (
+              <div className="flex min-h-[min(42vh,360px)] flex-col items-center justify-center px-6 py-16 text-center">
+                <div className="mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
+                  <CheckCircle2 className="size-11" strokeWidth={1.85} />
+                </div>
+                <p className="text-xl font-semibold tracking-tight text-foreground">All caught up</p>
+                <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
+                  No pending evaluations assigned to you right now.
+                </p>
+              </div>
+            ) : (
+              <div className="min-w-0 flex-1 overflow-x-auto">
+                <table className="w-full min-w-[min(100%,900px)] text-sm">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[24%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[12%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[18%]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-border/70 bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-5 py-4 font-bold">Employee</th>
+                      <th className="px-5 py-4 font-bold">Template</th>
+                      <th className="px-5 py-4 font-bold">Your Role</th>
+                      <th className="px-5 py-4 font-bold">Deadline</th>
+                      <th className="px-5 py-4 font-bold">Status</th>
+                      <th className="px-5 py-4 text-right font-bold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-[13px]">
+                    {filteredMyPendingEvaluations.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
+                          No evaluations match your search.
+                        </td>
+                      </tr>
+                    ) : filteredMyPendingEvaluations.map((ev, idx) => {
+                      const emp = ev.employee || {}
+                      const name = employeeFullName(emp)
+                      const endDate = ev.evaluation_assignment?.end_date
+                      const overdue = endDate && new Date(endDate) < new Date()
+                      const roleLabel = EVALUATOR_ROLE_LABELS[ev.evaluator_role] || ev.evaluator_role || 'Evaluator'
+                      return (
+                        <tr
+                          key={ev.id}
+                          className={cn(
+                            'group border-b border-border/60 transition-colors last:border-b-0 hover:bg-muted/20',
+                            idx % 2 === 1 && 'bg-muted/10 dark:bg-muted/5',
+                          )}
+                        >
+                          <td className="px-5 py-4 align-middle">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="size-9 shrink-0">
+                                <AvatarImage src={profileImageUrl(emp.profile_image)} />
+                                <AvatarFallback className="rounded-full bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
+                                  {initials(name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0">
+                                <p className="truncate font-semibold text-foreground">{name || 'Self Evaluation'}</p>
+                                {emp.position && (
+                                  <p className="truncate text-xs text-muted-foreground">{emp.position}</p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 align-middle text-muted-foreground">{ev.evaluation_form?.title || '—'}</td>
+                          <td className="px-5 py-4 align-middle text-muted-foreground">{roleLabel}</td>
+                          <td className="px-5 py-4 align-middle text-muted-foreground tabular-nums">
+                            {endDate ? formatDate(endDate) : '—'}
+                          </td>
+                          <td className="px-5 py-4 align-middle">
+                            {overdue ? (
+                              <Badge className="gap-1 rounded-full border-0 bg-amber-100 px-3 py-1 font-semibold text-amber-700 dark:bg-amber-900/50 dark:text-amber-200">
+                                <AlertTriangle className="size-3" />
+                                Overdue
+                              </Badge>
+                            ) : statusBadge(ev.status || 'draft')}
+                          </td>
+                          <td className="px-5 py-4 text-right align-middle">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className={cn(evalPrimaryButtonClass, 'h-9 rounded-lg px-4')}
+                              onClick={() => handleOpenPendingEvaluation(ev)}
+                            >
+                              Start
+                              <ChevronRight className="size-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Legacy evaluate tab — kept for reference, disabled */}
+      {activeTab === 'evaluate' && false && (
         <div className="space-y-5">
           {/* Employee Cards */}
           <Card className={cn(evalCardClass, 'w-full min-w-0 overflow-hidden')}>
@@ -1021,7 +1452,6 @@ export default function AdminEvaluation() {
                         evaluation={ev}
                         onView={setViewDialog}
                         onSubmit={handleSubmitEvaluation}
-                        onDelete={handleDeleteEvaluation}
                       />
                     </div>
                   ))}
@@ -1140,7 +1570,6 @@ export default function AdminEvaluation() {
                               evaluation={ev}
                               onView={setViewDialog}
                               onSubmit={handleSubmitEvaluation}
-                              onDelete={handleDeleteEvaluation}
                             />
                           </td>
                         </tr>
@@ -1153,6 +1582,145 @@ export default function AdminEvaluation() {
           </CardContent>
         </Card>
       )}
+
+      {/* ───── ASSIGN WIZARD ───── */}
+      <EvaluationAssignWizard
+        open={assignWizardOpen}
+        onOpenChange={setAssignWizardOpen}
+        forms={forms}
+        employees={employees}
+        companies={companies}
+        onAssigned={() => { loadBootstrap(); loadAssignments() }}
+      />
+
+      {/* ───── ASSIGNMENT DETAIL ───── */}
+      <Dialog
+        open={assignmentDetailOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setAssignmentDetailOpen(true)
+            return
+          }
+          closeAssignmentDetail()
+        }}
+      >
+        <DialogContent
+          showCloseButton
+          overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
+          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
+          className={ASSIGNMENT_DETAIL_MODAL_CLASS}
+          innerClassName="gap-0 overflow-hidden p-0 pr-0"
+          aria-describedby="assignment-detail-desc"
+        >
+          {assignmentDetail && (
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-8 pb-6 pt-8 text-left dark:to-brand/10 @md:px-12">
+                  <AgcBrandLogo className="mb-7 h-9 @md:h-10" />
+                  <div className="relative z-10 max-w-3xl space-y-3 pr-14 @md:pr-0">
+                    <DialogTitle className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">
+                      Assignment Details
+                    </DialogTitle>
+                    <DialogDescription id="assignment-detail-desc" className="text-base leading-relaxed text-muted-foreground @md:text-lg">
+                      Review assignment progress, evaluators, and deadline.
+                    </DialogDescription>
+                  </div>
+                </DialogHeader>
+
+                <div className="space-y-6 px-8 py-7 @md:px-12">
+                  {(() => {
+                    const emp = assignmentDetail.employee || {}
+                    const name = employeeFullName(emp)
+                    const evals = assignmentDetail.evaluations || []
+                    const completed = evals.filter(e => e.status === 'completed').length
+                    const total = evals.length
+                    const overdue = assignmentDetail.status !== 'completed'
+                      && assignmentDetail.end_date
+                      && new Date(assignmentDetail.end_date) < new Date()
+                    return (
+                      <>
+                        <div className="flex flex-col gap-5 rounded-2xl border border-border/70 bg-muted/10 p-6 @md:flex-row @md:items-center">
+                          <EvalEmployeeAvatar employee={emp} className="size-16 rounded-2xl" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Employee</p>
+                            <p className="mt-1 text-xl font-bold text-foreground">{name}</p>
+                            <p className="mt-1 text-sm text-muted-foreground">{emp.position || 'No position'}</p>
+                          </div>
+                          {assignmentStatusBadge(assignmentDetail.status, overdue)}
+                        </div>
+
+                        <div className="grid gap-4 @lg:grid-cols-2">
+                          <div className="rounded-2xl border border-border/70 bg-card p-5">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Template</p>
+                            <p className="mt-2 text-base font-semibold leading-snug text-foreground">
+                              {assignmentDetail.evaluation_form?.title || '—'}
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-border/70 bg-card p-5">
+                            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Deadline</p>
+                            <p className="mt-2 flex items-center gap-2 text-base font-semibold text-foreground">
+                              <CalendarClock className="size-4 text-muted-foreground" />
+                              {formatDateFull(assignmentDetail.end_date)}
+                            </p>
+                            {assignmentDetail.start_date && (
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                Started {formatDate(assignmentDetail.start_date)}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-border/70 bg-card p-5">
+                          <AssignmentProgressBar completed={completed} total={total} />
+                        </div>
+
+                        <div>
+                          <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                            Evaluators ({total})
+                          </p>
+                          <div className="grid gap-3 @md:grid-cols-2">
+                            {evals.map(e => {
+                              const evaluator = e.evaluator || {}
+                              const evaluatorName = employeeFullName(evaluator) || EVALUATOR_ROLE_LABELS[e.evaluator_role] || e.evaluator_role
+                              const roleLabel = EVALUATOR_ROLE_LABELS[e.evaluator_role] || e.evaluator_role
+                              return (
+                                <div
+                                  key={e.id}
+                                  className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/10 px-4 py-3.5"
+                                >
+                                  <div className="flex min-w-0 items-center gap-3">
+                                    <EvalEmployeeAvatar employee={evaluator} className="size-10" />
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-semibold text-foreground">{evaluatorName}</p>
+                                      <p className="truncate text-xs text-muted-foreground">{roleLabel}</p>
+                                    </div>
+                                  </div>
+                                  {statusBadge(e.status === 'completed' ? 'completed' : e.status === 'submitted' ? 'submitted' : 'draft')}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      </>
+                    )
+                  })()}
+                </div>
+              </div>
+
+              <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-8 py-5 @md:px-12">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 min-w-32 rounded-xl border-border/80 px-6 text-base font-semibold"
+                  onClick={closeAssignmentDetail}
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ───── SURVEYJS CREATOR MODAL ───── */}
       <EvaluationSurveyCreatorModal

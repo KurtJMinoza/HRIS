@@ -22,8 +22,10 @@ class Evaluation extends Model
         'branch_id',
         'department_id',
         'evaluation_form_id',
+        'evaluation_assignment_id',
         'employee_id',
         'evaluator_id',
+        'evaluator_role',
         'overall_score',
         'overall_rating',
         'scores',
@@ -100,6 +102,11 @@ class Evaluation extends Model
     public function evaluationForm(): BelongsTo
     {
         return $this->belongsTo(EvaluationForm::class, 'evaluation_form_id');
+    }
+
+    public function evaluationAssignment(): BelongsTo
+    {
+        return $this->belongsTo(EvaluationAssignment::class, 'evaluation_assignment_id');
     }
 
     public function employee(): BelongsTo

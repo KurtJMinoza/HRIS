@@ -74,7 +74,7 @@ function authenticatedRoutes() {
       <Route
         path="evaluations"
         element={(
-          <ProtectedRoute role="employee" permissions={['evaluations.create', 'evaluations.view', 'evaluations.review']}>
+          <ProtectedRoute role="employee" permissions={['evaluations.view']}>
             {withSuspense(<AdminEvaluation />, <DataTableRouteFallback titleWidth="w-72" />)}
           </ProtectedRoute>
         )}

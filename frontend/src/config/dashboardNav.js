@@ -171,7 +171,7 @@ export const employeeNavItems = [
         end: false,
         label: 'Evaluations',
         icon: ClipboardCheck,
-        requiredPermissions: ['evaluations.create', 'evaluations.view', 'evaluations.review'],
+        requiredPermissions: ['evaluations.view'],
       },
     ],
   },

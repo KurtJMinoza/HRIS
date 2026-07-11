@@ -224,6 +224,45 @@ Route::middleware('auth:sanctum')->group(function () {
     /** Subject employee: read-only list of recommendations about self (no HR panel required). */
     Route::get('/regularization/my-status', [RegularizationController::class, 'myRegularizationAsSubject']);
 
+    // Performance Evaluations — all roster employees; permission-gated, not HR-panel-only.
+    Route::middleware('permission:evaluations.view|evaluations.create|evaluations.review|employees.view')->group(function () {
+        Route::get('/admin/evaluations', [EvaluationController::class, 'index']);
+        Route::get('/admin/evaluations/scope-meta', [EvaluationController::class, 'scopeMeta']);
+        Route::get('/admin/evaluations/bootstrap', [EvaluationController::class, 'bootstrap']);
+        Route::get('/admin/evaluations/forms', [EvaluationController::class, 'formsIndex']);
+        Route::post('/admin/evaluations/forms', [EvaluationController::class, 'formsStore']);
+        Route::get('/admin/evaluations/forms/{id}', [EvaluationController::class, 'formsShow']);
+        Route::patch('/admin/evaluations/forms/{id}', [EvaluationController::class, 'formsUpdate']);
+        Route::delete('/admin/evaluations/forms/{id}', [EvaluationController::class, 'formsDestroy']);
+        Route::get('/admin/evaluations/companies', [EvaluationController::class, 'companies']);
+        Route::get('/admin/evaluations/employees', [EvaluationController::class, 'employees']);
+        Route::get('/admin/evaluations/assignments', [EvaluationController::class, 'assignmentsIndex']);
+        Route::post('/admin/evaluations/assignments/evaluator-preview', [EvaluationController::class, 'evaluatorPreview']);
+        Route::post('/admin/evaluations/assignments', [EvaluationController::class, 'assignmentsStore']);
+        Route::get('/admin/evaluations/assignments/{id}', [EvaluationController::class, 'assignmentsShow']);
+        Route::get('/admin/evaluations/my-pending', [EvaluationController::class, 'myPendingEvaluations']);
+        Route::get('/admin/evaluations/dashboard/summary', [EvaluationController::class, 'dashboardSummary']);
+        Route::get('/admin/evaluations/employee/{employeeId}/history', [EvaluationController::class, 'employeeHistory']);
+        Route::post('/admin/evaluations', [EvaluationController::class, 'store']);
+        Route::get('/admin/evaluations/{id}', [EvaluationController::class, 'show']);
+        Route::patch('/admin/evaluations/{id}', [EvaluationController::class, 'update']);
+        Route::delete('/admin/evaluations/{id}', [EvaluationController::class, 'destroy']);
+        Route::post('/admin/evaluations/{id}/submit', [EvaluationController::class, 'submit']);
+    });
+
+    // Employee self-service evaluations — same controller, never behind hr.panel.
+    Route::middleware('permission:evaluations.view|evaluations.create|evaluations.review')->prefix('employee/evaluations')->group(function () {
+        Route::get('/bootstrap', [EvaluationController::class, 'bootstrap']);
+        Route::get('/scope-meta', [EvaluationController::class, 'scopeMeta']);
+        Route::get('/my-pending', [EvaluationController::class, 'myPendingEvaluations']);
+        Route::get('/widget', [EvaluationController::class, 'employeeDashboardWidget']);
+        Route::get('/dashboard/summary', [EvaluationController::class, 'dashboardSummary']);
+        Route::get('/', [EvaluationController::class, 'index']);
+        Route::get('/{id}', [EvaluationController::class, 'show'])->whereNumber('id');
+        Route::patch('/{id}', [EvaluationController::class, 'update'])->whereNumber('id');
+        Route::post('/{id}/submit', [EvaluationController::class, 'submit'])->whereNumber('id');
+    });
+
     Route::middleware(['hr.panel'])->group(function () {
         // Regularization: org heads + admin HR recommend (not plain employees)
         Route::get('/regularization/eligible-employees', [RegularizationController::class, 'eligibleEmployees']);
@@ -774,28 +813,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/email-notifications/test', [EmailNotificationController::class, 'testEmail']);
             Route::post('/admin/email-notifications/clear-cache', [EmailNotificationController::class, 'clearCache']);
         });
-
-        // ─── Performance Evaluations ─────────────────────────────────
-        Route::middleware('permission:employees.view|evaluations.view|evaluations.create|evaluations.review')->group(function () {
-            Route::get('/admin/evaluations', [EvaluationController::class, 'index']);
-            Route::get('/admin/evaluations/scope-meta', [EvaluationController::class, 'scopeMeta']);
-            Route::get('/admin/evaluations/bootstrap', [EvaluationController::class, 'bootstrap']);
-            Route::get('/admin/evaluations/forms', [EvaluationController::class, 'formsIndex']);
-            Route::post('/admin/evaluations/forms', [EvaluationController::class, 'formsStore']);
-            Route::get('/admin/evaluations/forms/{id}', [EvaluationController::class, 'formsShow']);
-            Route::patch('/admin/evaluations/forms/{id}', [EvaluationController::class, 'formsUpdate']);
-            Route::delete('/admin/evaluations/forms/{id}', [EvaluationController::class, 'formsDestroy']);
-            Route::get('/admin/evaluations/companies', [EvaluationController::class, 'companies']);
-            Route::get('/admin/evaluations/employees', [EvaluationController::class, 'employees']);
-            Route::post('/admin/evaluations', [EvaluationController::class, 'store']);
-            Route::get('/admin/evaluations/{id}', [EvaluationController::class, 'show']);
-            Route::patch('/admin/evaluations/{id}', [EvaluationController::class, 'update']);
-            Route::delete('/admin/evaluations/{id}', [EvaluationController::class, 'destroy']);
-            Route::post('/admin/evaluations/{id}/submit', [EvaluationController::class, 'submit']);
-            Route::get('/admin/evaluations/employee/{employeeId}/history', [EvaluationController::class, 'employeeHistory']);
-            Route::get('/admin/evaluations/dashboard/summary', [EvaluationController::class, 'dashboardSummary']);
-        });
-        Route::get('/employee/evaluations/widget', [EvaluationController::class, 'employeeDashboardWidget']);
 
         // Employee status management and regularization approval (HR)
         Route::middleware('permission:employees.view')->group(function () {

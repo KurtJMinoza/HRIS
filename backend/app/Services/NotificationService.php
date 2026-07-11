@@ -23,6 +23,7 @@ class NotificationService
         'payslip',
         'attendance',
         'reports',
+        'evaluations',
     ];
 
     public function notifyUser(User|int $recipient, array $payload): ?HrisNotification
@@ -361,6 +362,7 @@ class NotificationService
                 ? 'attendance_correction'
                 : 'attendance',
             'attendance_correction' => 'attendance_correction',
+            'evaluation', 'evaluations' => 'evaluations',
             'leave', 'overtime', 'payroll', 'payslip', 'dashboard' => $prefix,
             default => 'dashboard',
         };

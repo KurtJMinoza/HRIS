@@ -183,10 +183,11 @@ return [
         ['slug' => 'email_notifications.manage', 'module' => 'email_notifications', 'label' => 'Manage email notifications', 'description' => 'Configure email notification settings, templates, and retry failed emails'],
 
         // 21. Performance Evaluation
-        ['slug' => 'evaluations.view', 'module' => 'evaluations', 'label' => 'View evaluations', 'description' => 'View evaluation records in scope'],
-        ['slug' => 'evaluations.create', 'module' => 'evaluations', 'label' => 'Create evaluations', 'description' => 'Create and submit evaluations for employees in scope'],
-        ['slug' => 'evaluations.review', 'module' => 'evaluations', 'label' => 'Review evaluations', 'description' => 'Review and complete submitted evaluations'],
+        ['slug' => 'evaluations.view', 'module' => 'evaluations', 'label' => 'View evaluations', 'description' => 'Open the Performance Evaluation module and view assigned or own evaluation records'],
+        ['slug' => 'evaluations.create', 'module' => 'evaluations', 'label' => 'Complete evaluations', 'description' => 'Fill and submit assigned evaluations (self, supervisor, peer, or other assigned roles)'],
+        ['slug' => 'evaluations.review', 'module' => 'evaluations', 'label' => 'Review evaluations', 'description' => 'Review and complete submitted evaluations (HR / reviewers)'],
         ['slug' => 'evaluations.templates.manage', 'module' => 'evaluations', 'label' => 'Manage evaluation templates', 'description' => 'Create, edit, archive, and delete evaluation form templates (Admin HR only)'],
+        ['slug' => 'evaluations.assign', 'module' => 'evaluations', 'label' => 'Assign evaluations', 'description' => 'Create evaluation assignments and assign evaluators (Admin HR only)'],
     ],
 
     /**
@@ -440,6 +441,8 @@ return [
             'loans.request',
             'payslip.view',
             'holidays.view',
+            'evaluations.view',
+            'evaluations.create',
         ],
         'team_lead' => [
             'profile.view',
@@ -462,6 +465,8 @@ return [
             'can_access_reports_module',
             'can_view_own_reports',
             'can_view_subordinate_reports',
+            'evaluations.view',
+            'evaluations.create',
         ],
     ],
 ];

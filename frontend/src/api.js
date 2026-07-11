@@ -8298,15 +8298,23 @@ export async function saveThirteenthMonthSettings(payload) {
 
 // ── Performance Evaluations ────────────────────────────────────────────
 
+/** Employee shell uses /employee/evaluations/*; HR panel uses /admin/evaluations/*. */
+function evaluationApiPrefix() {
+  if (typeof window !== 'undefined' && /\/employee(\/|$)/.test(window.location.pathname)) {
+    return '/employee/evaluations'
+  }
+  return '/admin/evaluations'
+}
+
 export async function getEvaluationScopeMeta() {
-  const res = await authenticatedFetch('/admin/evaluations/scope-meta')
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}/scope-meta`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation scope meta')
   return data
 }
 
 export async function getEvaluationBootstrap() {
-  const res = await authenticatedFetch('/admin/evaluations/bootstrap')
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}/bootstrap`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation module')
   return data
@@ -8375,14 +8383,14 @@ export async function getEvaluations(params = {}) {
   if (params.evaluation_form_id) qs.set('evaluation_form_id', String(params.evaluation_form_id))
   if (params.status) qs.set('status', params.status)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
-  const res = await authenticatedFetch(`/admin/evaluations${suffix}`)
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}${suffix}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluations')
   return data
 }
 
 export async function createEvaluation(payload) {
-  const res = await authenticatedFetch('/admin/evaluations', {
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -8394,14 +8402,14 @@ export async function createEvaluation(payload) {
 }
 
 export async function getEvaluation(id) {
-  const res = await authenticatedFetch(`/admin/evaluations/${id}`)
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}/${id}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation')
   return data
 }
 
 export async function updateEvaluation(id, payload) {
-  const res = await authenticatedFetch(`/admin/evaluations/${id}`, {
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
@@ -8420,7 +8428,7 @@ export async function deleteEvaluation(id) {
 }
 
 export async function submitEvaluation(id) {
-  const res = await authenticatedFetch(`/admin/evaluations/${id}/submit`, { method: 'POST' })
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}/${id}/submit`, { method: 'POST' })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to submit evaluation')
   return data
@@ -8434,7 +8442,7 @@ export async function getEmployeeEvaluationHistory(employeeId) {
 }
 
 export async function getEvaluationDashboardSummary() {
-  const res = await authenticatedFetch('/admin/evaluations/dashboard/summary')
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}/dashboard/summary`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation dashboard')
   return data
@@ -8444,5 +8452,53 @@ export async function getEmployeeEvaluationWidget() {
   const res = await authenticatedFetch('/employee/evaluations/widget')
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation widget')
+  return data
+}
+
+export async function getEvaluationAssignments(params = {}) {
+  const qs = new URLSearchParams()
+  if (params.per_page) qs.set('per_page', String(params.per_page))
+  if (params.status) qs.set('status', params.status)
+  if (params.employee_id) qs.set('employee_id', String(params.employee_id))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/evaluations/assignments${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation assignments')
+  return data
+}
+
+export async function getEvaluationEvaluatorPreview(payload) {
+  const res = await authenticatedFetch('/admin/evaluations/assignments/evaluator-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluator suggestions')
+  return data
+}
+
+export async function createEvaluationAssignment(payload) {
+  const res = await authenticatedFetch('/admin/evaluations/assignments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to create evaluation assignment')
+  return data
+}
+
+export async function getEvaluationAssignment(id) {
+  const res = await authenticatedFetch(`/admin/evaluations/assignments/${id}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load evaluation assignment')
+  return data
+}
+
+export async function getMyPendingEvaluations() {
+  const res = await authenticatedFetch(`${evaluationApiPrefix()}/my-pending`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load pending evaluations')
   return data
 }

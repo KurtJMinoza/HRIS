@@ -6,10 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Enums\HrRole;
 use App\Models\Company;
 use App\Models\Evaluation;
+use App\Models\EvaluationAssignment;
 use App\Models\EvaluationForm;
 use App\Models\HrisNotification;
 use App\Models\User;
+use App\Models\Branch;
 use App\Services\DataScopeService;
+use App\Services\EvaluationAssignmentService;
+use App\Services\EvaluationEvaluatorResolver;
 use App\Services\EvaluationPrefillService;
 use App\Services\EvaluationScoringService;
 use App\Services\HrRoleResolver;
@@ -24,6 +28,8 @@ class EvaluationController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly EvaluationScoringService $evaluationScoringService,
         private readonly EvaluationPrefillService $evaluationPrefillService,
+        private readonly EvaluationAssignmentService $assignmentService,
+        private readonly EvaluationEvaluatorResolver $evaluatorResolver,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly RbacService $rbacService,
     ) {}
@@ -67,7 +73,13 @@ class EvaluationController extends Controller
             'companies' => $companies,
             'employees' => $employees,
             'evaluations' => $this->buildEvaluationsQuery($scopedEmployeeIds)->paginate(50),
-            'dashboard' => $this->buildDashboardSummary($scopedEmployeeIds),
+            'assignments' => $this->assignmentService
+                ->buildAssignmentsQuery($scopedEmployeeIds)
+                ->paginate(50),
+            'my_pending_evaluations' => $this->assignmentService->pendingForEvaluator($user),
+            'dashboard' => $scopeMeta['can_view_dashboard']
+                ? $this->buildDashboardSummary($scopedEmployeeIds)
+                : null,
         ]);
     }
 
@@ -83,13 +95,18 @@ class EvaluationController extends Controller
         $hrRole = $this->hrRoleResolver->resolve($user);
 
         $canManageTemplates = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.templates.manage', $permSet, true);
+        // Template managers (HR) always assign — avoids missing tab when evaluations.assign isn't seeded yet.
+        $canAssign = $canManageTemplates || in_array('evaluations.assign', $permSet, true);
         $canEvaluate = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.create', $permSet, true);
         $canReview = $isAdmin || $hrRole === HrRole::AdminHr || in_array('evaluations.review', $permSet, true);
 
         return [
             'can_manage_templates' => $canManageTemplates,
+            'can_assign' => $canAssign,
             'can_evaluate' => $canEvaluate,
             'can_review' => $canReview,
+            'can_view_dashboard' => $isAdmin,
+            'evaluator_role_types' => EvaluationEvaluatorResolver::ROLE_TYPES,
             'hr_role' => $hrRole->value,
             'hr_role_label' => $hrRole->badgeLabel(),
             'scope' => $this->resolveScopeKind($user),
@@ -103,6 +120,11 @@ class EvaluationController extends Controller
 
         if ($hrRole === HrRole::AdminHr) {
             return null;
+        }
+
+        // All roster employees participate in evaluations (self, peer, assigned evaluator).
+        if ($hrRole === HrRole::Employee) {
+            return [(int) $user->id];
         }
 
         $ids = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($user);
@@ -425,6 +447,7 @@ class EvaluationController extends Controller
 
         $alreadyEvaluated = Evaluation::query()
             ->where('employee_id', $validated['employee_id'])
+            ->whereNull('evaluation_assignment_id')
             ->whereIn('status', ['submitted', 'under_review', 'completed'])
             ->exists();
         if ($alreadyEvaluated) {
@@ -555,6 +578,12 @@ class EvaluationController extends Controller
 
         $this->ensureEvaluationInScope($request->user(), $evaluation);
 
+        if ($evaluation->evaluation_assignment_id !== null) {
+            return response()->json([
+                'message' => 'Assigned evaluations cannot be deleted.',
+            ], 422);
+        }
+
         $evaluation->delete();
 
         return response()->json(['message' => 'Evaluation deleted successfully.']);
@@ -572,6 +601,10 @@ class EvaluationController extends Controller
             return response()->json(['message' => 'Evaluation is already submitted.'], 422);
         }
 
+        if ((int) $evaluation->evaluator_id !== (int) $request->user()->id) {
+            return response()->json(['message' => 'Only the assigned evaluator can submit this evaluation.'], 403);
+        }
+
         $evaluation->load('evaluationForm');
         $this->computeOverallRating($evaluation);
 
@@ -585,6 +618,13 @@ class EvaluationController extends Controller
 
         $this->sendNotification($evaluation, 'completed');
 
+        if ($evaluation->evaluation_assignment_id) {
+            $assignment = EvaluationAssignment::find($evaluation->evaluation_assignment_id);
+            if ($assignment) {
+                $this->assignmentService->syncAssignmentStatus($assignment);
+            }
+        }
+
         return response()->json([
             'message' => 'Evaluation submitted and completed.',
             'evaluation' => $evaluation->fresh([
@@ -594,6 +634,207 @@ class EvaluationController extends Controller
                 'company:id,name',
             ]),
         ]);
+    }
+
+    // ─── Assignments ────────────────────────────────────────────────
+
+    public function assignmentsIndex(Request $request): JsonResponse
+    {
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($request->user());
+        $query = $this->assignmentService->buildAssignmentsQuery($scopedEmployeeIds);
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->string('status'));
+        }
+
+        if ($request->filled('employee_id')) {
+            $query->where('employee_id', $request->integer('employee_id'));
+        }
+
+        $perPage = min($request->integer('per_page', 25), 100);
+
+        return response()->json($query->paginate($perPage));
+    }
+
+    /**
+     * Given the selected employees (explicit IDs or org filters), return only the
+     * hierarchy evaluator levels that resolve to someone in their reporting chains,
+     * plus the always-available organizational options (HR, self, custom).
+     */
+    public function evaluatorPreview(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $scopeMeta = $this->buildScopeMeta($user);
+        if (!$scopeMeta['can_assign']) {
+            return response()->json(['message' => 'You are not authorized to assign evaluations.'], 403);
+        }
+
+        $validated = $request->validate([
+            'employee_ids' => ['sometimes', 'array'],
+            'employee_ids.*' => ['integer', 'exists:users,id'],
+            'company_id' => ['sometimes', 'integer', 'exists:companies,id'],
+            'area_id' => ['sometimes', 'integer', 'exists:areas,id'],
+            'branch_id' => ['sometimes', 'integer', 'exists:branches,id'],
+            'division_id' => ['sometimes', 'integer', 'exists:divisions,id'],
+            'department_id' => ['sometimes', 'integer', 'exists:departments,id'],
+            'section_unit_id' => ['sometimes', 'integer', 'exists:section_units,id'],
+        ]);
+
+        $employeeIds = $this->resolveTargetEmployeeIds($validated, $user);
+        if ($employeeIds === []) {
+            return response()->json([
+                'hierarchy' => [],
+                'special' => array_map(fn (string $role) => [
+                    'role' => $role,
+                    'label' => $this->evaluatorResolver->roleLabel($role),
+                ], EvaluationEvaluatorResolver::SPECIAL_ROLES),
+                'employee_count' => 0,
+            ]);
+        }
+
+        $employees = User::query()
+            ->whereIn('id', $employeeIds)
+            ->get();
+
+        return response()->json($this->evaluatorResolver->previewForEmployees($employees));
+    }
+
+    public function assignmentsStore(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $scopeMeta = $this->buildScopeMeta($user);
+        if (!$scopeMeta['can_assign']) {
+            return response()->json(['message' => 'You are not authorized to assign evaluations.'], 403);
+        }
+
+        $validated = $request->validate([
+            'evaluation_form_id' => ['required', 'integer', 'exists:evaluation_forms,id'],
+            'employee_ids' => ['sometimes', 'array', 'min:1'],
+            'employee_ids.*' => ['integer', 'exists:users,id'],
+            'company_id' => ['sometimes', 'integer', 'exists:companies,id'],
+            'area_id' => ['sometimes', 'integer', 'exists:areas,id'],
+            'branch_id' => ['sometimes', 'integer', 'exists:branches,id'],
+            'division_id' => ['sometimes', 'integer', 'exists:divisions,id'],
+            'department_id' => ['sometimes', 'integer', 'exists:departments,id'],
+            'section_unit_id' => ['sometimes', 'integer', 'exists:section_units,id'],
+            'evaluator_roles' => ['required', 'array', 'min:1'],
+            'evaluator_roles.*' => ['string', 'in:' . implode(',', EvaluationEvaluatorResolver::ROLE_TYPES)],
+            'custom_evaluator_ids' => ['sometimes', 'array'],
+            'custom_evaluator_ids.*' => ['integer', 'exists:users,id'],
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'after_or_equal:start_date'],
+            'reminder_days' => ['sometimes', 'array'],
+            'reminder_days.*' => ['integer', 'min:0', 'max:30'],
+        ]);
+
+        $employeeIds = $this->resolveTargetEmployeeIds($validated, $user);
+        if ($employeeIds === []) {
+            return response()->json(['message' => 'No employees matched the selection.'], 422);
+        }
+
+        $form = EvaluationForm::query()
+            ->where('is_active', true)
+            ->findOrFail($validated['evaluation_form_id']);
+
+        $assignments = $this->assignmentService->createBulk(
+            $user,
+            $form,
+            $employeeIds,
+            $validated['evaluator_roles'],
+            $validated['custom_evaluator_ids'] ?? [],
+            $validated['start_date'],
+            $validated['end_date'],
+            $validated['reminder_days'] ?? null,
+        );
+
+        if ($assignments === []) {
+            return response()->json([
+                'message' => 'No evaluators could be resolved for the selected employees.',
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => count($assignments) . ' evaluation assignment(s) created.',
+            'assignments' => $assignments,
+        ], 201);
+    }
+
+    public function assignmentsShow(Request $request, int $id): JsonResponse
+    {
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($request->user());
+        $query = $this->assignmentService->buildAssignmentsQuery($scopedEmployeeIds);
+        $assignment = $query->findOrFail($id);
+
+        $progress = $assignment->progressCounts();
+        $evaluators = $assignment->evaluations->map(fn (Evaluation $e) => [
+            'id' => $e->id,
+            'role' => $e->evaluator_role,
+            'role_label' => $this->evaluatorResolver->roleLabel((string) $e->evaluator_role),
+            'status' => $e->status,
+            'evaluator' => $e->evaluator
+                ? trim($e->evaluator->first_name . ' ' . $e->evaluator->last_name)
+                : null,
+            'submitted_at' => $e->submitted_at,
+        ]);
+
+        return response()->json([
+            'assignment' => $assignment,
+            'progress' => $progress,
+            'evaluators' => $evaluators,
+            'is_overdue' => $assignment->isOverdue(),
+        ]);
+    }
+
+    public function myPendingEvaluations(Request $request): JsonResponse
+    {
+        return response()->json([
+            'evaluations' => $this->assignmentService->pendingForEvaluator($request->user()),
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @return list<int>
+     */
+    private function resolveTargetEmployeeIds(array $validated, User $user): array
+    {
+        if (!empty($validated['employee_ids'])) {
+            $ids = array_map('intval', $validated['employee_ids']);
+        } else {
+            $query = User::query()->activeRoster();
+
+            if (!empty($validated['company_id'])) {
+                $query->where('company_id', (int) $validated['company_id']);
+            }
+            if (!empty($validated['area_id'])) {
+                $branchIds = Branch::query()
+                    ->where('area_id', (int) $validated['area_id'])
+                    ->pluck('id');
+                $query->whereIn('branch_id', $branchIds);
+            }
+            if (!empty($validated['branch_id'])) {
+                $query->where('branch_id', (int) $validated['branch_id']);
+            }
+            if (!empty($validated['division_id'])) {
+                $query->where('division_id', (int) $validated['division_id']);
+            }
+            if (!empty($validated['department_id'])) {
+                $query->where('department_id', (int) $validated['department_id']);
+            }
+            if (!empty($validated['section_unit_id'])) {
+                $query->where('section_unit_id', (int) $validated['section_unit_id']);
+            }
+
+            $ids = $query->pluck('id')->map(fn ($id) => (int) $id)->all();
+        }
+
+        $scopedIds = $this->getEvaluationScopeEmployeeIds($user);
+        if ($scopedIds !== null) {
+            $scopedSet = array_flip($scopedIds);
+            $ids = array_values(array_filter($ids, fn (int $id) => isset($scopedSet[$id])));
+        }
+
+        return array_values(array_unique($ids));
     }
 
     // ─── Employee Profile Endpoint ──────────────────────────────────
@@ -639,7 +880,12 @@ class EvaluationController extends Controller
 
     public function dashboardSummary(Request $request): JsonResponse
     {
-        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($request->user());
+        $user = $request->user();
+        if (!$user->isAdmin()) {
+            return response()->json(['message' => 'Forbidden. Admin access required.'], 403);
+        }
+
+        $scopedEmployeeIds = $this->getEvaluationScopeEmployeeIds($user);
 
         return response()->json($this->buildDashboardSummary($scopedEmployeeIds));
     }
@@ -650,6 +896,28 @@ class EvaluationController extends Controller
      */
     private function buildDashboardSummary(?array $scopedEmployeeIds): array
     {
+        $formsCount = EvaluationForm::query()->where('is_active', true)->count();
+
+        $assignmentBase = EvaluationAssignment::query();
+        if ($scopedEmployeeIds !== null) {
+            $assignmentBase->whereIn('employee_id', $scopedEmployeeIds);
+        }
+
+        $assignmentCounts = (clone $assignmentBase)
+            ->selectRaw('status, COUNT(*) as aggregate')
+            ->groupBy('status')
+            ->pluck('aggregate', 'status');
+
+        $activeAssignments = (int) ($assignmentCounts[EvaluationAssignment::STATUS_PENDING] ?? 0)
+            + (int) ($assignmentCounts[EvaluationAssignment::STATUS_IN_PROGRESS] ?? 0);
+        $completedAssignments = (int) ($assignmentCounts[EvaluationAssignment::STATUS_COMPLETED] ?? 0);
+        $pendingAssignments = (int) ($assignmentCounts[EvaluationAssignment::STATUS_PENDING] ?? 0);
+
+        $overdue = (clone $assignmentBase)
+            ->whereNotIn('status', [EvaluationAssignment::STATUS_COMPLETED, EvaluationAssignment::STATUS_CANCELLED])
+            ->whereDate('end_date', '<', now()->toDateString())
+            ->count();
+
         $base = Evaluation::query();
         if ($scopedEmployeeIds !== null) {
             $base->whereIn('employee_id', $scopedEmployeeIds);
@@ -703,6 +971,11 @@ class EvaluationController extends Controller
             ]);
 
         return [
+            'total_templates' => $formsCount,
+            'active_assignments' => $activeAssignments,
+            'completed_assignments' => $completedAssignments,
+            'pending_assignments' => $pendingAssignments,
+            'overdue_assignments' => $overdue,
             'employees_evaluated' => $employeesEvaluated,
             'pending_evaluations' => $pending,
             'average_score' => $avgScore ? round($avgScore, 2) : null,
@@ -741,6 +1014,10 @@ class EvaluationController extends Controller
 
     private function ensureEvaluationInScope(User $user, Evaluation $evaluation): void
     {
+        if ((int) $evaluation->evaluator_id === (int) $user->id) {
+            return;
+        }
+
         $scopedIds = $this->getEvaluationScopeEmployeeIds($user);
         if ($scopedIds !== null && !in_array((int) $evaluation->employee_id, $scopedIds, true)) {
             abort(403, 'Forbidden.');

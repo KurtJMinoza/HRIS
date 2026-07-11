@@ -1,4 +1,4 @@
-import { Eye, Send, Trash2 } from 'lucide-react'
+import { Eye, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -40,7 +40,6 @@ export default function EvaluationRowActions({
   evaluation,
   onView,
   onSubmit,
-  onDelete,
   className,
 }) {
   if (!evaluation) return null
@@ -52,14 +51,9 @@ export default function EvaluationRowActions({
       </EvalActionButton>
 
       {evaluation.status === 'draft' && (
-        <>
-          <EvalActionButton label="Submit evaluation" tone="success" onClick={() => onSubmit?.(evaluation.id)}>
-            <Send className="size-4" />
-          </EvalActionButton>
-          <EvalActionButton label="Delete draft" tone="danger" onClick={() => onDelete?.(evaluation.id)}>
-            <Trash2 className="size-4" />
-          </EvalActionButton>
-        </>
+        <EvalActionButton label="Submit evaluation" tone="success" onClick={() => onSubmit?.(evaluation.id)}>
+          <Send className="size-4" />
+        </EvalActionButton>
       )}
     </div>
   )
