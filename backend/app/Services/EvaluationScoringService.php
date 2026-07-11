@@ -222,12 +222,6 @@ class EvaluationScoringService
             'expression' => $overallExpr,
             'displayStyle' => 'decimal',
         ];
-        $elements[] = [
-            'type' => 'expression',
-            'name' => 'overall_rating',
-            'title' => 'Overall Performance Level',
-            'expression' => "if({overall_percentage} >= 90, 'Outstanding', if({overall_percentage} >= 70, 'Very Good', if({overall_percentage} >= 50, 'Good', if({overall_percentage} >= 30, 'Needs Improvement', 'Unsatisfactory'))))",
-        ];
 
         return $elements;
     }

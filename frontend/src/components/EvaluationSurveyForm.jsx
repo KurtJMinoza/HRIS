@@ -3,6 +3,7 @@ import { Model } from 'survey-core'
 import { Survey } from 'survey-react-ui'
 import 'survey-core/survey-core.min.css'
 import { normalizeSurveyJsonExpressions, scoresFromSurvey, surveyDataFromScores, syncModelDataForScoring, unlockEvaluationPrefillQuestions } from '@/lib/surveyConfig'
+import { applyWeightedSummaryExpressions } from '@/lib/evaluationScoring'
 
 function applySurveyDataToModel(model, surveyJson, scores, suppressNotifyRef) {
   suppressNotifyRef.current = true
@@ -27,6 +28,7 @@ const EvaluationSurveyForm = forwardRef(function EvaluationSurveyForm(
 
   const normalizedJson = useMemo(() => {
     let json = normalizeSurveyJsonExpressions(surveyJson)
+    json = applyWeightedSummaryExpressions(json)
     if (!readOnly) json = unlockEvaluationPrefillQuestions(json)
     return json
   }, [surveyJson, readOnly])
