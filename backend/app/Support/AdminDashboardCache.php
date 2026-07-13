@@ -18,6 +18,8 @@ class AdminDashboardCache
 
     public const TTL_CHARTS = 90;
 
+    public const CHARTS_CACHE_VERSION = 1;
+
     public const TTL_RECENT = 60;
 
     /** @var list<string> */

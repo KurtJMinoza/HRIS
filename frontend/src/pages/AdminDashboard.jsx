@@ -42,6 +42,10 @@ import {
   Calendar,
   Search,
   Flag,
+  TrendingUp,
+  SlidersHorizontal,
+  MoreVertical,
+  Percent,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -68,6 +72,7 @@ import {
   getAdminDashboardBirthdays,
   getDashboardCompanyAttendance,
   getCompanies,
+  getCompanyEfficiencyDetails,
   getHalfDayList,
   profileImageUrl,
   userProfileImageSrc,
@@ -687,6 +692,12 @@ export default function AdminDashboard() {
   const [halfDayModalOpen, setHalfDayModalOpen] = useState(false)
   const [halfDayList, setHalfDayList] = useState(null)
   const [halfDayListLoading, setHalfDayListLoading] = useState(false)
+  const [companyEfficiencyModalOpen, setCompanyEfficiencyModalOpen] = useState(false)
+  const [companyEfficiencyModalData, setCompanyEfficiencyModalData] = useState(null)
+  const [companyEfficiencyModalLoading, setCompanyEfficiencyModalLoading] = useState(false)
+  const [selectedEfficiencyCompany, setSelectedEfficiencyCompany] = useState(null)
+  const [dashboardFilter, setDashboardFilter] = useState('today')
+  const [dashboardCustomDate, setDashboardCustomDate] = useState(() => toLocalDateString(new Date()))
   const [regularizationActionById, setRegularizationActionById] = useState({})
   const [birthdayTab, setBirthdayTab] = useState('month')
   const [birthdaySearch, setBirthdaySearch] = useState('')
@@ -945,6 +956,39 @@ export default function AdminDashboard() {
       setHalfDayListLoading(false)
     }
   }, [toLocalDateString])
+
+  const getEffectiveDashboardDate = useCallback(() => {
+    const today = new Date()
+    switch (dashboardFilter) {
+      case 'today':
+        return toLocalDateString(today)
+      case 'yesterday': {
+        const d = new Date(today)
+        d.setDate(d.getDate() - 1)
+        return toLocalDateString(d)
+      }
+      case 'custom':
+        return dashboardCustomDate
+      default:
+        return toLocalDateString(today)
+    }
+  }, [dashboardFilter, dashboardCustomDate, toLocalDateString])
+
+  const openCompanyEfficiencyModal = useCallback(async (companyId, companyName) => {
+    setSelectedEfficiencyCompany({ id: companyId, name: companyName || 'Company' })
+    setCompanyEfficiencyModalOpen(true)
+    setCompanyEfficiencyModalLoading(true)
+    setCompanyEfficiencyModalData(null)
+    try {
+      const date = companyDateFrom || toLocalDateString(new Date())
+      const res = await getCompanyEfficiencyDetails(companyId, { date })
+      setCompanyEfficiencyModalData(res)
+    } catch (err) {
+      setCompanyEfficiencyModalData(null)
+    } finally {
+      setCompanyEfficiencyModalLoading(false)
+    }
+  }, [companyDateFrom, toLocalDateString])
 
   // Polling and focus refresh are handled by React Query config.
 
@@ -1281,6 +1325,10 @@ export default function AdminDashboard() {
         : 0,
     company: c.company ?? 'Unassigned',
     company_id: c.company_id,
+    // Efficiency fields
+    total_scheduled_hours: Number(c.total_scheduled_hours ?? 0),
+    total_payroll_impact_hours: Number(c.total_payroll_impact_hours ?? 0),
+    efficiency: Number(c.efficiency ?? 0),
     // Keep backend percentage for reference/debug; UI uses computed attendance_pct above.
     present_pct: c.present_pct ?? 0,
     color: CHART.deptBars[idx % CHART.deptBars.length],
@@ -1288,8 +1336,13 @@ export default function AdminDashboard() {
   }))
   const totalCompanyPresent = companyData.reduce((sum, d) => sum + (d.present ?? 0), 0)
   const totalCompanyHeadcount = companyData.reduce((sum, d) => sum + (d.headcount ?? 0), 0)
+  const totalCompanyScheduledHours = companyData.reduce((sum, d) => sum + (d.total_scheduled_hours ?? 0), 0)
+  const totalCompanyPayrollImpactHours = companyData.reduce((sum, d) => sum + (d.total_payroll_impact_hours ?? 0), 0)
+  const overallEfficiency = totalCompanyScheduledHours > 0
+    ? ((totalCompanyPayrollImpactHours / totalCompanyScheduledHours) * 100).toFixed(2)
+    : 0
   const topCompany = companyData.reduce(
-    (best, d) => (d.present > (best?.present ?? -1) ? d : best),
+    (best, d) => (d.efficiency > (best?.efficiency ?? -1) ? d : best),
     null
   )
   const isSingleCompany = companyData.length === 1
@@ -2785,7 +2838,7 @@ export default function AdminDashboard() {
         </Motion.div>
       </Motion.div>
 
-      {/* Company Attendance Comparison - horizontal bars with date + company filters */}
+      {/* Company Efficiency Comparison - horizontal bars with date + company filters */}
       <Motion.div
         variants={chartCardVariants}
         initial="hidden"
@@ -2807,57 +2860,97 @@ export default function AdminDashboard() {
                     loading="lazy"
                   />
                 ) : (
-                  <Building2 className="size-4 text-brand" aria-hidden />
+                  <TrendingUp className="size-4 text-brand" aria-hidden />
                 )}
-                {isSingleCompany ? 'Company Attendance Overview' : 'Company Attendance Comparison'}
+                {isSingleCompany ? 'Company Efficiency Overview' : 'Company Efficiency Comparison'}
               </CardTitle>
               <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                 {isSingleCompany
-                  ? `Attendance summary for ${companyData[0]?.company ?? 'company'}`
-                  : 'Present employees by company - Attendance metrics per company'}
+                  ? `Workforce efficiency for ${companyData[0]?.company ?? 'company'}`
+                  : 'Workforce efficiency metrics per company - Payroll Impact Hours / Scheduled Hours'}
               </CardDescription>
             </div>
-            {topCompany && topCompany.present > 0 && !isSingleCompany && (
+            {topCompany && topCompany.efficiency > 0 && !isSingleCompany && (
               <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/5 px-2.5 py-1 text-[11px] font-medium text-emerald-700 shadow-sm dark:border-emerald-400/40 dark:bg-emerald-500/15 dark:text-emerald-100">
                 <span className="inline-flex size-1.5 rounded-full bg-emerald-500" />
                 <span className="uppercase tracking-[0.12em] text-[10px] text-emerald-700/80 dark:text-emerald-100/80">
                   Top company
                 </span>
                 <span className="text-[11px] font-semibold text-foreground">
-                  {topCompany.company} - {topCompany.present} present
+                  {topCompany.company} - {topCompany.efficiency.toFixed(2)}% efficiency
                 </span>
               </div>
             )}
           </div>
-          {/* Filters: Date range + Company multi-select */}
+          {/* Filters: Quick date range + Company multi-select */}
           <div className="mt-5 flex flex-col gap-3 @md:flex-row @md:flex-wrap @md:items-center">
             <div className="flex w-full flex-wrap items-center gap-2 @md:w-auto">
-              <span className="text-[11px] font-normal uppercase tracking-wide text-muted-foreground">Date</span>
-              <input
-                type="date"
-                value={companyDateFrom}
-                onChange={(e) => setCompanyDateFrom(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm @md:w-auto @md:flex-none"
-              />
-              <span className="text-xs text-muted-foreground">?</span>
-              <input
-                type="date"
-                value={companyDateTo}
-                onChange={(e) => setCompanyDateTo(e.target.value)}
-                className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm @md:w-auto @md:flex-none"
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs font-semibold text-foreground @md:ml-1"
-                onClick={() => {
-                  const today = toLocalDateString(new Date())
-                  setCompanyDateFrom(today)
-                  setCompanyDateTo(today)
-                }}
-              >
-                Today
-              </Button>
+              <span className="text-[11px] font-normal uppercase tracking-wide text-muted-foreground">Period</span>
+              {[
+                { key: 'today', label: 'Today' },
+                { key: 'yesterday', label: 'Yesterday' },
+                { key: 'this_week', label: 'This Week' },
+                { key: 'this_month', label: 'This Month' },
+                { key: 'custom', label: 'Custom' },
+              ].map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  onClick={() => {
+                    setDashboardFilter(f.key)
+                    const today = new Date()
+                    if (f.key === 'today') {
+                      const d = toLocalDateString(today)
+                      setCompanyDateFrom(d)
+                      setCompanyDateTo(d)
+                    } else if (f.key === 'yesterday') {
+                      const d = new Date(today)
+                      d.setDate(d.getDate() - 1)
+                      const ds = toLocalDateString(d)
+                      setCompanyDateFrom(ds)
+                      setCompanyDateTo(ds)
+                    } else if (f.key === 'this_week') {
+                      const start = new Date(today)
+                      start.setDate(start.getDate() - start.getDay())
+                      const end = new Date(today)
+                      setCompanyDateFrom(toLocalDateString(start))
+                      setCompanyDateTo(toLocalDateString(end))
+                    } else if (f.key === 'this_month') {
+                      const start = new Date(today.getFullYear(), today.getMonth(), 1)
+                      const end = new Date(today)
+                      setCompanyDateFrom(toLocalDateString(start))
+                      setCompanyDateTo(toLocalDateString(end))
+                    }
+                  }}
+                  className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                    dashboardFilter === f.key
+                      ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-sm'
+                      : 'border border-border bg-muted/50 font-normal text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+              {dashboardFilter === 'custom' && (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={companyDateFrom}
+                    onChange={(e) => {
+                      setCompanyDateFrom(e.target.value)
+                      setDashboardCustomDate(e.target.value)
+                    }}
+                    className="min-w-0 w-32 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm"
+                  />
+                  <span className="text-xs text-muted-foreground">&ndash;</span>
+                  <input
+                    type="date"
+                    value={companyDateTo}
+                    onChange={(e) => setCompanyDateTo(e.target.value)}
+                    className="min-w-0 w-32 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm"
+                  />
+                </div>
+              )}
             </div>
             <div className="flex w-full flex-col gap-2 @md:w-auto @md:flex-row @md:items-center">
               <span className="text-[11px] font-normal uppercase tracking-wide text-muted-foreground">Companies</span>
@@ -2911,18 +3004,18 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
-          {totalCompanyPresent > 0 && !isSingleCompany && (
+          {companyData.length > 0 && !isSingleCompany && (
             <p className="mt-1.5 text-[11px] text-muted-foreground">
-              {totalCompanyPresent} employees present across {companyData.length}{' '}
-              {companyData.length === 1 ? 'company' : 'companies'}
-              {totalCompanyHeadcount > 0
-                ? ` (${Math.round((totalCompanyPresent / totalCompanyHeadcount) * 100)}% of headcount)`
+              {companyData.length} {companyData.length === 1 ? 'company' : 'companies'} &middot;{' '}
+              {totalCompanyHeadcount > 0 ? `${totalCompanyHeadcount} total staff` : ''}
+              {overallEfficiency > 0 && totalCompanyHeadcount > 0
+                ? ` &middot; Overall efficiency: ${overallEfficiency}%`
                 : ''}
             </p>
           )}
           {isSingleCompany && companyData[0] && (
             <p className="mt-1.5 text-[11px] text-muted-foreground">
-              {companyData[0].company}: {companyData[0].present ?? 0} present ({companyData[0].attendance_pct ?? 0}%)
+              {companyData[0].company}: {companyData[0].efficiency.toFixed(2)}% efficiency
               {(companyData[0].headcount ?? 0) > 0 && ` - ${companyData[0].headcount} total staff`}
             </p>
           )}
@@ -2980,10 +3073,11 @@ export default function AdminDashboard() {
                   />
                   <XAxis
                     type="number"
+                    domain={[0, 100]}
                     tick={{ fontSize: 12, fill: 'var(--muted-foreground)', fontWeight: 400 }}
                     axisLine={{ stroke: 'var(--border)' }}
                     tickLine={false}
-                    allowDecimals={false}
+                    tickFormatter={(v) => `${v}%`}
                   />
                   <YAxis
                     type="category"
@@ -3004,11 +3098,10 @@ export default function AdminDashboard() {
                     content={({ active, payload }) => {
                       if (!active || !payload?.length) return null
                       const row = payload[0]?.payload ?? {}
-                      const present = row.present ?? 0
-                      const headcount = row.headcount ?? null
+                      const eff = row.efficiency ?? 0
+                      const schedHrs = row.total_scheduled_hours ?? 0
+                      const piHrs = row.total_payroll_impact_hours ?? 0
                       const tooltipLogo = resolveCompanyLogoSrc(row.logo_url, { logo_url: row.logo_url, id: row.company_id })
-                      const shareOfToday =
-                        totalCompanyPresent > 0 ? Math.round((present / totalCompanyPresent) * 100) : 0
                       return (
                         <div
                           className="rounded-lg border px-3 py-2.5 text-sm shadow-lg"
@@ -3035,21 +3128,21 @@ export default function AdminDashboard() {
                             </p>
                           </div>
                           <p className="mt-0.5 tabular-nums" style={{ color: 'var(--muted-foreground)' }}>
-                            Present: <span className="font-semibold" style={{ color: 'var(--foreground)' }}>{present}</span>
-                            {headcount > 0 && (
-                              <span className="ml-1 text-xs">({row.attendance_pct}%)</span>
-                            )}
+                            Efficiency: <span className="font-semibold" style={{ color: 'var(--foreground)' }}>{eff.toFixed(2)}%</span>
                           </p>
-                          {headcount !== null && headcount > 0 && (
+                          {schedHrs > 0 && (
                             <>
                               <p className="mt-0.5 tabular-nums text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                                Late: {row.late} - Absent: {row.absent} - On leave: {row.on_leave}
+                                Scheduled: {schedHrs.toFixed(2)}h &middot; Payroll: {piHrs.toFixed(2)}h
                               </p>
-                              <p className="mt-0.5 tabular-nums" style={{ color: 'var(--muted-foreground)' }}>
-                                Share: <span className="font-semibold">{shareOfToday}%</span>
+                              <p className="mt-0.5 tabular-nums text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                                Present: {row.present} &middot; Late: {row.late} &middot; Absent: {row.absent}
                               </p>
                             </>
                           )}
+                          <p className="mt-1 text-[11px] font-medium text-brand cursor-pointer">
+                            Click to view details &rarr;
+                          </p>
                         </div>
                       )
                     }}
@@ -3058,33 +3151,42 @@ export default function AdminDashboard() {
                     cursor={{ fill: TOOLTIP_STYLES.cursorFill, stroke: TOOLTIP_STYLES.cursorStroke, radius: 4 }}
                   />
                   <Bar
-                    dataKey="present"
-                    name="Present"
+                    dataKey="efficiency"
+                    name="Efficiency"
                     radius={[0, 10, 10, 0]}
                     maxBarSize={32}
                     isAnimationActive
                     animationDuration={1400}
                     animationEasing="ease-out"
+                    onClick={(data) => {
+                      const cid = data?.company_id ?? data?.payload?.company_id
+                      const cname = data?.company ?? data?.payload?.company
+                      if (cid) {
+                        openCompanyEfficiencyModal(cid, cname)
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
                     label={{
                       position: 'right',
                       fill: 'var(--foreground)',
                       fontSize: 12,
-                      formatter: (v, entry) => {
-                        const pct = Number(entry?.payload?.attendance_pct ?? 0)
-                        if (pct <= 0) return `${v}`
-                        return `${v} (${pct}%)`
-                      },
+                      formatter: (v) => `${Number(v).toFixed(2)}%`,
                     }}
                   >
                     {companyData.map((entry, index) => (
-                      <Cell key={`${entry.company}-${index}`} fill={entry.color} stroke={entry.color} strokeWidth={1.6} />
+                      <Cell
+                        key={`${entry.company}-${index}`}
+                        fill={entry.color}
+                        stroke={entry.color}
+                        strokeWidth={1.6}
+                      />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : (
               <div className="flex h-full items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
-                No attendance data for selected date
+                No efficiency data for selected date
               </div>
             )}
           </div>
@@ -3854,6 +3956,279 @@ export default function AdminDashboard() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Company Efficiency Details Modal */}
+      <Dialog
+        open={companyEfficiencyModalOpen}
+        onOpenChange={setCompanyEfficiencyModalOpen}
+      >
+        <DialogContent
+          className="w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-2xl border-border/70 bg-background p-0 shadow-[0_30px_90px_-28px_rgba(15,23,42,0.55)] sm:max-w-6xl"
+          innerClassName="max-h-[92vh] gap-0 overflow-y-auto p-0"
+        >
+          <DialogHeader className="border-b-0 px-5 pb-3 pt-6 pr-14 text-left sm:px-7 sm:pb-4 sm:pt-7">
+            <div className="flex flex-col gap-2">
+              <div>
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+                  Company Efficiency Details
+                </DialogTitle>
+                <DialogDescription className="mt-1.5 text-sm text-muted-foreground sm:text-base">
+                  {selectedEfficiencyCompany?.name ?? 'Company'}
+                  {companyEfficiencyModalData?.company?.date && (
+                    <> <span className="px-1.5">&bull;</span> {new Date(companyEfficiencyModalData.company.date + 'T12:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</>
+                  )}
+                  {companyEfficiencyModalData?.company?.employees != null && (
+                    <> <span className="px-1.5">&bull;</span> {companyEfficiencyModalData.company.employees} employee{companyEfficiencyModalData.company.employees === 1 ? '' : 's'}</>
+                  )}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {companyEfficiencyModalLoading ? (
+            <div className="flex min-h-[34rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
+              Loading efficiency details&hellip;
+            </div>
+          ) : !companyEfficiencyModalData ? (
+            <div className="flex min-h-[34rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
+              Unable to load data. Please try again.
+            </div>
+          ) : (
+            <div className="px-5 pb-6 sm:px-7 sm:pb-7">
+              {/* Efficiency Header Card */}
+              <div className="mb-5 flex flex-col gap-4 rounded-xl border border-border/70 bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-foreground">Company Efficiency Details</h3>
+                    <div className="h-6 w-px bg-border" />
+                    <span className="text-sm font-medium text-muted-foreground">{companyEfficiencyModalData?.company?.name}</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {new Date(companyEfficiencyModalData.company.date + 'T12:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
+                    &nbsp;&middot;&nbsp;{companyEfficiencyModalData.company.employees} employee{companyEfficiencyModalData.company.employees === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <div className="flex flex-col items-end">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Efficiency</span>
+                    <span className="text-2xl font-bold tabular-nums text-foreground">
+                      {companyEfficiencyModalData.summary?.efficiency?.toFixed(2) ?? '0.00'}%
+                    </span>
+                  </div>
+                  <span className={cn(
+                    'inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold',
+                    (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 98
+                      ? 'bg-emerald-100 text-emerald-800 border-emerald-400 dark:bg-emerald-500/10 dark:text-emerald-200'
+                      : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 95
+                        ? 'bg-green-100 text-green-800 border-green-400 dark:bg-green-500/10 dark:text-green-200'
+                        : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 90
+                          ? 'bg-amber-100 text-amber-800 border-amber-400 dark:bg-amber-500/10 dark:text-amber-200'
+                          : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 85
+                            ? 'bg-orange-100 text-orange-800 border-orange-400 dark:bg-orange-500/10 dark:text-orange-200'
+                            : 'bg-red-100 text-red-800 border-red-400 dark:bg-red-500/10 dark:text-red-200'
+                  )}>
+                    {(companyEfficiencyModalData.summary?.efficiency ?? 0) >= 98 ? 'Outstanding'
+                      : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 95 ? 'Excellent'
+                        : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 90 ? 'Very Good'
+                          : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 85 ? 'Good'
+                            : 'Needs Improvement'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Summary Cards */}
+              <section className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                {[
+                  { label: 'Employees', value: companyEfficiencyModalData.summary?.employees ?? 0, cls: 'from-blue-50/80 to-background border-blue-200/70 dark:from-blue-500/10 dark:border-blue-500/20' },
+                  { label: 'Present', value: companyEfficiencyModalData.summary?.present ?? 0, cls: 'from-emerald-50/80 to-background border-emerald-200/70 dark:from-emerald-500/10 dark:border-emerald-500/20' },
+                  { label: 'Absent', value: companyEfficiencyModalData.summary?.absent ?? 0, cls: 'from-rose-50/80 to-background border-rose-200/70 dark:from-rose-500/10 dark:border-rose-500/20' },
+                  { label: 'Late', value: companyEfficiencyModalData.summary?.late ?? 0, cls: 'from-amber-50/80 to-background border-amber-200/70 dark:from-amber-500/10 dark:border-amber-500/20' },
+                  { label: 'Undertime', value: companyEfficiencyModalData.summary?.undertime ?? 0, cls: 'from-yellow-50/80 to-background border-yellow-200/70 dark:from-yellow-500/10 dark:border-yellow-500/20' },
+                  { label: 'Efficiency', value: `${(companyEfficiencyModalData.summary?.efficiency ?? 0).toFixed(2)}%`, cls: 'from-violet-50/80 to-background border-violet-200/70 dark:from-violet-500/10 dark:border-violet-500/20' },
+                ].map((metric) => (
+                  <div key={metric.label} className={cn('flex flex-col items-center justify-center rounded-xl border bg-gradient-to-br p-4 shadow-sm text-center', metric.cls)}>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-muted-foreground">{metric.label}</p>
+                    <p className="mt-1.5 text-xl font-bold tabular-nums text-black dark:text-foreground">{metric.value}</p>
+                  </div>
+                ))}
+              </section>
+
+              {/* Efficiency Breakdown */}
+              <section className="mb-5 grid gap-5 lg:grid-cols-[1fr_1.2fr]">
+                {/* Attendance Metrics */}
+                <div className="rounded-xl border border-border/70 bg-card p-5 shadow-sm">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground">Attendance Metrics</h4>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                    {[
+                      { label: 'Present employees', value: companyEfficiencyModalData.summary?.present ?? 0, color: '#22c55e' },
+                      { label: 'Absent employees', value: companyEfficiencyModalData.summary?.absent ?? 0, color: '#ef4444' },
+                      { label: 'Late employees', value: companyEfficiencyModalData.summary?.late ?? 0, color: '#f97316' },
+                      { label: 'Undertime employees', value: companyEfficiencyModalData.summary?.undertime ?? 0, color: '#eab308' },
+                      { label: 'Total employees', value: companyEfficiencyModalData.summary?.employees ?? 0, color: '#3b82f6' },
+                    ].map((item) => (
+                      <div key={item.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0">
+                        <span className="flex items-center gap-2 text-muted-foreground">
+                          <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
+                          {item.label}
+                        </span>
+                        <span className="font-semibold tabular-nums text-foreground">{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Efficiency Breakdown */}
+                <div className="rounded-xl border border-border/70 bg-card p-5 shadow-sm">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground">Company Efficiency Breakdown</h4>
+                  <div className="space-y-2.5 text-sm">
+                    {[
+                      { label: 'Total Employees', value: companyEfficiencyModalData.breakdown?.total_employees ?? 0 },
+                      { label: 'Scheduled Employees', value: companyEfficiencyModalData.breakdown?.scheduled_employees ?? 0 },
+                      { label: 'Present', value: companyEfficiencyModalData.breakdown?.present ?? 0 },
+                      { label: 'Absent', value: companyEfficiencyModalData.breakdown?.absent ?? 0 },
+                      { label: 'Late', value: companyEfficiencyModalData.breakdown?.late ?? 0 },
+                      { label: 'Undertime', value: companyEfficiencyModalData.breakdown?.undertime ?? 0 },
+                      { label: 'Total Scheduled Hours', value: `${(companyEfficiencyModalData.breakdown?.total_scheduled_hours ?? 0).toFixed(2)} hrs` },
+                      { label: 'Total Payroll Impact Hours', value: `${(companyEfficiencyModalData.breakdown?.total_payroll_impact_hours ?? 0).toFixed(2)} hrs` },
+                    ].map((row) => (
+                      <div key={row.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0 text-muted-foreground">
+                        <span>{row.label}</span>
+                        <span className="font-semibold tabular-nums text-foreground">{row.value}</span>
+                      </div>
+                    ))}
+                    <div className="mt-3 flex items-center justify-between rounded-lg bg-gradient-to-r from-orange-50 to-amber-50 p-3 dark:from-orange-500/10 dark:to-amber-500/10">
+                      <span className="text-sm font-bold text-gray-800 dark:text-foreground">Company Efficiency</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-extrabold tabular-nums text-black dark:text-foreground">
+                          {(companyEfficiencyModalData.breakdown?.company_efficiency ?? 0).toFixed(2)}%
+                        </span>
+                        <span className={cn(
+                          'rounded-full border px-2 py-0.5 text-xs font-bold',
+                          (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 98
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-400 dark:bg-emerald-500/10 dark:text-emerald-200'
+                            : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 95
+                              ? 'bg-green-100 text-green-800 border-green-400 dark:bg-green-500/10 dark:text-green-200'
+                              : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 90
+                                ? 'bg-amber-100 text-amber-800 border-amber-400 dark:bg-amber-500/10 dark:text-amber-200'
+                                : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 85
+                                  ? 'bg-orange-100 text-orange-800 border-orange-400 dark:bg-orange-500/10 dark:text-orange-200'
+                                  : 'bg-red-100 text-red-800 border-red-400 dark:bg-red-500/10 dark:text-red-200'
+                        )}>
+                          {(companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 98 ? 'Outstanding'
+                            : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 95 ? 'Excellent'
+                              : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 90 ? 'Very Good'
+                                : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 85 ? 'Good'
+                                  : 'Needs Improvement'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Daily Attendance Table */}
+              <section>
+                <div className="border-b border-border">
+                  <div className="relative w-fit px-5 pb-3 text-sm font-semibold text-orange-600">
+                    Daily Attendance
+                    <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-orange-500" />
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm mt-4">
+                  {!Array.isArray(companyEfficiencyModalData.employees) || companyEfficiencyModalData.employees.length === 0 ? (
+                    <div className="flex min-h-48 flex-col items-center justify-center px-5 py-10 text-center">
+                      <CalendarDays className="mb-3 size-8 text-muted-foreground/50" aria-hidden />
+                      <p className="font-medium text-foreground">No attendance records found</p>
+                      <p className="mt-1 text-sm text-muted-foreground">No employees found for this company on the selected date.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[90rem] border-collapse text-sm">
+                        <thead className="bg-muted/25">
+                          <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
+                            {['Employee', 'Date', 'Day', 'Schedule', 'Time In', 'Time Out', 'Status', 'Late', 'Undertime', 'Payroll Impact', 'Evaluation %', 'Performance'].map((label) => (
+                              <th key={label} className="h-11 whitespace-nowrap px-3 font-medium first:pl-4">
+                                <span className="inline-flex items-center gap-1.5">{label}</span>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {companyEfficiencyModalData.employees.map((emp, idx) => (
+                            <tr key={emp.id ?? idx} className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/20">
+                              <td className="whitespace-nowrap px-3 py-3 pl-4 text-foreground">
+                                <span className="inline-flex items-center gap-2.5">
+                                  <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                                    <Users className="size-3.5" aria-hidden />
+                                  </span>
+                                  <span className="font-medium">{emp.employee_name}</span>
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-3 text-foreground">
+                                {emp.date ? new Date(emp.date + 'T12:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.day || '—'}</td>
+                              <td className="whitespace-nowrap px-3 py-3 text-xs text-foreground">{emp.schedule || '—'}</td>
+                              <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{emp.time_in || '—'}</td>
+                              <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{emp.time_out || '—'}</td>
+                              <td className="whitespace-nowrap px-3 py-3">
+                                <span className={cn(
+                                  'inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold',
+                                  emp.status_code === 'present' || emp.status_code === 'present_with_ot'
+                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
+                                    : emp.status_code === 'late'
+                                      ? 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200'
+                                      : emp.status_code === 'absent'
+                                        ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
+                                        : emp.status_code === 'leave'
+                                          ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200'
+                                          : emp.status_code === 'halfday' || emp.status_code === 'half_day'
+                                            ? 'border-purple-300 bg-purple-50 text-purple-700 dark:border-purple-500/30 dark:bg-purple-500/10 dark:text-purple-200'
+                                            : emp.status_code === 'undertime'
+                                              ? 'border-yellow-300 bg-yellow-50 text-yellow-700 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200'
+                                              : 'border-border bg-muted text-muted-foreground'
+                                )}>
+                                  <span className="size-2 rounded-full bg-current" aria-hidden />
+                                  {emp.status}
+                                </span>
+                              </td>
+                              <td className={cn(
+                                'whitespace-nowrap px-3 py-3 tabular-nums',
+                                (emp.late_minutes ?? 0) > 0 ? 'font-medium text-orange-600 dark:text-orange-400' : 'text-muted-foreground'
+                              )}>
+                                {(emp.late_minutes ?? 0) > 0 ? `${emp.late_minutes}m` : '—'}
+                              </td>
+                              <td className={cn(
+                                'whitespace-nowrap px-3 py-3 tabular-nums',
+                                (emp.undertime_minutes ?? 0) > 0 ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                              )}>
+                                {(emp.undertime_minutes ?? 0) > 0 ? `${emp.undertime_minutes}m` : '—'}
+                              </td>
+                              <td className={cn(
+                                'whitespace-nowrap px-3 py-3 tabular-nums',
+                                (emp.payroll_impact ?? 0) > 0 ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'
+                              )}>
+                                {(emp.payroll_impact ?? 0) > 0 ? `${Number(emp.payroll_impact).toFixed(2)}h` : '—'}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-3 text-muted-foreground italic text-xs">
+                                Coming Soon
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-3 text-muted-foreground italic text-xs">
+                                Coming Soon
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </Motion.div>

@@ -26,6 +26,7 @@ use App\Services\HolidayCalendarService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\OrgApprovalWorkflowService;
+use App\Services\AttendanceDailySummaryService;
 use App\Services\PresenceFilingService;
 use App\Support\AdminDashboardCache;
 use App\Support\RequestPerformanceLogger;
@@ -49,6 +50,7 @@ class DashboardController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PresenceFilingService $presenceFilingService,
         private readonly LeaveApprovalService $leaveApprovalService,
+        private readonly AttendanceDailySummaryService $attendanceDailySummaryService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -747,6 +749,8 @@ class DashboardController extends Controller
      */
     private function dashboardChartsPayload(Request $request): array
     {
+        // Force fresh charts by adding code version to period key so cache auto-busts on deploy
+        $codeVersion = 'v2';
         return $this->cachedDashboardPayload($request, 'charts', function (User $actor): array {
             $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
             $today = Carbon::now($tz)->startOfDay();
@@ -758,7 +762,7 @@ class DashboardController extends Controller
                 'department_distribution' => $this->departmentAttendanceDistribution($today, $actor),
                 'company_distribution' => $this->companyAttendanceDistribution($today, null, $actor),
             ];
-        }, 'week:'.Carbon::now(config('attendance.timezone', config('app.timezone', 'UTC')))->toDateString());
+        }, $codeVersion.':week:'.Carbon::now(config('attendance.timezone', config('app.timezone', 'UTC')))->toDateString());
     }
 
     /**
@@ -2971,10 +2975,65 @@ class DashboardController extends Controller
     }
 
     /**
+     * Compute scheduled shift duration in hours from day schedule.
+     * Falls back to expected_paid_minutes if available, then to 8h default.
+     */
+    private function computeScheduleHours(array $daySchedule): float
+    {
+        // First try expected_paid_minutes from the schedule config (most reliable)
+        $expectedMinutes = (int) ($daySchedule['expected_paid_minutes'] ?? 0);
+        if ($expectedMinutes > 0) {
+            return round($expectedMinutes / 60, 2);
+        }
+
+        $in = trim((string) ($daySchedule['in'] ?? ''));
+        $out = trim((string) ($daySchedule['out'] ?? ''));
+        if ($in === '' && $out === '') {
+            return 0.0;
+        }
+
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $refDate = '2000-01-01';
+
+        // Parse in-time
+        if ($in === '') {
+            return 0.0;
+        }
+        try {
+            $inDt = Carbon::parse($refDate.' '.$in, $tz);
+        } catch (\Exception) {
+            return 0.0;
+        }
+
+        // If no out-time, default to 8 hours
+        if ($out === '') {
+            return 8.0;
+        }
+
+        try {
+            $outDt = Carbon::parse($refDate.' '.$out, $tz);
+        } catch (\Exception) {
+            return 8.0;
+        }
+
+        $inMinutes = (int) $inDt->format('G') * 60 + (int) $inDt->format('i');
+        $outMinutes = (int) $outDt->format('G') * 60 + (int) $outDt->format('i');
+        // Handle overnight shifts
+        if ($outMinutes <= $inMinutes) {
+            $outMinutes += 1440;
+        }
+        $diffMinutes = $outMinutes - $inMinutes;
+        // Subtract break minutes if configured
+        $breakMinutes = max(0, (int) ($daySchedule['break_minutes'] ?? 0));
+
+        return $diffMinutes > $breakMinutes ? round(($diffMinutes - $breakMinutes) / 60, 2) : 8.0;
+    }
+
+    /**
      * Company-level attendance rows for a given date. Used by dashboard index and companyAttendance endpoint.
      *
      * @param  array<int>|null  $companyIds  Filter to these company IDs, or null for all.
-     * @return array{array{company_id: int|null, company: string, present: int, late: int, absent: int, on_leave: int, headcount: int, present_pct: float, absent_pct: float, late_pct: float, on_leave_pct: float}}
+     * @return array{array{company_id: int|null, company: string, present: int, late: int, absent: int, on_leave: int, headcount: int, present_pct: float, absent_pct: float, late_pct: float, on_leave_pct: float, total_scheduled_hours: float, total_payroll_impact_hours: float, efficiency: float}}
      */
     private function companyAttendanceDistribution(Carbon $date, ?array $companyIds, User $actor): array
     {
@@ -3054,34 +3113,54 @@ class DashboardController extends Controller
             $lateCount = 0;
             $absentCount = 0;
             $onLeaveCount = 0;
+            $totalScheduledHours = 0.0;
+            $totalPayrollImpactHours = 0.0;
 
             foreach ($users as $user) {
-                if (isset($leaveSet[$user->id])) {
-                    $onLeaveCount++;
+                $schedule = $this->resolveEffectiveSchedule($user);
+                $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
 
-                    continue;
+                $scheduledHours = 0.0;
+                $payrollImpactHours = 0.0;
+
+                if ($daySched && ! empty($daySched['in'])) {
+                    $scheduledHours = $this->computeScheduleHours($daySched);
                 }
-                $firstAt = $firstClockIn->get($user->id)?->first_at;
-                if ($firstAt) {
-                    $presentCount++;
-                    $schedule = $this->resolveEffectiveSchedule($user);
-                    $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-                    if ($daySched && ! empty($daySched['in'])) {
-                        $firstAtCarbon = $firstAt instanceof Carbon ? $firstAt : Carbon::parse($firstAt, 'UTC')->timezone($tz);
-                        $result = AttendanceStatusService::getClockInStatus($daySched, $dateKey, $firstAtCarbon);
-                        if ($result['status'] === 'late') {
-                            $lateCount++;
-                        }
-                    }
+
+                if (isset($leaveSet[$user->id])) {
+                    // On approved leave — paid leave counts as full scheduled hours
+                    $onLeaveCount++;
+                    $payrollImpactHours = $scheduledHours;
                 } else {
-                    $schedule = $this->resolveEffectiveSchedule($user);
-                    $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-                    if ($daySched && ! empty($daySched['in'])) {
+                    $firstAt = $firstClockIn->get($user->id)?->first_at;
+                    if ($firstAt) {
+                        // Clocked in — present (may be late)
+                        $presentCount++;
+                        $payrollImpactHours = $scheduledHours;
+                        if ($daySched && ! empty($daySched['in'])) {
+                            $firstAtCarbon = $firstAt instanceof Carbon ? $firstAt : Carbon::parse($firstAt, 'UTC')->timezone($tz);
+                            $result = AttendanceStatusService::getClockInStatus($daySched, $dateKey, $firstAtCarbon);
+                            if ($result['status'] === 'late') {
+                                $lateCount++;
+                                $lateMinutes = (int) ($result['late_minutes'] ?? 0);
+                                $payrollImpactHours = max(0, $scheduledHours - ($lateMinutes / 60));
+                            }
+                        }
+                    } elseif ($daySched && ! empty($daySched['in'])) {
+                        // No clock-in yet — check if past absent cutoff
                         if (AttendanceStatusService::isPastAbsentCutoff($dateKey, $nowForCutoff)) {
                             $absentCount++;
+                            // Absent: scheduled hours count toward total, 0 payroll impact
+                        } else {
+                            // Before cutoff — still pending, don't count hours at all
+                            $scheduledHours = 0.0;
                         }
                     }
+                    // If no scheduled hours, payroll impact stays 0
                 }
+
+                $totalScheduledHours += $scheduledHours;
+                $totalPayrollImpactHours += $payrollImpactHours;
             }
 
             $companyModel = $companyId > 0 && $companies->has($companyId) ? $companies->get($companyId) : null;
@@ -3102,6 +3181,11 @@ class DashboardController extends Controller
                 'absent_pct' => $headcount > 0 ? round(100 * $absentCount / $headcount, 1) : 0,
                 'late_pct' => $headcount > 0 ? round(100 * $lateCount / $headcount, 1) : 0,
                 'on_leave_pct' => $headcount > 0 ? round(100 * $onLeaveCount / $headcount, 1) : 0,
+                'total_scheduled_hours' => round($totalScheduledHours, 2),
+                'total_payroll_impact_hours' => round($totalPayrollImpactHours, 2),
+                'efficiency' => $totalScheduledHours > 0
+                    ? round(($totalPayrollImpactHours / $totalScheduledHours) * 100, 2)
+                    : 0,
             ];
         }
 
@@ -3162,6 +3246,166 @@ class DashboardController extends Controller
     }
 
     /**
+     * Company Efficiency Details — returns per-employee daily summary data for the modal.
+     */
+    public function companyEfficiencyDetails(Request $request, int $companyId): JsonResponse
+    {
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $today = Carbon::now($tz)->startOfDay();
+        $dateKey = $request->input('date', $today->toDateString());
+        $date = Carbon::parse($dateKey, $tz)->startOfDay();
+        $todayDate = $today->toDateString();
+        $nowTz = Carbon::now($tz);
+
+        $actor = $request->user();
+
+        $company = Company::find($companyId);
+        if (! $company) {
+            return response()->json(['message' => 'Company not found.'], 404);
+        }
+
+        $allEmployees = User::activeRoster()
+            ->with(['workingSchedule', 'companyHeadships:id,company_head_id', 'company:id,name', 'branch:id,company_id', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id'])
+            ->orderByLastName()
+            ->get();
+
+        $this->dataScopeService->restrictEmployeeQuery($actor, $allEmployees);
+
+        // Filter to only employees whose effective company matches the requested company
+        $employees = $allEmployees->filter(function (User $u) use ($companyId) {
+            return $u->getEffectiveCompanyId() === $companyId;
+        });
+
+        $dayKey = self::DAY_KEYS[(int) $date->format('w')];
+        $employeeRows = [];
+        $summaryAgg = [
+            'total_employees' => 0,
+            'scheduled_employees' => 0,
+            'present' => 0,
+            'absent' => 0,
+            'late' => 0,
+            'undertime' => 0,
+            'total_scheduled_hours' => 0.0,
+            'total_payroll_impact_hours' => 0.0,
+        ];
+
+        foreach ($employees as $employee) {
+            $dailySummary = $this->attendanceDailySummaryService->computeForDate(
+                user: $employee,
+                dateKey: $dateKey,
+                todayDate: $todayDate,
+                nowTz: $nowTz,
+            );
+
+            $status = $dailySummary['status'] ?? '';
+            $lateMinutes = (int) ($dailySummary['late_minutes'] ?? 0);
+            $undertimeMinutes = (int) ($dailySummary['undertime_minutes'] ?? 0);
+            $payrollImpactHours = (float) ($dailySummary['payroll_impact_hours'] ?? 0);
+            $scheduleIn = $dailySummary['schedule_in'] ?? null;
+            $scheduleOut = $dailySummary['schedule_out'] ?? null;
+
+            $isScheduled = $scheduleIn !== null && $scheduleOut !== null;
+            $isPresent = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true);
+            $isAbsent = $status === 'absent' && ! $dailySummary['is_leave'] && ! $dailySummary['is_rest_day'] && ! $dailySummary['is_holiday'];
+            $isLate = $lateMinutes > 0 && $isPresent;
+            $isUndertime = $undertimeMinutes > 0 && $isPresent;
+
+            if ($isScheduled) {
+                $summaryAgg['scheduled_employees']++;
+            }
+
+            if ($isAbsent) {
+                $summaryAgg['absent']++;
+            } elseif ($isPresent) {
+                $summaryAgg['present']++;
+            }
+
+            if ($isLate) {
+                $summaryAgg['late']++;
+            }
+            if ($isUndertime) {
+                $summaryAgg['undertime']++;
+            }
+
+            // Compute scheduled hours from the schedule for efficiency
+            if ($dailySummary['is_rest_day'] && ! $dailySummary['is_rest_day_worked']) {
+                // Rest day not worked — skip
+            } elseif ($dailySummary['is_leave']) {
+                // On leave — count scheduled hours as paid
+                $schedule = $this->resolveEffectiveSchedule($employee);
+                $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
+                if ($daySched && ! empty($daySched['in']) && ! empty($daySched['out'])) {
+                    $schedHrs = $this->computeScheduleHours($daySched);
+                    $summaryAgg['total_scheduled_hours'] += $schedHrs;
+                    $summaryAgg['total_payroll_impact_hours'] += $schedHrs;
+                }
+            } elseif ($status !== 'upcoming' && $status !== 'rest' && $isScheduled) {
+                $schedule = $this->resolveEffectiveSchedule($employee);
+                $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
+                if ($daySched && ! empty($daySched['in']) && ! empty($daySched['out'])) {
+                    $schedHrs = $this->computeScheduleHours($daySched);
+                    $summaryAgg['total_scheduled_hours'] += $schedHrs;
+                    $summaryAgg['total_payroll_impact_hours'] += $payrollImpactHours;
+                }
+            }
+
+            $employeeRows[] = [
+                'id' => $employee->id,
+                'employee_name' => $employee->display_name ?: '—',
+                'profile_image' => $employee->profile_image_url,
+                'department' => $employee->department ?? '-',
+                'date' => $dateKey,
+                'day' => $date->format('D'),
+                'schedule' => $scheduleIn && $scheduleOut ? "$scheduleIn - $scheduleOut" : ($dailySummary['is_rest_day'] ? 'Rest Day' : '—'),
+                'time_in' => $dailySummary['formatted_time_in'] ?? ($dailySummary['time_in'] ? date('g:i A', strtotime($dailySummary['time_in'])) : '—'),
+                'time_out' => $dailySummary['formatted_time_out'] ?? ($dailySummary['time_out'] ? date('g:i A', strtotime($dailySummary['time_out'])) : '—'),
+                'status' => $dailySummary['status_label'] ?? $status,
+                'status_code' => $status,
+                'late_minutes' => $lateMinutes,
+                'undertime_minutes' => $undertimeMinutes,
+                'payroll_impact' => $payrollImpactHours,
+                'evaluation' => null,
+                'performance' => null,
+            ];
+        }
+
+        $summaryAgg['total_employees'] = $employees->count();
+        $companyEfficiency = $summaryAgg['total_scheduled_hours'] > 0
+            ? round(($summaryAgg['total_payroll_impact_hours'] / $summaryAgg['total_scheduled_hours']) * 100, 2)
+            : 0;
+
+        return response()->json([
+            'company' => [
+                'id' => $company->id,
+                'name' => $company->name,
+                'logo_url' => $company->logo ? $this->companyLogoUrl($company->logo) : null,
+                'employees' => $employees->count(),
+                'date' => $dateKey,
+            ],
+            'summary' => [
+                'employees' => $summaryAgg['total_employees'],
+                'present' => $summaryAgg['present'],
+                'absent' => $summaryAgg['absent'],
+                'late' => $summaryAgg['late'],
+                'undertime' => $summaryAgg['undertime'],
+                'efficiency' => $companyEfficiency,
+            ],
+            'breakdown' => [
+                'total_employees' => $summaryAgg['total_employees'],
+                'scheduled_employees' => $summaryAgg['scheduled_employees'],
+                'present' => $summaryAgg['present'],
+                'absent' => $summaryAgg['absent'],
+                'late' => $summaryAgg['late'],
+                'undertime' => $summaryAgg['undertime'],
+                'total_scheduled_hours' => round($summaryAgg['total_scheduled_hours'], 2),
+                'total_payroll_impact_hours' => round($summaryAgg['total_payroll_impact_hours'], 2),
+                'company_efficiency' => $companyEfficiency,
+            ],
+            'employees' => $employeeRows,
+        ]);
+    }
+
+    /**
      * Aggregate company attendance across a date range. Sums present/late/absent/on_leave per company.
      * Percentages use expected work-days (headcount * num_days) for range.
      */
@@ -3191,18 +3435,24 @@ class DashboardController extends Controller
                         'absent' => 0,
                         'on_leave' => 0,
                         'headcount' => $row['headcount'],
+                        'total_scheduled_hours' => 0.0,
+                        'total_payroll_impact_hours' => 0.0,
                     ];
                 }
                 $aggregated[$key]['present'] += $row['present'];
                 $aggregated[$key]['late'] += $row['late'];
                 $aggregated[$key]['absent'] += $row['absent'];
                 $aggregated[$key]['on_leave'] += $row['on_leave'];
+                $aggregated[$key]['total_scheduled_hours'] += $row['total_scheduled_hours'] ?? 0;
+                $aggregated[$key]['total_payroll_impact_hours'] += $row['total_payroll_impact_hours'] ?? 0;
             }
         }
         $result = [];
         foreach ($aggregated as $row) {
             $headcount = $row['headcount'];
             $expectedDays = $headcount * $numDays;
+            $totalScheduledHours = round($row['total_scheduled_hours'], 2);
+            $totalPayrollImpactHours = round($row['total_payroll_impact_hours'], 2);
             $result[] = [
                 'company_id' => $row['company_id'],
                 'company' => $row['company'],
@@ -3216,6 +3466,11 @@ class DashboardController extends Controller
                 'absent_pct' => $expectedDays > 0 ? round(100 * $row['absent'] / $expectedDays, 1) : 0,
                 'late_pct' => $expectedDays > 0 ? round(100 * $row['late'] / $expectedDays, 1) : 0,
                 'on_leave_pct' => $expectedDays > 0 ? round(100 * $row['on_leave'] / $expectedDays, 1) : 0,
+                'total_scheduled_hours' => $totalScheduledHours,
+                'total_payroll_impact_hours' => $totalPayrollImpactHours,
+                'efficiency' => $totalScheduledHours > 0
+                    ? round(($totalPayrollImpactHours / $totalScheduledHours) * 100, 2)
+                    : 0,
             ];
         }
         usort($result, fn (array $a, array $b) => $b['present'] <=> $a['present']);

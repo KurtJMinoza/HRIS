@@ -2303,6 +2303,21 @@ export async function getDashboardCompanyAttendance(params = {}) {
 }
 
 /**
+ * Fetch company efficiency details for the modal — per-employee daily summary.
+ * @param {number} companyId
+ * @param {{ date?: string }} params
+ */
+export async function getCompanyEfficiencyDetails(companyId, params = {}) {
+  const query = new URLSearchParams()
+  if (params.date) query.set('date', params.date)
+  const path = `/admin/dashboard/company-efficiency-details/${companyId}${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.message || 'Failed to load company efficiency details')
+  return body
+}
+
+/**
  * Fetch half-day leave list for a given date (employees on AM/PM half-day).
  * @param {{ date?: string }} params - date in YYYY-MM-DD (default: today)
  */
