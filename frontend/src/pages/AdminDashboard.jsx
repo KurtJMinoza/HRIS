@@ -2910,19 +2910,18 @@ export default function AdminDashboard() {
                       const ds = toLocalDateString(d)
                       setCompanyDateFrom(ds)
                       setCompanyDateTo(ds)
-                    } else if (f.key === 'this_week') {
+                      } else if (f.key === 'this_week') {
                       const start = new Date(today)
                       start.setDate(start.getDate() - start.getDay())
                       const end = new Date(today)
                       setCompanyDateFrom(toLocalDateString(start))
-                      fromDate = toLocalDateString(start)
-                      toDate = toLocalDateString(end)
+                      setCompanyDateTo(toLocalDateString(end))
+                    } else if (f.key === 'this_month') {
                       const start = new Date(today.getFullYear(), today.getMonth(), 1)
                       const end = new Date(today)
                       setCompanyDateFrom(toLocalDateString(start))
                       setCompanyDateTo(toLocalDateString(end))
                     }
-                  }}
                   className={`rounded-full px-3 py-1 text-xs transition-colors ${
                     dashboardFilter === f.key
                       ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-sm'
