@@ -1101,12 +1101,9 @@ class DeductionScheduleService
             ]), $payrollRun);
             $thisAmt = (float) ($resolvedAmount['applied_amount'] ?? 0.0);
             $factor = (float) ($resolvedAmount['divisor_applied'] ?? ($amt > 0.0 ? round($thisAmt / $amt, 6) : 0.0));
-            $usesPayrollStandard = $this->isPayrollStandardResolution($resolvedAmount);
-            $lineAttendanceFactor = (! $usesPayrollStandard && ! $isBasic && ! empty($e['is_proratable'])) ? $attendanceFactor : 1.0;
+            $lineAttendanceFactor = (! $isBasic && ! empty($e['is_proratable'])) ? $attendanceFactor : 1.0;
             $allowanceProration = null;
-            $allowanceMode = $usesPayrollStandard
-                ? 'scheduled_fixed'
-                : $this->resolveAllowanceProrationType($e, $isBasic);
+            $allowanceMode = $this->resolveAllowanceProrationType($e, $isBasic);
             if ($allowanceMode === 'attendance_prorated') {
                 $allowanceProration = $this->computeAttendanceProratedAllowanceAmount(
                     $e,
