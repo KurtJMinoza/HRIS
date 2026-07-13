@@ -915,14 +915,13 @@ export default function AdminDashboard() {
     companyDateTo === toLocalDateString(new Date()) &&
     selectedCompanyIds.length === 0
 
-  // Fetch company attendance only when user changes date or company filter (non-default).
-  const fetchCompanyAttendance = useCallback(async () => {
-    if (isDefaultFilters) return
+  // Fetch company attendance - called directly from filter handlers for non-default filters.
+  const fetchCompanyAttendance = useCallback(async (fromDate, toDate) => {
     setCompanyChartLoading(true)
     try {
       const params = {
-        from_date: companyDateFrom,
-        to_date: companyDateTo,
+        from_date: fromDate,
+        to_date: toDate,
         ...(selectedCompanyIds.length > 0 ? { company_ids: selectedCompanyIds } : {}),
       }
       const res = await getDashboardCompanyAttendance(params)
@@ -932,15 +931,15 @@ export default function AdminDashboard() {
     } finally {
       setCompanyChartLoading(false)
     }
-  }, [companyDateFrom, companyDateTo, selectedCompanyIds, isDefaultFilters])
+  }, [selectedCompanyIds])
+
+  // Fetch company attendance when date range changes for non-default views
   useEffect(() => {
-    if (isDefaultFilters) {
-      setCompanyAttendanceData(null)
-      setCompanyChartLoading(false)
-    } else {
-      fetchCompanyAttendance()
+    const todayStr = toLocalDateString(new Date())
+    if (companyDateFrom !== todayStr || companyDateTo !== todayStr || selectedCompanyIds.length > 0) {
+      fetchCompanyAttendance(companyDateFrom, companyDateTo)
     }
-  }, [fetchCompanyAttendance, isDefaultFilters])
+  }, [companyDateFrom, companyDateTo, selectedCompanyIds, toLocalDateString])
 
   const openHalfDayModal = useCallback(async () => {
     setHalfDayModalOpen(true)
@@ -2916,8 +2915,8 @@ export default function AdminDashboard() {
                       start.setDate(start.getDate() - start.getDay())
                       const end = new Date(today)
                       setCompanyDateFrom(toLocalDateString(start))
-                      setCompanyDateTo(toLocalDateString(end))
-                    } else if (f.key === 'this_month') {
+                      fromDate = toLocalDateString(start)
+                      toDate = toLocalDateString(end)
                       const start = new Date(today.getFullYear(), today.getMonth(), 1)
                       const end = new Date(today)
                       setCompanyDateFrom(toLocalDateString(start))
