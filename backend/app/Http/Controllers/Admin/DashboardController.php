@@ -3263,12 +3263,13 @@ class DashboardController extends Controller
             return response()->json(['message' => 'Company not found.'], 404);
         }
 
-        $allEmployees = User::activeRoster()
+        $allEmployeesQuery = User::activeRoster()
             ->with(['workingSchedule', 'companyHeadships:id,company_head_id', 'company:id,name', 'branch:id,company_id', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id'])
-            ->orderByLastName()
-            ->get();
+            ->orderByLastName();
 
-        $this->dataScopeService->restrictEmployeeQuery($actor, $allEmployees);
+        $this->dataScopeService->restrictEmployeeQuery($actor, $allEmployeesQuery);
+
+        $allEmployees = $allEmployeesQuery->get();
 
         // Filter to only employees whose effective company matches the requested company
         $employees = $allEmployees->filter(function (User $u) use ($companyId) {
