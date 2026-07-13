@@ -270,7 +270,7 @@ function ChartTooltip({ active, payload, label, labelPrefix = '', valueSuffix = 
 }
 
 const LOGS_PER_PAGE = 10
-const DASHBOARD_SNAPSHOT_KEY = 'admin-dashboard:last-snapshot:v1'
+const DASHBOARD_SNAPSHOT_KEY = 'admin-dashboard:last-snapshot:v2'
 
 function readDashboardRequestsSnapshot() {
   const segment = dashboardSnapshotSegment(readDashboardSnapshot(), 'requests')

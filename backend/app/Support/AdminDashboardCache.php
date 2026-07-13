@@ -18,7 +18,7 @@ class AdminDashboardCache
 
     public const TTL_CHARTS = 90;
 
-    public const CHARTS_CACHE_VERSION = 1;
+    public const CHARTS_CACHE_VERSION = 2;
 
     public const TTL_RECENT = 60;
 
@@ -50,14 +50,16 @@ class AdminDashboardCache
         $userId = (int) $actor->id;
         $companyId = (int) ($actor->getEffectiveCompanyId() ?? $actor->company_id ?? 0);
         $version = self::segmentVersion($companyId, $segment);
+        $codeVersion = $segment === 'charts' ? self::CHARTS_CACHE_VERSION : 0;
 
         return sprintf(
-            'admin_dashboard:%s:%d:%d:%s:v%d',
+            'admin_dashboard:%s:%d:%d:%s:v%d_c%d',
             $segment,
             $userId,
             $companyId,
             $periodKey,
             $version,
+            $codeVersion,
         );
     }
 

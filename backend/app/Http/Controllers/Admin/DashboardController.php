@@ -3152,8 +3152,7 @@ class DashboardController extends Controller
                             $absentCount++;
                             // Absent: scheduled hours count toward total, 0 payroll impact
                         } else {
-                            // Before cutoff — still pending, don't count hours at all
-                            $scheduledHours = 0.0;
+                            // Before cutoff - still pending: count scheduled hours toward total, 0 payroll impact
                         }
                     }
                     // If no scheduled hours, payroll impact stays 0
