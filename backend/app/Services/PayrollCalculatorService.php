@@ -10,6 +10,7 @@ use App\Models\PayCycle;
 use App\Models\SssBracket;
 use App\Models\StatutoryContribution;
 use App\Models\User;
+use App\Services\Compensation\AllowanceCalculationService;
 use App\Support\BulkPayrollDraftContext;
 use App\Support\CalculationStandard;
 use Carbon\Carbon;
@@ -1754,6 +1755,14 @@ class PayrollCalculatorService
         $earnings = $this->attachCalculationStandardFields($this->attachPayScheduleTypes($user, $earnings));
         $deductions = $this->attachCalculationStandardFields($this->attachPayScheduleTypes($user, $deductions));
 
+        // After schedule & standard resolution, adjust allowance lines to their monthly equivalent
+        // so that Employee Compensation Gross Pay reflects the true monthly compensation,
+        // not just a single-run configured amount.
+        $earnings = $this->attachMonthlyEquivalentToAllowances($earnings);
+        $monthlyGrossEarnings = round(collect($earnings)->sum(fn (array $line) =>
+            (float) ($line['monthly_equivalent'] ?? $line['computed_amount'] ?? 0)
+        ), 2);
+
         $scheduleSvc = app(DeductionScheduleService::class);
         $companyId = $user->getEffectiveCompanyId();
 
@@ -1771,7 +1780,7 @@ class PayrollCalculatorService
                 'withholding_tax' => $scheduleSvc->resolveScheduleType(DeductionScheduleSetting::GOV_WITHHOLDING, $companyId),
             ],
             'totals' => [
-                'gross_earnings' => $earningsTotal,
+                'gross_earnings' => $monthlyGrossEarnings,
                 'custom_deductions' => $deductionsTotal,
                 'employee_statutory_deductions' => round($employeeStatutory, 2),
                 'withholding_tax' => round($withholdingMonthly, 2),
@@ -2101,6 +2110,71 @@ class PayrollCalculatorService
 
         return in_array($source, ['legacy_salary_fields', 'salary_profile'], true)
             || in_array($assignmentSource, ['auto_backfill_basic_salary'], true);
+    }
+
+    /**
+     * For each allowance-type earnings line, compute the monthly equivalent amount
+     * using the resolved schedule and calculation standard, and store it in a
+     * dedicated `monthly_equivalent` field.
+     *
+     * The original `computed_amount` (the configured per-occurrence amount) is
+     * preserved — it is still used by payroll processing and net-pay math.
+     *
+     * @param  list<array<string, mixed>>  $earnings
+     * @return list<array<string, mixed>>
+     */
+    private function attachMonthlyEquivalentToAllowances(array $earnings): array
+    {
+        $svc = app(AllowanceCalculationService::class);
+
+        foreach ($earnings as $i => $line) {
+            if (! $this->isAllowanceComponent($line)) {
+                continue;
+            }
+
+            $amount = round(max(0.0, (float) ($line['configured_value'] ?? 0)), 2);
+            if ($amount <= 0.0) {
+                continue;
+            }
+
+            $frequency = $line['calculation_standard']
+                ?? $line['resolved_calculation_standard']
+                ?? PayComponent::STANDARD_MONTHLY;
+
+            $selectedPayrolls = $line['resolved_schedule']
+                ?? $line['pay_schedule_type']
+                ?? DeductionScheduleSetting::SCHEDULE_BOTH;
+
+            $prorationMethod = AllowanceCalculationService::resolveProrationMethod($line);
+
+            $monthlyEquivalent = $svc->monthlyEquivalent(
+                amount: $amount,
+                frequency: $frequency,
+                selectedPayrolls: $selectedPayrolls,
+                prorationMethod: $prorationMethod,
+            );
+
+            $earnings[$i]['monthly_equivalent'] = $monthlyEquivalent;
+        }
+
+        return $earnings;
+    }
+
+    /**
+     * Heuristic to detect whether a compensation line is an allowance component.
+     * Matches by category, name, or code containing "allowance".
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function isAllowanceComponent(array $line): bool
+    {
+        $haystack = strtolower(implode(' ', array_filter([
+            (string) ($line['category'] ?? ''),
+            (string) ($line['name'] ?? ''),
+            (string) ($line['code'] ?? ''),
+        ])));
+
+        return str_contains($haystack, 'allowance');
     }
 
     private function normalizeCalculationStandard(mixed $value): string
