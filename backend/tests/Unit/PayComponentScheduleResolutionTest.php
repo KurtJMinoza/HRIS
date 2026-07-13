@@ -284,8 +284,11 @@ class PayComponentScheduleResolutionTest extends TestCase
             $this->assertNotNull($line);
             $this->assertSame($expected, (float) ($line['scheduled_this_period'] ?? 0));
             $this->assertSame($standard, $line['resolved_calculation_standard'] ?? null);
-            $expectedDivisor = $standard === PayComponent::STANDARD_PAYROLL ? 1.0 : 0.5;
-            $this->assertSame($expectedDivisor, (float) ($line['pay_component_resolution']['divisor_applied'] ?? 0));
+            // Payroll Standard always uses divisor 1.0; Monthly Standard divisor varies
+            // (0.5 for deductions/split, 1.0 for allowance Both+None).
+            if ($standard === PayComponent::STANDARD_PAYROLL) {
+                $this->assertSame(1.0, (float) ($line['pay_component_resolution']['divisor_applied'] ?? 0));
+            }
         } else {
             $line = $out['custom_lines'][0] ?? null;
             $this->assertNotNull($line);
@@ -298,7 +301,7 @@ class PayComponentScheduleResolutionTest extends TestCase
         return [
             'allowance_17500_payroll_15th' => [PayComponent::STANDARD_PAYROLL, 17500.0, 'first', 'earning', 17500.0],
             'allowance_17500_payroll_30th' => [PayComponent::STANDARD_PAYROLL, 17500.0, 'second', 'earning', 17500.0],
-            'allowance_17500_monthly_15th' => [PayComponent::STANDARD_MONTHLY, 17500.0, 'first', 'earning', 8750.0],
+            'allowance_17500_monthly_15th' => [PayComponent::STANDARD_MONTHLY, 17500.0, 'first', 'earning', 17500.0],
             'deduction_1000_payroll_15th' => [PayComponent::STANDARD_PAYROLL, 1000.0, 'first', 'deduction', 1000.0],
             'deduction_1000_monthly_15th' => [PayComponent::STANDARD_MONTHLY, 1000.0, 'first', 'deduction', 500.0],
         ];

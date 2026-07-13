@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\DeductionScheduleSetting;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\PayComponent;
+use App\Services\Compensation\AllowanceCalculationService;
 use App\Models\PayCycle;
 use App\Models\User;
 use App\Support\BulkPayrollDraftContext;
@@ -757,6 +758,18 @@ class DeductionScheduleService
             $payrollRun['period_end'] ?? $payrollRun['pay_period_end'] ?? null
         );
 
+        // Monthly Standard + Both + Proration None: allowance amounts belong in full
+        // to each payroll run (no split).  Override the factor so the divisor stays
+        // at 1.0 for that case instead of the default 0.5 for Both schedules.
+        // This only applies to allowance-type components (not general deductions).
+        if ($standard === PayComponent::STANDARD_MONTHLY
+            && $schedule === DeductionScheduleSetting::SCHEDULE_BOTH
+            && $monthlyFactor < 1.0
+            && $this->isAllowanceLine($component)
+            && AllowanceCalculationService::resolveProrationMethod($component) === AllowanceCalculationService::PRORATION_NONE) {
+            $monthlyFactor = 1.0;
+        }
+
         $runApplies = $monthlyFactor > 0.0;
         $divisorApplied = $standard === PayComponent::STANDARD_PAYROLL
             ? ($runApplies ? 1.0 : 0.0)
@@ -1271,10 +1284,16 @@ class DeductionScheduleService
         $scheduleFactor = max(0.0, min(1.0, $scheduleFactor));
         $isApplicable = $scheduleFactor > 0.0;
 
-        $fullMonthDailyRate = round($monthlyAmount / $monthlyDivisor, 6);
-        $scheduledBaseForRun = $isApplicable ? round($monthlyAmount * $scheduleFactor, 2) : 0.0;
-        $amountByPayableDays = round($fullMonthDailyRate * $payableDayUnits, 2);
-        $unpaidAbsenceDeduction = $isApplicable ? round($fullMonthDailyRate * $unpaidAbsentDays, 2) : 0.0;
+        // Per-period amount = monthly amount × schedule's per-run factor.
+        $perPeriodAmount = $isApplicable ? round($monthlyAmount * $scheduleFactor, 2) : 0.0;
+        // Use the period's scheduled workdays as divisor so proration stays within the period,
+        // rather than scaling against the full-month divisor (which would account for only half
+        // the month when the allowance is assigned to a single payroll run).
+        $periodScheduledDays = max(1.0, (float) ($attendanceProration['scheduled_workdays'] ?? $monthlyDivisor));
+        $periodDailyRate = $perPeriodAmount > 0.0 ? round($perPeriodAmount / $periodScheduledDays, 6) : 0.0;
+        $scheduledBaseForRun = $perPeriodAmount;
+        $amountByPayableDays = round($periodDailyRate * $payableDayUnits, 2);
+        $unpaidAbsenceDeduction = $isApplicable ? round($periodDailyRate * $unpaidAbsentDays, 2) : 0.0;
         $originalProratedBeforeSchedule = $amountByPayableDays;
         $amount = $isApplicable ? $amountByPayableDays : 0.0;
         $scheduleDivisor = ($isApplicable && $scheduleFactor > 0.0)
@@ -1304,7 +1323,7 @@ class DeductionScheduleService
             'proration_basis' => 'payable_days',
             'monthly_divisor_days' => round($monthlyDivisor, 4),
             'base_divisor_days' => round($monthlyDivisor, 4),
-            'daily_allowance_rate' => round($fullMonthDailyRate, 6),
+            'daily_allowance_rate' => round($periodDailyRate, 6),
             'worked_day_units' => round($payableDayUnits, 6),
             'worked_minutes' => (int) ($allowanceMeta['worked_minutes'] ?? 0),
             'converted_hours' => round((float) ($allowanceMeta['converted_hours'] ?? 0), 4),

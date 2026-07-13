@@ -1062,19 +1062,21 @@ class PolicyEngineTest extends TestCase
             $this->assertNotNull($allowanceLine);
             // Proratable allowance mirrors Regular pay's minute-accurate basis: 4 full days
             // (May 4-7) credit 1.0 each and May 8 clocks out 66 min early, crediting 414/480 =
-            // 0.8625. Total payable = 4.8625 → 2600 / 26 × 4.8625 = 486.25.
-            $this->assertSame(486.25, (float) ($allowanceLine['amount'] ?? 0));
+            // 0.8625. Total payable = 4.8625.
+            // Monthly Standard + Both + None: full per-period amount (2600) ÷ 6 scheduled days ×
+            // 4.8625 payable days = 2107.08.
+            $this->assertSame(2107.08, (float) ($allowanceLine['amount'] ?? 0));
             $this->assertSame(4.8625, (float) data_get($allowanceLine, 'allowance_proration.payable_day_units'));
             $this->assertSame(1.0, (float) data_get($allowanceLine, 'allowance_proration.unpaid_absent_days'));
             $this->assertSame('payable_days', data_get($allowanceLine, 'allowance_proration.proration_basis'));
             $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.monthly_divisor_days'));
             $this->assertSame(26.0, (float) data_get($allowanceLine, 'allowance_proration.base_divisor_days'));
             $this->assertSame(2600.0, (float) data_get($allowanceLine, 'allowance_proration.allowance_base_before_proration'));
-            $this->assertSame(486.25, (float) data_get($allowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
-            $this->assertSame(1300.0, (float) data_get($allowanceLine, 'allowance_proration.scheduled_base_for_run_before_absence_deduction'));
-            $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.unpaid_absence_deduction'));
-            $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
-            $this->assertSame(2.0, (float) data_get($allowanceLine, 'allowance_proration.schedule_adjustment_divisor'));
+            $this->assertSame(2107.08, (float) data_get($allowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
+            $this->assertSame(2600.0, (float) data_get($allowanceLine, 'allowance_proration.scheduled_base_for_run_before_absence_deduction'));
+            $this->assertSame(433.33, (float) data_get($allowanceLine, 'allowance_proration.unpaid_absence_deduction'));
+            $this->assertSame(433.333333, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
+            $this->assertSame(1.0, (float) data_get($allowanceLine, 'allowance_proration.schedule_adjustment_divisor'));
             $this->assertTrue(collect(data_get($allowanceLine, 'allowance_proration.unpaid_absences', []))
                 ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-09'));
             $partialDayEntry = collect(data_get($allowanceLine, 'allowance_proration.attendance_counted', []))
@@ -1103,7 +1105,9 @@ class PolicyEngineTest extends TestCase
             $fifteenthAllowanceLine = collect($fifteenthOnlyPayroll['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
             $this->assertNotNull($fifteenthAllowanceLine);
-            $this->assertSame(486.25, (float) ($fifteenthAllowanceLine['amount'] ?? 0));
+            // Monthly Standard + 15th only: full per-period amount (2600) × attendance factor
+            // = 2600 / 6 × 4.8625 = 2107.08.
+            $this->assertSame(2107.08, (float) ($fifteenthAllowanceLine['amount'] ?? 0));
             // schedule_adjustment_multiplier mirrors the resolved cutoff factor for this run.
             $this->assertGreaterThan(0.0, (float) data_get($fifteenthAllowanceLine, 'allowance_proration.schedule_adjustment_multiplier'));
 
@@ -1131,7 +1135,8 @@ class PolicyEngineTest extends TestCase
             // NOTE: schedule resolution for the 30TH-only branch is tracked separately —
             // the 15TH cutoff is currently still treated as applicable. The proration math
             // itself is correct: the 4.8625 payable day-units flow through unchanged.
-            $this->assertSame(486.25, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
+            // Monthly Standard + 30th only: full per-period amount (2600) / 6 × 4.8625 = 2107.08.
+            $this->assertSame(2107.08, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.original_prorated_allowance_before_schedule_adjustment'));
             $this->assertSame(4.8625, (float) data_get($secondRunOnlyAllowanceLine, 'allowance_proration.payable_day_units'));
         } finally {
             DeductionScheduleSetting::query()
@@ -1240,12 +1245,15 @@ class PolicyEngineTest extends TestCase
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance');
 
             $this->assertNotNull($allowanceLine);
-            $this->assertSame(100.0, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
+            // Monthly Standard + Both + Split: per-period amount = 2600 × 0.5 = 1300.
+            // Period has 12 scheduled days; daily rate = 1300 / 12 = 108.33.
+            // 9 payable days → 108.33 × 9 = 975.00.
+            $this->assertSame(108.333333, (float) data_get($allowanceLine, 'allowance_proration.daily_allowance_rate'));
             $this->assertSame(9.0, (float) data_get($allowanceLine, 'allowance_proration.payable_day_units'));
             $this->assertSame(9.0, (float) data_get($allowanceLine, 'allowance_proration.present_day_units'));
             $this->assertSame('both', data_get($allowanceLine, 'allowance_proration.schedule_configuration'));
             $this->assertSame('first', data_get($allowanceLine, 'allowance_proration.current_payroll_run_type'));
-            $this->assertSame(900.0, (float) ($allowanceLine['amount'] ?? 0));
+            $this->assertSame(975.0, (float) ($allowanceLine['amount'] ?? 0));
         } finally {
             $assignment->forceDelete();
             $component->forceDelete();
@@ -1367,11 +1375,12 @@ class PolicyEngineTest extends TestCase
 
             // Paid leave fills the full 480-min day so May 4 credits 1.0; May 5-9 only worked
             // 5 of 8 hours each (clock out at 14:00) → 300/480 = 0.625 per day. Total payable =
-            // 1.0 + 5 × 0.625 = 4.125 → 2600 / 26 × 4.125 = 412.50.
+            // 1.0 + 5 × 0.625 = 4.125.
+            // Monthly Standard + Both + None: 2600 / 6 × 4.125 = 1787.50.
             $paidLine = collect($payrollFor($paidUser)['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance PAID');
             $this->assertNotNull($paidLine);
-            $this->assertSame(412.50, (float) ($paidLine['amount'] ?? 0));
+            $this->assertSame(1787.50, (float) ($paidLine['amount'] ?? 0));
             $this->assertSame(0.0, (float) data_get($paidLine, 'allowance_proration.unpaid_absent_days'));
             $this->assertSame(1.0, (float) data_get($paidLine, 'allowance_proration.approved_paid_leave_day_units'));
             $this->assertSame(4.125, (float) data_get($paidLine, 'allowance_proration.payable_day_units'));
@@ -1380,11 +1389,12 @@ class PolicyEngineTest extends TestCase
                     && ($row['reason'] ?? null) === 'approved_paid_leave'));
 
             // Unpaid leave on May 4 deducts a full day; May 5-9 partial work credits 0.625 each.
-            // Payable = 5 × 0.625 = 3.125 → 2600 / 26 × 3.125 = 312.50.
+            // Payable = 5 × 0.625 = 3.125.
+            // Monthly Standard + Both + None: 2600 / 6 × 3.125 = 1354.17.
             $unpaidLine = collect($payrollFor($unpaidUser)['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance UNPAID');
             $this->assertNotNull($unpaidLine);
-            $this->assertSame(312.50, (float) ($unpaidLine['amount'] ?? 0));
+            $this->assertSame(1354.17, (float) ($unpaidLine['amount'] ?? 0));
             $this->assertSame(1.0, (float) data_get($unpaidLine, 'allowance_proration.unpaid_absent_days'));
             $this->assertSame(3.125, (float) data_get($unpaidLine, 'allowance_proration.payable_day_units'));
             $this->assertTrue(collect(data_get($unpaidLine, 'allowance_proration.unpaid_absences', []))
