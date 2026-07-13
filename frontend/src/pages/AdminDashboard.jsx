@@ -1312,28 +1312,30 @@ export default function AdminDashboard() {
     isDefaultFilters && Array.isArray(data?.company_distribution)
       ? data.company_distribution
       : (companyAttendanceData?.companies ?? [])
-  const companyData = companyRows.map((c, idx) => ({
-    present: Number(c.present ?? 0),
-    headcount: Number(c.headcount ?? 0),
-    late: Number(c.late ?? 0),
-    absent: Number(c.absent ?? 0),
-    on_leave: Number(c.on_leave ?? 0),
-    // Attendance formula: (present employees / total company employees) * 100.
-    attendance_pct:
-      Number(c.headcount ?? 0) > 0
-        ? Number(((Number(c.present ?? 0) / Number(c.headcount ?? 0)) * 100).toFixed(2))
-        : 0,
-    company: c.company ?? 'Unassigned',
-    company_id: c.company_id,
-    // Efficiency fields
-    total_scheduled_hours: Number(c.total_scheduled_hours ?? 0),
-    total_payroll_impact_hours: Number(c.total_payroll_impact_hours ?? 0),
-    efficiency: Number(c.efficiency ?? 0),
-    // Keep backend percentage for reference/debug; UI uses computed attendance_pct above.
-    present_pct: c.present_pct ?? 0,
-    color: CHART.deptBars[idx % CHART.deptBars.length],
-    logo_url: companyLogoUrl(c) ?? (c.company_id != null ? companyLogoMap[c.company_id] : null),
-  }))
+  const companyData = companyRows
+    .map((c, idx) => ({
+      present: Number(c.present ?? 0),
+      headcount: Number(c.headcount ?? 0),
+      late: Number(c.late ?? 0),
+      absent: Number(c.absent ?? 0),
+      on_leave: Number(c.on_leave ?? 0),
+      // Attendance formula: (present employees / total company employees) * 100.
+      attendance_pct:
+        Number(c.headcount ?? 0) > 0
+          ? Number(((Number(c.present ?? 0) / Number(c.headcount ?? 0)) * 100).toFixed(2))
+          : 0,
+      company: c.company ?? 'Unassigned',
+      company_id: c.company_id,
+      // Efficiency fields
+      total_scheduled_hours: Number(c.total_scheduled_hours ?? 0),
+      total_payroll_impact_hours: Number(c.total_payroll_impact_hours ?? 0),
+      efficiency: Number(c.efficiency ?? 0),
+      // Keep backend percentage for reference/debug; UI uses computed attendance_pct above.
+      present_pct: c.present_pct ?? 0,
+      color: CHART.deptBars[idx % CHART.deptBars.length],
+      logo_url: companyLogoUrl(c) ?? (c.company_id != null ? companyLogoMap[c.company_id] : null),
+    }))
+    .sort((a, b) => b.efficiency - a.efficiency)
   const totalCompanyPresent = companyData.reduce((sum, d) => sum + (d.present ?? 0), 0)
   const totalCompanyHeadcount = companyData.reduce((sum, d) => sum + (d.headcount ?? 0), 0)
   const totalCompanyScheduledHours = companyData.reduce((sum, d) => sum + (d.total_scheduled_hours ?? 0), 0)
