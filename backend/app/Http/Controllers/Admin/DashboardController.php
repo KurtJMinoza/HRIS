@@ -3277,6 +3277,26 @@ class DashboardController extends Controller
         });
 
         $dayKey = self::DAY_KEYS[(int) $date->format('w')];
+
+        // Preload attendance logs and corrections so computeForDate has time_in/time_out data
+        $employeeIds = $employees->pluck('id')->all();
+        [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($date, $tz);
+        $allLogs = AttendanceLog::query()
+            ->whereIn('user_id', $employeeIds)
+            ->whereRaw(
+                $this->attendanceLogEffectivePunchColumnSql().' between ? and ?',
+                [$rangeStart->format('Y-m-d H:i:s'), $rangeEnd->format('Y-m-d H:i:s')]
+            )
+            ->orderByRaw($this->attendanceLogEffectivePunchColumnSql())
+            ->get()
+            ->groupBy('user_id');
+        $approvedCorrections = AttendanceCorrection::query()
+            ->whereDate('date', $dateKey)
+            ->where('approved', true)
+            ->whereIn('user_id', $employeeIds)
+            ->get()
+            ->keyBy('user_id');
+
         $employeeRows = [];
         $summaryAgg = [
             'total_employees' => 0,
@@ -3295,6 +3315,8 @@ class DashboardController extends Controller
                 dateKey: $dateKey,
                 todayDate: $todayDate,
                 nowTz: $nowTz,
+                preloadedLogs: $allLogs->get($employee->id)?->all(),
+                correction: $approvedCorrections->get($employee->id),
             );
 
             $status = $dailySummary['status'] ?? '';
