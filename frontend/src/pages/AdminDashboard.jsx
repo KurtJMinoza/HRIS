@@ -70,7 +70,7 @@ import {
   getAdminDashboardCharts,
   getAdminDashboardRecentActivity,
   getAdminDashboardBirthdays,
-  getDashboardCompanyAttendance,
+  getDashboardCompanyEfficiency,
   getCompanies,
   getCompanyEfficiencyDetails,
   getHalfDayList,
@@ -692,6 +692,8 @@ export default function AdminDashboard() {
     const d = new Date()
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
+  const [customCompanyDateFrom, setCustomCompanyDateFrom] = useState(companyDateFrom)
+  const [customCompanyDateTo, setCustomCompanyDateTo] = useState(companyDateTo)
   const [holidayMonth, setHolidayMonth] = useState(getDefaultHolidayMonthKey)
   const holidayYearOptions = useMemo(() => buildHolidayYearOptions(), [])
   const holidayMonthOptions = useMemo(() => buildHolidayMonthOptions(), [])
@@ -713,8 +715,8 @@ export default function AdminDashboard() {
   const [halfDayListLoading, setHalfDayListLoading] = useState(false)
   const [companyEfficiencyModalOpen, setCompanyEfficiencyModalOpen] = useState(false)
   const [companyEfficiencyModalData, setCompanyEfficiencyModalData] = useState(null)
-  const [companyEfficiencyModalLoading, setCompanyEfficiencyModalLoading] = useState(false)
   const [selectedEfficiencyCompany, setSelectedEfficiencyCompany] = useState(null)
+  const [companyEfficiencyAttendancePage, setCompanyEfficiencyAttendancePage] = useState(1)
   const [dashboardFilter, setDashboardFilter] = useState('today')
   const [regularizationActionById, setRegularizationActionById] = useState({})
   const [birthdayTab, setBirthdayTab] = useState('month')
@@ -927,37 +929,36 @@ export default function AdminDashboard() {
     }
   }, [authLoading, canViewCompanyDirectory])
 
-  // Use main dashboard's company_distribution when viewing "today" + "all companies" (no separate fetch).
-  const isDefaultFilters =
-    companyDateFrom === toLocalDateString(new Date()) &&
-    companyDateTo === toLocalDateString(new Date()) &&
-    selectedCompanyIds.length === 0
+  const companyEfficiencyQuery = useQuery({
+    queryKey: ['company-efficiency', dashboardFilter, companyDateFrom, companyDateTo, selectedCompanyIds],
+    queryFn: ({ signal }) =>
+      getDashboardCompanyEfficiency(
+        {
+          period: dashboardFilter,
+          ...(dashboardFilter === 'custom' ? { start_date: companyDateFrom, end_date: companyDateTo } : {}),
+          ...(selectedCompanyIds.length > 0 ? { company_ids: selectedCompanyIds } : {}),
+        },
+        { signal },
+      ),
+    enabled: !authLoading,
+    placeholderData: (previousData) => previousData,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
+  })
 
-  // Fetch company attendance - called directly from filter handlers for non-default filters.
-  const fetchCompanyAttendance = useCallback(async (fromDate, toDate) => {
-    setCompanyChartLoading(true)
-    try {
-      const params = {
-        from_date: fromDate,
-        to_date: toDate,
-        ...(selectedCompanyIds.length > 0 ? { company_ids: selectedCompanyIds } : {}),
-      }
-      const res = await getDashboardCompanyAttendance(params)
-      setCompanyAttendanceData(res)
-    } catch {
-      setCompanyAttendanceData(null)
-    } finally {
-      setCompanyChartLoading(false)
-    }
-  }, [selectedCompanyIds])
-
-  // Fetch company attendance when date range changes for non-default views
   useEffect(() => {
-    const todayStr = toLocalDateString(new Date())
-    if (companyDateFrom !== todayStr || companyDateTo !== todayStr || selectedCompanyIds.length > 0) {
-      fetchCompanyAttendance(companyDateFrom, companyDateTo)
+    setCompanyChartLoading(companyEfficiencyQuery.isFetching && !companyEfficiencyQuery.data)
+  }, [companyEfficiencyQuery.isFetching, companyEfficiencyQuery.data])
+
+  useEffect(() => {
+    if (companyEfficiencyQuery.data) {
+      setCompanyAttendanceData(companyEfficiencyQuery.data)
     }
-  }, [companyDateFrom, companyDateTo, selectedCompanyIds, toLocalDateString])
+  }, [companyEfficiencyQuery.data])
+
+  useEffect(() => {
+    setCompanyEfficiencyAttendancePage(1)
+  }, [dashboardFilter, companyDateFrom, companyDateTo, selectedEfficiencyCompany?.id])
 
   const openHalfDayModal = useCallback(async () => {
     setHalfDayModalOpen(true)
@@ -974,22 +975,159 @@ export default function AdminDashboard() {
     }
   }, [toLocalDateString])
 
-  const openCompanyEfficiencyModal = useCallback(async (companyId, companyName) => {
-    setSelectedEfficiencyCompany({ id: companyId, name: companyName || 'Company' })
-    setCompanyEfficiencyModalOpen(true)
-    setCompanyEfficiencyModalLoading(true)
-    setCompanyEfficiencyModalData(null)
-    try {
-      const from = companyDateFrom || toLocalDateString(new Date())
-      const to = companyDateTo || from
-      const res = await getCompanyEfficiencyDetails(companyId, { from_date: from, to_date: to })
-      setCompanyEfficiencyModalData(res)
-    } catch {
-      setCompanyEfficiencyModalData(null)
-    } finally {
-      setCompanyEfficiencyModalLoading(false)
+  const openCompanyEfficiencyModal = useCallback((companyId, companyName, summary = {}) => {
+    const period = companyEfficiencyQuery.data?.period ?? {}
+    const startDate = summary.start_date ?? period.start_date ?? companyDateFrom
+    const endDate = summary.end_date ?? period.end_date ?? companyDateTo ?? startDate
+    const normalizedSummary = {
+      company_id: companyId,
+      company_name: companyName || summary.company_name || summary.company || 'Company',
+      employees: Number(summary.employee_count ?? summary.headcount ?? summary.employees ?? 0),
+      employee_count: Number(summary.employee_count ?? summary.headcount ?? summary.employees ?? 0),
+      present: Number(summary.present_count ?? summary.present ?? 0),
+      absent: Number(summary.absent_count ?? summary.absent ?? 0),
+      late: Number(summary.late_count ?? summary.late ?? 0),
+      undertime: Number(summary.undertime_count ?? summary.undertime ?? 0),
+      scheduled_hours: Number(summary.scheduled_hours ?? summary.total_scheduled_hours ?? 0),
+      payroll_impact_hours: Number(summary.payroll_impact_hours ?? summary.total_payroll_impact_hours ?? 0),
+      efficiency: Number(summary.efficiency_percentage ?? summary.efficiency ?? 0),
+      efficiency_percentage: Number(summary.efficiency_percentage ?? summary.efficiency ?? 0),
     }
-  }, [companyDateFrom, companyDateTo, toLocalDateString])
+    setSelectedEfficiencyCompany({ id: companyId, name: normalizedSummary.company_name, start_date: startDate, end_date: endDate })
+    setCompanyEfficiencyAttendancePage(1)
+    setCompanyEfficiencyModalOpen(true)
+    setCompanyEfficiencyModalData({
+      company: {
+        id: companyId,
+        name: normalizedSummary.company_name,
+        employees: normalizedSummary.employee_count,
+        from_date: startDate,
+        to_date: endDate,
+        start_date: startDate,
+        end_date: endDate,
+      },
+      summary: normalizedSummary,
+      breakdown: {
+        total_employees: normalizedSummary.employee_count,
+        present: normalizedSummary.present,
+        absent: normalizedSummary.absent,
+        late: normalizedSummary.late,
+        undertime: normalizedSummary.undertime,
+        total_scheduled_hours: normalizedSummary.scheduled_hours,
+        total_payroll_impact_hours: normalizedSummary.payroll_impact_hours,
+        company_efficiency: normalizedSummary.efficiency_percentage,
+        efficiency_percentage: normalizedSummary.efficiency_percentage,
+      },
+      employees: [],
+      data: [],
+      pagination: null,
+    })
+  }, [companyDateFrom, companyDateTo, companyEfficiencyQuery.data?.period])
+
+  const companyEfficiencyAttendanceQuery = useQuery({
+    queryKey: [
+      'company-efficiency-attendance',
+      selectedEfficiencyCompany?.id,
+      selectedEfficiencyCompany?.start_date,
+      selectedEfficiencyCompany?.end_date,
+      companyEfficiencyAttendancePage,
+      {},
+    ],
+    queryFn: ({ signal }) =>
+      getCompanyEfficiencyDetails(
+        selectedEfficiencyCompany.id,
+        {
+          period: 'custom',
+          start_date: selectedEfficiencyCompany.start_date,
+          end_date: selectedEfficiencyCompany.end_date,
+          page: companyEfficiencyAttendancePage,
+          per_page: 25,
+          sort: 'date',
+          direction: 'asc',
+        },
+        { signal },
+      ),
+    enabled: companyEfficiencyModalOpen && Boolean(selectedEfficiencyCompany?.id),
+    placeholderData: (previousData) => previousData,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
+  })
+
+  useEffect(() => {
+    const res = companyEfficiencyAttendanceQuery.data
+    if (!res) return
+    setCompanyEfficiencyModalData((prev) => {
+      const nextSummary = res.summary ?? prev?.summary ?? {}
+      const chartEfficiency = Number(prev?.summary?.efficiency_percentage ?? prev?.summary?.efficiency)
+      const modalEfficiency = Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency)
+      if (
+        import.meta.env.DEV &&
+        Number.isFinite(chartEfficiency) &&
+        Number.isFinite(modalEfficiency) &&
+        Math.abs(chartEfficiency - modalEfficiency) > 0
+      ) {
+        console.warn('company_efficiency_summary_mismatch', {
+          company_id: selectedEfficiencyCompany?.id,
+          start_date: selectedEfficiencyCompany?.start_date,
+          end_date: selectedEfficiencyCompany?.end_date,
+          chart_efficiency_percentage: chartEfficiency,
+          modal_efficiency_percentage: modalEfficiency,
+        })
+      }
+      return {
+        ...(prev ?? {}),
+        company: {
+          ...(prev?.company ?? {}),
+          employees: nextSummary.employee_count ?? nextSummary.employees ?? prev?.company?.employees,
+        },
+        summary: {
+          ...nextSummary,
+          efficiency: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
+        },
+        breakdown: {
+          ...(prev?.breakdown ?? {}),
+          total_employees: nextSummary.employee_count ?? nextSummary.employees ?? prev?.breakdown?.total_employees ?? 0,
+          present: nextSummary.present_count ?? nextSummary.present ?? 0,
+          absent: nextSummary.absent_count ?? nextSummary.absent ?? 0,
+          late: nextSummary.late_count ?? nextSummary.late ?? 0,
+          undertime: nextSummary.undertime_count ?? nextSummary.undertime ?? 0,
+          total_scheduled_hours: nextSummary.scheduled_hours ?? 0,
+          total_payroll_impact_hours: nextSummary.payroll_impact_hours ?? 0,
+          company_efficiency: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
+          efficiency_percentage: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
+        },
+        employees: Array.isArray(res.data) ? res.data : [],
+        data: Array.isArray(res.data) ? res.data : [],
+        pagination: res.pagination ?? null,
+        employees_meta: res.pagination ?? null,
+      }
+    })
+  }, [
+    companyEfficiencyAttendanceQuery.data,
+    selectedEfficiencyCompany?.end_date,
+    selectedEfficiencyCompany?.id,
+    selectedEfficiencyCompany?.start_date,
+  ])
+
+  useEffect(() => {
+    if (!companyEfficiencyModalOpen || !selectedEfficiencyCompany?.id) return
+    const period = companyEfficiencyQuery.data?.period
+    const rows = companyAttendanceData?.companies
+    if (!period || !Array.isArray(rows)) return
+    if (period.start_date === selectedEfficiencyCompany.start_date && period.end_date === selectedEfficiencyCompany.end_date) return
+    const row = rows.find((item) => item.company_id === selectedEfficiencyCompany.id)
+    if (row) {
+      openCompanyEfficiencyModal(row.company_id, row.company_name ?? row.company, row)
+    }
+  }, [
+    companyAttendanceData?.companies,
+    companyEfficiencyModalOpen,
+    companyEfficiencyQuery.data?.period,
+    openCompanyEfficiencyModal,
+    selectedEfficiencyCompany?.end_date,
+    selectedEfficiencyCompany?.id,
+    selectedEfficiencyCompany?.start_date,
+  ])
 
   // Polling and focus refresh are handled by React Query config.
 
@@ -1309,10 +1447,7 @@ export default function AdminDashboard() {
       trendType: 'weekly',
     },
   ]
-  const companyRows =
-    isDefaultFilters && Array.isArray(data?.company_distribution)
-      ? data.company_distribution
-      : (companyAttendanceData?.companies ?? [])
+  const companyRows = companyAttendanceData?.companies ?? []
   const companyData = companyRows
     .map((c, idx) => ({
       present: Number(c.present ?? 0),
@@ -1325,12 +1460,20 @@ export default function AdminDashboard() {
         Number(c.headcount ?? 0) > 0
           ? Number(((Number(c.present ?? 0) / Number(c.headcount ?? 0)) * 100).toFixed(2))
           : 0,
-      company: c.company ?? 'Unassigned',
+      company: c.company_name ?? c.company ?? 'Unassigned',
       company_id: c.company_id,
       // Efficiency fields
-      total_scheduled_hours: Number(c.total_scheduled_hours ?? 0),
-      total_payroll_impact_hours: Number(c.total_payroll_impact_hours ?? 0),
-      efficiency: Number(c.efficiency ?? 0),
+      total_scheduled_hours: Number(c.scheduled_hours ?? c.total_scheduled_hours ?? 0),
+      total_payroll_impact_hours: Number(c.payroll_impact_hours ?? c.total_payroll_impact_hours ?? 0),
+      efficiency: Number(c.efficiency_percentage ?? c.efficiency ?? 0),
+      efficiency_percentage: Number(c.efficiency_percentage ?? c.efficiency ?? 0),
+      employee_count: Number(c.employee_count ?? c.headcount ?? 0),
+      present_count: Number(c.present_count ?? c.present ?? 0),
+      absent_count: Number(c.absent_count ?? c.absent ?? 0),
+      late_count: Number(c.late_count ?? c.late ?? 0),
+      undertime_count: Number(c.undertime_count ?? c.undertime ?? 0),
+      start_date: companyAttendanceData?.period?.start_date,
+      end_date: companyAttendanceData?.period?.end_date,
       // Keep backend percentage for reference/debug; UI uses computed attendance_pct above.
       present_pct: c.present_pct ?? 0,
       color: CHART.deptBars[idx % CHART.deptBars.length],
@@ -2909,28 +3052,9 @@ export default function AdminDashboard() {
                   type="button"
                   onClick={() => {
                     setDashboardFilter(f.key)
-                    const today = new Date()
-                    if (f.key === 'today') {
-                      const d = toLocalDateString(today)
-                      setCompanyDateFrom(d)
-                      setCompanyDateTo(d)
-                    } else if (f.key === 'yesterday') {
-                      const d = new Date(today)
-                      d.setDate(d.getDate() - 1)
-                      const ds = toLocalDateString(d)
-                      setCompanyDateFrom(ds)
-                      setCompanyDateTo(ds)
-                    } else if (f.key === 'this_week') {
-                      const start = new Date(today)
-                      start.setDate(start.getDate() - start.getDay())
-                      const end = new Date(today)
-                      setCompanyDateFrom(toLocalDateString(start))
-                      setCompanyDateTo(toLocalDateString(end))
-                    } else if (f.key === 'this_month') {
-                      const start = new Date(today.getFullYear(), today.getMonth(), 1)
-                      const end = new Date(today)
-                      setCompanyDateFrom(toLocalDateString(start))
-                      setCompanyDateTo(toLocalDateString(end))
+                    if (f.key === 'custom') {
+                      setCustomCompanyDateFrom(companyDateFrom)
+                      setCustomCompanyDateTo(companyDateTo)
                     }
                   }}
                   className={`rounded-full px-3 py-1 text-xs transition-colors ${
@@ -2946,19 +3070,27 @@ export default function AdminDashboard() {
                 <div className="flex items-center gap-1.5">
                   <input
                     type="date"
-                    value={companyDateFrom}
-                    onChange={(e) => {
-                      setCompanyDateFrom(e.target.value)
-                    }}
+                    value={customCompanyDateFrom}
+                    onChange={(e) => setCustomCompanyDateFrom(e.target.value)}
                     className="min-w-0 w-32 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm"
                   />
                   <span className="text-xs text-muted-foreground">&ndash;</span>
                   <input
                     type="date"
-                    value={companyDateTo}
-                    onChange={(e) => setCompanyDateTo(e.target.value)}
+                    value={customCompanyDateTo}
+                    onChange={(e) => setCustomCompanyDateTo(e.target.value)}
                     className="min-w-0 w-32 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm"
                   />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompanyDateFrom(customCompanyDateFrom)
+                      setCompanyDateTo(customCompanyDateTo || customCompanyDateFrom)
+                    }}
+                    className="rounded-md border border-brand bg-brand px-3 py-1.5 text-xs font-bold text-brand-foreground shadow-sm"
+                  >
+                    Apply
+                  </button>
                 </div>
               )}
             </div>
@@ -3037,9 +3169,16 @@ export default function AdminDashboard() {
                   const isUnassigned = (cd.company || '').toLowerCase() === 'unassigned'
                   const legendLogo = resolveCompanyLogoSrc(cd.logo_url, { logo_url: cd.logo_url, id: cd.company_id })
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={cd.company_id ?? cd.company}
-                      className={`inline-flex shrink-0 items-center gap-2 rounded-lg border border-border/50 px-2 py-1.5 ${isUnassigned ? 'bg-muted/10' : 'bg-muted/20'}`}
+                      onClick={() => {
+                        if (cd.company_id) {
+                          openCompanyEfficiencyModal(cd.company_id, cd.company, cd)
+                        }
+                      }}
+                      disabled={!cd.company_id}
+                      className={`inline-flex shrink-0 items-center gap-2 rounded-lg border border-border/50 px-2 py-1.5 text-left transition-colors ${isUnassigned ? 'bg-muted/10' : 'bg-muted/20 hover:bg-muted/40'} ${cd.company_id ? 'cursor-pointer' : 'cursor-default opacity-70'}`}
                     >
                       {legendLogo ? (
                         <img
@@ -3056,7 +3195,7 @@ export default function AdminDashboard() {
                       >
                         {cd.company} - {cd.headcount ?? 0} staff
                       </span>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -3171,8 +3310,9 @@ export default function AdminDashboard() {
                     onClick={(data) => {
                       const cid = data?.company_id ?? data?.payload?.company_id
                       const cname = data?.company ?? data?.payload?.company
+                      const row = data?.payload ?? data
                       if (cid) {
-                        openCompanyEfficiencyModal(cid, cname)
+                        openCompanyEfficiencyModal(cid, cname, row)
                       }
                     }}
                     style={{ cursor: 'pointer' }}
@@ -3187,8 +3327,6 @@ export default function AdminDashboard() {
                       <Cell
                         key={`${entry.company}-${index}`}
                         fill={entry.color}
-                        stroke={entry.color}
-                        strokeWidth={1.6}
                       />
                     ))}
                   </Bar>
@@ -4024,11 +4162,7 @@ export default function AdminDashboard() {
             </DialogDescription>
           </DialogHeader>
 
-          {companyEfficiencyModalLoading ? (
-            <div className="flex min-h-[40rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
-              Loading efficiency details&hellip;
-            </div>
-          ) : !companyEfficiencyModalData ? (
+          {!companyEfficiencyModalData ? (
             <div className="flex min-h-[40rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
               Unable to load data. Please try again.
             </div>
@@ -4039,7 +4173,7 @@ export default function AdminDashboard() {
                 <div className="flex flex-col items-end">
                   <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Efficiency</span>
                   <span className="text-2xl font-bold tabular-nums text-foreground sm:text-3xl">
-                    {companyEfficiencyModalData.summary?.efficiency?.toFixed(2) ?? '0.00'}%
+                    {Number(companyEfficiencyModalData.summary?.efficiency_percentage ?? companyEfficiencyModalData.summary?.efficiency ?? 0).toFixed(2)}%
                   </span>
                 </div>
                 <span className={cn(
@@ -4051,14 +4185,15 @@ export default function AdminDashboard() {
               </div>
 
               {/* Summary Cards */}
-              <section className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <section className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
                 {[
-                  { label: 'Employees', value: companyEfficiencyModalData.summary?.employees ?? 0, cls: 'from-blue-50/80 to-background border-blue-200/70 dark:from-blue-500/10 dark:border-blue-500/20' },
+                  { label: 'Efficiency', value: `${Number(companyEfficiencyModalData.summary?.efficiency_percentage ?? companyEfficiencyModalData.summary?.efficiency ?? 0).toFixed(2)}%`, cls: 'from-violet-50/80 to-background border-violet-200/70 dark:from-violet-500/10 dark:border-violet-500/20' },
+                  { label: 'Scheduled Hours', value: `${Number(companyEfficiencyModalData.summary?.scheduled_hours ?? 0).toFixed(2)} hrs`, cls: 'from-blue-50/80 to-background border-blue-200/70 dark:from-blue-500/10 dark:border-blue-500/20' },
+                  { label: 'Payroll Impact', value: `${Number(companyEfficiencyModalData.summary?.payroll_impact_hours ?? 0).toFixed(2)} hrs`, cls: 'from-emerald-50/80 to-background border-emerald-200/70 dark:from-emerald-500/10 dark:border-emerald-500/20' },
                   { label: 'Present', value: companyEfficiencyModalData.summary?.present ?? 0, cls: 'from-emerald-50/80 to-background border-emerald-200/70 dark:from-emerald-500/10 dark:border-emerald-500/20' },
                   { label: 'Absent', value: companyEfficiencyModalData.summary?.absent ?? 0, cls: 'from-rose-50/80 to-background border-rose-200/70 dark:from-rose-500/10 dark:border-rose-500/20' },
                   { label: 'Late', value: companyEfficiencyModalData.summary?.late ?? 0, cls: 'from-amber-50/80 to-background border-amber-200/70 dark:from-amber-500/10 dark:border-amber-500/20' },
                   { label: 'Undertime', value: companyEfficiencyModalData.summary?.undertime ?? 0, cls: 'from-yellow-50/80 to-background border-yellow-200/70 dark:from-yellow-500/10 dark:border-yellow-500/20' },
-                  { label: 'Efficiency', value: `${(companyEfficiencyModalData.summary?.efficiency ?? 0).toFixed(2)}%`, cls: 'from-violet-50/80 to-background border-violet-200/70 dark:from-violet-500/10 dark:border-violet-500/20' },
                 ].map((metric) => (
                   <div key={metric.label} className={cn('flex flex-col items-center justify-center rounded-xl border bg-gradient-to-br p-4 shadow-sm text-center', metric.cls)}>
                     <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-muted-foreground">{metric.label}</p>
@@ -4142,13 +4277,19 @@ export default function AdminDashboard() {
               <section>
                 <div className="border-b border-border">
                   <div className="relative w-fit px-5 pb-3 text-sm font-semibold text-orange-600">
-                    Daily Attendance
+                    Daily Attendance Breakdown
                     <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-orange-500" />
                   </div>
                 </div>
 
                 <div className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm mt-4">
-                  {!Array.isArray(companyEfficiencyModalData.employees) || companyEfficiencyModalData.employees.length === 0 ? (
+                  {companyEfficiencyAttendanceQuery.isFetching && (!Array.isArray(companyEfficiencyModalData.employees) || companyEfficiencyModalData.employees.length === 0) ? (
+                    <div className="space-y-2 p-4">
+                      {Array.from({ length: 8 }).map((_, idx) => (
+                        <div key={idx} className="h-10 animate-pulse rounded-md bg-muted/60" />
+                      ))}
+                    </div>
+                  ) : !Array.isArray(companyEfficiencyModalData.employees) || companyEfficiencyModalData.employees.length === 0 ? (
                     <div className="flex min-h-48 flex-col items-center justify-center px-5 py-10 text-center">
                       <CalendarDays className="mb-3 size-8 text-muted-foreground/50" aria-hidden />
                       <p className="font-medium text-foreground">No attendance records found</p>
@@ -4159,7 +4300,7 @@ export default function AdminDashboard() {
                       <table className="w-full min-w-[90rem] border-collapse text-sm">
                         <thead className="bg-muted/25">
                           <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
-                            {['Employee', 'Date', 'Day', 'Schedule', 'Time In', 'Time Out', 'Status', 'Late', 'Undertime', 'Payroll Impact', 'Evaluation %', 'Performance'].map((label) => (
+                            {['Employee', 'Company', 'Department', 'Date', 'Day', 'Schedule', 'Time In', 'Time Out', 'Status', 'Late', 'Undertime', 'Payroll Impact', 'Remarks', 'Evaluation Percentage', 'Performance'].map((label) => (
                               <th key={label} className="h-11 whitespace-nowrap px-3 font-medium first:pl-4">
                                 <span className="inline-flex items-center gap-1.5">{label}</span>
                               </th>
@@ -4184,6 +4325,8 @@ export default function AdminDashboard() {
                                   <span className="font-medium">{emp.employee_name}</span>
                                 </span>
                               </td>
+                              <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.company_name ?? emp.company ?? '—'}</td>
+                              <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.department ?? '—'}</td>
                               <td className="whitespace-nowrap px-3 py-3 text-foreground">
                                 {emp.date ? new Date(emp.date + 'T12:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                               </td>
@@ -4232,20 +4375,11 @@ export default function AdminDashboard() {
                               )}>
                                 {(emp.payroll_impact ?? 0) > 0 ? `${Number(emp.payroll_impact).toFixed(2)}h` : '—'}
                               </td>
-                              <td className={cn(
-                                'whitespace-nowrap px-3 py-3 text-xs',
-                                emp.evaluation_pct != null ? 'font-medium text-violet-600 dark:text-violet-400' : 'text-muted-foreground'
-                              )}>
-                                {emp.evaluation_pct != null ? (
-                                  <span className="tabular-nums">
-                                    {Number(emp.evaluation_pct).toFixed(2)}%
-                                    {emp.evaluation_rating ? (
-                                      <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">
-                                        {emp.evaluation_rating}
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                ) : '—'}
+                              <td className="max-w-[14rem] truncate px-3 py-3 text-xs text-muted-foreground" title={emp.remarks ?? undefined}>
+                                {emp.remarks || '—'}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-3 text-xs italic text-muted-foreground">
+                                Coming Soon
                               </td>
                               <td className="whitespace-nowrap px-3 py-3 text-xs italic text-muted-foreground">
                                 Coming Soon
@@ -4257,6 +4391,74 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </div>
+                {companyEfficiencyModalData.pagination && (
+                  <div className="mt-3 flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2">
+                      <span>
+                        Showing {companyEfficiencyModalData.pagination.from ?? 0}&ndash;{companyEfficiencyModalData.pagination.to ?? 0} of{' '}
+                        {companyEfficiencyModalData.pagination.total ?? 0} attendance records
+                      </span>
+                      {companyEfficiencyAttendanceQuery.isFetching && (
+                        <span className="inline-flex items-center gap-1 text-brand">
+                          <RefreshCw className="size-3 animate-spin" aria-hidden />
+                          Loading
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={(companyEfficiencyModalData.pagination.current_page ?? 1) <= 1}
+                        onClick={() => setCompanyEfficiencyAttendancePage((page) => Math.max(1, page - 1))}
+                        className="rounded-md border border-border px-2.5 py-1 font-medium text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      {Array.from({ length: Math.min(5, companyEfficiencyModalData.pagination.last_page ?? 1) }).map((_, idx) => {
+                        const current = companyEfficiencyModalData.pagination.current_page ?? 1
+                        const last = companyEfficiencyModalData.pagination.last_page ?? 1
+                        const start = Math.max(1, Math.min(current - 2, last - 4))
+                        const pageNo = start + idx
+                        if (pageNo > last) return null
+                        return (
+                          <button
+                            key={pageNo}
+                            type="button"
+                            onClick={() => setCompanyEfficiencyAttendancePage(pageNo)}
+                            className={cn(
+                              'rounded-md border px-2.5 py-1 font-medium',
+                              current === pageNo
+                                ? 'border-brand bg-brand text-brand-foreground'
+                                : 'border-border text-foreground hover:bg-muted',
+                            )}
+                          >
+                            {pageNo}
+                          </button>
+                        )
+                      })}
+                      {(companyEfficiencyModalData.pagination.last_page ?? 1) > 5 && (
+                        <span className="px-1">...</span>
+                      )}
+                      {(companyEfficiencyModalData.pagination.last_page ?? 1) > 5 && (
+                        <button
+                          type="button"
+                          onClick={() => setCompanyEfficiencyAttendancePage(companyEfficiencyModalData.pagination.last_page)}
+                          className="rounded-md border border-border px-2.5 py-1 font-medium text-foreground hover:bg-muted"
+                        >
+                          {companyEfficiencyModalData.pagination.last_page}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={(companyEfficiencyModalData.pagination.current_page ?? 1) >= (companyEfficiencyModalData.pagination.last_page ?? 1)}
+                        onClick={() => setCompanyEfficiencyAttendancePage((page) => Math.min(companyEfficiencyModalData.pagination.last_page ?? page, page + 1))}
+                        className="rounded-md border border-border px-2.5 py-1 font-medium text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </section>
             </div>
           )}

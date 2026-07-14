@@ -289,6 +289,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/dashboard/birthdays', [DashboardController::class, 'birthdaysByMonth']);
             Route::get('/admin/dashboard/half-day-list', [DashboardController::class, 'halfDayList']);
             Route::get('/admin/dashboard/company-attendance', [DashboardController::class, 'companyAttendance']);
+            Route::get('/admin/dashboard/company-efficiency', [DashboardController::class, 'companyEfficiency']);
+            Route::get('/admin/dashboard/company-efficiency/{companyId}/attendance', [DashboardController::class, 'companyEfficiencyAttendance'])->whereNumber('companyId');
             Route::get('/admin/dashboard/company-efficiency-details/{companyId}', [DashboardController::class, 'companyEfficiencyDetails']);
         });
 

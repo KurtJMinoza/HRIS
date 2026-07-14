@@ -28,6 +28,7 @@ use App\Services\LeaveApprovalService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\AttendanceDailySummaryService;
 use App\Services\CompanyEfficiencyService;
+use App\Services\EfficiencyPeriodResolver;
 use App\Services\PresenceFilingService;
 use App\Support\AdminDashboardCache;
 use App\Support\RequestPerformanceLogger;
@@ -53,6 +54,7 @@ class DashboardController extends Controller
         private readonly LeaveApprovalService $leaveApprovalService,
         private readonly AttendanceDailySummaryService $attendanceDailySummaryService,
         private readonly CompanyEfficiencyService $companyEfficiencyService,
+        private readonly EfficiencyPeriodResolver $efficiencyPeriodResolver,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -3248,6 +3250,48 @@ class DashboardController extends Controller
         ]);
     }
 
+    public function companyEfficiency(Request $request): JsonResponse
+    {
+        $period = $this->efficiencyPeriodResolver->resolve($request);
+        $fromDate = Carbon::parse($period['start_date'], $period['timezone'])->startOfDay();
+        $toDate = Carbon::parse($period['end_date'], $period['timezone'])->startOfDay();
+        $companyIds = $this->requestedCompanyIds($request);
+        $actorCompanyId = (int) ($request->user()?->getEffectiveCompanyId() ?? $request->user()?->company_id ?? 0);
+        $attendanceVersion = AdminDashboardCache::segmentVersion($actorCompanyId, 'attendance');
+        $scopeHash = md5(json_encode([
+            'actor' => $request->user()?->id,
+            'companies' => $companyIds,
+            'attendance_version' => $attendanceVersion,
+        ]));
+        $cacheKey = sprintf(
+            'dashboard:company_efficiency:%s:%s:%s',
+            $period['start_date'],
+            $period['end_date'],
+            $scopeHash,
+        );
+
+        $companies = Cache::remember($cacheKey, now()->addMinutes(3), function () use ($fromDate, $toDate, $request, $companyIds): array {
+            return $this->companyEfficiencyService->companiesForRange(
+                $fromDate,
+                $toDate,
+                $request->user(),
+                $companyIds,
+            );
+        });
+
+        return response()->json([
+            'period' => [
+                'type' => $period['type'],
+                'start_date' => $period['start_date'],
+                'end_date' => $period['end_date'],
+                'timezone' => $period['timezone'],
+            ],
+            'date' => $period['start_date'],
+            'date_to' => $period['end_date'],
+            'companies' => $companies,
+        ]);
+    }
+
     /**
      * Company Efficiency Details — per-employee daily rows for the selected date range.
      */
@@ -3286,6 +3330,79 @@ class DashboardController extends Controller
         }
 
         return response()->json($details);
+    }
+
+    public function companyEfficiencyAttendance(Request $request, int $companyId): JsonResponse
+    {
+        $period = $this->efficiencyPeriodResolver->resolve($request);
+        $fromDate = Carbon::parse($period['start_date'], $period['timezone'])->startOfDay();
+        $toDate = Carbon::parse($period['end_date'], $period['timezone'])->startOfDay();
+        $page = max(1, (int) $request->input('page', 1));
+        $perPage = 25;
+        $attendanceVersion = AdminDashboardCache::segmentVersion($companyId, 'attendance');
+        $filtersHash = md5(json_encode([
+            'search' => $request->input('search'),
+            'status' => $request->input('status'),
+            'department_id' => $request->input('department_id'),
+            'sort' => $request->input('sort', 'date'),
+            'direction' => $request->input('direction', 'asc'),
+            'actor' => $request->user()?->id,
+            'attendance_version' => $attendanceVersion,
+        ]));
+        $cacheKey = sprintf(
+            'dashboard:company_efficiency:attendance:%d:%s:%s:%d:%s',
+            $companyId,
+            $period['start_date'],
+            $period['end_date'],
+            $page,
+            $filtersHash,
+        );
+
+        $details = Cache::remember($cacheKey, now()->addMinutes(1), function () use ($request, $companyId, $fromDate, $toDate, $page, $perPage): ?array {
+            return $this->companyEfficiencyService->companyDetails(
+                $fromDate,
+                $toDate,
+                $request->user(),
+                $companyId,
+                $page,
+                $perPage,
+                $request->input('search'),
+                $request->input('status'),
+                $request->filled('department_id') ? (int) $request->input('department_id') : null,
+                (string) $request->input('sort', 'date'),
+                (string) $request->input('direction', 'asc'),
+            );
+        });
+        if ($details === null) {
+            return response()->json(['message' => 'Company not found.'], 404);
+        }
+
+        return response()->json([
+            'data' => $details['data'] ?? $details['employees'] ?? [],
+            'pagination' => $details['pagination'] ?? $details['employees_meta'] ?? [],
+            'summary' => $details['summary'] ?? [],
+            'period' => [
+                'type' => $period['type'],
+                'start_date' => $period['start_date'],
+                'end_date' => $period['end_date'],
+                'timezone' => $period['timezone'],
+            ],
+        ]);
+    }
+
+    /**
+     * @return array<int>|null
+     */
+    private function requestedCompanyIds(Request $request): ?array
+    {
+        $companyIdsParam = $request->input('company_ids');
+        if ($companyIdsParam === null || $companyIdsParam === '') {
+            return null;
+        }
+
+        $arr = is_array($companyIdsParam) ? $companyIdsParam : [$companyIdsParam];
+
+        return array_values(array_filter(array_map('intval', $arr)));
     }
 
     /**

@@ -43,6 +43,18 @@ class CompanyEfficiencyService
     }
 
     /**
+     * @return array<string, mixed>|null
+     */
+    public function calculate(int $companyId, Carbon $fromDate, Carbon $toDate, User $actor): ?array
+    {
+        $rows = $this->companiesForRange($fromDate, $toDate, $actor, [$companyId]);
+
+        return collect($rows)->first(
+            fn (array $row) => (int) ($row['company_id'] ?? 0) === $companyId
+        );
+    }
+
+    /**
      * @return array{company: array<string, mixed>, summary: array<string, mixed>, breakdown: array<string, mixed>, employees: list<array<string, mixed>>, employees_meta: array<string, int>}|null
      */
     public function companyDetails(
@@ -52,6 +64,11 @@ class CompanyEfficiencyService
         int $companyId,
         int $page = 1,
         int $perPage = 25,
+        ?string $search = null,
+        ?string $status = null,
+        ?int $departmentId = null,
+        string $sort = 'date',
+        string $direction = 'asc',
     ): ?array {
         $ctx = $this->buildContext($fromDate, $toDate, $actor, [$companyId]);
         $company = Company::find($companyId);
@@ -69,7 +86,21 @@ class CompanyEfficiencyService
         $numDays = $ctx['num_days'];
         $agg = $companyRow['agg'] ?? $this->emptyAgg();
 
-        $slots = $this->buildEmployeeSlots($ctx, $companyId);
+        $slots = $this->buildEmployeeSlots($ctx, $companyId, $search, $departmentId, $sort, $direction);
+        if ($status !== null && trim($status) !== '') {
+            $wantedStatus = strtolower(trim($status));
+            $slots = array_values(array_filter($slots, function (array $slot) use ($ctx, $wantedStatus): bool {
+                $dailySummary = $this->resolveDailySummary(
+                    $ctx,
+                    $slot['employee'],
+                    $slot['date_key'],
+                    $slot['day_key'],
+                    $slot['date_key'] === $ctx['today_date'],
+                );
+
+                return strtolower((string) ($dailySummary['status'] ?? '')) === $wantedStatus;
+            }));
+        }
         $totalSlots = count($slots);
         $lastPage = max(1, (int) ceil($totalSlots / max(1, $perPage)));
         $page = min(max(1, $page), $lastPage);
@@ -86,12 +117,34 @@ class CompanyEfficiencyService
                 $slot['day_key'],
             );
         }
-
-        $efficiency = (float) ($companyRow['efficiency'] ?? 0);
+        $efficiency = (float) ($companyRow['efficiency_percentage'] ?? $companyRow['efficiency'] ?? 0);
         $attendanceEfficiency = (float) ($companyRow['attendance_efficiency'] ?? $efficiency);
         $evaluationAvg = $companyRow['evaluation_avg'] ?? null;
-        $totalScheduledHours = (float) ($companyRow['total_scheduled_hours'] ?? 0);
-        $totalPayrollImpactHours = (float) ($companyRow['total_payroll_impact_hours'] ?? 0);
+        $totalScheduledHours = (float) ($companyRow['scheduled_hours'] ?? $companyRow['total_scheduled_hours'] ?? 0);
+        $totalPayrollImpactHours = (float) ($companyRow['payroll_impact_hours'] ?? $companyRow['total_payroll_impact_hours'] ?? 0);
+        $summary = [
+            'company_id' => $companyId,
+            'company_name' => $company->name,
+            'start_date' => $ctx['from_date_key'],
+            'end_date' => $ctx['to_date_key'],
+            'employees' => $uniqueEmployees,
+            'employee_count' => $uniqueEmployees,
+            'employee_days' => $uniqueEmployees * $numDays,
+            'present' => (int) ($agg['present'] ?? 0),
+            'present_count' => (int) ($agg['present'] ?? 0),
+            'absent' => (int) ($agg['absent'] ?? 0),
+            'absent_count' => (int) ($agg['absent'] ?? 0),
+            'late' => (int) ($agg['late'] ?? 0),
+            'late_count' => (int) ($agg['late'] ?? 0),
+            'undertime' => (int) ($agg['undertime'] ?? 0),
+            'undertime_count' => (int) ($agg['undertime'] ?? 0),
+            'scheduled_hours' => $totalScheduledHours,
+            'payroll_impact_hours' => $totalPayrollImpactHours,
+            'efficiency' => $efficiency,
+            'efficiency_percentage' => $efficiency,
+            'attendance_efficiency' => $attendanceEfficiency,
+            'evaluation_avg' => $evaluationAvg,
+        ];
 
         return [
             'company' => [
@@ -102,18 +155,10 @@ class CompanyEfficiencyService
                 'date' => $ctx['from_date_key'],
                 'from_date' => $ctx['from_date_key'],
                 'to_date' => $ctx['to_date_key'],
+                'start_date' => $ctx['from_date_key'],
+                'end_date' => $ctx['to_date_key'],
             ],
-            'summary' => [
-                'employees' => $uniqueEmployees,
-                'employee_days' => $uniqueEmployees * $numDays,
-                'present' => (int) ($agg['present'] ?? 0),
-                'absent' => (int) ($agg['absent'] ?? 0),
-                'late' => (int) ($agg['late'] ?? 0),
-                'undertime' => (int) ($agg['undertime'] ?? 0),
-                'efficiency' => $efficiency,
-                'attendance_efficiency' => $attendanceEfficiency,
-                'evaluation_avg' => $evaluationAvg,
-            ],
+            'summary' => $summary,
             'breakdown' => [
                 'total_employees' => $uniqueEmployees,
                 'employee_days' => $uniqueEmployees * $numDays,
@@ -127,8 +172,18 @@ class CompanyEfficiencyService
                 'attendance_efficiency' => $attendanceEfficiency,
                 'evaluation_avg' => $evaluationAvg,
                 'company_efficiency' => $efficiency,
+                'efficiency_percentage' => $efficiency,
             ],
+            'data' => $employeeRows,
             'employees' => $employeeRows,
+            'pagination' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalSlots,
+                'last_page' => $lastPage,
+                'from' => $totalSlots > 0 ? $offset + 1 : 0,
+                'to' => $totalSlots > 0 ? $offset + count($employeeRows) : 0,
+            ],
             'employees_meta' => [
                 'current_page' => $page,
                 'last_page' => $lastPage,
@@ -213,9 +268,14 @@ class CompanyEfficiencyService
 
         $approvedCorrections = AttendanceCorrection::query()
             ->whereBetween('date', [$fromDateKey, $toDateKey])
-            ->where('approved', true)
             ->whereIn('user_id', $employeeIds)
+            ->where(function ($query): void {
+                $query->where('approved', true)->orWhere('pending_approval', true);
+            })
+            ->orderByDesc('approved')
+            ->orderByDesc('id')
             ->get()
+            ->unique(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString())
             ->keyBy(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString());
 
         $latestEvaluationsByEmployee = Evaluation::query()
@@ -306,23 +366,32 @@ class CompanyEfficiencyService
             $rows[] = [
                 'company_id' => $bucket['company_id'],
                 'company' => $bucket['company'],
+                'company_name' => $bucket['company'],
                 'logo_url' => $bucket['logo_url'],
                 'present' => (int) $agg['present'],
+                'present_count' => (int) $agg['present'],
                 'late' => (int) $agg['late'],
+                'late_count' => (int) $agg['late'],
                 'absent' => (int) $agg['absent'],
+                'absent_count' => (int) $agg['absent'],
                 'undertime' => (int) $agg['undertime'],
+                'undertime_count' => (int) $agg['undertime'],
                 'on_leave' => (int) $agg['on_leave'],
                 'scheduled_employees' => (int) $agg['scheduled_employees'],
                 'headcount' => $headcount,
+                'employee_count' => $headcount,
                 'present_pct' => $expectedDays > 0 ? round(100 * $agg['present'] / $expectedDays, 1) : 0,
                 'absent_pct' => $expectedDays > 0 ? round(100 * $agg['absent'] / $expectedDays, 1) : 0,
                 'late_pct' => $expectedDays > 0 ? round(100 * $agg['late'] / $expectedDays, 1) : 0,
                 'on_leave_pct' => $expectedDays > 0 ? round(100 * $agg['on_leave'] / $expectedDays, 1) : 0,
                 'total_scheduled_hours' => $totalScheduledHours,
+                'scheduled_hours' => $totalScheduledHours,
                 'total_payroll_impact_hours' => $totalPayrollImpactHours,
+                'payroll_impact_hours' => $totalPayrollImpactHours,
                 'attendance_efficiency' => $attendanceEfficiency,
                 'evaluation_avg' => $evaluationAvg,
                 'efficiency' => $efficiency,
+                'efficiency_percentage' => $efficiency,
                 'agg' => $agg,
             ];
         }
@@ -333,10 +402,29 @@ class CompanyEfficiencyService
     }
 
     /** @param array<string, mixed> $ctx @return list<array{employee: User, date: Carbon, date_key: string, day_key: string}> */
-    private function buildEmployeeSlots(array $ctx, int $companyId): array
+    private function buildEmployeeSlots(
+        array $ctx,
+        int $companyId,
+        ?string $search,
+        ?int $departmentId,
+        string $sort,
+        string $direction,
+    ): array
     {
         $slots = [];
         $employees = $ctx['employees_by_company']->get((int) $companyId, collect());
+        $search = strtolower(trim((string) $search));
+        if ($search !== '') {
+            $employees = $employees->filter(static function (User $employee) use ($search): bool {
+                return str_contains(strtolower((string) ($employee->display_name ?: '')), $search)
+                    || str_contains(strtolower((string) ($employee->email ?? '')), $search);
+            })->values();
+        }
+        if ($departmentId !== null && $departmentId > 0) {
+            $employees = $employees->filter(
+                static fn (User $employee): bool => (int) ($employee->department_id ?? 0) === $departmentId
+            )->values();
+        }
         $dateCursor = $ctx['from_date']->copy();
 
         while ($dateCursor->lessThanOrEqualTo($ctx['to_date'])) {
@@ -352,6 +440,19 @@ class CompanyEfficiencyService
             }
             $dateCursor->addDay();
         }
+
+        $direction = strtolower($direction) === 'asc' ? 'asc' : 'desc';
+        usort($slots, static function (array $a, array $b) use ($sort, $direction): int {
+            $employeeCmp = strcmp(
+                strtolower((string) ($a['employee']->last_name ?? $a['employee']->display_name ?? '')),
+                strtolower((string) ($b['employee']->last_name ?? $b['employee']->display_name ?? '')),
+            );
+            $cmp = $sort === 'employee'
+                ? ($employeeCmp ?: strcmp($a['date_key'], $b['date_key']))
+                : (strcmp($a['date_key'], $b['date_key']) ?: $employeeCmp);
+
+            return $direction === 'asc' ? $cmp : -$cmp;
+        });
 
         return $slots;
     }
@@ -419,10 +520,16 @@ class CompanyEfficiencyService
             )
             : null;
         $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $hrEvaluationPct);
+        $companyId = (int) ($employee->getEffectiveCompanyId() ?? 0);
+        $company = $companyId > 0 ? $ctx['companies']->get($companyId) : null;
+        $correction = $ctx['approved_corrections']->get($employee->id.'|'.$dateKey);
+        $remarks = $this->resolveAttendanceRemarks($dailySummary, $storedSummary, $correction);
 
         return [
             'id' => $employee->id,
             'employee_name' => $employee->display_name ?: '—',
+            'company' => $company?->name ?? 'Unassigned',
+            'company_name' => $company?->name ?? 'Unassigned',
             'profile_image' => $profileImageUrl,
             'profile_image_url' => $profileImageUrl,
             'department' => $employee->department ?? '-',
@@ -442,15 +549,83 @@ class CompanyEfficiencyService
             'undertime_minutes' => $undertimeMinutes,
             'payroll_impact' => $payrollImpactHours,
             'scheduled_hours' => round($scheduledHours, 2),
-            'evaluation' => $hrEvaluationPct,
-            'evaluation_pct' => $hrEvaluationPct,
-            'evaluation_rating' => $latestEvaluation?->overall_rating,
+            'remarks' => $remarks,
+            'presence_label' => $dailySummary['presence_label'] ?? null,
+            'presence_issue' => $dailySummary['presence_issue'] ?? null,
+            'evaluation' => null,
+            'evaluation_pct' => null,
+            'evaluation_percentage' => null,
+            'evaluation_rating' => null,
             'attendance_efficiency_pct' => $attendanceEfficiencyPct,
             'combined_efficiency_pct' => $combinedEfficiencyPct,
             // ponytail: Performance column is Coming Soon — wire when product defines the metric
             'efficiency_performance' => null,
             'performance' => null,
         ];
+    }
+
+    /**
+     * Build Remarks from presence annotations (Present (Approved), incomplete, pending, etc.).
+     */
+    private function resolveAttendanceRemarks(
+        array $dailySummary,
+        ?AttendanceDailySummary $storedSummary = null,
+        ?AttendanceCorrection $correction = null,
+    ): ?string {
+        $parts = [];
+
+        $presenceLabel = trim((string) ($dailySummary['presence_label'] ?? $storedSummary?->presence_label ?? ''));
+        $presenceIssue = strtolower(trim((string) ($dailySummary['presence_issue'] ?? $storedSummary?->presence_issue ?? '')));
+        $hasCorrection = (bool) ($dailySummary['has_correction'] ?? $storedSummary?->has_correction ?? false);
+        $correctionApproved = (bool) ($dailySummary['correction_approved'] ?? $storedSummary?->correction_approved ?? false)
+            || ($correction !== null && (bool) $correction->approved);
+
+        if ($presenceLabel === '') {
+            $presenceLabel = match ($presenceIssue) {
+                'approved_correction' => 'Present (Approved)',
+                'correction_pending' => 'Present (Pending Correction)',
+                'incomplete_pair' => 'Present (Incomplete Records)',
+                default => '',
+            };
+        }
+        if ($presenceLabel === '' && $correctionApproved) {
+            $presenceLabel = 'Present (Approved)';
+        } elseif ($presenceLabel === '' && $hasCorrection && ! $correctionApproved) {
+            $presenceLabel = 'Present (Pending Correction)';
+        }
+        if ($presenceLabel === '' && in_array(($dailySummary['status'] ?? ''), ['incomplete'], true)) {
+            $presenceLabel = 'Present (Incomplete Records)';
+        }
+
+        if ($presenceLabel !== '') {
+            $parts[] = $presenceLabel;
+        }
+
+        $holidayName = trim((string) ($dailySummary['holiday_name'] ?? $storedSummary?->holiday_name ?? ''));
+        if ($holidayName !== '' && ! in_array($holidayName, $parts, true)) {
+            $parts[] = $holidayName;
+        }
+
+        $lateLabel = trim((string) ($dailySummary['late_label'] ?? ''));
+        if ($lateLabel !== '' && ! in_array($lateLabel, $parts, true) && $presenceLabel === '') {
+            $parts[] = $lateLabel;
+        }
+
+        $note = trim((string) (
+            $dailySummary['correction_remarks']
+            ?? (is_array($storedSummary?->extra) ? ($storedSummary->extra['correction_remarks'] ?? null) : null)
+            ?? $correction?->remarks
+            ?? ''
+        ));
+        if ($note !== '' && ! in_array($note, $parts, true)) {
+            $parts[] = $note;
+        }
+
+        if ($parts === []) {
+            return null;
+        }
+
+        return implode(' — ', $parts);
     }
 
     /** @param array<string, mixed> $ctx */
@@ -569,7 +744,7 @@ class CompanyEfficiencyService
             return;
         }
 
-        if ($status === 'upcoming' || $status === 'rest' || ! $isScheduled) {
+        if ($status === 'upcoming' || $status === '—' || $status === '-' || $status === 'rest' || ! $isScheduled) {
             return;
         }
 
@@ -581,8 +756,15 @@ class CompanyEfficiencyService
             $storedSummary,
         );
         if ($scheduledHours > 0) {
+            $payHours = $payrollImpactHours;
+            // Open / incomplete days: payroll engine returns 0 without time_out, which
+            // zeros the whole chart for Today/Yesterday. Credit provisional impact.
+            // ponytail: ceiling = full schedule until time-out; switch to live worked minutes if dashboards need mid-shift accuracy.
+            if ($payHours <= 0 && $isPresent) {
+                $payHours = max(0.0, $scheduledHours - ($lateMinutes / 60));
+            }
             $agg['total_scheduled_hours'] += $scheduledHours;
-            $agg['total_payroll_impact_hours'] += $payrollImpactHours;
+            $agg['total_payroll_impact_hours'] += $payHours;
         }
     }
 
@@ -608,6 +790,14 @@ class CompanyEfficiencyService
             'is_leave' => $status === 'leave',
             'is_holiday' => $status === 'holiday',
             'scheduled_regular_hours' => $stored->scheduled_regular_hours,
+            'presence_label' => $stored->presence_label,
+            'presence_issue' => $stored->presence_issue,
+            'has_correction' => (bool) $stored->has_correction,
+            'correction_approved' => (bool) $stored->correction_approved,
+            'holiday_name' => $stored->holiday_name,
+            'late_label' => is_array($stored->extra) ? ($stored->extra['late_label'] ?? null) : null,
+            'correction_remarks' => is_array($stored->extra) ? ($stored->extra['correction_remarks'] ?? null) : null,
+            'remarks' => null,
         ];
     }
 
@@ -641,7 +831,7 @@ class CompanyEfficiencyService
         $scheduleIn = $dailySummary['schedule_in'] ?? null;
         $scheduleOut = $dailySummary['schedule_out'] ?? null;
         $isScheduled = $scheduleIn !== null && $scheduleOut !== null;
-        if ($status === 'upcoming' || $status === 'rest' || ! $isScheduled) {
+        if ($status === 'upcoming' || $status === '—' || $status === '-' || $status === 'rest' || ! $isScheduled) {
             return 0.0;
         }
 

@@ -2285,37 +2285,60 @@ export async function getAdminDashboardBirthdays({ year, month }) {
 }
 
 /**
- * Fetch company attendance comparison data for the chart.
- * @param {{ from_date?: string, to_date?: string, company_ids?: number[] }} params
+ * Fetch company efficiency comparison data for the chart.
+ * @param {{ period?: string, start_date?: string, end_date?: string, company_ids?: number[] }} params
+ * @param {RequestInit} [options]
  */
-export async function getDashboardCompanyAttendance(params = {}) {
+export async function getDashboardCompanyEfficiency(params = {}, options = {}) {
   const query = new URLSearchParams()
-  if (params.from_date) query.set('from_date', params.from_date)
-  if (params.to_date) query.set('to_date', params.to_date)
+  if (params.period) query.set('period', params.period)
+  if (params.start_date) query.set('start_date', params.start_date)
+  if (params.end_date) query.set('end_date', params.end_date)
   if (params.company_ids && Array.isArray(params.company_ids) && params.company_ids.length > 0) {
     params.company_ids.forEach((id) => query.append('company_ids[]', String(id)))
   }
-  const path = `/admin/dashboard/company-attendance${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
+  const path = `/admin/dashboard/company-efficiency${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path, options)
   const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(body.message || 'Failed to load company attendance')
+  if (!res.ok) throw new Error(body.message || 'Failed to load company efficiency')
   return body.data != null ? body.data : body
+}
+
+/**
+ * Backward-compatible wrapper for existing callers.
+ * @param {{ from_date?: string, to_date?: string, company_ids?: number[] }} params
+ * @param {RequestInit} [options]
+ */
+export async function getDashboardCompanyAttendance(params = {}, options = {}) {
+  return getDashboardCompanyEfficiency({
+    period: params.period ?? (params.from_date || params.to_date ? 'custom' : undefined),
+    start_date: params.start_date ?? params.from_date,
+    end_date: params.end_date ?? params.to_date,
+    company_ids: params.company_ids,
+  }, options)
 }
 
 /**
  * Fetch company efficiency details for the modal — per-employee daily summary.
  * @param {number} companyId
- * @param {{ date?: string, from_date?: string, to_date?: string, page?: number, per_page?: number }} params
+ * @param {{ period?: string, date?: string, start_date?: string, end_date?: string, from_date?: string, to_date?: string, page?: number, per_page?: number, search?: string, status?: string, department_id?: number, sort?: string, direction?: string }} params
+ * @param {RequestInit} [options]
  */
-export async function getCompanyEfficiencyDetails(companyId, params = {}) {
+export async function getCompanyEfficiencyDetails(companyId, params = {}, options = {}) {
   const query = new URLSearchParams()
-  if (params.from_date) query.set('from_date', params.from_date)
-  if (params.to_date) query.set('to_date', params.to_date)
-  if (!params.from_date && params.date) query.set('date', params.date)
+  if (params.period) query.set('period', params.period)
+  if (params.start_date || params.from_date) query.set('start_date', params.start_date ?? params.from_date)
+  if (params.end_date || params.to_date) query.set('end_date', params.end_date ?? params.to_date)
+  if (!params.start_date && !params.from_date && params.date) query.set('date', params.date)
   if (params.page) query.set('page', String(params.page))
   if (params.per_page) query.set('per_page', String(params.per_page))
-  const path = `/admin/dashboard/company-efficiency-details/${companyId}${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path)
+  if (params.search) query.set('search', params.search)
+  if (params.status) query.set('status', params.status)
+  if (params.department_id) query.set('department_id', String(params.department_id))
+  if (params.sort) query.set('sort', params.sort)
+  if (params.direction) query.set('direction', params.direction)
+  const path = `/admin/dashboard/company-efficiency/${companyId}/attendance${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path, options)
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.message || 'Failed to load company efficiency details')
   return body
