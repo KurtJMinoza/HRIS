@@ -4127,8 +4127,8 @@ export default function AdminDashboard() {
         onOpenChange={setCompanyEfficiencyModalOpen}
       >
         <DialogContent
-          className="w-[calc(100vw-1rem)] max-w-[min(96vw,92rem)] gap-0 overflow-hidden rounded-2xl border-border/70 bg-background p-0 shadow-[0_30px_90px_-28px_rgba(15,23,42,0.55)] sm:max-w-[min(96vw,92rem)]"
-          innerClassName="max-h-[94vh] gap-0 overflow-y-auto p-0"
+          className="w-[calc(100vw-0.75rem)] max-w-[min(99vw,98rem)] gap-0 overflow-hidden rounded-2xl border-border/70 bg-background p-0 shadow-[0_30px_90px_-28px_rgba(15,23,42,0.55)] sm:max-w-[min(99vw,98rem)]"
+          innerClassName="max-h-[94vh] gap-0 overflow-y-auto overflow-x-hidden p-0"
         >
           <DialogHeader className="border-b border-border/60 px-5 pb-4 pt-6 pr-14 text-left sm:px-8 sm:pb-5 sm:pt-7">
             <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
@@ -4167,7 +4167,7 @@ export default function AdminDashboard() {
               Unable to load data. Please try again.
             </div>
           ) : (
-            <div className="px-5 pb-7 sm:px-8 sm:pb-8">
+            <div className="px-3 pb-7 sm:px-5 sm:pb-8">
               {/* Efficiency score strip — title/meta live in DialogHeader only */}
               <div className="mb-5 flex flex-wrap items-center justify-end gap-3 rounded-xl border border-border/70 bg-card px-5 py-4 shadow-sm">
                 <div className="flex flex-col items-end">
@@ -4292,109 +4292,155 @@ export default function AdminDashboard() {
                       <p className="mt-1 text-sm text-muted-foreground">No employees found for this company on the selected date.</p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[90rem] border-collapse text-sm">
+                    <div className="w-full overflow-hidden">
+                      <table className="w-full table-fixed border-collapse text-[11px] leading-tight sm:text-xs">
+                        <colgroup>
+                          <col className="w-[14%]" />
+                          <col className="w-[8%]" />
+                          <col className="w-[7%]" />
+                          <col className="w-[4%]" />
+                          <col className="w-[9%]" />
+                          <col className="w-[5%]" />
+                          <col className="w-[5%]" />
+                          <col className="w-[8%]" />
+                          <col className="w-[4%]" />
+                          <col className="w-[5%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[10%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[9%]" />
+                        </colgroup>
                         <thead className="bg-muted/25">
-                          <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
-                            {['Employee', 'Company', 'Date', 'Day', 'Schedule', 'Time In', 'Time Out', 'Status', 'Late', 'Undertime', 'Payroll Impact', 'Remarks', 'Evaluation Percentage', 'Performance'].map((label) => (
-                              <th key={label} className="h-11 whitespace-nowrap px-3 font-medium first:pl-4">
-                                <span className="inline-flex items-center gap-1.5">{label}</span>
+                          <tr className="border-b border-border text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground sm:text-[11px]">
+                            {[
+                              { label: 'Employee', title: 'Employee' },
+                              { label: 'Company', title: 'Company' },
+                              { label: 'Date', title: 'Date' },
+                              { label: 'Day', title: 'Day' },
+                              { label: 'Schedule', title: 'Schedule' },
+                              { label: 'In', title: 'Time In' },
+                              { label: 'Out', title: 'Time Out' },
+                              { label: 'Status', title: 'Status' },
+                              { label: 'Late', title: 'Late' },
+                              { label: 'UT', title: 'Undertime' },
+                              { label: 'Impact', title: 'Payroll Impact' },
+                              { label: 'Remarks', title: 'Remarks' },
+                              { label: 'Eval %', title: 'Evaluation Percentage' },
+                              { label: 'Perf', title: 'Performance' },
+                            ].map((col) => (
+                              <th key={col.title} title={col.title} className="h-10 px-1.5 font-semibold first:pl-3 last:pr-3">
+                                <span className="block truncate">{col.label}</span>
                               </th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {companyEfficiencyModalData.employees.map((emp, idx) => (
-                            <tr key={emp.id ?? idx} className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/20">
-                              <td className="whitespace-nowrap px-3 py-3 pl-4 text-foreground">
-                                <span className="inline-flex items-center gap-2.5">
-                                  <Avatar className="size-8 shrink-0 rounded-full border border-border/60 shadow-sm">
-                                    <AvatarImage
-                                      src={profileImageUrl(emp.profile_image_url || emp.profile_image)}
-                                      alt=""
-                                      className="object-cover"
-                                    />
-                                    <AvatarFallback className="rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
-                                      {String(emp.employee_name || 'U').replace(/[^A-Za-z]/g, '').slice(0, 1).toUpperCase() || 'U'}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <span className="font-medium">{emp.employee_name}</span>
-                                </span>
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.company_name ?? emp.company ?? '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-3 text-foreground">
-                                {emp.date ? new Date(emp.date + 'T12:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.day || '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-3 text-xs text-foreground">
-                                {emp.schedule ? formatScheduleLabel12h(emp.schedule) : '—'}
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{emp.time_in || '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{emp.time_out || '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-3">
-                                <span className={cn(
-                                  'inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-semibold',
-                                  emp.status_code === 'present' || emp.status_code === 'present_with_ot'
-                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
-                                    : emp.status_code === 'late'
-                                      ? 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200'
-                                      : emp.status_code === 'absent'
-                                        ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
-                                        : emp.status_code === 'leave'
-                                          ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200'
-                                          : emp.status_code === 'halfday' || emp.status_code === 'half_day'
-                                            ? 'border-purple-300 bg-purple-50 text-purple-700 dark:border-purple-500/30 dark:bg-purple-500/10 dark:text-purple-200'
-                                            : emp.status_code === 'undertime'
-                                              ? 'border-yellow-300 bg-yellow-50 text-yellow-700 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200'
-                                              : emp.status_code === 'incomplete'
-                                                ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
-                                                : 'border-border bg-muted text-muted-foreground'
+                          {companyEfficiencyModalData.employees.map((emp, idx) => {
+                            const dateLabel = emp.date
+                              ? new Date(`${emp.date}T12:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+                              : '—'
+                            const scheduleLabel = emp.schedule ? formatScheduleLabel12h(emp.schedule) : '—'
+                            const companyLabel = emp.company_name ?? emp.company ?? '—'
+                            const evalPct = emp.evaluation_percentage ?? emp.evaluation_pct
+                            const performanceLabel = emp.evaluation_rating || emp.performance || emp.efficiency_performance || '—'
+                            const remarksLabel = emp.remarks || '—'
+
+                            return (
+                              <tr key={emp.id ?? idx} className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/20">
+                                <td className="px-1.5 py-2.5 pl-3 align-middle text-foreground">
+                                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                                    <Avatar className="size-6 shrink-0 rounded-full border border-border/60 shadow-sm">
+                                      <AvatarImage
+                                        src={profileImageUrl(emp.profile_image_url || emp.profile_image)}
+                                        alt=""
+                                        className="object-cover"
+                                      />
+                                      <AvatarFallback className="rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+                                        {String(emp.employee_name || 'U').replace(/[^A-Za-z]/g, '').slice(0, 1).toUpperCase() || 'U'}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <span className="min-w-0 break-words font-medium leading-snug" title={emp.employee_name}>
+                                      {emp.employee_name}
+                                    </span>
+                                  </span>
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle text-foreground">
+                                  <span className="block break-words leading-snug" title={companyLabel}>{companyLabel}</span>
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle text-foreground">
+                                  <span className="block break-words leading-snug" title={dateLabel}>{dateLabel}</span>
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle text-foreground">
+                                  <span className="block truncate" title={emp.day || undefined}>{emp.day || '—'}</span>
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle text-foreground">
+                                  <span className="block break-words leading-snug" title={scheduleLabel}>{scheduleLabel}</span>
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle tabular-nums text-foreground">
+                                  <span className="block truncate" title={emp.time_in || undefined}>{emp.time_in || '—'}</span>
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle tabular-nums text-foreground">
+                                  <span className="block truncate" title={emp.time_out || undefined}>{emp.time_out || '—'}</span>
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle">
+                                  <span className={cn(
+                                    'inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold leading-tight sm:text-[11px]',
+                                    emp.status_code === 'present' || emp.status_code === 'present_with_ot'
+                                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
+                                      : emp.status_code === 'late'
+                                        ? 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200'
+                                        : emp.status_code === 'absent'
+                                          ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'
+                                          : emp.status_code === 'leave'
+                                            ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200'
+                                            : emp.status_code === 'halfday' || emp.status_code === 'half_day'
+                                              ? 'border-purple-300 bg-purple-50 text-purple-700 dark:border-purple-500/30 dark:bg-purple-500/10 dark:text-purple-200'
+                                              : emp.status_code === 'undertime'
+                                                ? 'border-yellow-300 bg-yellow-50 text-yellow-700 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200'
+                                                : emp.status_code === 'incomplete'
+                                                  ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+                                                  : 'border-border bg-muted text-muted-foreground'
+                                  )}>
+                                    <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden />
+                                    <span className="min-w-0 truncate" title={emp.status}>{emp.status}</span>
+                                  </span>
+                                </td>
+                                <td className={cn(
+                                  'px-1.5 py-2.5 align-middle tabular-nums',
+                                  (emp.late_minutes ?? 0) > 0 ? 'font-medium text-orange-600 dark:text-orange-400' : 'text-muted-foreground'
                                 )}>
-                                  <span className="size-2 rounded-full bg-current" aria-hidden />
-                                  {emp.status}
-                                </span>
-                              </td>
-                              <td className={cn(
-                                'whitespace-nowrap px-3 py-3 tabular-nums',
-                                (emp.late_minutes ?? 0) > 0 ? 'font-medium text-orange-600 dark:text-orange-400' : 'text-muted-foreground'
-                              )}>
-                                {(emp.late_minutes ?? 0) > 0 ? `${emp.late_minutes}m` : '—'}
-                              </td>
-                              <td className={cn(
-                                'whitespace-nowrap px-3 py-3 tabular-nums',
-                                (emp.undertime_minutes ?? 0) > 0 ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
-                              )}>
-                                {(emp.undertime_minutes ?? 0) > 0 ? `${emp.undertime_minutes}m` : '—'}
-                              </td>
-                              <td className={cn(
-                                'whitespace-nowrap px-3 py-3 tabular-nums',
-                                (emp.payroll_impact ?? 0) > 0 ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'
-                              )}>
-                                {(emp.payroll_impact ?? 0) > 0 ? `${Number(emp.payroll_impact).toFixed(2)}h` : '—'}
-                              </td>
-                              <td className="max-w-[14rem] truncate px-3 py-3 text-xs text-muted-foreground" title={emp.remarks ?? undefined}>
-                                {emp.remarks || '—'}
-                              </td>
-                              <td className={cn(
-                                'whitespace-nowrap px-3 py-3 tabular-nums',
-                                emp.evaluation_percentage != null || emp.evaluation_pct != null
-                                  ? 'font-medium text-foreground'
-                                  : 'text-muted-foreground'
-                              )}>
-                                {emp.evaluation_percentage != null || emp.evaluation_pct != null
-                                  ? `${Number(emp.evaluation_percentage ?? emp.evaluation_pct).toFixed(2)}%`
-                                  : '—'}
-                              </td>
-                              <td className={cn(
-                                'whitespace-nowrap px-3 py-3',
-                                emp.evaluation_rating || emp.performance || emp.efficiency_performance
-                                  ? 'font-medium text-foreground'
-                                  : 'text-muted-foreground'
-                              )}>
-                                {emp.evaluation_rating || emp.performance || emp.efficiency_performance || '—'}
-                              </td>
-                            </tr>
-                          ))}
+                                  {(emp.late_minutes ?? 0) > 0 ? `${emp.late_minutes}m` : '—'}
+                                </td>
+                                <td className={cn(
+                                  'px-1.5 py-2.5 align-middle tabular-nums',
+                                  (emp.undertime_minutes ?? 0) > 0 ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                                )}>
+                                  {(emp.undertime_minutes ?? 0) > 0 ? `${emp.undertime_minutes}m` : '—'}
+                                </td>
+                                <td className={cn(
+                                  'px-1.5 py-2.5 align-middle tabular-nums',
+                                  (emp.payroll_impact ?? 0) > 0 ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'
+                                )}>
+                                  {(emp.payroll_impact ?? 0) > 0 ? `${Number(emp.payroll_impact).toFixed(2)}h` : '—'}
+                                </td>
+                                <td className="px-1.5 py-2.5 align-middle text-muted-foreground" title={emp.remarks ?? undefined}>
+                                  <span className="block break-words leading-snug">{remarksLabel}</span>
+                                </td>
+                                <td className={cn(
+                                  'px-1.5 py-2.5 align-middle tabular-nums',
+                                  evalPct != null ? 'font-medium text-foreground' : 'text-muted-foreground'
+                                )}>
+                                  {evalPct != null ? `${Number(evalPct).toFixed(1)}%` : '—'}
+                                </td>
+                                <td className={cn(
+                                  'px-1.5 py-2.5 align-middle last:pr-3',
+                                  performanceLabel !== '—' ? 'font-medium text-foreground' : 'text-muted-foreground'
+                                )}>
+                                  <span className="block break-words leading-snug" title={performanceLabel}>{performanceLabel}</span>
+                                </td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>
