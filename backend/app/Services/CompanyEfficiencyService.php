@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Storage;
 /**
  * Single source of truth for company efficiency (chart + modal summary).
  * Attendance efficiency excludes EXECom. Evaluation avg includes EXECom.
- * Chart/company efficiency % stays attendance-only (evaluation is reported separately).
+ * Workforce efficiency = average of attendance % and HR evaluation % when both exist.
  */
 class CompanyEfficiencyService
 {
@@ -213,6 +213,12 @@ class CompanyEfficiencyService
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $today = Carbon::now($tz)->startOfDay();
+        if ($toDate->greaterThan($today)) {
+            $toDate = $today->copy();
+        }
+        if ($fromDate->greaterThan($toDate)) {
+            $fromDate = $toDate->copy();
+        }
         $fromDateKey = $fromDate->toDateString();
         $toDateKey = $toDate->toDateString();
         $todayDate = $today->toDateString();
@@ -367,6 +373,11 @@ class CompanyEfficiencyService
                 }
 
                 $dailySummary = $this->resolveDailySummary($ctx, $employee, $dateKey, $dayKey, $isToday);
+                // Pending today belongs only in single-day Today; past no-punch rows are absences.
+                $status = (string) ($dailySummary['status'] ?? '');
+                if (($status === '—' || $status === '-') && $isToday && (int) $ctx['num_days'] > 1) {
+                    continue;
+                }
                 $this->accumulateDayStats(
                     $buckets[$companyId]['agg'],
                     $employee,
@@ -393,8 +404,9 @@ class CompanyEfficiencyService
             $totalPayrollImpactHours = round($payrollImpactMinutes / 60, 2);
             $attendanceEfficiency = $scheduledMinutes > 0
                 ? round(($payrollImpactMinutes / $scheduledMinutes) * 100, 2)
-                : 0.0;
+                : null;
             $evaluationAvg = $this->averageCompanyEvaluationPct($ctx, $companyId);
+            $efficiency = $this->combineEfficiency($attendanceEfficiency, $evaluationAvg) ?? 0.0;
             $excludedExecomCount = (int) ($ctx['excluded_execom_by_company']->get($companyId, collect())->count());
             $totalCompanyEmployees = (int) ($ctx['all_employees_by_company']->get($companyId, collect())->count());
 
@@ -409,8 +421,9 @@ class CompanyEfficiencyService
                 'absent_workdays' => (int) $agg['absent'],
                 'expected_scheduled_minutes' => $scheduledMinutes,
                 'payroll_impact_minutes' => $payrollImpactMinutes,
-                'efficiency_percentage' => $attendanceEfficiency,
+                'attendance_efficiency' => $attendanceEfficiency,
                 'evaluation_avg' => $evaluationAvg,
+                'efficiency_percentage' => $efficiency,
                 'cache_hit' => false,
             ]);
 
@@ -442,10 +455,10 @@ class CompanyEfficiencyService
                 'scheduled_hours' => $totalScheduledHours,
                 'total_payroll_impact_hours' => $totalPayrollImpactHours,
                 'payroll_impact_hours' => $totalPayrollImpactHours,
-                'attendance_efficiency' => $attendanceEfficiency,
+                'attendance_efficiency' => $attendanceEfficiency ?? 0.0,
                 'evaluation_avg' => $evaluationAvg,
-                'efficiency' => $attendanceEfficiency,
-                'efficiency_percentage' => $attendanceEfficiency,
+                'efficiency' => $efficiency,
+                'efficiency_percentage' => $efficiency,
                 'included_employee_count' => $headcount,
                 'excluded_execom_count' => $excludedExecomCount,
                 'agg' => $agg,
@@ -754,12 +767,14 @@ class CompanyEfficiencyService
             $ctx['schedule_cache'],
             $storedSummary,
         );
-        // Complete present rows only; incomplete / missing punches get 0 payroll impact.
+        // Complete present rows; missing-out / live clocked-in get provisional payroll for efficiency.
         $isPresentComplete = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime'], true);
+        $isMissingOut = $status === 'incomplete' && ($dailySummary['presence_issue'] ?? '') === 'missing_out';
         $payForEff = $isPresentComplete ? $payrollImpactHours : 0.0;
-        // Live mid-shift (still clocked in today) may credit provisional hours for the chart.
-        if ($payForEff <= 0 && $status === 'clocked_in' && $isToday && $scheduledHours > 0) {
-            $payForEff = max(0.0, $scheduledHours - ($lateMinutes / 60));
+        if ($payForEff <= 0 && $scheduledHours > 0 && ($status === 'clocked_in' || $isMissingOut)) {
+            $payForEff = $payrollImpactHours > 0
+                ? $payrollImpactHours
+                : max(0.0, $scheduledHours - ($lateMinutes / 60));
         }
         $attendanceEfficiencyPct = $scheduledHours > 0
             ? round(($payForEff / $scheduledHours) * 100, 2)
@@ -768,6 +783,19 @@ class CompanyEfficiencyService
         $company = $companyId > 0 ? $ctx['companies']->get($companyId) : null;
         $correction = $ctx['approved_corrections']->get($employee->id.'|'.$dateKey);
         $remarks = $this->resolveAttendanceRemarks($dailySummary, $storedSummary, $correction);
+        $latestEvaluation = $ctx['latest_evaluations']->get($employee->id);
+        $hrEvaluationPct = $latestEvaluation
+            ? $this->evaluationScoringService->resolveOverallPercentage(
+                $latestEvaluation->scores,
+                $latestEvaluation->overall_score,
+            )
+            : null;
+        $evaluationRating = $hrEvaluationPct !== null
+            ? $this->evaluationScoringService->ratingLabelFromPercentage($hrEvaluationPct)
+            : (is_string($latestEvaluation?->overall_rating) && trim($latestEvaluation->overall_rating) !== ''
+                ? trim($latestEvaluation->overall_rating)
+                : null);
+        $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $hrEvaluationPct);
 
         return [
             'id' => $employee->id,
@@ -798,13 +826,13 @@ class CompanyEfficiencyService
             'presence_issue' => $dailySummary['presence_issue'] ?? null,
             'classification' => $this->employeeClassificationService->label($employee, $ctx['from_date'], $ctx['to_date']),
             'is_execom' => $this->employeeClassificationService->isExecom($employee, $ctx['from_date'], $ctx['to_date']),
-            'evaluation_id' => null,
-            'evaluation_status' => null,
-            'evaluation_pct' => null,
-            'evaluation_percentage' => null,
-            'evaluation_rating' => null,
+            'evaluation_id' => $latestEvaluation?->id,
+            'evaluation_status' => $latestEvaluation?->status,
+            'evaluation_pct' => $hrEvaluationPct,
+            'evaluation_percentage' => $hrEvaluationPct,
+            'evaluation_rating' => $evaluationRating,
             'attendance_efficiency_pct' => $attendanceEfficiencyPct,
-            'combined_efficiency_pct' => null,
+            'combined_efficiency_pct' => $combinedEfficiencyPct,
             // ponytail: Performance column is Coming Soon on the breakdown table.
             'efficiency_performance' => null,
             'performance' => null,
@@ -942,7 +970,13 @@ class CompanyEfficiencyService
         $isPresentComplete = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime'], true);
         $isClockedIn = $status === 'clocked_in';
         $isIncomplete = $status === 'incomplete';
-        $isAbsent = $status === 'absent' && ! ($dailySummary['is_leave'] ?? false) && ! ($dailySummary['is_rest_day'] ?? false) && ! ($dailySummary['is_holiday'] ?? false);
+        $isMissingOut = $isIncomplete && ($dailySummary['presence_issue'] ?? '') === 'missing_out';
+        $isPendingNoPunch = $status === '—' || $status === '-';
+        $isAbsent = ($status === 'absent' || $isPendingNoPunch)
+            && $isScheduled
+            && ! ($dailySummary['is_leave'] ?? false)
+            && ! ($dailySummary['is_rest_day'] ?? false)
+            && ! ($dailySummary['is_holiday'] ?? false);
         $isLate = $lateMinutes > 0 && $isPresentComplete;
         $isUndertime = $undertimeMinutes > 0 && $isPresentComplete;
         $isLeave = ($dailySummary['is_leave'] ?? false) || $status === 'leave';
@@ -954,7 +988,7 @@ class CompanyEfficiencyService
             $agg['on_leave']++;
         } elseif ($isAbsent) {
             $agg['absent']++;
-        } elseif ($isPresentComplete || $isClockedIn) {
+        } elseif ($isPresentComplete || $isClockedIn || $isMissingOut) {
             $agg['present']++;
         }
         if ($isLate) {
@@ -972,7 +1006,7 @@ class CompanyEfficiencyService
             return;
         }
 
-        if ($status === 'upcoming' || $status === '—' || $status === '-' || $status === 'rest' || ! $isScheduled) {
+        if ($status === 'upcoming' || $status === 'rest' || ! $isScheduled) {
             return;
         }
 
@@ -987,17 +1021,36 @@ class CompanyEfficiencyService
             $payHours = 0.0;
             if ($isPresentComplete) {
                 $payHours = $payrollImpactHours;
-            } elseif ($isClockedIn) {
-                // Open live shift only: payroll engine returns 0 without time_out.
+            } elseif ($isClockedIn || $isMissingOut) {
+                // Open live shift / missing clock-out: employees showed up — credit provisional pay.
                 // ponytail: ceiling = full schedule until time-out; switch to live worked minutes if dashboards need mid-shift accuracy.
                 $payHours = $payrollImpactHours > 0
                     ? $payrollImpactHours
                     : max(0.0, $scheduledHours - ($lateMinutes / 60));
             }
-            // Incomplete (missing in/out): keep scheduled hours in the denominator, zero payroll impact.
+            // Missing-in (and other incomplete): keep scheduled hours in the denominator, zero payroll impact.
+            // Status "—" (before absent cutoff, no punch yet): scheduled only, zero pay.
             $agg['total_scheduled_hours'] += $scheduledHours;
-            $agg['total_payroll_impact_hours'] += $isIncomplete ? 0.0 : $payHours;
+            $agg['total_payroll_impact_hours'] += ($isIncomplete && ! $isMissingOut) ? 0.0 : $payHours;
         }
+    }
+
+    /**
+     * Workforce efficiency = average of attendance % and HR evaluation % when both exist.
+     */
+    private function combineEfficiency(?float $attendancePct, ?float $evaluationPct): ?float
+    {
+        if ($attendancePct === null && $evaluationPct === null) {
+            return null;
+        }
+        if ($evaluationPct === null) {
+            return round((float) $attendancePct, 2);
+        }
+        if ($attendancePct === null) {
+            return round((float) $evaluationPct, 2);
+        }
+
+        return round(($attendancePct + $evaluationPct) / 2, 2);
     }
 
     private function dailySummaryFromStoredRow(AttendanceDailySummary $stored): array
@@ -1134,7 +1187,7 @@ class CompanyEfficiencyService
         $scheduleIn = $dailySummary['schedule_in'] ?? null;
         $scheduleOut = $dailySummary['schedule_out'] ?? null;
         $isScheduled = $scheduleIn !== null && $scheduleOut !== null;
-        if ($status === 'upcoming' || $status === '—' || $status === '-' || $status === 'rest' || ! $isScheduled) {
+        if ($status === 'upcoming' || $status === 'rest' || ! $isScheduled) {
             return 0.0;
         }
 

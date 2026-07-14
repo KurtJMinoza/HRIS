@@ -30,6 +30,11 @@ class EfficiencyPeriodResolver
         if ($end->lessThan($start)) {
             $end = $start->copy();
         }
+        // Future calendar days have no attendance yet — including them as empty
+        // zeros This Week / This Month efficiency. Cap at today.
+        if ($end->greaterThan($today)) {
+            $end = $today->copy();
+        }
         if ($start->diffInDays($end) > 366) {
             $end = $start->copy()->addDays(366);
         }

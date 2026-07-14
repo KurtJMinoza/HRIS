@@ -36,14 +36,20 @@ class CompanyEfficiencyScheduleHoursTest extends TestCase
         $this->assertSame(8.0, $hours);
     }
 
-    public function test_evaluation_is_not_part_of_company_efficiency_service(): void
+    public function test_combine_efficiency_averages_attendance_and_evaluation(): void
     {
         $ref = new ReflectionClass(CompanyEfficiencyService::class);
+        $combine = $ref->getMethod('combineEfficiency');
+        $combine->setAccessible(true);
+        $service = app(CompanyEfficiencyService::class);
 
-        $this->assertFalse($ref->hasMethod('combineEfficiency'));
+        $this->assertSame(75.0, $combine->invoke($service, 50.0, 100.0));
+        $this->assertSame(50.0, $combine->invoke($service, 50.0, null));
+        $this->assertSame(100.0, $combine->invoke($service, null, 100.0));
+        $this->assertNull($combine->invoke($service, null, null));
     }
 
-    public function test_missing_out_is_incomplete_with_zero_payroll_impact(): void
+    public function test_missing_out_is_incomplete_with_zero_stored_payroll_impact(): void
     {
         $ref = new ReflectionClass(CompanyEfficiencyService::class);
         $normalize = $ref->getMethod('normalizeIncompletePunches');
@@ -81,7 +87,7 @@ class CompanyEfficiencyScheduleHoursTest extends TestCase
         $this->assertNull($meta->invoke($service, false, false));
     }
 
-    public function test_incomplete_day_keeps_scheduled_hours_but_zero_pay_in_agg(): void
+    public function test_incomplete_missing_in_keeps_scheduled_hours_but_zero_pay_in_agg(): void
     {
         $ref = new ReflectionClass(CompanyEfficiencyService::class);
         $accumulate = $ref->getMethod('accumulateDayStats');
@@ -108,6 +114,7 @@ class CompanyEfficiencyScheduleHoursTest extends TestCase
             [
                 'status' => 'incomplete',
                 'status_label' => 'Missing in',
+                'presence_issue' => 'missing_in',
                 'schedule_in' => '08:00:00',
                 'schedule_out' => '17:00:00',
                 'late_minutes' => 0,
@@ -136,6 +143,126 @@ class CompanyEfficiencyScheduleHoursTest extends TestCase
         ]);
 
         $this->assertSame(0, $agg['present']);
+        $this->assertSame(8.0, $agg['total_scheduled_hours']);
+        $this->assertSame(0.0, $agg['total_payroll_impact_hours']);
+    }
+
+    public function test_incomplete_missing_out_credits_provisional_pay_in_agg(): void
+    {
+        $ref = new ReflectionClass(CompanyEfficiencyService::class);
+        $accumulate = $ref->getMethod('accumulateDayStats');
+        $accumulate->setAccessible(true);
+        $service = app(CompanyEfficiencyService::class);
+
+        $employee = new \App\Models\User;
+        $employee->id = 1;
+        $agg = [
+            'scheduled_employees' => 0,
+            'present' => 0,
+            'absent' => 0,
+            'late' => 0,
+            'undertime' => 0,
+            'on_leave' => 0,
+            'total_scheduled_hours' => 0.0,
+            'total_payroll_impact_hours' => 0.0,
+        ];
+
+        $accumulate->invokeArgs($service, [
+            &$agg,
+            $employee,
+            'mon',
+            [
+                'status' => 'incomplete',
+                'status_label' => 'Missing out',
+                'presence_issue' => 'missing_out',
+                'schedule_in' => '08:00:00',
+                'schedule_out' => '17:00:00',
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 0.0,
+                'scheduled_regular_hours' => 8.0,
+                'is_leave' => false,
+                'is_rest_day' => false,
+                'is_holiday' => false,
+            ],
+            [
+                1 => [
+                    'mon' => [
+                        'in' => '08:00:00',
+                        'out' => '17:00:00',
+                        'break_start' => '12:00:00',
+                        'break_end' => '13:00:00',
+                        'breaks' => [
+                            ['start' => '12:00:00', 'end' => '13:00:00', 'is_paid' => false],
+                        ],
+                        'shift_type' => 'fixed',
+                    ],
+                ],
+            ],
+            null,
+        ]);
+
+        $this->assertSame(1, $agg['present']);
+        $this->assertSame(8.0, $agg['total_scheduled_hours']);
+        $this->assertSame(8.0, $agg['total_payroll_impact_hours']);
+    }
+
+    public function test_no_punch_scheduled_day_counts_as_absent_with_zero_pay_in_agg(): void
+    {
+        $ref = new ReflectionClass(CompanyEfficiencyService::class);
+        $accumulate = $ref->getMethod('accumulateDayStats');
+        $accumulate->setAccessible(true);
+        $service = app(CompanyEfficiencyService::class);
+
+        $employee = new \App\Models\User;
+        $employee->id = 1;
+        $agg = [
+            'scheduled_employees' => 0,
+            'present' => 0,
+            'absent' => 0,
+            'late' => 0,
+            'undertime' => 0,
+            'on_leave' => 0,
+            'total_scheduled_hours' => 0.0,
+            'total_payroll_impact_hours' => 0.0,
+        ];
+
+        $accumulate->invokeArgs($service, [
+            &$agg,
+            $employee,
+            'mon',
+            [
+                'status' => '—',
+                'status_label' => '—',
+                'schedule_in' => '08:00:00',
+                'schedule_out' => '17:00:00',
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 0.0,
+                'scheduled_regular_hours' => 8.0,
+                'is_leave' => false,
+                'is_rest_day' => false,
+                'is_holiday' => false,
+            ],
+            [
+                1 => [
+                    'mon' => [
+                        'in' => '08:00:00',
+                        'out' => '17:00:00',
+                        'break_start' => '12:00:00',
+                        'break_end' => '13:00:00',
+                        'breaks' => [
+                            ['start' => '12:00:00', 'end' => '13:00:00', 'is_paid' => false],
+                        ],
+                        'shift_type' => 'fixed',
+                    ],
+                ],
+            ],
+            null,
+        ]);
+
+        $this->assertSame(0, $agg['present']);
+        $this->assertSame(1, $agg['absent']);
         $this->assertSame(8.0, $agg['total_scheduled_hours']);
         $this->assertSame(0.0, $agg['total_payroll_impact_hours']);
     }
