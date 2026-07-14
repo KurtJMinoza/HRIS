@@ -26,7 +26,7 @@ import {
   getEvaluationEmployees,
   getEvaluations, createEvaluation, submitEvaluation, updateEvaluation,
   profileImageUrl, getEvaluationDashboardSummary,
-  getEvaluationBootstrap, getEvaluationAssignments,
+  getEvaluationBootstrap, getEvaluationAssignments, getEvaluationAssignment,
 } from '@/api'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
@@ -273,6 +273,98 @@ function PerformanceLeadersSection({ dashboardSummary }) {
               })}
             </TableBody>
           </Table>
+        </CardContent>
+      )}
+    </Card>
+  )
+}
+
+function RecentlyAssignedSection({ recentAssignments, onViewAssignment, onViewAll, canAssign }) {
+  const items = recentAssignments ?? []
+
+  return (
+    <Card className={cn(evalCardClass, 'overflow-hidden')}>
+      <CardHeader className="space-y-4 border-b border-border/50 px-5 py-5 @sm:px-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <CardTitle className="text-base font-semibold tracking-tight">Recently Assigned</CardTitle>
+            <CardDescription>
+              Latest evaluation assignments across your scope
+            </CardDescription>
+          </div>
+          {canAssign && items.length > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 shrink-0 gap-1 rounded-lg px-3 text-xs font-semibold text-muted-foreground hover:text-foreground"
+              onClick={onViewAll}
+            >
+              View all
+              <ChevronRight className="size-3.5" />
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+
+      {items.length === 0 ? (
+        <CardContent className="flex min-h-[220px] flex-col items-center justify-center px-6 py-12 text-center">
+          <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-brand/10 text-brand dark:bg-brand/15">
+            <ClipboardCheck className="size-7" strokeWidth={1.85} />
+          </div>
+          <p className="text-sm font-semibold text-foreground">No assignments yet</p>
+          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+            Newly assigned evaluations will appear here.
+          </p>
+        </CardContent>
+      ) : (
+        <CardContent className="divide-y divide-border/50 p-0">
+          {items.map((item) => {
+            const emp = item.employee || {}
+            const name = emp.name || '—'
+            const completed = item.progress?.completed ?? 0
+            const total = item.progress?.total ?? 0
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onViewAssignment(item.id)}
+                className="flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-muted/20 @sm:px-6"
+              >
+                <Avatar className="size-9 shrink-0">
+                  <AvatarImage src={profileImageUrl(emp.profile_image)} alt={name} className="object-cover" />
+                  <AvatarFallback className="rounded-full bg-teal-500/20 text-[10px] font-bold text-teal-700 dark:text-teal-300">
+                    {initials(name)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-foreground">{name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{item.template || '—'}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                    <span>Assigned {formatDate(item.assigned_at)}</span>
+                    {item.assigned_by && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="truncate">by {item.assigned_by}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="hidden shrink-0 flex-col items-end gap-1.5 @sm:flex">
+                  <span className="text-xs font-semibold tabular-nums text-foreground">
+                    {completed}/{total} done
+                  </span>
+                  <span className="text-[11px] text-muted-foreground tabular-nums">
+                    Due {formatDate(item.end_date)}
+                  </span>
+                </div>
+                <div className="shrink-0">
+                  {assignmentStatusBadge(item.status, item.overdue)}
+                </div>
+              </button>
+            )
+          })}
         </CardContent>
       )}
     </Card>
@@ -693,6 +785,21 @@ export default function AdminEvaluation() {
     setAssignmentDetailOpen(true)
   }, [])
 
+  const handleRecentAssignmentClick = useCallback(async (assignmentId) => {
+    const existing = assignments.find(a => a.id === assignmentId)
+    if (existing) {
+      openAssignmentDetail(existing)
+      return
+    }
+
+    try {
+      const data = await getEvaluationAssignment(assignmentId)
+      openAssignmentDetail(data.assignment || data)
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Error', description: e.message })
+    }
+  }, [assignments, openAssignmentDetail, toast])
+
   const closeAssignmentDetail = useCallback(() => {
     setAssignmentDetailOpen(false)
     window.setTimeout(() => setAssignmentDetail(null), 300)
@@ -782,6 +889,8 @@ export default function AdminEvaluation() {
   const formsCount = forms.length
   const completedCount = useMemo(() => evaluations.filter(e => e.status === 'completed').length, [evaluations])
   const pendingCount = useMemo(() => evaluations.filter(e => e.status === 'draft').length, [evaluations])
+  const hasPerformanceOverview = dashboardSummary?.average_score != null
+    || (dashboardSummary?.top_performers?.length ?? 0) > 0
   const activeEvalsCount = pendingCount
 
   return (
@@ -947,7 +1056,15 @@ export default function AdminEvaluation() {
               </CardContent>
             </Card>
           </div>
-          <PerformanceLeadersSection dashboardSummary={dashboardSummary} />
+          <div className={cn('grid gap-6', hasPerformanceOverview && '@lg:grid-cols-2')}>
+            <RecentlyAssignedSection
+              recentAssignments={dashboardSummary.recent_assignments}
+              onViewAssignment={handleRecentAssignmentClick}
+              onViewAll={() => setActiveTab('assignments')}
+              canAssign={canAssign}
+            />
+            <PerformanceLeadersSection dashboardSummary={dashboardSummary} />
+          </div>
         </div>
       )}
 

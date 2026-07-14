@@ -918,6 +918,43 @@ class EvaluationController extends Controller
             ->whereDate('end_date', '<', now()->toDateString())
             ->count();
 
+        $recentAssignments = (clone $assignmentBase)
+            ->with([
+                'employee:id,first_name,middle_name,last_name,suffix,profile_image,position',
+                'evaluationForm:id,title',
+                'evaluations:id,evaluation_assignment_id,status',
+                'createdBy:id,first_name,middle_name,last_name,suffix',
+            ])
+            ->orderByDesc('assigned_at')
+            ->orderByDesc('created_at')
+            ->limit(8)
+            ->get()
+            ->map(function (EvaluationAssignment $assignment) {
+                $progress = $assignment->progressCounts();
+
+                return [
+                    'id' => $assignment->id,
+                    'employee' => $assignment->employee
+                        ? [
+                            'id' => $assignment->employee->id,
+                            'name' => trim($assignment->employee->first_name . ' ' . $assignment->employee->last_name),
+                            'profile_image' => $assignment->employee->profile_image,
+                            'position' => $assignment->employee->position,
+                        ]
+                        : null,
+                    'template' => $assignment->evaluationForm?->title,
+                    'assigned_at' => $assignment->assigned_at?->toIso8601String(),
+                    'end_date' => $assignment->end_date?->format('Y-m-d'),
+                    'status' => $assignment->status,
+                    'overdue' => $assignment->isOverdue(),
+                    'progress' => $progress,
+                    'assigned_by' => $assignment->createdBy
+                        ? trim($assignment->createdBy->first_name . ' ' . $assignment->createdBy->last_name)
+                        : null,
+                ];
+            })
+            ->values();
+
         $base = Evaluation::query();
         if ($scopedEmployeeIds !== null) {
             $base->whereIn('employee_id', $scopedEmployeeIds);
@@ -982,6 +1019,7 @@ class EvaluationController extends Controller
             'pending_evaluations' => $pending,
             'average_score' => $avgScore ? round($avgScore, 2) : null,
             'top_performers' => $topPerformers,
+            'recent_assignments' => $recentAssignments,
         ];
     }
 
