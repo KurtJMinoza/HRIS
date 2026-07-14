@@ -89,6 +89,7 @@ import { hrPanelPath } from '@/lib/hrRoutes'
 import { cn } from '@/lib/utils'
 import { DIALOG_CONTENT_CLASS } from '@/lib/fieldClasses'
 import { EMPTY_PLACEHOLDER, formatEmpty } from '@/lib/formatEmpty'
+import { formatScheduleLabel12h } from '@/lib/timeFormat'
 import { OvertimeRequestsCard } from '@/components/dashboard/OvertimeRequestsCard'
 import { TodaysLeavesCard } from '@/components/dashboard/TodaysLeavesCard'
 import { AttendanceCorrectionsCard } from '@/components/dashboard/AttendanceCorrectionsCard'
@@ -715,7 +716,6 @@ export default function AdminDashboard() {
   const [companyEfficiencyModalLoading, setCompanyEfficiencyModalLoading] = useState(false)
   const [selectedEfficiencyCompany, setSelectedEfficiencyCompany] = useState(null)
   const [dashboardFilter, setDashboardFilter] = useState('today')
-  const [dashboardCustomDate, setDashboardCustomDate] = useState(() => toLocalDateString(new Date()))
   const [regularizationActionById, setRegularizationActionById] = useState({})
   const [birthdayTab, setBirthdayTab] = useState('month')
   const [birthdaySearch, setBirthdaySearch] = useState('')
@@ -973,23 +973,6 @@ export default function AdminDashboard() {
       setHalfDayListLoading(false)
     }
   }, [toLocalDateString])
-
-  const getEffectiveDashboardDate = useCallback(() => {
-    const today = new Date()
-    switch (dashboardFilter) {
-      case 'today':
-        return toLocalDateString(today)
-      case 'yesterday': {
-        const d = new Date(today)
-        d.setDate(d.getDate() - 1)
-        return toLocalDateString(d)
-      }
-      case 'custom':
-        return dashboardCustomDate
-      default:
-        return toLocalDateString(today)
-    }
-  }, [dashboardFilter, dashboardCustomDate, toLocalDateString])
 
   const openCompanyEfficiencyModal = useCallback(async (companyId, companyName) => {
     setSelectedEfficiencyCompany({ id: companyId, name: companyName || 'Company' })
@@ -2966,7 +2949,6 @@ export default function AdminDashboard() {
                     value={companyDateFrom}
                     onChange={(e) => {
                       setCompanyDateFrom(e.target.value)
-                      setDashboardCustomDate(e.target.value)
                     }}
                     className="min-w-0 w-32 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm"
                   />
@@ -4007,65 +3989,65 @@ export default function AdminDashboard() {
         onOpenChange={setCompanyEfficiencyModalOpen}
       >
         <DialogContent
-          className="w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-2xl border-border/70 bg-background p-0 shadow-[0_30px_90px_-28px_rgba(15,23,42,0.55)] sm:max-w-6xl"
-          innerClassName="max-h-[92vh] gap-0 overflow-y-auto p-0"
+          className="w-[calc(100vw-1rem)] max-w-[min(96vw,92rem)] gap-0 overflow-hidden rounded-2xl border-border/70 bg-background p-0 shadow-[0_30px_90px_-28px_rgba(15,23,42,0.55)] sm:max-w-[min(96vw,92rem)]"
+          innerClassName="max-h-[94vh] gap-0 overflow-y-auto p-0"
         >
-          <DialogHeader className="border-b-0 px-5 pb-3 pt-6 pr-14 text-left sm:px-7 sm:pb-4 sm:pt-7">
-            <div className="flex flex-col gap-2">
-              <div>
-                <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                  Company Efficiency Details
-                </DialogTitle>
-                <DialogDescription className="mt-1.5 text-sm text-muted-foreground sm:text-base">
-                  {selectedEfficiencyCompany?.name ?? 'Company'}
-                  {companyEfficiencyModalData?.company?.date && (
-                    <> <span className="px-1.5">&bull;</span> {new Date(companyEfficiencyModalData.company.date + 'T12:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</>
-                  )}
-                  {companyEfficiencyModalData?.company?.employees != null && (
-                    <> <span className="px-1.5">&bull;</span> {companyEfficiencyModalData.company.employees} employee{companyEfficiencyModalData.company.employees === 1 ? '' : 's'}</>
-                  )}
-                </DialogDescription>
-              </div>
-            </div>
+          <DialogHeader className="border-b border-border/60 px-5 pb-4 pt-6 pr-14 text-left sm:px-8 sm:pb-5 sm:pt-7">
+            <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+              Company Efficiency Details
+            </DialogTitle>
+            <DialogDescription className="mt-1.5 text-sm text-muted-foreground sm:text-base">
+              {selectedEfficiencyCompany?.name
+                ?? companyEfficiencyModalData?.company?.name
+                ?? 'Company'}
+              {(() => {
+                const from = companyEfficiencyModalData?.company?.from_date ?? companyEfficiencyModalData?.company?.date
+                const to = companyEfficiencyModalData?.company?.to_date ?? from
+                if (!from) return null
+                const fmt = (d) => new Date(`${d}T12:00:00`).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+                const period = from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`
+                return (
+                  <>
+                    {' '}
+                    <span className="px-1.5">&bull;</span> {period}
+                  </>
+                )
+              })()}
+              {companyEfficiencyModalData?.company?.employees != null && (
+                <>
+                  {' '}
+                  <span className="px-1.5">&bull;</span>{' '}
+                  {companyEfficiencyModalData.company.employees} employee
+                  {companyEfficiencyModalData.company.employees === 1 ? '' : 's'}
+                </>
+              )}
+            </DialogDescription>
           </DialogHeader>
 
           {companyEfficiencyModalLoading ? (
-            <div className="flex min-h-[34rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
+            <div className="flex min-h-[40rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
               Loading efficiency details&hellip;
             </div>
           ) : !companyEfficiencyModalData ? (
-            <div className="flex min-h-[34rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
+            <div className="flex min-h-[40rem] items-center justify-center px-5 py-10 text-sm text-muted-foreground">
               Unable to load data. Please try again.
             </div>
           ) : (
-            <div className="px-5 pb-6 sm:px-7 sm:pb-7">
-              {/* Efficiency Header Card */}
-              <div className="mb-5 flex flex-col gap-4 rounded-xl border border-border/70 bg-card p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-foreground">Company Efficiency Details</h3>
-                    <div className="h-6 w-px bg-border" />
-                    <span className="text-sm font-medium text-muted-foreground">{companyEfficiencyModalData?.company?.name}</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {new Date(companyEfficiencyModalData.company.date + 'T12:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
-                    &nbsp;&middot;&nbsp;{companyEfficiencyModalData.company.employees} employee{companyEfficiencyModalData.company.employees === 1 ? '' : 's'}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <div className="flex flex-col items-end">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Efficiency</span>
-                    <span className="text-2xl font-bold tabular-nums text-foreground">
-                      {companyEfficiencyModalData.summary?.efficiency?.toFixed(2) ?? '0.00'}%
-                    </span>
-                  </div>
-                  <span className={cn(
-                    'inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold',
-                    efficiencyBadgeClass(Number(companyEfficiencyModalData.summary?.efficiency ?? 0))
-                  )}>
-                    {efficiencyLabel(Number(companyEfficiencyModalData.summary?.efficiency ?? 0))}
+            <div className="px-5 pb-7 sm:px-8 sm:pb-8">
+              {/* Efficiency score strip — title/meta live in DialogHeader only */}
+              <div className="mb-5 flex flex-wrap items-center justify-end gap-3 rounded-xl border border-border/70 bg-card px-5 py-4 shadow-sm">
+                <div className="flex flex-col items-end">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Efficiency</span>
+                  <span className="text-2xl font-bold tabular-nums text-foreground sm:text-3xl">
+                    {companyEfficiencyModalData.summary?.efficiency?.toFixed(2) ?? '0.00'}%
                   </span>
                 </div>
+                <span className={cn(
+                  'inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold',
+                  efficiencyBadgeClass(Number(companyEfficiencyModalData.summary?.efficiency ?? 0))
+                )}>
+                  {efficiencyLabel(Number(companyEfficiencyModalData.summary?.efficiency ?? 0))}
+                </span>
               </div>
 
               {/* Summary Cards */}
@@ -4189,9 +4171,16 @@ export default function AdminDashboard() {
                             <tr key={emp.id ?? idx} className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/20">
                               <td className="whitespace-nowrap px-3 py-3 pl-4 text-foreground">
                                 <span className="inline-flex items-center gap-2.5">
-                                  <span className="flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                                    <Users className="size-3.5" aria-hidden />
-                                  </span>
+                                  <Avatar className="size-8 shrink-0 rounded-full border border-border/60 shadow-sm">
+                                    <AvatarImage
+                                      src={profileImageUrl(emp.profile_image_url || emp.profile_image)}
+                                      alt=""
+                                      className="object-cover"
+                                    />
+                                    <AvatarFallback className="rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
+                                      {String(emp.employee_name || 'U').replace(/[^A-Za-z]/g, '').slice(0, 1).toUpperCase() || 'U'}
+                                    </AvatarFallback>
+                                  </Avatar>
                                   <span className="font-medium">{emp.employee_name}</span>
                                 </span>
                               </td>
@@ -4199,7 +4188,9 @@ export default function AdminDashboard() {
                                 {emp.date ? new Date(emp.date + 'T12:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                               </td>
                               <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.day || '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-3 text-xs text-foreground">{emp.schedule || '—'}</td>
+                              <td className="whitespace-nowrap px-3 py-3 text-xs text-foreground">
+                                {emp.schedule ? formatScheduleLabel12h(emp.schedule) : '—'}
+                              </td>
                               <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{emp.time_in || '—'}</td>
                               <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">{emp.time_out || '—'}</td>
                               <td className="whitespace-nowrap px-3 py-3">
@@ -4256,23 +4247,8 @@ export default function AdminDashboard() {
                                   </span>
                                 ) : '—'}
                               </td>
-                              <td className="whitespace-nowrap px-3 py-3">
-                                {emp.performance ? (
-                                  <span className={cn(
-                                    'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold',
-                                    efficiencyBadgeClass(
-                                      emp.combined_efficiency_pct != null
-                                        ? Number(emp.combined_efficiency_pct)
-                                        : emp.evaluation_pct != null
-                                          ? Number(emp.evaluation_pct)
-                                          : null
-                                    )
-                                  )}>
-                                    {emp.performance}
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">—</span>
-                                )}
+                              <td className="whitespace-nowrap px-3 py-3 text-xs italic text-muted-foreground">
+                                Coming Soon
                               </td>
                             </tr>
                           ))}

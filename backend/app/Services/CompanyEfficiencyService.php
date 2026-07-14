@@ -419,7 +419,6 @@ class CompanyEfficiencyService
             )
             : null;
         $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $hrEvaluationPct);
-        $performanceLabel = $this->efficiencyPerformanceLabel($combinedEfficiencyPct);
 
         return [
             'id' => $employee->id,
@@ -448,8 +447,9 @@ class CompanyEfficiencyService
             'evaluation_rating' => $latestEvaluation?->overall_rating,
             'attendance_efficiency_pct' => $attendanceEfficiencyPct,
             'combined_efficiency_pct' => $combinedEfficiencyPct,
-            'efficiency_performance' => $performanceLabel,
-            'performance' => $performanceLabel,
+            // ponytail: Performance column is Coming Soon — wire when product defines the metric
+            'efficiency_performance' => null,
+            'performance' => null,
         ];
     }
 
@@ -730,21 +730,6 @@ class CompanyEfficiencyService
         $hour12 = $hour % 12 ?: 12;
 
         return sprintf('%d:%02d %s', $hour12, $minute, $period);
-    }
-
-    private function efficiencyPerformanceLabel(?float $pct): ?string
-    {
-        if ($pct === null) {
-            return null;
-        }
-
-        return match (true) {
-            $pct >= 98 => 'Outstanding',
-            $pct >= 95 => 'Excellent',
-            $pct >= 90 => 'Very Good',
-            $pct >= 85 => 'Good',
-            default => 'Needs Improvement',
-        };
     }
 
     private function companyLogoUrl(?string $path): ?string
