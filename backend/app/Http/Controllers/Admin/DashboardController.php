@@ -27,6 +27,7 @@ use App\Services\HrRoleResolver;
 use App\Services\LeaveApprovalService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\AttendanceDailySummaryService;
+use App\Services\CompanyEfficiencyService;
 use App\Services\PresenceFilingService;
 use App\Support\AdminDashboardCache;
 use App\Support\RequestPerformanceLogger;
@@ -51,6 +52,7 @@ class DashboardController extends Controller
         private readonly PresenceFilingService $presenceFilingService,
         private readonly LeaveApprovalService $leaveApprovalService,
         private readonly AttendanceDailySummaryService $attendanceDailySummaryService,
+        private readonly CompanyEfficiencyService $companyEfficiencyService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -3231,10 +3233,12 @@ class DashboardController extends Controller
                 'logo' => $company->logo,
                 'logo_url' => $company->logo ? $this->companyLogoUrl($company->logo) : null,
             ]);
-        $actor = $request->user();
-        $rows = $fromDate->equalTo($toDate)
-            ? $this->companyAttendanceDistribution($fromDate, $companyIds, $actor)
-            : $this->companyAttendanceDistributionForRange($fromDate, $toDate, $companyIds, $actor);
+        $rows = $this->companyEfficiencyService->companiesForRange(
+            $fromDate,
+            $toDate,
+            $request->user(),
+            $companyIds,
+        );
 
         return response()->json([
             'date' => $fromDate->toDateString(),
@@ -3245,186 +3249,43 @@ class DashboardController extends Controller
     }
 
     /**
-     * Company Efficiency Details — returns per-employee daily summary data for the modal.
+     * Company Efficiency Details — per-employee daily rows for the selected date range.
      */
     public function companyEfficiencyDetails(Request $request, int $companyId): JsonResponse
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $today = Carbon::now($tz)->startOfDay();
-        $dateKey = $request->input('date', $today->toDateString());
-        $date = Carbon::parse($dateKey, $tz)->startOfDay();
-        $todayDate = $today->toDateString();
-        $nowTz = Carbon::now($tz);
+        $fromDate = $request->filled('from_date')
+            ? Carbon::parse($request->input('from_date'), $tz)->startOfDay()
+            : ($request->filled('date')
+                ? Carbon::parse($request->input('date'), $tz)->startOfDay()
+                : $today->copy());
+        $toDate = $request->filled('to_date')
+            ? Carbon::parse($request->input('to_date'), $tz)->startOfDay()
+            : $fromDate->copy();
+        if ($toDate->lessThan($fromDate)) {
+            $toDate = $fromDate->copy();
+        }
+        if ($fromDate->diffInDays($toDate) > 366) {
+            $toDate = $fromDate->copy()->addDays(366);
+        }
 
-        $actor = $request->user();
+        $page = max(1, (int) $request->input('page', 1));
+        $perPage = min(100, max(1, (int) $request->input('per_page', 25)));
 
-        $company = Company::find($companyId);
-        if (! $company) {
+        $details = $this->companyEfficiencyService->companyDetails(
+            $fromDate,
+            $toDate,
+            $request->user(),
+            $companyId,
+            $page,
+            $perPage,
+        );
+        if ($details === null) {
             return response()->json(['message' => 'Company not found.'], 404);
         }
 
-        $allEmployeesQuery = User::activeRoster()
-            ->with(['workingSchedule', 'companyHeadships:id,company_head_id', 'company:id,name', 'branch:id,company_id', 'departmentRelation:id,branch_id', 'departmentRelation.branch:id,company_id'])
-            ->orderByLastName();
-
-        $this->dataScopeService->restrictEmployeeQuery($actor, $allEmployeesQuery);
-
-        $allEmployees = $allEmployeesQuery->get();
-
-        // Filter to only employees whose effective company matches the requested company
-        $employees = $allEmployees->filter(function (User $u) use ($companyId) {
-            return $u->getEffectiveCompanyId() === $companyId;
-        });
-
-        $dayKey = self::DAY_KEYS[(int) $date->format('w')];
-
-        // Preload attendance logs and corrections so computeForDate has time_in/time_out data
-        $employeeIds = $employees->pluck('id')->all();
-        [$rangeStart, $rangeEnd] = $this->dateRangeUtcForDay($date, $tz);
-        $allLogs = AttendanceLog::query()
-            ->whereIn('user_id', $employeeIds)
-            ->whereRaw(
-                $this->attendanceLogEffectivePunchColumnSql().' between ? and ?',
-                [$rangeStart->format('Y-m-d H:i:s'), $rangeEnd->format('Y-m-d H:i:s')]
-            )
-            ->orderByRaw($this->attendanceLogEffectivePunchColumnSql())
-            ->get()
-            ->groupBy('user_id');
-        $approvedCorrections = AttendanceCorrection::query()
-            ->whereDate('date', $dateKey)
-            ->where('approved', true)
-            ->whereIn('user_id', $employeeIds)
-            ->get()
-            ->keyBy('user_id');
-
-        $employeeRows = [];
-        $summaryAgg = [
-            'total_employees' => 0,
-            'scheduled_employees' => 0,
-            'present' => 0,
-            'absent' => 0,
-            'late' => 0,
-            'undertime' => 0,
-            'total_scheduled_hours' => 0.0,
-            'total_payroll_impact_hours' => 0.0,
-        ];
-
-        foreach ($employees as $employee) {
-            $dailySummary = $this->attendanceDailySummaryService->computeForDate(
-                user: $employee,
-                dateKey: $dateKey,
-                todayDate: $todayDate,
-                nowTz: $nowTz,
-                preloadedLogs: $allLogs->get($employee->id)?->all(),
-                correction: $approvedCorrections->get($employee->id),
-            );
-
-            $status = $dailySummary['status'] ?? '';
-            $lateMinutes = (int) ($dailySummary['late_minutes'] ?? 0);
-            $undertimeMinutes = (int) ($dailySummary['undertime_minutes'] ?? 0);
-            $payrollImpactHours = (float) ($dailySummary['payroll_impact_hours'] ?? 0);
-            $scheduleIn = $dailySummary['schedule_in'] ?? null;
-            $scheduleOut = $dailySummary['schedule_out'] ?? null;
-
-            $isScheduled = $scheduleIn !== null && $scheduleOut !== null;
-            $isPresent = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true);
-            $isAbsent = $status === 'absent' && ! $dailySummary['is_leave'] && ! $dailySummary['is_rest_day'] && ! $dailySummary['is_holiday'];
-            $isLate = $lateMinutes > 0 && $isPresent;
-            $isUndertime = $undertimeMinutes > 0 && $isPresent;
-
-            if ($isScheduled) {
-                $summaryAgg['scheduled_employees']++;
-            }
-
-            if ($isAbsent) {
-                $summaryAgg['absent']++;
-            } elseif ($isPresent) {
-                $summaryAgg['present']++;
-            }
-
-            if ($isLate) {
-                $summaryAgg['late']++;
-            }
-            if ($isUndertime) {
-                $summaryAgg['undertime']++;
-            }
-
-            // Compute scheduled hours from the schedule for efficiency
-            if ($dailySummary['is_rest_day'] && ! $dailySummary['is_rest_day_worked']) {
-                // Rest day not worked — skip
-            } elseif ($dailySummary['is_leave']) {
-                // On leave — count scheduled hours as paid
-                $schedule = $this->resolveEffectiveSchedule($employee);
-                $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-                if ($daySched && ! empty($daySched['in']) && ! empty($daySched['out'])) {
-                    $schedHrs = $this->computeScheduleHours($daySched);
-                    $summaryAgg['total_scheduled_hours'] += $schedHrs;
-                    $summaryAgg['total_payroll_impact_hours'] += $schedHrs;
-                }
-            } elseif ($status !== 'upcoming' && $status !== 'rest' && $isScheduled) {
-                $schedule = $this->resolveEffectiveSchedule($employee);
-                $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-                if ($daySched && ! empty($daySched['in']) && ! empty($daySched['out'])) {
-                    $schedHrs = $this->computeScheduleHours($daySched);
-                    $summaryAgg['total_scheduled_hours'] += $schedHrs;
-                    $summaryAgg['total_payroll_impact_hours'] += $payrollImpactHours;
-                }
-            }
-
-            $employeeRows[] = [
-                'id' => $employee->id,
-                'employee_name' => $employee->display_name ?: '—',
-                'profile_image' => $employee->profile_image_url,
-                'department' => $employee->department ?? '-',
-                'date' => $dateKey,
-                'day' => $date->format('D'),
-                'schedule' => $scheduleIn && $scheduleOut ? "$scheduleIn - $scheduleOut" : ($dailySummary['is_rest_day'] ? 'Rest Day' : '—'),
-                'time_in' => $dailySummary['formatted_time_in'] ?? ($dailySummary['time_in'] ? date('g:i A', strtotime($dailySummary['time_in'])) : '—'),
-                'time_out' => $dailySummary['formatted_time_out'] ?? ($dailySummary['time_out'] ? date('g:i A', strtotime($dailySummary['time_out'])) : '—'),
-                'status' => $dailySummary['status_label'] ?? $status,
-                'status_code' => $status,
-                'late_minutes' => $lateMinutes,
-                'undertime_minutes' => $undertimeMinutes,
-                'payroll_impact' => $payrollImpactHours,
-                'evaluation' => null,
-                'performance' => null,
-            ];
-        }
-
-        $summaryAgg['total_employees'] = $employees->count();
-        $companyEfficiency = $summaryAgg['total_scheduled_hours'] > 0
-            ? round(($summaryAgg['total_payroll_impact_hours'] / $summaryAgg['total_scheduled_hours']) * 100, 2)
-            : 0;
-
-        return response()->json([
-            'company' => [
-                'id' => $company->id,
-                'name' => $company->name,
-                'logo_url' => $company->logo ? $this->companyLogoUrl($company->logo) : null,
-                'employees' => $employees->count(),
-                'date' => $dateKey,
-            ],
-            'summary' => [
-                'employees' => $summaryAgg['total_employees'],
-                'present' => $summaryAgg['present'],
-                'absent' => $summaryAgg['absent'],
-                'late' => $summaryAgg['late'],
-                'undertime' => $summaryAgg['undertime'],
-                'efficiency' => $companyEfficiency,
-            ],
-            'breakdown' => [
-                'total_employees' => $summaryAgg['total_employees'],
-                'scheduled_employees' => $summaryAgg['scheduled_employees'],
-                'present' => $summaryAgg['present'],
-                'absent' => $summaryAgg['absent'],
-                'late' => $summaryAgg['late'],
-                'undertime' => $summaryAgg['undertime'],
-                'total_scheduled_hours' => round($summaryAgg['total_scheduled_hours'], 2),
-                'total_payroll_impact_hours' => round($summaryAgg['total_payroll_impact_hours'], 2),
-                'company_efficiency' => $companyEfficiency,
-            ],
-            'employees' => $employeeRows,
-        ]);
+        return response()->json($details);
     }
 
     /**

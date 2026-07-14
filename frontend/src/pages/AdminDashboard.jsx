@@ -272,6 +272,24 @@ function ChartTooltip({ active, payload, label, labelPrefix = '', valueSuffix = 
 const LOGS_PER_PAGE = 10
 const DASHBOARD_SNAPSHOT_KEY = 'admin-dashboard:last-snapshot:v2'
 
+function efficiencyBadgeClass(pct) {
+  if (pct == null || typeof pct !== 'number') return 'bg-muted text-muted-foreground border-border'
+  if (pct >= 98) return 'bg-emerald-100 text-emerald-800 border-emerald-400 dark:bg-emerald-500/10 dark:text-emerald-200'
+  if (pct >= 95) return 'bg-green-100 text-green-800 border-green-400 dark:bg-green-500/10 dark:text-green-200'
+  if (pct >= 90) return 'bg-amber-100 text-amber-800 border-amber-400 dark:bg-amber-500/10 dark:text-amber-200'
+  if (pct >= 85) return 'bg-orange-100 text-orange-800 border-orange-400 dark:bg-orange-500/10 dark:text-orange-200'
+  return 'bg-red-100 text-red-800 border-red-400 dark:bg-red-500/10 dark:text-red-200'
+}
+
+function efficiencyLabel(pct) {
+  if (pct == null || typeof pct !== 'number') return 'N/A'
+  if (pct >= 98) return 'Outstanding'
+  if (pct >= 95) return 'Excellent'
+  if (pct >= 90) return 'Very Good'
+  if (pct >= 85) return 'Good'
+  return 'Needs Improvement'
+}
+
 function readDashboardRequestsSnapshot() {
   const segment = dashboardSnapshotSegment(readDashboardSnapshot(), 'requests')
   return segment ? normalizeAdminDashboardRequestsData(segment) : undefined
@@ -979,15 +997,16 @@ export default function AdminDashboard() {
     setCompanyEfficiencyModalLoading(true)
     setCompanyEfficiencyModalData(null)
     try {
-      const date = companyDateFrom || toLocalDateString(new Date())
-      const res = await getCompanyEfficiencyDetails(companyId, { date })
+      const from = companyDateFrom || toLocalDateString(new Date())
+      const to = companyDateTo || from
+      const res = await getCompanyEfficiencyDetails(companyId, { from_date: from, to_date: to })
       setCompanyEfficiencyModalData(res)
-    } catch (err) {
+    } catch {
       setCompanyEfficiencyModalData(null)
     } finally {
       setCompanyEfficiencyModalLoading(false)
     }
-  }, [companyDateFrom, toLocalDateString])
+  }, [companyDateFrom, companyDateTo, toLocalDateString])
 
   // Polling and focus refresh are handled by React Query config.
 
@@ -1335,7 +1354,6 @@ export default function AdminDashboard() {
       logo_url: companyLogoUrl(c) ?? (c.company_id != null ? companyLogoMap[c.company_id] : null),
     }))
     .sort((a, b) => b.efficiency - a.efficiency)
-  const totalCompanyPresent = companyData.reduce((sum, d) => sum + (d.present ?? 0), 0)
   const totalCompanyHeadcount = companyData.reduce((sum, d) => sum + (d.headcount ?? 0), 0)
   const totalCompanyScheduledHours = companyData.reduce((sum, d) => sum + (d.total_scheduled_hours ?? 0), 0)
   const totalCompanyPayrollImpactHours = companyData.reduce((sum, d) => sum + (d.total_payroll_impact_hours ?? 0), 0)
@@ -1404,6 +1422,15 @@ export default function AdminDashboard() {
   const logsEnd = attendanceTableMeta
     ? Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
     : Math.min(effectiveLogsPage * LOGS_PER_PAGE, totalLogs)
+  // ponytail: windowed page list — upgrades to a shared Pagination helper if reused
+  const logsPageItems = (() => {
+    const cur = effectiveLogsPage
+    const total = totalLogsPages
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+    const midStart = Math.min(Math.max(cur - 1, 2), total - 2)
+    const mid = [midStart, midStart + 1, midStart + 2].filter((p) => p > 1 && p < total)
+    return [1, ...(cur > 3 ? ['…'] : []), ...mid, ...(cur < total - 2 ? ['…'] : []), total]
+  })()
   const attendanceTableLoading = attendanceQuery.isFetching && todayLogs.length === 0
   const attendanceTableError = attendanceQuery.error
   const emptyLogsMessage =
@@ -2868,7 +2895,7 @@ export default function AdminDashboard() {
               <CardDescription className="mt-0 text-xs font-normal leading-[1.55] text-muted-foreground">
                 {isSingleCompany
                   ? `Workforce efficiency for ${companyData[0]?.company ?? 'company'}`
-                  : 'Workforce efficiency metrics per company - Payroll Impact Hours / Scheduled Hours'}
+                  : 'Workforce efficiency = average of (Payroll Impact ÷ Scheduled Hours) and HR Evaluation %'}
               </CardDescription>
             </div>
             {topCompany && topCompany.efficiency > 0 && !isSingleCompany && (
@@ -2910,7 +2937,7 @@ export default function AdminDashboard() {
                       const ds = toLocalDateString(d)
                       setCompanyDateFrom(ds)
                       setCompanyDateTo(ds)
-                      } else if (f.key === 'this_week') {
+                    } else if (f.key === 'this_week') {
                       const start = new Date(today)
                       start.setDate(start.getDate() - start.getDay())
                       const end = new Date(today)
@@ -2922,6 +2949,7 @@ export default function AdminDashboard() {
                       setCompanyDateFrom(toLocalDateString(start))
                       setCompanyDateTo(toLocalDateString(end))
                     }
+                  }}
                   className={`rounded-full px-3 py-1 text-xs transition-colors ${
                     dashboardFilter === f.key
                       ? 'border border-brand bg-brand font-bold text-brand-foreground shadow-sm'
@@ -3672,42 +3700,56 @@ export default function AdminDashboard() {
                 <p className="text-xs text-muted-foreground @sm:text-sm">
                   Showing{' '}
                   <span className="font-medium text-foreground">
-                    {logsStart}{logsEnd}
+                    {logsStart}–{logsEnd}
                   </span>{' '}
                   of{' '}
                   <span className="font-medium text-foreground">
                     {totalLogs}
                   </span>
                 </p>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5">
                   <Button
-                    variant="outline"
+                    type="button"
+                    variant="ghost"
                     size="sm"
+                    className="h-8 gap-1 px-2 text-muted-foreground hover:text-foreground"
                     onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
                     disabled={effectiveLogsPage <= 1}
                   >
                     <ChevronLeft className="size-4" />
                     <span className="hidden sm:inline">Previous</span>
                   </Button>
-                  <span className="mx-1 text-xs font-medium text-muted-foreground sm:hidden">
-                    Page {effectiveLogsPage} / {totalLogsPages}
+                  <span className="px-2 text-xs font-medium text-muted-foreground sm:hidden">
+                    {effectiveLogsPage} / {totalLogsPages}
                   </span>
-                  <div className="hidden items-center gap-1 sm:flex">
-                    {Array.from({ length: totalLogsPages }, (_, i) => i + 1).map((p) => (
-                      <Button
-                        key={p}
-                        variant={p === effectiveLogsPage ? 'default' : 'outline'}
-                        size="sm"
-                        className="min-w-9"
-                        onClick={() => setLogsPage(p)}
-                      >
-                        {p}
-                      </Button>
-                    ))}
+                  <div className="hidden items-center gap-0.5 sm:flex">
+                    {logsPageItems.map((p, i) =>
+                      p === '…' ? (
+                        <span key={`e${i}`} className="px-1.5 text-xs text-muted-foreground">
+                          …
+                        </span>
+                      ) : (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setLogsPage(p)}
+                          className={cn(
+                            'inline-flex size-8 items-center justify-center rounded-md text-xs transition-colors',
+                            p === effectiveLogsPage
+                              ? 'bg-foreground font-semibold text-background'
+                              : 'font-medium text-muted-foreground hover:bg-muted hover:text-foreground'
+                          )}
+                        >
+                          {p}
+                        </button>
+                      )
+                    )}
                   </div>
                   <Button
-                    variant="outline"
+                    type="button"
+                    variant="ghost"
                     size="sm"
+                    className="h-8 gap-1 px-2 text-muted-foreground hover:text-foreground"
                     onClick={() => setLogsPage((p) => Math.min(totalLogsPages, p + 1))}
                     disabled={effectiveLogsPage >= totalLogsPages}
                   >
@@ -4019,21 +4061,9 @@ export default function AdminDashboard() {
                   </div>
                   <span className={cn(
                     'inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold',
-                    (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 98
-                      ? 'bg-emerald-100 text-emerald-800 border-emerald-400 dark:bg-emerald-500/10 dark:text-emerald-200'
-                      : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 95
-                        ? 'bg-green-100 text-green-800 border-green-400 dark:bg-green-500/10 dark:text-green-200'
-                        : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 90
-                          ? 'bg-amber-100 text-amber-800 border-amber-400 dark:bg-amber-500/10 dark:text-amber-200'
-                          : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 85
-                            ? 'bg-orange-100 text-orange-800 border-orange-400 dark:bg-orange-500/10 dark:text-orange-200'
-                            : 'bg-red-100 text-red-800 border-red-400 dark:bg-red-500/10 dark:text-red-200'
+                    efficiencyBadgeClass(Number(companyEfficiencyModalData.summary?.efficiency ?? 0))
                   )}>
-                    {(companyEfficiencyModalData.summary?.efficiency ?? 0) >= 98 ? 'Outstanding'
-                      : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 95 ? 'Excellent'
-                        : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 90 ? 'Very Good'
-                          : (companyEfficiencyModalData.summary?.efficiency ?? 0) >= 85 ? 'Good'
-                            : 'Needs Improvement'}
+                    {efficiencyLabel(Number(companyEfficiencyModalData.summary?.efficiency ?? 0))}
                   </span>
                 </div>
               </div>
@@ -4092,6 +4122,16 @@ export default function AdminDashboard() {
                       { label: 'Undertime', value: companyEfficiencyModalData.breakdown?.undertime ?? 0 },
                       { label: 'Total Scheduled Hours', value: `${(companyEfficiencyModalData.breakdown?.total_scheduled_hours ?? 0).toFixed(2)} hrs` },
                       { label: 'Total Payroll Impact Hours', value: `${(companyEfficiencyModalData.breakdown?.total_payroll_impact_hours ?? 0).toFixed(2)} hrs` },
+                      {
+                        label: 'Attendance Efficiency',
+                        value: `${Number(companyEfficiencyModalData.breakdown?.attendance_efficiency ?? companyEfficiencyModalData.breakdown?.company_efficiency ?? 0).toFixed(2)}%`,
+                      },
+                      {
+                        label: 'Evaluation Avg',
+                        value: companyEfficiencyModalData.breakdown?.evaluation_avg != null
+                          ? `${Number(companyEfficiencyModalData.breakdown.evaluation_avg).toFixed(2)}%`
+                          : '—',
+                      },
                     ].map((row) => (
                       <div key={row.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0 text-muted-foreground">
                         <span>{row.label}</span>
@@ -4106,21 +4146,9 @@ export default function AdminDashboard() {
                         </span>
                         <span className={cn(
                           'rounded-full border px-2 py-0.5 text-xs font-bold',
-                          (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 98
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-400 dark:bg-emerald-500/10 dark:text-emerald-200'
-                            : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 95
-                              ? 'bg-green-100 text-green-800 border-green-400 dark:bg-green-500/10 dark:text-green-200'
-                              : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 90
-                                ? 'bg-amber-100 text-amber-800 border-amber-400 dark:bg-amber-500/10 dark:text-amber-200'
-                                : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 85
-                                  ? 'bg-orange-100 text-orange-800 border-orange-400 dark:bg-orange-500/10 dark:text-orange-200'
-                                  : 'bg-red-100 text-red-800 border-red-400 dark:bg-red-500/10 dark:text-red-200'
+                          efficiencyBadgeClass(Number(companyEfficiencyModalData.breakdown?.company_efficiency ?? 0))
                         )}>
-                          {(companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 98 ? 'Outstanding'
-                            : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 95 ? 'Excellent'
-                              : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 90 ? 'Very Good'
-                                : (companyEfficiencyModalData.breakdown?.company_efficiency ?? 0) >= 85 ? 'Good'
-                                  : 'Needs Improvement'}
+                          {efficiencyLabel(Number(companyEfficiencyModalData.breakdown?.company_efficiency ?? 0))}
                         </span>
                       </div>
                     </div>
@@ -4213,11 +4241,38 @@ export default function AdminDashboard() {
                               )}>
                                 {(emp.payroll_impact ?? 0) > 0 ? `${Number(emp.payroll_impact).toFixed(2)}h` : '—'}
                               </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-muted-foreground italic text-xs">
-                                Coming Soon
+                              <td className={cn(
+                                'whitespace-nowrap px-3 py-3 text-xs',
+                                emp.evaluation_pct != null ? 'font-medium text-violet-600 dark:text-violet-400' : 'text-muted-foreground'
+                              )}>
+                                {emp.evaluation_pct != null ? (
+                                  <span className="tabular-nums">
+                                    {Number(emp.evaluation_pct).toFixed(2)}%
+                                    {emp.evaluation_rating ? (
+                                      <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">
+                                        {emp.evaluation_rating}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                ) : '—'}
                               </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-muted-foreground italic text-xs">
-                                Coming Soon
+                              <td className="whitespace-nowrap px-3 py-3">
+                                {emp.performance ? (
+                                  <span className={cn(
+                                    'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold',
+                                    efficiencyBadgeClass(
+                                      emp.combined_efficiency_pct != null
+                                        ? Number(emp.combined_efficiency_pct)
+                                        : emp.evaluation_pct != null
+                                          ? Number(emp.evaluation_pct)
+                                          : null
+                                    )
+                                  )}>
+                                    {emp.performance}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
                               </td>
                             </tr>
                           ))}

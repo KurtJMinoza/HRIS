@@ -2305,11 +2305,15 @@ export async function getDashboardCompanyAttendance(params = {}) {
 /**
  * Fetch company efficiency details for the modal — per-employee daily summary.
  * @param {number} companyId
- * @param {{ date?: string }} params
+ * @param {{ date?: string, from_date?: string, to_date?: string, page?: number, per_page?: number }} params
  */
 export async function getCompanyEfficiencyDetails(companyId, params = {}) {
   const query = new URLSearchParams()
-  if (params.date) query.set('date', params.date)
+  if (params.from_date) query.set('from_date', params.from_date)
+  if (params.to_date) query.set('to_date', params.to_date)
+  if (!params.from_date && params.date) query.set('date', params.date)
+  if (params.page) query.set('page', String(params.page))
+  if (params.per_page) query.set('per_page', String(params.per_page))
   const path = `/admin/dashboard/company-efficiency-details/${companyId}${query.toString() ? `?${query.toString()}` : ''}`
   const res = await authenticatedFetch(path)
   const body = await res.json().catch(() => ({}))
