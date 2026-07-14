@@ -525,26 +525,30 @@ class CompanyEfficiencyService
         $storedSummary = $ctx['stored_summaries']->get($storeKey);
 
         if ($storedSummary !== null && ! $isToday) {
-            return $this->dailySummaryFromStoredRow($storedSummary);
+            return $this->normalizeIncompletePunches($this->dailySummaryFromStoredRow($storedSummary));
         }
 
         // Today still uses the full attendance engine.
         if ($isToday) {
-            return $this->attendanceDailySummaryService->computeForDate(
-                user: $employee,
-                dateKey: $dateKey,
-                todayDate: $ctx['today_date'],
-                nowTz: $ctx['now_tz'],
-                effectiveSchedule: $ctx['schedule_cache'][$employee->id] ?? null,
-                preloadedLogs: $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? null,
-                correction: $ctx['approved_corrections']->get($storeKey),
+            return $this->normalizeIncompletePunches(
+                $this->attendanceDailySummaryService->computeForDate(
+                    user: $employee,
+                    dateKey: $dateKey,
+                    todayDate: $ctx['today_date'],
+                    nowTz: $ctx['now_tz'],
+                    effectiveSchedule: $ctx['schedule_cache'][$employee->id] ?? null,
+                    preloadedLogs: $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? null,
+                    correction: $ctx['approved_corrections']->get($storeKey),
+                ),
             );
         }
 
         // ponytail: historical custom/month ranges without dense daily summaries must not call
         // computeForDate per employee-day (O(employees×days) ~60s+). Use log+schedule estimate;
         // upgrade by backfilling attendance_daily_summaries then prefer stored rows.
-        return $this->estimateHistoricalDaySummary($ctx, $employee, $dateKey, $dayKey);
+        return $this->normalizeIncompletePunches(
+            $this->estimateHistoricalDaySummary($ctx, $employee, $dateKey, $dayKey),
+        );
     }
 
     /**
@@ -652,14 +656,39 @@ class CompanyEfficiencyService
             ];
         }
 
+        // Incomplete shift: one punch only must not count as Present or full-day payroll impact.
+        if ($timeIn === null || $timeOut === null) {
+            $missing = $this->missingPunchMeta($timeIn !== null, $timeOut !== null);
+
+            return [
+                'status' => 'incomplete',
+                'status_label' => $missing['status_label'],
+                'schedule_in' => $scheduleIn,
+                'schedule_out' => $scheduleOut,
+                'formatted_time_in' => $timeIn?->format('g:i A'),
+                'formatted_time_out' => $timeOut?->format('g:i A'),
+                'time_in' => $timeIn?->format('H:i:s'),
+                'time_out' => $timeOut?->format('H:i:s'),
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 0.0,
+                'is_rest_day' => false,
+                'is_rest_day_worked' => false,
+                'is_leave' => false,
+                'is_holiday' => false,
+                'presence_label' => $missing['status_label'],
+                'presence_issue' => $missing['presence_issue'],
+                'scheduled_regular_hours' => $scheduledHours,
+                'correction_remarks' => is_string($correction?->remarks) ? trim($correction->remarks) : null,
+            ];
+        }
+
         $lateMinutes = 0;
         $lateLabel = null;
-        if ($timeIn !== null) {
-            $clockIn = AttendanceStatusService::getClockInStatus($daySched, $dateKey, $timeIn);
-            if (($clockIn['status'] ?? '') === 'late') {
-                $lateMinutes = (int) ($clockIn['late_minutes'] ?? 0);
-                $lateLabel = $clockIn['late_label'] ?? null;
-            }
+        $clockIn = AttendanceStatusService::getClockInStatus($daySched, $dateKey, $timeIn);
+        if (($clockIn['status'] ?? '') === 'late') {
+            $lateMinutes = (int) ($clockIn['late_minutes'] ?? 0);
+            $lateLabel = $clockIn['late_label'] ?? null;
         }
 
         $presenceLabel = null;
@@ -670,9 +699,6 @@ class CompanyEfficiencyService
         } elseif ($correction && $correction->approved) {
             $presenceLabel = 'Present (Approved)';
             $presenceIssue = 'approved_correction';
-        } elseif ($timeIn !== null && $timeOut === null) {
-            $presenceLabel = 'Present (Incomplete Records)';
-            $presenceIssue = 'incomplete_pair';
         }
 
         $status = $lateMinutes > 0 ? 'late' : 'present';
@@ -728,10 +754,11 @@ class CompanyEfficiencyService
             $ctx['schedule_cache'],
             $storedSummary,
         );
-        $isPresent = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true);
-        // Match chart provisional pay so row Efficiency stays consistent when time-out is missing.
-        $payForEff = $payrollImpactHours;
-        if ($payForEff <= 0 && $isPresent && $scheduledHours > 0) {
+        // Complete present rows only; incomplete / missing punches get 0 payroll impact.
+        $isPresentComplete = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime'], true);
+        $payForEff = $isPresentComplete ? $payrollImpactHours : 0.0;
+        // Live mid-shift (still clocked in today) may credit provisional hours for the chart.
+        if ($payForEff <= 0 && $status === 'clocked_in' && $isToday && $scheduledHours > 0) {
             $payForEff = max(0.0, $scheduledHours - ($lateMinutes / 60));
         }
         $attendanceEfficiencyPct = $scheduledHours > 0
@@ -762,9 +789,9 @@ class CompanyEfficiencyService
             'time_out' => $dailySummary['formatted_time_out'] ?? ($dailySummary['time_out'] ? date('g:i A', strtotime((string) $dailySummary['time_out'])) : '—'),
             'status' => $dailySummary['status_label'] ?? $status,
             'status_code' => $status,
-            'late_minutes' => $lateMinutes,
-            'undertime_minutes' => $undertimeMinutes,
-            'payroll_impact' => $payrollImpactHours,
+            'late_minutes' => $status === 'incomplete' ? 0 : $lateMinutes,
+            'undertime_minutes' => $status === 'incomplete' ? 0 : $undertimeMinutes,
+            'payroll_impact' => $payForEff,
             'scheduled_hours' => round($scheduledHours, 2),
             'remarks' => $remarks,
             'presence_label' => $dailySummary['presence_label'] ?? null,
@@ -804,7 +831,7 @@ class CompanyEfficiencyService
             $presenceLabel = match ($presenceIssue) {
                 'approved_correction' => 'Present (Approved)',
                 'correction_pending' => 'Present (Pending Correction)',
-                'incomplete_pair' => 'Present (Incomplete Records)',
+                'incomplete_pair', 'missing_in', 'missing_out' => (string) ($dailySummary['status_label'] ?? 'Incomplete'),
                 default => '',
             };
         }
@@ -814,7 +841,7 @@ class CompanyEfficiencyService
             $presenceLabel = 'Present (Pending Correction)';
         }
         if ($presenceLabel === '' && in_array(($dailySummary['status'] ?? ''), ['incomplete'], true)) {
-            $presenceLabel = 'Present (Incomplete Records)';
+            $presenceLabel = (string) ($dailySummary['status_label'] ?? 'Incomplete');
         }
 
         if ($presenceLabel !== '') {
@@ -912,10 +939,12 @@ class CompanyEfficiencyService
         $scheduleOut = $dailySummary['schedule_out'] ?? null;
 
         $isScheduled = $scheduleIn !== null && $scheduleOut !== null;
-        $isPresent = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true);
+        $isPresentComplete = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime'], true);
+        $isClockedIn = $status === 'clocked_in';
+        $isIncomplete = $status === 'incomplete';
         $isAbsent = $status === 'absent' && ! ($dailySummary['is_leave'] ?? false) && ! ($dailySummary['is_rest_day'] ?? false) && ! ($dailySummary['is_holiday'] ?? false);
-        $isLate = $lateMinutes > 0 && $isPresent;
-        $isUndertime = $undertimeMinutes > 0 && $isPresent;
+        $isLate = $lateMinutes > 0 && $isPresentComplete;
+        $isUndertime = $undertimeMinutes > 0 && $isPresentComplete;
         $isLeave = ($dailySummary['is_leave'] ?? false) || $status === 'leave';
 
         if ($isScheduled) {
@@ -925,7 +954,7 @@ class CompanyEfficiencyService
             $agg['on_leave']++;
         } elseif ($isAbsent) {
             $agg['absent']++;
-        } elseif ($isPresent) {
+        } elseif ($isPresentComplete || $isClockedIn) {
             $agg['present']++;
         }
         if ($isLate) {
@@ -955,15 +984,19 @@ class CompanyEfficiencyService
             $storedSummary,
         );
         if ($scheduledHours > 0) {
-            $payHours = $payrollImpactHours;
-            // Open / incomplete days: payroll engine returns 0 without time_out, which
-            // zeros the whole chart for Today/Yesterday. Credit provisional impact.
-            // ponytail: ceiling = full schedule until time-out; switch to live worked minutes if dashboards need mid-shift accuracy.
-            if ($payHours <= 0 && $isPresent) {
-                $payHours = max(0.0, $scheduledHours - ($lateMinutes / 60));
+            $payHours = 0.0;
+            if ($isPresentComplete) {
+                $payHours = $payrollImpactHours;
+            } elseif ($isClockedIn) {
+                // Open live shift only: payroll engine returns 0 without time_out.
+                // ponytail: ceiling = full schedule until time-out; switch to live worked minutes if dashboards need mid-shift accuracy.
+                $payHours = $payrollImpactHours > 0
+                    ? $payrollImpactHours
+                    : max(0.0, $scheduledHours - ($lateMinutes / 60));
             }
+            // Incomplete (missing in/out): keep scheduled hours in the denominator, zero payroll impact.
             $agg['total_scheduled_hours'] += $scheduledHours;
-            $agg['total_payroll_impact_hours'] += $payHours;
+            $agg['total_payroll_impact_hours'] += $isIncomplete ? 0.0 : $payHours;
         }
     }
 
@@ -985,7 +1018,7 @@ class CompanyEfficiencyService
             'payroll_impact_hours' => (float) ($stored->payroll_impact_hours ?? 0),
             'is_rest_day' => (bool) $stored->is_rest_day,
             'is_rest_day_worked' => (bool) $stored->is_rest_day
-                && in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true),
+                && in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'clocked_in'], true),
             'is_leave' => $status === 'leave',
             'is_holiday' => $status === 'holiday',
             'scheduled_regular_hours' => $stored->scheduled_regular_hours,
@@ -998,6 +1031,77 @@ class CompanyEfficiencyService
             'correction_remarks' => is_array($stored->extra) ? ($stored->extra['correction_remarks'] ?? null) : null,
             'remarks' => null,
         ];
+    }
+
+    /**
+     * One-sided punches must not look like Present or earn full-day payroll impact.
+     * Live mid-shift `clocked_in` stays as-is (attendance engine owns that label).
+     *
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    private function normalizeIncompletePunches(array $summary): array
+    {
+        $status = (string) ($summary['status'] ?? '');
+        if (in_array($status, ['leave', 'holiday', 'rest', 'upcoming', 'absent', 'clocked_in'], true)) {
+            return $summary;
+        }
+
+        $hasIn = $this->hasPunchTime($summary['time_in'] ?? $summary['formatted_time_in'] ?? null);
+        $hasOut = $this->hasPunchTime($summary['time_out'] ?? $summary['formatted_time_out'] ?? null);
+        $missing = $this->missingPunchMeta($hasIn, $hasOut);
+        if ($missing === null) {
+            return $summary;
+        }
+
+        $summary['status'] = 'incomplete';
+        $summary['status_label'] = $missing['status_label'];
+        $summary['presence_label'] = $missing['status_label'];
+        $summary['presence_issue'] = $missing['presence_issue'];
+        $summary['payroll_impact_hours'] = 0.0;
+        $summary['late_minutes'] = 0;
+        $summary['undertime_minutes'] = 0;
+
+        return $summary;
+    }
+
+    /**
+     * @return array{status_label: string, presence_issue: string}|null
+     */
+    private function missingPunchMeta(bool $hasIn, bool $hasOut): ?array
+    {
+        if ($hasIn && $hasOut) {
+            return null;
+        }
+        if (! $hasIn && ! $hasOut) {
+            return null;
+        }
+
+        if ($hasIn && ! $hasOut) {
+            return [
+                'status_label' => 'Missing out',
+                'presence_issue' => 'missing_out',
+            ];
+        }
+
+        return [
+            'status_label' => 'Missing in',
+            'presence_issue' => 'missing_in',
+        ];
+    }
+
+    private function hasPunchTime(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+        $raw = trim((string) $value);
+
+        return $raw !== ''
+            && $raw !== '—'
+            && $raw !== '-'
+            && $raw !== '--'
+            && strtolower($raw) !== 'null';
     }
 
     /** @param array<string, mixed> $dailySummary @param array<int, array<string, mixed>|null> $scheduleCache */

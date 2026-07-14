@@ -4346,7 +4346,9 @@ export default function AdminDashboard() {
                                             ? 'border-purple-300 bg-purple-50 text-purple-700 dark:border-purple-500/30 dark:bg-purple-500/10 dark:text-purple-200'
                                             : emp.status_code === 'undertime'
                                               ? 'border-yellow-300 bg-yellow-50 text-yellow-700 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-200'
-                                              : 'border-border bg-muted text-muted-foreground'
+                                              : emp.status_code === 'incomplete'
+                                                ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+                                                : 'border-border bg-muted text-muted-foreground'
                                 )}>
                                   <span className="size-2 rounded-full bg-current" aria-hidden />
                                   {emp.status}

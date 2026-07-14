@@ -3264,7 +3264,7 @@ class DashboardController extends Controller
             'attendance_version' => $attendanceVersion,
         ]));
         $cacheKey = sprintf(
-            'dashboard:company_efficiency:v4:%s:%s:%s',
+            'dashboard:company_efficiency:v5:%s:%s:%s',
             $period['start_date'],
             $period['end_date'],
             $scopeHash,
@@ -3350,7 +3350,7 @@ class DashboardController extends Controller
             'attendance_version' => $attendanceVersion,
         ]));
         $cacheKey = sprintf(
-            'dashboard:company_efficiency:attendance:v4:%d:%s:%s:%d:%s',
+            'dashboard:company_efficiency:attendance:v5:%d:%s:%s:%d:%s',
             $companyId,
             $period['start_date'],
             $period['end_date'],
