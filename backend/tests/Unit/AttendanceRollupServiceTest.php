@@ -64,6 +64,31 @@ class AttendanceRollupServiceTest extends TestCase
     }
 
     #[Test]
+    public function scheduled_absence_reduces_efficiency_with_zero_payroll_impact(): void
+    {
+        $days = [];
+        for ($day = 1; $day <= 5; $day++) {
+            $absent = $day === 5;
+            $days[] = [
+                'status' => $absent ? 'absent' : 'present',
+                'date' => '2026-07-0'.$day,
+                'is_rest_day' => false,
+                'scheduled_regular_hours' => 8.0,
+                'worked_hours' => $absent ? 0.0 : 8.0,
+                'payroll_impact_hours' => $absent ? 0.0 : 8.0,
+            ];
+        }
+
+        $summary = $this->rollup->summarizeEmployeeDays($days);
+
+        $this->assertSame(5, $summary['scheduled_workdays']);
+        $this->assertSame(40.0, $summary['expected_scheduled_hours']);
+        $this->assertSame(32.0, $summary['payroll_impact_hours']);
+        $this->assertSame(8.0, $summary['absent_hours']);
+        $this->assertSame(80.0, $summary['attendance_efficiency_percentage']);
+    }
+
+    #[Test]
     public function scheduled_rest_day_is_detected_from_empty_shift_in(): void
     {
         $schedule = [

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Support\PayrollCacheInvalidator;
+use App\Support\AdminDashboardCache;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -79,6 +80,7 @@ class ExecomEmployeeProfile extends Model
     {
         static::saved(function (ExecomEmployeeProfile $profile): void {
             if ($profile->wasChanged(['employee_id', 'company_id', 'branch_id', 'department_id', 'is_active', 'effective_from', 'effective_to'])) {
+                $profile->invalidateEfficiencyCaches();
                 PayrollCacheInvalidator::clear('execom_profile_saved', [
                     'employee_id' => (int) $profile->employee_id,
                     'company_id' => $profile->company_id ? (int) $profile->company_id : null,
@@ -89,6 +91,7 @@ class ExecomEmployeeProfile extends Model
         });
 
         static::deleted(function (ExecomEmployeeProfile $profile): void {
+            $profile->invalidateEfficiencyCaches();
             PayrollCacheInvalidator::clear('execom_profile_deleted', [
                 'employee_id' => (int) $profile->employee_id,
                 'company_id' => $profile->company_id ? (int) $profile->company_id : null,
@@ -96,5 +99,15 @@ class ExecomEmployeeProfile extends Model
                 'effective_to' => $profile->effective_to?->toDateString(),
             ]);
         });
+    }
+
+    private function invalidateEfficiencyCaches(): void
+    {
+        \App\Services\EmployeeDashboardCacheService::invalidate((int) $this->employee_id);
+        AdminDashboardCache::invalidateForUserCompany(
+            $this->company_id ? (int) $this->company_id : null,
+            ['attendance', 'charts', 'summary']
+        );
+        AdminDashboardCache::invalidateCompany(0, ['attendance', 'charts', 'summary']);
     }
 }

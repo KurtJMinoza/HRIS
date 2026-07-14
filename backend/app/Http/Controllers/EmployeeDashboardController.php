@@ -11,6 +11,7 @@ use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusResolver;
 use App\Services\AttendanceStatusService;
 use App\Services\EmployeeDashboardCacheService;
+use App\Services\EmployeeClassificationService;
 use App\Services\HolidayService;
 use App\Services\HolidayEligibilityService;
 use App\Services\OtDetectionService;
@@ -45,6 +46,7 @@ class EmployeeDashboardController extends Controller
         private readonly HolidayService $holidayService,
         private readonly HolidayEligibilityService $holidayEligibility,
         private readonly PolicyResolverService $policyResolver,
+        private readonly EmployeeClassificationService $employeeClassification,
     ) {}
 
     /**
@@ -62,7 +64,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::summaryKey($employeeId, $todayDate);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 7) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 8) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             Log::debug('[EmployeeDashboard] summary cache HIT', [
@@ -171,9 +173,13 @@ class EmployeeDashboardController extends Controller
 
         // Detect OT for today
         $otDetection = $this->otDetectionService->detectForToday($user, $attendanceTz);
+        $isExecom = $this->employeeClassification->isExecom($user, $todayNow, $todayNow);
 
         $payload = [
             'schedule_assigned' => $scheduleAssigned,
+            'is_execom' => $isExecom,
+            'classification' => $this->employeeClassification->label($user, $todayNow, $todayNow),
+            'execom_badge' => $isExecom ? 'EXECom' : null,
             'today' => $todayPayload,
             'pending_requests' => [
                 'total' => $totalPending,
@@ -184,7 +190,7 @@ class EmployeeDashboardController extends Controller
             'upcoming_payroll' => $upcomingBatch,
             'latest_payslip' => $latestPayslipSummary,
             'meta' => [
-                'schema_version' => 7,
+                'schema_version' => 8,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -242,7 +248,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 14) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 17) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -358,6 +364,7 @@ class EmployeeDashboardController extends Controller
 
         $totalExpectedMinutes = 0;
         $totalAbsentExpectedMinutes = 0;
+        $totalPayrollImpactMinutes = 0;
 
         while ($cursor->lessThanOrEqualTo($to)) {
             $dateKey = $cursor->toDateString();
@@ -376,7 +383,10 @@ class EmployeeDashboardController extends Controller
             $expectedDayMinutes = 0;
             $isFutureDay = $dateKey > $todayDate;
             if (! $isFutureDay && ! $isRestDay && ! $isLeave && ! $isHoliday && is_array($daySchedule)) {
-                $expectedDayMinutes = max(0, (int) ($daySchedule['expected_paid_minutes'] ?? 480));
+                $expectedDayMinutes = max(0, (int) ($daySchedule['expected_paid_minutes'] ?? 0));
+                if ($expectedDayMinutes <= 0) {
+                    $expectedDayMinutes = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule);
+                }
                 $totalExpectedMinutes += $expectedDayMinutes;
             }
 
@@ -397,6 +407,9 @@ class EmployeeDashboardController extends Controller
             $dayLateMinutes = (int) ($summary['late_minutes'] ?? 0);
             $dayUndertimeMinutes = (int) ($summary['undertime_minutes'] ?? 0);
             $effectiveWorkedMinutes = $summary['worked_minutes'];
+            if ($expectedDayMinutes > 0) {
+                $totalPayrollImpactMinutes += max(0, (int) round(((float) ($summary['payroll_impact_hours'] ?? 0)) * 60));
+            }
             $holidayPayPolicy = null;
             if ($holidayOnDate !== null) {
                 $activePolicy = $this->policyResolver->getActivePolicy(
@@ -496,22 +509,34 @@ class EmployeeDashboardController extends Controller
 
         // Override expected_scheduled_hours and absent_hours with controller-computed values from schedule config
         $monthSummary['expected_scheduled_hours'] = round($totalExpectedMinutes / 60, 2);
+        $monthSummary['payroll_impact_hours'] = round($totalPayrollImpactMinutes / 60, 2);
+        $monthSummary['lost_hours'] = round(max(0, $totalExpectedMinutes - $totalPayrollImpactMinutes) / 60, 2);
         $monthSummary['absent_hours'] = round($totalAbsentExpectedMinutes / 60, 2);
 
-        // Days-based attendance efficiency (DOLE-friendly)
-        $schDays = (int) ($monthSummary['scheduled_workdays'] ?? $monthSummary['scheduled_days'] ?? 0);
-        $absDays = (int) ($monthSummary['absent_days'] ?? 0);
-        $lateDays = (int) ($monthSummary['late_days'] ?? 0);
-        $underDays = (int) ($monthSummary['undertime_days'] ?? 0);
+        $isExecom = $this->employeeClassification->isExecom($user, $from, $to);
+        if ($isExecom) {
+            $monthSummary['payroll_impact_hours'] = round($totalExpectedMinutes / 60, 2);
+            $monthSummary['lost_hours'] = 0.0;
+            $monthSummary['absent_hours'] = 0.0;
+            $monthSummary['attendance_efficiency_percentage'] = 100.0;
+        } else {
+            $monthSummary['attendance_efficiency_percentage'] = $totalExpectedMinutes > 0
+                ? round(($totalPayrollImpactMinutes / $totalExpectedMinutes) * 100, 2)
+                : 0.0;
+        }
+        $monthSummary['is_execom'] = $isExecom;
+        $monthSummary['classification'] = $this->employeeClassification->label($user, $from, $to);
+        $monthSummary['execom_badge'] = $isExecom ? 'EXECom' : null;
 
-        $absentPenalty = $schDays > 0 ? ($absDays * (100 / $schDays)) : 0;
-        $latePenalty = $lateDays * 0.5;
-        $underPenalty = $underDays * 0.5;
-        $deduction = $absentPenalty + $latePenalty + $underPenalty;
-
-        $monthSummary['attendance_efficiency_percentage'] = $schDays > 0
-            ? round(max(0, 100 - $deduction), 2)
-            : 0.0;
+        Log::info('[EmployeeDashboard] attendance efficiency details', [
+            'employee_id' => $employeeId,
+            'is_execom' => $monthSummary['is_execom'],
+            'scheduled_days' => (int) ($monthSummary['scheduled_workdays'] ?? 0),
+            'absent_days' => (int) ($monthSummary['absent_days'] ?? 0),
+            'expected_minutes' => $totalExpectedMinutes,
+            'payroll_impact_minutes' => $isExecom ? $totalExpectedMinutes : $totalPayrollImpactMinutes,
+            'efficiency_percentage' => $monthSummary['attendance_efficiency_percentage'],
+        ]);
 
         $payload = [
             'year' => $year,
@@ -545,7 +570,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 14,
+                'schema_version' => 17,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,

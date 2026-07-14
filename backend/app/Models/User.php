@@ -11,6 +11,7 @@ use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Support\EmployeeProfileCache;
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -167,6 +168,34 @@ class User extends Authenticatable
     {
         return $query->visibleEmployees()
             ->where('exclude_from_attendance', false);
+    }
+
+    public function scopeExcludeExecom(
+        Builder $query,
+        ?CarbonInterface $periodStart = null,
+        ?CarbonInterface $periodEnd = null,
+    ): Builder {
+        return $query
+            ->where(function (Builder $flagQuery): void {
+                $flagQuery->whereNull('is_execom')->orWhere('is_execom', false);
+            })
+            ->whereDoesntHave('execomProfiles', function (Builder $profileQuery) use ($periodStart, $periodEnd): void {
+                $profileQuery->activeForPeriod($periodStart, $periodEnd);
+            });
+    }
+
+    public function scopeOnlyExecom(
+        Builder $query,
+        ?CarbonInterface $periodStart = null,
+        ?CarbonInterface $periodEnd = null,
+    ): Builder {
+        return $query->where(function (Builder $execomQuery) use ($periodStart, $periodEnd): void {
+            $execomQuery
+                ->where('is_execom', true)
+                ->orWhereHas('execomProfiles', function (Builder $profileQuery) use ($periodStart, $periodEnd): void {
+                    $profileQuery->activeForPeriod($periodStart, $periodEnd);
+                });
+        });
     }
 
     /**

@@ -83,6 +83,7 @@ class AttendanceRollupService
             }
             if ($dayExpectedHours > 0) {
                 $expectedScheduledHours += $dayExpectedHours;
+                $payrollImpactHours += (float) ($day['payroll_impact_hours'] ?? 0);
             }
 
             $label = $this->employeeDisplayLabel($day);
@@ -93,14 +94,12 @@ class AttendanceRollupService
             } elseif ($this->labelCountsAsPresent($label, $day)) {
                 $present++;
                 $actualWorkedHours += (float) ($day['worked_hours'] ?? 0);
-                $payrollImpactHours += (float) ($day['payroll_impact_hours'] ?? 0);
             } elseif ($this->labelCountsAsAbsent($label, $day)) {
                 $absent++;
                 $absentHours += $dayExpectedHours;
             } elseif ($this->labelCountsAsLate($label, $day)) {
                 $late++;
                 $actualWorkedHours += (float) ($day['worked_hours'] ?? 0);
-                $payrollImpactHours += (float) ($day['payroll_impact_hours'] ?? 0);
             } elseif ($this->labelCountsAsLeave($label, $day)) {
                 $leave++;
             }

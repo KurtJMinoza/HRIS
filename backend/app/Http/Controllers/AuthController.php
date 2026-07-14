@@ -9,6 +9,7 @@ use App\Models\FailedFaceAttempt;
 use App\Models\User;
 use App\Services\EmployeeActivityRecorder;
 use App\Services\DataScopeService;
+use App\Services\EmployeeClassificationService;
 use App\Services\EmployeeStatusService;
 use App\Services\FaceAttemptThrottleService;
 use App\Services\FaceAuthService;
@@ -238,7 +239,7 @@ class AuthController extends Controller
         $payload = EmployeeProfileCache::remember(
             (int) $authUser->id,
             'auth_user_payload',
-            ['version' => 9, 'include_leave_credits' => false],
+            ['version' => 10, 'include_leave_credits' => false],
             $authTtl,
             fn () => $this->userResponse($authUser, ['include_leave_credits' => false])
         );
@@ -732,6 +733,8 @@ class AuthController extends Controller
                 ?? $user->sectionUnit?->division?->branch?->name);
 
         $accessFlags = $rbac->accessFlagsForUser($user);
+        $classification = app(EmployeeClassificationService::class);
+        $isExecom = $classification->isExecom($user);
         $permissions = Cache::remember(
             'permissions:user:'.(int) $user->id,
             now()->addMinutes(10),
@@ -831,6 +834,9 @@ class AuthController extends Controller
             'branch_office_location' => $user->branch_office_location,
             'employment_type' => $user->employment_type,
             'employment_status' => $user->employment_status,
+            'is_execom' => $isExecom,
+            'classification' => $classification->label($user),
+            'execom_badge' => $isExecom ? 'EXECom' : null,
             'employment_status_effective_date' => $user->employment_status_effective_date?->toDateString(),
             'regularization_date' => $user->regularization_date?->toDateString(),
             'status_override' => (bool) ($user->status_override ?? false),

@@ -656,7 +656,7 @@ export default function EmployeeDashboard() {
       if (calendarCacheRef.current.has(mk)) continue
       try {
         const data = await getEmployeeDashboardAttendanceCalendar({ month: mk })
-        if (data?.meta?.schema_version === 14) {
+        if (data?.meta?.schema_version === 17) {
           calendarCacheRef.current.set(mk, data)
         }
       } catch {
@@ -669,7 +669,7 @@ export default function EmployeeDashboard() {
     const monthKey = calendarMonthSelectKey(year, month)
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    const cacheValid = cached && cached?.meta?.schema_version === 14
+    const cacheValid = cached && cached?.meta?.schema_version === 17
 
     if (cacheValid) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
@@ -1091,21 +1091,33 @@ export default function EmployeeDashboard() {
     setCalendarMonth(t.getMonth())
   }
 
+  const employeeIsExecom = Boolean(
+    summary?.is_execom
+    || user?.is_execom
+    || summary?.execom_badge
+    || user?.execom_badge
+    || summary?.classification === 'EXECom'
+    || user?.classification === 'EXECom',
+  )
+  const employeeClassification = summary?.classification || user?.classification || (employeeIsExecom ? 'EXECom' : null)
+
   const monthAttendanceMetrics = useMemo(() => {
     const scheduledDays = Array.isArray(days) ? days.filter(isScheduledWorkDay).length : 0
+    const rawExpectedHours = Number(summary?.expected_scheduled_hours ?? 0)
+    const rawPayrollImpactHours = Number(summary?.payroll_impact_hours ?? 0)
     return {
       present: summary?.present_count ?? 0,
       absent: absentCounts?.absent ?? summary?.absent_count ?? 0,
       late: summary?.late_count ?? 0,
       undertime: summary?.undertime_count ?? 0,
       scheduledDays,
-      efficiency: summary?.attendance_efficiency_percentage ?? 0,
-      expectedScheduledHours: summary?.expected_scheduled_hours ?? 0,
+      efficiency: employeeIsExecom ? 100 : (summary?.attendance_efficiency_percentage ?? 0),
+      expectedScheduledHours: rawExpectedHours,
       actualWorkedHours: summary?.actual_worked_hours ?? 0,
-      payrollImpactHours: summary?.payroll_impact_hours ?? 0,
+      payrollImpactHours: employeeIsExecom ? rawExpectedHours : rawPayrollImpactHours,
       lateMinutes: summary?.late_minutes ?? 0,
       undertimeMinutes: summary?.undertime_minutes ?? 0,
-      absentHours: summary?.absent_hours ?? 0,
+      absentHours: employeeIsExecom ? 0 : (summary?.absent_hours ?? 0),
       presentDays: summary?.present_days ?? 0,
       absentDays: summary?.absent_days ?? 0,
       lateDays: summary?.late_days ?? 0,
@@ -1113,8 +1125,11 @@ export default function EmployeeDashboard() {
       restDays: summary?.rest_day_count ?? 0,
       leaveDays: summary?.leave_count ?? 0,
       holidayDays: summary?.holiday_count ?? 0,
+      lostHours: employeeIsExecom ? 0 : (summary?.lost_hours ?? Math.max(0, rawExpectedHours - rawPayrollImpactHours)),
+      isExecom: employeeIsExecom,
+      classification: employeeClassification,
     }
-  }, [summary, absentCounts, days])
+  }, [summary, absentCounts, days, employeeIsExecom, employeeClassification])
 
   const attendanceSummaryBaseDays = monthAttendanceMetrics.scheduledDays
 
@@ -1642,6 +1657,11 @@ export default function EmployeeDashboard() {
               <p className="mt-1 text-xs font-extrabold uppercase tracking-wide text-orange-600">
                 {user.position}
               </p>
+            )}
+            {employeeIsExecom && (
+              <Badge className="mt-2 border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-extrabold uppercase tracking-wide text-violet-700 shadow-sm dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200">
+                EXECom
+              </Badge>
             )}
             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground @sm:text-[15px]">
               Track your time, review your logs, and stay on top of your schedule.
@@ -2806,9 +2826,13 @@ export default function EmployeeDashboard() {
                     <div className="h-6 w-px bg-border" />
                     <span className="text-sm font-medium text-muted-foreground">{getMonthLabel()}</span>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    {employeeDisplayName} &middot; {attendanceSummaryBaseDays} scheduled work day{attendanceSummaryBaseDays === 1 ? '' : 's'}
-                  </p>
+                  <div className="space-y-1 text-sm text-muted-foreground">
+                    <p>Employee: <span className="font-medium text-foreground">{employeeDisplayName}</span></p>
+                    {monthAttendanceMetrics.classification && (
+                      <p>Classification: <span className="font-medium text-foreground">{monthAttendanceMetrics.classification}</span></p>
+                    )}
+                    <p>Period: <span className="font-medium text-foreground">{getMonthLabel()}</span> &middot; {attendanceSummaryBaseDays} scheduled work day{attendanceSummaryBaseDays === 1 ? '' : 's'}</p>
+                  </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
                   <div className="flex flex-col items-end">
@@ -2830,7 +2854,7 @@ export default function EmployeeDashboard() {
                 const expHrs = Number(monthAttendanceMetrics.expectedScheduledHours)
                 const piHrs = Number(monthAttendanceMetrics.payrollImpactHours)
                 const awHrs = Number(monthAttendanceMetrics.actualWorkedHours)
-                const lostHrs = expHrs - piHrs
+                const lostHrs = Math.max(0, Number(monthAttendanceMetrics.lostHours ?? expHrs - piHrs))
                 return (
                   <section className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {[
@@ -2890,6 +2914,11 @@ export default function EmployeeDashboard() {
                       const lateDays = monthAttendanceMetrics.lateDays
                       const underDays = monthAttendanceMetrics.undertimeDays
                       const finalEff = monthAttendanceMetrics.efficiency
+                      const expectedHours = Number(monthAttendanceMetrics.expectedScheduledHours || 0)
+                      const payrollImpactHours = Number(monthAttendanceMetrics.payrollImpactHours || 0)
+                      const absenceLostHours = Number(monthAttendanceMetrics.absentHours || 0)
+                      const lateLostHours = monthAttendanceMetrics.isExecom ? 0 : Number(monthAttendanceMetrics.lateMinutes || 0) / 60
+                      const undertimeLostHours = monthAttendanceMetrics.isExecom ? 0 : Number(monthAttendanceMetrics.undertimeMinutes || 0) / 60
                       return (
                         <>
                           {[
@@ -2898,6 +2927,11 @@ export default function EmployeeDashboard() {
                             { label: 'Absent Days', value: absDays },
                             { label: 'Late Days', value: lateDays },
                             { label: 'Undertime Days', value: underDays },
+                            { label: 'Expected Scheduled Hours', value: `${expectedHours.toFixed(2)} hrs` },
+                            { label: 'Payroll Impact Hours', value: `${payrollImpactHours.toFixed(2)} hrs` },
+                            { label: 'Hours Lost to Absence', value: `${absenceLostHours.toFixed(2)} hrs` },
+                            { label: 'Hours Lost to Late', value: `${lateLostHours.toFixed(2)} hrs` },
+                            { label: 'Hours Lost to Undertime', value: `${undertimeLostHours.toFixed(2)} hrs` },
                           ].map((row) => (
                             <div key={row.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0 text-muted-foreground">
                               <span>{row.label}</span>

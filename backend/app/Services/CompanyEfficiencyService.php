@@ -10,12 +10,13 @@ use App\Models\Evaluation;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 /**
  * Single source of truth for company efficiency (chart + modal summary).
- * Attendance = payroll impact hours / scheduled hours.
- * Final efficiency averages that with latest completed HR Evaluation % when present.
+ * Attendance efficiency excludes EXECom. Evaluation avg includes EXECom.
+ * Chart/company efficiency % stays attendance-only (evaluation is reported separately).
  */
 class CompanyEfficiencyService
 {
@@ -23,8 +24,9 @@ class CompanyEfficiencyService
 
     public function __construct(
         private readonly AttendanceDailySummaryService $attendanceDailySummaryService,
-        private readonly EvaluationScoringService $evaluationScoringService,
         private readonly DataScopeService $dataScopeService,
+        private readonly EmployeeClassificationService $employeeClassificationService,
+        private readonly EvaluationScoringService $evaluationScoringService,
     ) {}
 
     /**
@@ -129,6 +131,8 @@ class CompanyEfficiencyService
             'end_date' => $ctx['to_date_key'],
             'employees' => $uniqueEmployees,
             'employee_count' => $uniqueEmployees,
+            'included_employee_count' => $uniqueEmployees,
+            'excluded_execom_count' => (int) ($companyRow['excluded_execom_count'] ?? 0),
             'employee_days' => $uniqueEmployees * $numDays,
             'present' => (int) ($agg['present'] ?? 0),
             'present_count' => (int) ($agg['present'] ?? 0),
@@ -138,6 +142,9 @@ class CompanyEfficiencyService
             'late_count' => (int) ($agg['late'] ?? 0),
             'undertime' => (int) ($agg['undertime'] ?? 0),
             'undertime_count' => (int) ($agg['undertime'] ?? 0),
+            'scheduled_minutes' => (int) ($companyRow['scheduled_minutes'] ?? 0),
+            'expected_scheduled_minutes' => (int) ($companyRow['expected_scheduled_minutes'] ?? 0),
+            'payroll_impact_minutes' => (int) ($companyRow['payroll_impact_minutes'] ?? 0),
             'scheduled_hours' => $totalScheduledHours,
             'payroll_impact_hours' => $totalPayrollImpactHours,
             'efficiency' => $efficiency,
@@ -152,6 +159,8 @@ class CompanyEfficiencyService
                 'name' => $company->name,
                 'logo_url' => $company->logo ? $this->companyLogoUrl($company->logo) : null,
                 'employees' => $uniqueEmployees,
+                'included_employee_count' => $uniqueEmployees,
+                'excluded_execom_count' => (int) ($companyRow['excluded_execom_count'] ?? 0),
                 'date' => $ctx['from_date_key'],
                 'from_date' => $ctx['from_date_key'],
                 'to_date' => $ctx['to_date_key'],
@@ -167,6 +176,9 @@ class CompanyEfficiencyService
                 'absent' => (int) ($agg['absent'] ?? 0),
                 'late' => (int) ($agg['late'] ?? 0),
                 'undertime' => (int) ($agg['undertime'] ?? 0),
+                'scheduled_minutes' => (int) ($companyRow['scheduled_minutes'] ?? 0),
+                'expected_scheduled_minutes' => (int) ($companyRow['expected_scheduled_minutes'] ?? 0),
+                'payroll_impact_minutes' => (int) ($companyRow['payroll_impact_minutes'] ?? 0),
                 'total_scheduled_hours' => $totalScheduledHours,
                 'total_payroll_impact_hours' => $totalPayrollImpactHours,
                 'attendance_efficiency' => $attendanceEfficiency,
@@ -216,20 +228,31 @@ class CompanyEfficiencyService
                 'branch:id,company_id',
                 'departmentRelation:id,branch_id',
                 'departmentRelation.branch:id,company_id',
+                'execomProfiles',
             ])
             ->orderByLastName();
         $this->dataScopeService->restrictEmployeeQuery($actor, $employeesQuery);
-        $employees = $employeesQuery->get();
+        $allEmployees = $employeesQuery->get();
 
         if ($companyIds !== null && $companyIds !== []) {
-            $scopedCompanyIds = $employees->map(fn (User $u) => $u->getEffectiveCompanyId())->filter()->unique()->values()->all();
+            $scopedCompanyIds = $allEmployees->map(fn (User $u) => $u->getEffectiveCompanyId())->filter()->unique()->values()->all();
             $companyIds = array_values(array_intersect($companyIds, $scopedCompanyIds));
-            $employees = $employees->filter(
+            $allEmployees = $allEmployees->filter(
                 fn (User $u) => in_array($u->getEffectiveCompanyId(), $companyIds, true)
             )->values();
         }
 
+        $excludedExecom = $allEmployees->filter(
+            fn (User $employee): bool => $this->employeeClassificationService->isExecom($employee, $fromDate, $toDate)
+        )->values();
+        $employees = $allEmployees->reject(
+            fn (User $employee): bool => $this->employeeClassificationService->isExecom($employee, $fromDate, $toDate)
+        )->values();
+
         $employeeIds = $employees->pluck('id')->all();
+        $allEmployeeIds = $allEmployees->pluck('id')->all();
+        $allEmployeesByCompany = $allEmployees->groupBy(fn (User $u) => (int) ($u->getEffectiveCompanyId() ?? 0));
+        $excludedExecomByCompany = $excludedExecom->groupBy(fn (User $u) => (int) ($u->getEffectiveCompanyId() ?? 0));
         $employeesByCompany = $employees->groupBy(fn (User $u) => (int) ($u->getEffectiveCompanyId() ?? 0));
 
         $scheduleCache = [];
@@ -278,19 +301,21 @@ class CompanyEfficiencyService
             ->unique(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString())
             ->keyBy(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString());
 
-        // Same scored statuses as the Evaluation module (AdminEvaluation EVALUATED_STATUSES).
-        $latestEvaluationsByEmployee = Evaluation::query()
-            ->whereIn('employee_id', $employeeIds)
-            ->whereIn('status', [
-                Evaluation::STATUS_COMPLETED,
-                Evaluation::STATUS_UNDER_REVIEW,
-                Evaluation::STATUS_SUBMITTED,
-            ])
-            ->orderByDesc('evaluated_at')
-            ->orderByDesc('id')
-            ->get()
-            ->unique('employee_id')
-            ->keyBy('employee_id');
+        // Evaluations include EXECom employees; attendance aggregation above does not.
+        $latestEvaluationsByEmployee = $allEmployeeIds === []
+            ? collect()
+            : Evaluation::query()
+                ->whereIn('employee_id', $allEmployeeIds)
+                ->whereIn('status', [
+                    Evaluation::STATUS_COMPLETED,
+                    Evaluation::STATUS_UNDER_REVIEW,
+                    Evaluation::STATUS_SUBMITTED,
+                ])
+                ->orderByDesc('evaluated_at')
+                ->orderByDesc('id')
+                ->get()
+                ->unique('employee_id')
+                ->keyBy('employee_id');
 
         return [
             'tz' => $tz,
@@ -308,6 +333,8 @@ class CompanyEfficiencyService
             'stored_summaries' => $storedSummaries,
             'logs_by_employee_date' => $logsByEmployeeDate,
             'approved_corrections' => $approvedCorrections,
+            'all_employees_by_company' => $allEmployeesByCompany,
+            'excluded_execom_by_company' => $excludedExecomByCompany,
             'latest_evaluations' => $latestEvaluationsByEmployee,
         ];
     }
@@ -360,13 +387,32 @@ class CompanyEfficiencyService
             $headcount = (int) $bucket['headcount'];
             $companyId = (int) ($bucket['company_id'] ?? 0);
             $expectedDays = $headcount * $numDays;
-            $totalScheduledHours = round((float) $agg['total_scheduled_hours'], 2);
-            $totalPayrollImpactHours = round((float) $agg['total_payroll_impact_hours'], 2);
-            $attendanceEfficiency = $totalScheduledHours > 0
-                ? round(($totalPayrollImpactHours / $totalScheduledHours) * 100, 2)
+            $scheduledMinutes = (int) round(((float) $agg['total_scheduled_hours']) * 60);
+            $payrollImpactMinutes = (int) round(((float) $agg['total_payroll_impact_hours']) * 60);
+            $totalScheduledHours = round($scheduledMinutes / 60, 2);
+            $totalPayrollImpactHours = round($payrollImpactMinutes / 60, 2);
+            $attendanceEfficiency = $scheduledMinutes > 0
+                ? round(($payrollImpactMinutes / $scheduledMinutes) * 100, 2)
                 : 0.0;
             $evaluationAvg = $this->averageCompanyEvaluationPct($ctx, $companyId);
-            $efficiency = $this->combineEfficiency($attendanceEfficiency, $evaluationAvg) ?? 0.0;
+            $excludedExecomCount = (int) ($ctx['excluded_execom_by_company']->get($companyId, collect())->count());
+            $totalCompanyEmployees = (int) ($ctx['all_employees_by_company']->get($companyId, collect())->count());
+
+            Log::info('[CompanyEfficiency] attendance aggregation', [
+                'company_id' => $companyId,
+                'start_date' => $ctx['from_date_key'],
+                'end_date' => $ctx['to_date_key'],
+                'total_company_employees' => $totalCompanyEmployees,
+                'excluded_execom_employees' => $excludedExecomCount,
+                'included_employees' => $headcount,
+                'scheduled_workdays' => (int) $agg['scheduled_employees'],
+                'absent_workdays' => (int) $agg['absent'],
+                'expected_scheduled_minutes' => $scheduledMinutes,
+                'payroll_impact_minutes' => $payrollImpactMinutes,
+                'efficiency_percentage' => $attendanceEfficiency,
+                'evaluation_avg' => $evaluationAvg,
+                'cache_hit' => false,
+            ]);
 
             $rows[] = [
                 'company_id' => $bucket['company_id'],
@@ -389,14 +435,19 @@ class CompanyEfficiencyService
                 'absent_pct' => $expectedDays > 0 ? round(100 * $agg['absent'] / $expectedDays, 1) : 0,
                 'late_pct' => $expectedDays > 0 ? round(100 * $agg['late'] / $expectedDays, 1) : 0,
                 'on_leave_pct' => $expectedDays > 0 ? round(100 * $agg['on_leave'] / $expectedDays, 1) : 0,
+                'scheduled_minutes' => $scheduledMinutes,
+                'expected_scheduled_minutes' => $scheduledMinutes,
+                'payroll_impact_minutes' => $payrollImpactMinutes,
                 'total_scheduled_hours' => $totalScheduledHours,
                 'scheduled_hours' => $totalScheduledHours,
                 'total_payroll_impact_hours' => $totalPayrollImpactHours,
                 'payroll_impact_hours' => $totalPayrollImpactHours,
                 'attendance_efficiency' => $attendanceEfficiency,
                 'evaluation_avg' => $evaluationAvg,
-                'efficiency' => $efficiency,
-                'efficiency_percentage' => $efficiency,
+                'efficiency' => $attendanceEfficiency,
+                'efficiency_percentage' => $attendanceEfficiency,
+                'included_employee_count' => $headcount,
+                'excluded_execom_count' => $excludedExecomCount,
                 'agg' => $agg,
             ];
         }
@@ -662,7 +713,6 @@ class CompanyEfficiencyService
         $isToday = $dateKey === $ctx['today_date'];
         $storedSummary = $ctx['stored_summaries']->get($employee->id.'|'.$dateKey);
         $dailySummary = $this->resolveDailySummary($ctx, $employee, $dateKey, $dayKey, $isToday);
-        $latestEvaluation = $ctx['latest_evaluations']->get($employee->id);
 
         $status = $dailySummary['status'] ?? '';
         $lateMinutes = (int) ($dailySummary['late_minutes'] ?? 0);
@@ -687,18 +737,6 @@ class CompanyEfficiencyService
         $attendanceEfficiencyPct = $scheduledHours > 0
             ? round(($payForEff / $scheduledHours) * 100, 2)
             : null;
-        $hrEvaluationPct = $latestEvaluation
-            ? $this->evaluationScoringService->resolveOverallPercentage(
-                $latestEvaluation->scores,
-                $latestEvaluation->overall_score,
-            )
-            : null;
-        $evaluationRating = $hrEvaluationPct !== null
-            ? $this->evaluationScoringService->ratingLabelFromPercentage($hrEvaluationPct)
-            : (is_string($latestEvaluation?->overall_rating) && trim($latestEvaluation->overall_rating) !== ''
-                ? trim($latestEvaluation->overall_rating)
-                : null);
-        $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $hrEvaluationPct);
         $companyId = (int) ($employee->getEffectiveCompanyId() ?? 0);
         $company = $companyId > 0 ? $ctx['companies']->get($companyId) : null;
         $correction = $ctx['approved_corrections']->get($employee->id.'|'.$dateKey);
@@ -731,13 +769,15 @@ class CompanyEfficiencyService
             'remarks' => $remarks,
             'presence_label' => $dailySummary['presence_label'] ?? null,
             'presence_issue' => $dailySummary['presence_issue'] ?? null,
-            'evaluation_id' => $latestEvaluation?->id,
-            'evaluation_status' => $latestEvaluation?->status,
-            'evaluation_pct' => $hrEvaluationPct,
-            'evaluation_percentage' => $hrEvaluationPct,
-            'evaluation_rating' => $evaluationRating,
+            'classification' => $this->employeeClassificationService->label($employee, $ctx['from_date'], $ctx['to_date']),
+            'is_execom' => $this->employeeClassificationService->isExecom($employee, $ctx['from_date'], $ctx['to_date']),
+            'evaluation_id' => null,
+            'evaluation_status' => null,
+            'evaluation_pct' => null,
+            'evaluation_percentage' => null,
+            'evaluation_rating' => null,
             'attendance_efficiency_pct' => $attendanceEfficiencyPct,
-            'combined_efficiency_pct' => $combinedEfficiencyPct,
+            'combined_efficiency_pct' => null,
             // ponytail: Performance column is Coming Soon on the breakdown table.
             'efficiency_performance' => null,
             'performance' => null,
@@ -808,13 +848,19 @@ class CompanyEfficiencyService
         return implode(' — ', $parts);
     }
 
-    /** @param array<string, mixed> $ctx */
+    /**
+     * Company evaluation average — includes EXECom employees.
+     * Attendance efficiency intentionally uses the non-EXECom roster only.
+     *
+     * @param  array<string, mixed>  $ctx
+     */
     private function averageCompanyEvaluationPct(array $ctx, int $companyId): ?float
     {
-        $employees = $ctx['employees_by_company']->get($companyId, collect());
+        $employees = $ctx['all_employees_by_company']->get($companyId, collect());
+        $evaluations = $ctx['latest_evaluations'] ?? collect();
         $pcts = [];
         foreach ($employees as $employee) {
-            $latest = $ctx['latest_evaluations']->get($employee->id);
+            $latest = $evaluations->get($employee->id);
             if (! $latest) {
                 continue;
             }
@@ -832,25 +878,6 @@ class CompanyEfficiencyService
         }
 
         return round(array_sum($pcts) / count($pcts), 2);
-    }
-
-    /**
-     * Blend attendance efficiency with HR evaluation %.
-     * No evaluation → attendance-only; no attendance → evaluation-only; both → plain average.
-     */
-    private function combineEfficiency(?float $attendancePct, ?float $evaluationPct): ?float
-    {
-        if ($attendancePct === null && $evaluationPct === null) {
-            return null;
-        }
-        if ($evaluationPct === null) {
-            return round((float) $attendancePct, 2);
-        }
-        if ($attendancePct === null) {
-            return round((float) $evaluationPct, 2);
-        }
-
-        return round(($attendancePct + $evaluationPct) / 2, 2);
     }
 
     /** @return array<string, int|float> */
@@ -913,14 +940,6 @@ class CompanyEfficiencyService
         }
 
         if ($dailySummary['is_leave'] ?? false) {
-            $schedule = $scheduleCache[$employee->id] ?? null;
-            $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-            if ($daySched && ! empty($daySched['in']) && ! empty($daySched['out'])) {
-                $schedHrs = $this->computeScheduleHours($daySched);
-                $agg['total_scheduled_hours'] += $schedHrs;
-                $agg['total_payroll_impact_hours'] += $schedHrs;
-            }
-
             return;
         }
 

@@ -36,16 +36,10 @@ class CompanyEfficiencyScheduleHoursTest extends TestCase
         $this->assertSame(8.0, $hours);
     }
 
-    public function test_combine_efficiency_averages_attendance_and_evaluation(): void
+    public function test_evaluation_is_not_part_of_company_efficiency_service(): void
     {
         $ref = new ReflectionClass(CompanyEfficiencyService::class);
-        $m = $ref->getMethod('combineEfficiency');
-        $m->setAccessible(true);
-        $svc = app(CompanyEfficiencyService::class);
 
-        $this->assertSame(90.0, $m->invoke($svc, 100.0, 80.0));
-        $this->assertSame(100.0, $m->invoke($svc, 100.0, null));
-        $this->assertSame(80.0, $m->invoke($svc, null, 80.0));
-        $this->assertNull($m->invoke($svc, null, null));
+        $this->assertFalse($ref->hasMethod('combineEfficiency'));
     }
 }
