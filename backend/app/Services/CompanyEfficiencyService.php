@@ -278,9 +278,14 @@ class CompanyEfficiencyService
             ->unique(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString())
             ->keyBy(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString());
 
+        // Same scored statuses as the Evaluation module (AdminEvaluation EVALUATED_STATUSES).
         $latestEvaluationsByEmployee = Evaluation::query()
             ->whereIn('employee_id', $employeeIds)
-            ->where('status', Evaluation::STATUS_COMPLETED)
+            ->whereIn('status', [
+                Evaluation::STATUS_COMPLETED,
+                Evaluation::STATUS_UNDER_REVIEW,
+                Evaluation::STATUS_SUBMITTED,
+            ])
             ->orderByDesc('evaluated_at')
             ->orderByDesc('id')
             ->get()
@@ -673,8 +678,14 @@ class CompanyEfficiencyService
             $ctx['schedule_cache'],
             $storedSummary,
         );
+        $isPresent = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime', 'incomplete', 'clocked_in'], true);
+        // Match chart provisional pay so row Efficiency stays consistent when time-out is missing.
+        $payForEff = $payrollImpactHours;
+        if ($payForEff <= 0 && $isPresent && $scheduledHours > 0) {
+            $payForEff = max(0.0, $scheduledHours - ($lateMinutes / 60));
+        }
         $attendanceEfficiencyPct = $scheduledHours > 0
-            ? round(($payrollImpactHours / $scheduledHours) * 100, 2)
+            ? round(($payForEff / $scheduledHours) * 100, 2)
             : null;
         $hrEvaluationPct = $latestEvaluation
             ? $this->evaluationScoringService->resolveOverallPercentage(
@@ -682,6 +693,11 @@ class CompanyEfficiencyService
                 $latestEvaluation->overall_score,
             )
             : null;
+        $evaluationRating = $hrEvaluationPct !== null
+            ? $this->evaluationScoringService->ratingLabelFromPercentage($hrEvaluationPct)
+            : (is_string($latestEvaluation?->overall_rating) && trim($latestEvaluation->overall_rating) !== ''
+                ? trim($latestEvaluation->overall_rating)
+                : null);
         $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $hrEvaluationPct);
         $companyId = (int) ($employee->getEffectiveCompanyId() ?? 0);
         $company = $companyId > 0 ? $ctx['companies']->get($companyId) : null;
@@ -715,13 +731,14 @@ class CompanyEfficiencyService
             'remarks' => $remarks,
             'presence_label' => $dailySummary['presence_label'] ?? null,
             'presence_issue' => $dailySummary['presence_issue'] ?? null,
-            'evaluation' => null,
-            'evaluation_pct' => null,
-            'evaluation_percentage' => null,
-            'evaluation_rating' => null,
+            'evaluation_id' => $latestEvaluation?->id,
+            'evaluation_status' => $latestEvaluation?->status,
+            'evaluation_pct' => $hrEvaluationPct,
+            'evaluation_percentage' => $hrEvaluationPct,
+            'evaluation_rating' => $evaluationRating,
             'attendance_efficiency_pct' => $attendanceEfficiencyPct,
             'combined_efficiency_pct' => $combinedEfficiencyPct,
-            // ponytail: Performance column is Coming Soon — wire when product defines the metric
+            // ponytail: Performance column is Coming Soon on the breakdown table.
             'efficiency_performance' => null,
             'performance' => null,
         ];

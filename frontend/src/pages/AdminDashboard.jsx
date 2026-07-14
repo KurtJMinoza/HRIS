@@ -4240,10 +4240,6 @@ export default function AdminDashboard() {
                       { label: 'Total Scheduled Hours', value: `${(companyEfficiencyModalData.breakdown?.total_scheduled_hours ?? 0).toFixed(2)} hrs` },
                       { label: 'Total Payroll Impact Hours', value: `${(companyEfficiencyModalData.breakdown?.total_payroll_impact_hours ?? 0).toFixed(2)} hrs` },
                       {
-                        label: 'Attendance Efficiency',
-                        value: `${Number(companyEfficiencyModalData.breakdown?.attendance_efficiency ?? companyEfficiencyModalData.breakdown?.company_efficiency ?? 0).toFixed(2)}%`,
-                      },
-                      {
                         label: 'Evaluation Avg',
                         value: companyEfficiencyModalData.breakdown?.evaluation_avg != null
                           ? `${Number(companyEfficiencyModalData.breakdown.evaluation_avg).toFixed(2)}%`
@@ -4377,8 +4373,17 @@ export default function AdminDashboard() {
                               <td className="max-w-[14rem] truncate px-3 py-3 text-xs text-muted-foreground" title={emp.remarks ?? undefined}>
                                 {emp.remarks || '—'}
                               </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-xs italic text-muted-foreground">
-                                Coming Soon
+                              <td className="whitespace-nowrap px-3 py-3 tabular-nums text-foreground">
+                                {(emp.evaluation_percentage ?? emp.evaluation_pct) != null
+                                  ? (
+                                    <span className="inline-flex flex-col gap-0.5">
+                                      <span className="font-medium">{Number(emp.evaluation_percentage ?? emp.evaluation_pct).toFixed(2)}%</span>
+                                      {emp.evaluation_rating ? (
+                                        <span className="text-[10px] font-medium text-muted-foreground">{emp.evaluation_rating}</span>
+                                      ) : null}
+                                    </span>
+                                  )
+                                  : '—'}
                               </td>
                               <td className="whitespace-nowrap px-3 py-3 text-xs italic text-muted-foreground">
                                 Coming Soon
