@@ -6,7 +6,6 @@ use App\Models\AttendanceCorrection;
 use App\Models\AttendanceDailySummary;
 use App\Models\AttendanceLog;
 use App\Models\Company;
-use App\Models\Evaluation;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -26,6 +25,7 @@ class CompanyEfficiencyService
         private readonly AttendanceDailySummaryService $attendanceDailySummaryService,
         private readonly DataScopeService $dataScopeService,
         private readonly EmployeeClassificationService $employeeClassificationService,
+        private readonly EmployeeEvaluationResultService $employeeEvaluationResultService,
         private readonly EvaluationScoringService $evaluationScoringService,
     ) {}
 
@@ -308,20 +308,15 @@ class CompanyEfficiencyService
             ->keyBy(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString());
 
         // Evaluations include EXECom employees; attendance aggregation above does not.
-        $latestEvaluationsByEmployee = $allEmployeeIds === []
-            ? collect()
-            : Evaluation::query()
-                ->whereIn('employee_id', $allEmployeeIds)
-                ->whereIn('status', [
-                    Evaluation::STATUS_COMPLETED,
-                    Evaluation::STATUS_UNDER_REVIEW,
-                    Evaluation::STATUS_SUBMITTED,
-                ])
-                ->orderByDesc('evaluated_at')
-                ->orderByDesc('id')
-                ->get()
-                ->unique('employee_id')
-                ->keyBy('employee_id');
+        // Use latest applicable result as of period end so short ranges (Today/Yesterday)
+        // still connect to the Performance Evaluation module.
+        $latestEvaluationsByEmployee = $this->employeeEvaluationResultService
+            ->getLatestApplicableResultsForEmployees(
+                $allEmployeeIds,
+                $fromDateKey,
+                $toDateKey,
+                EmployeeEvaluationResultService::MODE_LATEST_AS_OF_PERIOD_END,
+            );
 
         return [
             'tz' => $tz,
@@ -784,16 +779,14 @@ class CompanyEfficiencyService
         $correction = $ctx['approved_corrections']->get($employee->id.'|'.$dateKey);
         $remarks = $this->resolveAttendanceRemarks($dailySummary, $storedSummary, $correction);
         $latestEvaluation = $ctx['latest_evaluations']->get($employee->id);
-        $hrEvaluationPct = $latestEvaluation
-            ? $this->evaluationScoringService->resolveOverallPercentage(
-                $latestEvaluation->scores,
-                $latestEvaluation->overall_score,
-            )
+        $hrEvaluationPct = isset($latestEvaluation['evaluation_percentage'])
+            ? (float) $latestEvaluation['evaluation_percentage']
             : null;
-        $evaluationRating = $hrEvaluationPct !== null
-            ? $this->evaluationScoringService->ratingLabelFromPercentage($hrEvaluationPct)
-            : (is_string($latestEvaluation?->overall_rating) && trim($latestEvaluation->overall_rating) !== ''
-                ? trim($latestEvaluation->overall_rating)
+        $evaluationRating = is_string($latestEvaluation['performance_level'] ?? null)
+            && trim((string) $latestEvaluation['performance_level']) !== ''
+            ? trim((string) $latestEvaluation['performance_level'])
+            : ($hrEvaluationPct !== null
+                ? $this->evaluationScoringService->ratingLabelFromPercentage($hrEvaluationPct)
                 : null);
         $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $hrEvaluationPct);
 
@@ -826,16 +819,15 @@ class CompanyEfficiencyService
             'presence_issue' => $dailySummary['presence_issue'] ?? null,
             'classification' => $this->employeeClassificationService->label($employee, $ctx['from_date'], $ctx['to_date']),
             'is_execom' => $this->employeeClassificationService->isExecom($employee, $ctx['from_date'], $ctx['to_date']),
-            'evaluation_id' => $latestEvaluation?->id,
-            'evaluation_status' => $latestEvaluation?->status,
+            'evaluation_id' => $latestEvaluation['evaluation_id'] ?? null,
+            'evaluation_status' => $latestEvaluation['status'] ?? null,
             'evaluation_pct' => $hrEvaluationPct,
             'evaluation_percentage' => $hrEvaluationPct,
             'evaluation_rating' => $evaluationRating,
             'attendance_efficiency_pct' => $attendanceEfficiencyPct,
             'combined_efficiency_pct' => $combinedEfficiencyPct,
-            // ponytail: Performance column is Coming Soon on the breakdown table.
-            'efficiency_performance' => null,
-            'performance' => null,
+            'efficiency_performance' => $evaluationRating,
+            'performance' => $evaluationRating,
         ];
     }
 
@@ -916,16 +908,10 @@ class CompanyEfficiencyService
         $pcts = [];
         foreach ($employees as $employee) {
             $latest = $evaluations->get($employee->id);
-            if (! $latest) {
+            if (! is_array($latest) || ! isset($latest['evaluation_percentage'])) {
                 continue;
             }
-            $pct = $this->evaluationScoringService->resolveOverallPercentage(
-                $latest->scores,
-                $latest->overall_score,
-            );
-            if ($pct !== null) {
-                $pcts[] = $pct;
-            }
+            $pcts[] = (float) $latest['evaluation_percentage'];
         }
 
         if ($pcts === []) {

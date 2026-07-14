@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\EmployeeEvaluationResultService;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -46,6 +47,17 @@ class Evaluation extends Model
             'submitted_at' => 'datetime',
             'reviewed_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        $bump = static function (): void {
+            // Keep company-efficiency / dashboard evaluation lookups fresh.
+            EmployeeEvaluationResultService::bumpCacheVersion();
+        };
+
+        static::saved($bump);
+        static::deleted($bump);
     }
 
     protected function scores(): Attribute

@@ -4375,11 +4375,23 @@ export default function AdminDashboard() {
                               <td className="max-w-[14rem] truncate px-3 py-3 text-xs text-muted-foreground" title={emp.remarks ?? undefined}>
                                 {emp.remarks || '—'}
                               </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-xs italic text-muted-foreground">
-                                Coming Soon
+                              <td className={cn(
+                                'whitespace-nowrap px-3 py-3 tabular-nums',
+                                emp.evaluation_percentage != null || emp.evaluation_pct != null
+                                  ? 'font-medium text-foreground'
+                                  : 'text-muted-foreground'
+                              )}>
+                                {emp.evaluation_percentage != null || emp.evaluation_pct != null
+                                  ? `${Number(emp.evaluation_percentage ?? emp.evaluation_pct).toFixed(2)}%`
+                                  : '—'}
                               </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-xs italic text-muted-foreground">
-                                Coming Soon
+                              <td className={cn(
+                                'whitespace-nowrap px-3 py-3',
+                                emp.evaluation_rating || emp.performance || emp.efficiency_performance
+                                  ? 'font-medium text-foreground'
+                                  : 'text-muted-foreground'
+                              )}>
+                                {emp.evaluation_rating || emp.performance || emp.efficiency_performance || '—'}
                               </td>
                             </tr>
                           ))}

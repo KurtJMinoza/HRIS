@@ -49,6 +49,45 @@ class CompanyEfficiencyScheduleHoursTest extends TestCase
         $this->assertNull($combine->invoke($service, null, null));
     }
 
+    public function test_average_company_evaluation_reads_evaluation_module_results(): void
+    {
+        $ref = new ReflectionClass(CompanyEfficiencyService::class);
+        $avg = $ref->getMethod('averageCompanyEvaluationPct');
+        $avg->setAccessible(true);
+        $service = app(CompanyEfficiencyService::class);
+
+        $employeeA = new \App\Models\User;
+        $employeeA->id = 10;
+        $employeeB = new \App\Models\User;
+        $employeeB->id = 11;
+
+        $pct = $avg->invoke($service, [
+            'all_employees_by_company' => collect([
+                1 => collect([$employeeA, $employeeB]),
+            ]),
+            'latest_evaluations' => collect([
+                10 => [
+                    'evaluation_id' => 1,
+                    'employee_id' => 10,
+                    'evaluation_percentage' => 80.0,
+                    'performance_level' => 'Very Satisfactory',
+                    'evaluated_at' => '2026-07-01',
+                    'status' => 'completed',
+                ],
+                11 => [
+                    'evaluation_id' => 2,
+                    'employee_id' => 11,
+                    'evaluation_percentage' => 90.0,
+                    'performance_level' => 'Outstanding',
+                    'evaluated_at' => '2026-07-02',
+                    'status' => 'completed',
+                ],
+            ]),
+        ], 1);
+
+        $this->assertSame(85.0, $pct);
+    }
+
     public function test_missing_out_is_incomplete_with_zero_stored_payroll_impact(): void
     {
         $ref = new ReflectionClass(CompanyEfficiencyService::class);
