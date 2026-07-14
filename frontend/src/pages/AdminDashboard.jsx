@@ -4300,7 +4300,7 @@ export default function AdminDashboard() {
                       <table className="w-full min-w-[90rem] border-collapse text-sm">
                         <thead className="bg-muted/25">
                           <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
-                            {['Employee', 'Company', 'Department', 'Date', 'Day', 'Schedule', 'Time In', 'Time Out', 'Status', 'Late', 'Undertime', 'Payroll Impact', 'Remarks', 'Evaluation Percentage', 'Performance'].map((label) => (
+                            {['Employee', 'Company', 'Date', 'Day', 'Schedule', 'Time In', 'Time Out', 'Status', 'Late', 'Undertime', 'Payroll Impact', 'Remarks', 'Evaluation Percentage', 'Performance'].map((label) => (
                               <th key={label} className="h-11 whitespace-nowrap px-3 font-medium first:pl-4">
                                 <span className="inline-flex items-center gap-1.5">{label}</span>
                               </th>
@@ -4326,7 +4326,6 @@ export default function AdminDashboard() {
                                 </span>
                               </td>
                               <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.company_name ?? emp.company ?? '—'}</td>
-                              <td className="whitespace-nowrap px-3 py-3 text-foreground">{emp.department ?? '—'}</td>
                               <td className="whitespace-nowrap px-3 py-3 text-foreground">
                                 {emp.date ? new Date(emp.date + 'T12:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                               </td>

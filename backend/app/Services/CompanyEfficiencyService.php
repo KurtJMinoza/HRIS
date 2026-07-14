@@ -472,15 +472,178 @@ class CompanyEfficiencyService
             return $this->dailySummaryFromStoredRow($storedSummary);
         }
 
-        return $this->attendanceDailySummaryService->computeForDate(
-            user: $employee,
-            dateKey: $dateKey,
-            todayDate: $ctx['today_date'],
-            nowTz: $ctx['now_tz'],
-            effectiveSchedule: $ctx['schedule_cache'][$employee->id] ?? null,
-            preloadedLogs: $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? null,
-            correction: $ctx['approved_corrections']->get($storeKey),
-        );
+        // Today still uses the full attendance engine.
+        if ($isToday) {
+            return $this->attendanceDailySummaryService->computeForDate(
+                user: $employee,
+                dateKey: $dateKey,
+                todayDate: $ctx['today_date'],
+                nowTz: $ctx['now_tz'],
+                effectiveSchedule: $ctx['schedule_cache'][$employee->id] ?? null,
+                preloadedLogs: $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? null,
+                correction: $ctx['approved_corrections']->get($storeKey),
+            );
+        }
+
+        // ponytail: historical custom/month ranges without dense daily summaries must not call
+        // computeForDate per employee-day (O(employees×days) ~60s+). Use log+schedule estimate;
+        // upgrade by backfilling attendance_daily_summaries then prefer stored rows.
+        return $this->estimateHistoricalDaySummary($ctx, $employee, $dateKey, $dayKey);
+    }
+
+    /**
+     * Fast historical day estimate from preloaded logs + schedule (chart/modal summary path).
+     *
+     * @param  array<string, mixed>  $ctx
+     * @return array<string, mixed>
+     */
+    private function estimateHistoricalDaySummary(
+        array $ctx,
+        User $employee,
+        string $dateKey,
+        string $dayKey,
+    ): array {
+        $tz = $ctx['tz'];
+        $schedule = $ctx['schedule_cache'][$employee->id] ?? null;
+        $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
+        $hasSchedule = is_array($daySched) && ! empty($daySched['in']) && ! empty($daySched['out']);
+
+        if (! $hasSchedule) {
+            return [
+                'status' => 'rest',
+                'status_label' => 'Rest Day',
+                'schedule_in' => null,
+                'schedule_out' => null,
+                'formatted_time_in' => null,
+                'formatted_time_out' => null,
+                'time_in' => null,
+                'time_out' => null,
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 0.0,
+                'is_rest_day' => true,
+                'is_rest_day_worked' => false,
+                'is_leave' => false,
+                'is_holiday' => false,
+                'presence_label' => null,
+                'presence_issue' => 'none',
+            ];
+        }
+
+        $storeKey = $employee->id.'|'.$dateKey;
+        $correction = $ctx['approved_corrections']->get($storeKey);
+        $logs = $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? [];
+
+        $timeIn = null;
+        $timeOut = null;
+        foreach ($logs as $log) {
+            if (! $log instanceof AttendanceLog) {
+                continue;
+            }
+            $rawStamp = $log->verified_at ?? $log->created_at;
+            if ($rawStamp === null) {
+                continue;
+            }
+            $stamp = ($rawStamp instanceof Carbon ? $rawStamp->copy() : Carbon::parse($rawStamp))
+                ->timezone($tz)
+                ->second(0);
+            if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
+                if ($timeIn === null) {
+                    $timeIn = $stamp;
+                }
+            } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
+                $timeOut = $stamp;
+            }
+        }
+
+        if ($correction && $correction->approved && $correction->pending_approval !== true) {
+            if ($correction->time_in) {
+                $timeIn = $correction->time_in instanceof Carbon
+                    ? $correction->time_in->copy()->timezone($tz)->second(0)
+                    : Carbon::parse($correction->time_in)->timezone($tz)->second(0);
+            }
+            if ($correction->time_out) {
+                $timeOut = $correction->time_out instanceof Carbon
+                    ? $correction->time_out->copy()->timezone($tz)->second(0)
+                    : Carbon::parse($correction->time_out)->timezone($tz)->second(0);
+            }
+        }
+
+        $scheduleIn = (string) $daySched['in'];
+        $scheduleOut = (string) $daySched['out'];
+        $scheduledHours = $this->computeScheduleHours($daySched, $dateKey);
+
+        if ($timeIn === null && $timeOut === null) {
+            return [
+                'status' => 'absent',
+                'status_label' => 'Absent',
+                'schedule_in' => $scheduleIn,
+                'schedule_out' => $scheduleOut,
+                'formatted_time_in' => null,
+                'formatted_time_out' => null,
+                'time_in' => null,
+                'time_out' => null,
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 0.0,
+                'is_rest_day' => false,
+                'is_rest_day_worked' => false,
+                'is_leave' => false,
+                'is_holiday' => false,
+                'presence_label' => null,
+                'presence_issue' => 'none',
+                'scheduled_regular_hours' => $scheduledHours,
+            ];
+        }
+
+        $lateMinutes = 0;
+        $lateLabel = null;
+        if ($timeIn !== null) {
+            $clockIn = AttendanceStatusService::getClockInStatus($daySched, $dateKey, $timeIn);
+            if (($clockIn['status'] ?? '') === 'late') {
+                $lateMinutes = (int) ($clockIn['late_minutes'] ?? 0);
+                $lateLabel = $clockIn['late_label'] ?? null;
+            }
+        }
+
+        $presenceLabel = null;
+        $presenceIssue = 'none';
+        if ($correction && $correction->pending_approval) {
+            $presenceLabel = 'Present (Pending Correction)';
+            $presenceIssue = 'correction_pending';
+        } elseif ($correction && $correction->approved) {
+            $presenceLabel = 'Present (Approved)';
+            $presenceIssue = 'approved_correction';
+        } elseif ($timeIn !== null && $timeOut === null) {
+            $presenceLabel = 'Present (Incomplete Records)';
+            $presenceIssue = 'incomplete_pair';
+        }
+
+        $status = $lateMinutes > 0 ? 'late' : 'present';
+        $payHours = max(0.0, $scheduledHours - ($lateMinutes / 60));
+
+        return [
+            'status' => $status,
+            'status_label' => $lateLabel ?: ($status === 'late' ? 'Late' : 'Present'),
+            'schedule_in' => $scheduleIn,
+            'schedule_out' => $scheduleOut,
+            'formatted_time_in' => $timeIn?->format('g:i A'),
+            'formatted_time_out' => $timeOut?->format('g:i A'),
+            'time_in' => $timeIn?->format('H:i:s'),
+            'time_out' => $timeOut?->format('H:i:s'),
+            'late_minutes' => $lateMinutes,
+            'late_label' => $lateLabel,
+            'undertime_minutes' => 0,
+            'payroll_impact_hours' => round($payHours, 2),
+            'is_rest_day' => false,
+            'is_rest_day_worked' => false,
+            'is_leave' => false,
+            'is_holiday' => false,
+            'presence_label' => $presenceLabel,
+            'presence_issue' => $presenceIssue,
+            'scheduled_regular_hours' => $scheduledHours,
+            'correction_remarks' => is_string($correction?->remarks) ? trim($correction->remarks) : null,
+        ];
     }
 
     /** @param array<string, mixed> $ctx */
@@ -838,49 +1001,34 @@ class CompanyEfficiencyService
         return $this->computeScheduleHours($daySched);
     }
 
-    private function computeScheduleHours(array $daySchedule): float
+    /**
+     * Net scheduled paid hours (shift span minus unpaid breaks).
+     * Uses ScheduleComputationService via getRequiredWorkingMinutes so breaks[] /
+     * break_start-end match attendance/payroll calendar math — not gross in→out.
+     */
+    private function computeScheduleHours(array $daySchedule, ?string $dateKey = null): float
     {
-        $expectedMinutes = (int) ($daySchedule['expected_paid_minutes'] ?? 0);
-        if ($expectedMinutes > 0) {
-            return round($expectedMinutes / 60, 2);
-        }
-
         $in = trim((string) ($daySchedule['in'] ?? ''));
         $out = trim((string) ($daySchedule['out'] ?? ''));
-        if ($in === '' && $out === '') {
+        $shiftType = (string) ($daySchedule['shift_type'] ?? 'fixed');
+        if ($in === '' && $out === '' && $shiftType !== 'split') {
             return 0.0;
         }
 
-        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
-        if ($in === '') {
-            return 0.0;
+        $minutes = AttendanceStatusService::getRequiredWorkingMinutes(
+            $dateKey ?: '2000-01-03',
+            $daySchedule,
+        );
+        if ($minutes > 0) {
+            return round($minutes / 60, 2);
         }
 
-        try {
-            $inDt = Carbon::parse('2000-01-01 '.$in, $tz);
-        } catch (\Exception) {
-            return 0.0;
-        }
-
-        if ($out === '') {
+        // Open-ended schedule (in only): assume a standard paid day.
+        if ($in !== '' && $out === '') {
             return 8.0;
         }
 
-        try {
-            $outDt = Carbon::parse('2000-01-01 '.$out, $tz);
-        } catch (\Exception) {
-            return 8.0;
-        }
-
-        $inMinutes = (int) $inDt->format('G') * 60 + (int) $inDt->format('i');
-        $outMinutes = (int) $outDt->format('G') * 60 + (int) $outDt->format('i');
-        if ($outMinutes <= $inMinutes) {
-            $outMinutes += 1440;
-        }
-        $breakMinutes = max(0, (int) ($daySchedule['break_minutes'] ?? 0));
-        $diffMinutes = $outMinutes - $inMinutes;
-
-        return $diffMinutes > $breakMinutes ? round(($diffMinutes - $breakMinutes) / 60, 2) : 8.0;
+        return 0.0;
     }
 
     private function formatScheduleLabel(

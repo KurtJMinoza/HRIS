@@ -2298,7 +2298,7 @@ export async function getDashboardCompanyEfficiency(params = {}, options = {}) {
     params.company_ids.forEach((id) => query.append('company_ids[]', String(id)))
   }
   const path = `/admin/dashboard/company-efficiency${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path, options)
+  const res = await authenticatedFetch(path, { timeoutMs: 120_000, ...options })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.message || 'Failed to load company efficiency')
   return body.data != null ? body.data : body
@@ -2338,7 +2338,7 @@ export async function getCompanyEfficiencyDetails(companyId, params = {}, option
   if (params.sort) query.set('sort', params.sort)
   if (params.direction) query.set('direction', params.direction)
   const path = `/admin/dashboard/company-efficiency/${companyId}/attendance${query.toString() ? `?${query.toString()}` : ''}`
-  const res = await authenticatedFetch(path, options)
+  const res = await authenticatedFetch(path, { timeoutMs: 120_000, ...options })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.message || 'Failed to load company efficiency details')
   return body
