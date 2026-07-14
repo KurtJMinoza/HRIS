@@ -992,6 +992,7 @@ export default function AdminDashboard() {
       payroll_impact_hours: Number(summary.payroll_impact_hours ?? summary.total_payroll_impact_hours ?? 0),
       efficiency: Number(summary.efficiency_percentage ?? summary.efficiency ?? 0),
       efficiency_percentage: Number(summary.efficiency_percentage ?? summary.efficiency ?? 0),
+      evaluation_avg: summary.evaluation_avg != null ? Number(summary.evaluation_avg) : null,
     }
     setSelectedEfficiencyCompany({ id: companyId, name: normalizedSummary.company_name, start_date: startDate, end_date: endDate })
     setCompanyEfficiencyAttendancePage(1)
@@ -1015,6 +1016,7 @@ export default function AdminDashboard() {
         undertime: normalizedSummary.undertime,
         total_scheduled_hours: normalizedSummary.scheduled_hours,
         total_payroll_impact_hours: normalizedSummary.payroll_impact_hours,
+        evaluation_avg: normalizedSummary.evaluation_avg,
         company_efficiency: normalizedSummary.efficiency_percentage,
         efficiency_percentage: normalizedSummary.efficiency_percentage,
       },
@@ -1086,6 +1088,7 @@ export default function AdminDashboard() {
         },
         breakdown: {
           ...(prev?.breakdown ?? {}),
+          ...(res.breakdown ?? {}),
           total_employees: nextSummary.employee_count ?? nextSummary.employees ?? prev?.breakdown?.total_employees ?? 0,
           present: nextSummary.present_count ?? nextSummary.present ?? 0,
           absent: nextSummary.absent_count ?? nextSummary.absent ?? 0,
@@ -1093,6 +1096,7 @@ export default function AdminDashboard() {
           undertime: nextSummary.undertime_count ?? nextSummary.undertime ?? 0,
           total_scheduled_hours: nextSummary.scheduled_hours ?? 0,
           total_payroll_impact_hours: nextSummary.payroll_impact_hours ?? 0,
+          evaluation_avg: nextSummary.evaluation_avg ?? res.breakdown?.evaluation_avg ?? prev?.breakdown?.evaluation_avg ?? null,
           company_efficiency: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
           efficiency_percentage: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
         },
@@ -4292,29 +4296,27 @@ export default function AdminDashboard() {
                       <p className="mt-1 text-sm text-muted-foreground">No employees found for this company on the selected date.</p>
                     </div>
                   ) : (
-                    <div className="w-full overflow-hidden">
+                    <div className="w-full min-w-0">
                       <table className="w-full table-fixed border-collapse text-[11px] leading-tight sm:text-xs">
                         <colgroup>
-                          <col className="w-[14%]" />
-                          <col className="w-[8%]" />
-                          <col className="w-[7%]" />
-                          <col className="w-[4%]" />
-                          <col className="w-[9%]" />
-                          <col className="w-[5%]" />
-                          <col className="w-[5%]" />
-                          <col className="w-[8%]" />
-                          <col className="w-[4%]" />
-                          <col className="w-[5%]" />
-                          <col className="w-[6%]" />
-                          <col className="w-[10%]" />
-                          <col className="w-[6%]" />
-                          <col className="w-[9%]" />
+                          <col style={{ width: '14%' }} />
+                          <col style={{ width: '8%' }} />
+                          <col style={{ width: '4%' }} />
+                          <col style={{ width: '9%' }} />
+                          <col style={{ width: '5%' }} />
+                          <col style={{ width: '5%' }} />
+                          <col style={{ width: '8%' }} />
+                          <col style={{ width: '4%' }} />
+                          <col style={{ width: '4%' }} />
+                          <col style={{ width: '6%' }} />
+                          <col style={{ width: '11%' }} />
+                          <col style={{ width: '10%' }} />
+                          <col style={{ width: '12%' }} />
                         </colgroup>
                         <thead className="bg-muted/25">
                           <tr className="border-b border-border text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground sm:text-[11px]">
                             {[
                               { label: 'Employee', title: 'Employee' },
-                              { label: 'Company', title: 'Company' },
                               { label: 'Date', title: 'Date' },
                               { label: 'Day', title: 'Day' },
                               { label: 'Schedule', title: 'Schedule' },
@@ -4325,11 +4327,11 @@ export default function AdminDashboard() {
                               { label: 'UT', title: 'Undertime' },
                               { label: 'Impact', title: 'Payroll Impact' },
                               { label: 'Remarks', title: 'Remarks' },
-                              { label: 'Eval %', title: 'Evaluation Percentage' },
-                              { label: 'Perf', title: 'Performance' },
+                              { label: 'Evaluation %', title: 'Evaluation Percentage' },
+                              { label: 'Performance', title: 'Performance' },
                             ].map((col) => (
                               <th key={col.title} title={col.title} className="h-10 px-1.5 font-semibold first:pl-3 last:pr-3">
-                                <span className="block truncate">{col.label}</span>
+                                <span className="block leading-snug">{col.label}</span>
                               </th>
                             ))}
                           </tr>
@@ -4340,7 +4342,6 @@ export default function AdminDashboard() {
                               ? new Date(`${emp.date}T12:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
                               : '—'
                             const scheduleLabel = emp.schedule ? formatScheduleLabel12h(emp.schedule) : '—'
-                            const companyLabel = emp.company_name ?? emp.company ?? '—'
                             const evalPct = emp.evaluation_percentage ?? emp.evaluation_pct
                             const performanceLabel = emp.evaluation_rating || emp.performance || emp.efficiency_performance || '—'
                             const remarksLabel = emp.remarks || '—'
@@ -4363,9 +4364,6 @@ export default function AdminDashboard() {
                                       {emp.employee_name}
                                     </span>
                                   </span>
-                                </td>
-                                <td className="px-1.5 py-2.5 align-middle text-foreground">
-                                  <span className="block break-words leading-snug" title={companyLabel}>{companyLabel}</span>
                                 </td>
                                 <td className="px-1.5 py-2.5 align-middle text-foreground">
                                   <span className="block break-words leading-snug" title={dateLabel}>{dateLabel}</span>
@@ -4428,7 +4426,7 @@ export default function AdminDashboard() {
                                 </td>
                                 <td className={cn(
                                   'px-1.5 py-2.5 align-middle tabular-nums',
-                                  evalPct != null ? 'font-medium text-foreground' : 'text-muted-foreground'
+                                  evalPct != null ? 'font-semibold text-violet-700 dark:text-violet-300' : 'text-muted-foreground'
                                 )}>
                                   {evalPct != null ? `${Number(evalPct).toFixed(1)}%` : '—'}
                                 </td>
