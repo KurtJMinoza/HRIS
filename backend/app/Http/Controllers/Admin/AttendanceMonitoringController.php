@@ -19,6 +19,7 @@ use App\Services\PayrollComputationService;
 use App\Services\HrRoleResolver;
 use App\Services\OvertimePayrollService;
 use App\Services\PremiumReportService;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -609,7 +610,7 @@ class AttendanceMonitoringController extends Controller
             $dateKey = $cursor->toDateString();
 
             foreach ($employees as $employee) {
-                $effectiveSchedule = $this->resolveEffectiveSchedule($employee);
+                $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($employee, $dateKey);
                 $todaySchedule = is_array($effectiveSchedule) && isset($effectiveSchedule[$dayKey])
                     ? $effectiveSchedule[$dayKey]
                     : null;

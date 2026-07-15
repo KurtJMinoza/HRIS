@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Policy;
 use App\Models\User;
 use App\Models\WorkingSchedule;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 
 /**
@@ -45,15 +46,7 @@ class PayrollRulesEngineService
      */
     public function resolveEffectiveSchedule(User $user): ?array
     {
-        $schedule = $user->schedule;
-        if (is_array($schedule) && $schedule !== []) {
-            return $schedule;
-        }
-        if ($user->working_schedule_id !== null) {
-            return $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
-        }
-
-        return null;
+        return EmployeeScheduleResolver::resolve($user);
     }
 
     private function buildScheduleFromWorkingSchedule(?WorkingSchedule $ws): ?array
@@ -266,7 +259,7 @@ class PayrollRulesEngineService
         $tz = $this->getTimezone();
         $date = Carbon::parse($dateKey, $tz);
 
-        $effectiveSchedule = $this->resolveEffectiveSchedule($user);
+        $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($user, $dateKey);
         $isRestDay = $effectiveSchedule ? $this->isRestDay($effectiveSchedule, $date) : false;
         $holidayType = $this->getHolidayTypeForUser($user, $dateKey);
 

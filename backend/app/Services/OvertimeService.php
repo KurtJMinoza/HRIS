@@ -27,7 +27,7 @@ class OvertimeService
 
         $tz = $this->attendanceTimezone();
         $user->loadMissing('workingSchedule');
-        $schedule = EmployeeScheduleResolver::resolve($user);
+        $schedule = EmployeeScheduleResolver::resolveForDate($user, $dateKey);
         if (! is_array($schedule) || $schedule === []) {
             return null;
         }
@@ -232,7 +232,7 @@ class OvertimeService
         }
 
         $user->loadMissing('workingSchedule');
-        $schedule = EmployeeScheduleResolver::resolve($user);
+        $schedule = EmployeeScheduleResolver::resolveForDate($user, $dateKey);
         if (! is_array($schedule) || $schedule === []) {
             return null;
         }

@@ -18,6 +18,7 @@ use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
 use App\Services\PayrollComputationService;
 use App\Services\PolicyResolverService;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -376,8 +377,10 @@ class EmployeeDashboardController extends Controller
             $otRecords = $overtimesByDate->get($dateKey)?->all() ?? [];
 
             $dayKey = self::DAY_KEYS[(int) $cursor->format('w')];
-            $daySchedule = $scheduleAssigned && isset($effectiveSchedule[$dayKey]) ? $effectiveSchedule[$dayKey] : null;
-            $isRestDay = $this->attendanceRollup->isScheduledRestDay($effectiveSchedule, $daySchedule);
+            $dateSchedule = EmployeeScheduleResolver::resolveForDate($user, $dateKey) ?? $effectiveSchedule;
+            $dateScheduleAssigned = is_array($dateSchedule) && $dateSchedule !== [];
+            $daySchedule = $dateScheduleAssigned && isset($dateSchedule[$dayKey]) ? $dateSchedule[$dayKey] : null;
+            $isRestDay = $this->attendanceRollup->isScheduledRestDay($dateSchedule, $daySchedule);
             $isLeave = $leaveOnDate !== null;
             $isHoliday = $holidayOnDate !== null;
             $expectedDayMinutes = 0;
@@ -395,7 +398,7 @@ class EmployeeDashboardController extends Controller
                 dateKey: $dateKey,
                 todayDate: $todayDate,
                 nowTz: $todayNow,
-                effectiveSchedule: $effectiveSchedule,
+                effectiveSchedule: $dateSchedule,
                 preloadedLogs: $dayLogs,
                 correction: $correction,
                 leave: $leaveOnDate,

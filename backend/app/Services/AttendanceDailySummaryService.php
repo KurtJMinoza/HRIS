@@ -7,6 +7,7 @@ use App\Models\AttendanceLog;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 
 /**
@@ -60,7 +61,7 @@ class AttendanceDailySummaryService
         $tz = $this->attendanceTimezone();
 
         if ($effectiveSchedule === null) {
-            $effectiveSchedule = $this->resolveEffectiveSchedule($user);
+            $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($user, $dateKey);
         }
 
         $dayKey = self::DAY_KEYS[(int) Carbon::parse($dateKey)->format('w')];
@@ -302,20 +303,7 @@ class AttendanceDailySummaryService
      */
     public function resolveEffectiveSchedule(User $user): ?array
     {
-        $schedule = $user->schedule;
-        if (is_array($schedule) && $schedule !== []) {
-            return $schedule;
-        }
-
-        if ($user->working_schedule_id !== null) {
-            $user->loadMissing('workingSchedule');
-            $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
-            if ($derived !== null) {
-                return $derived;
-            }
-        }
-
-        return null;
+        return EmployeeScheduleResolver::resolve($user);
     }
 
     /**

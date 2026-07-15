@@ -99,7 +99,7 @@ class HolidayPayEvaluationService
             $paidRegularMinutes = $requiredMinutes > 0 ? $requiredMinutes : 480;
         }
 
-        $schedule = EmployeeScheduleResolver::resolve($employee);
+        $schedule = EmployeeScheduleResolver::resolveForDate($employee, $dateKey);
         $scheduleDay = is_array($schedule)
             ? ($schedule[EmployeeScheduleResolver::dayKeyForDate($date)] ?? null)
             : null;

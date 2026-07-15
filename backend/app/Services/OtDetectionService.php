@@ -75,7 +75,7 @@ class OtDetectionService
         }
 
         $user->loadMissing('workingSchedule');
-        $schedule = EmployeeScheduleResolver::resolve($user);
+        $schedule = EmployeeScheduleResolver::resolveForDate($user, $dateKey);
         if (! is_array($schedule) || $schedule === []) {
             return null;
         }

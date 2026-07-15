@@ -29,7 +29,7 @@ class MyScheduleController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $user = $this->resolveSelfUser($request);
+        $user = $this->applyMaturedPendingSchedule($this->resolveSelfUser($request));
         $user->loadMissing('pendingWorkingSchedule');
 
         $requests = ScheduleRequest::query()
@@ -49,7 +49,7 @@ class MyScheduleController extends Controller
 
     public function requestContext(Request $request): JsonResponse
     {
-        $user = $this->resolveSelfUser($request);
+        $user = $this->applyMaturedPendingSchedule($this->resolveSelfUser($request));
         $user->loadMissing('pendingWorkingSchedule');
 
         return response()->json([
@@ -239,6 +239,11 @@ class MyScheduleController extends Controller
             return null;
         }
 
+        $today = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfDay();
+        if ($user->pending_schedule_effective_from->copy()->startOfDay()->lessThanOrEqualTo($today)) {
+            return null;
+        }
+
         $pending = $user->pendingWorkingSchedule;
         if (! $pending) {
             return null;
@@ -252,6 +257,25 @@ class MyScheduleController extends Controller
 
     protected function currentScheduleSummary(User $user): ?array
     {
+        $today = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->toDateString();
+        $assignment = EmployeeScheduleResolver::assignmentForDate($user, $today);
+        if ($assignment) {
+            $assignment->loadMissing(['template', 'snapshot']);
+            if ($assignment->template) {
+                return $this->workingScheduleSummary($assignment->template);
+            }
+
+            $payload = $assignment->snapshot?->schedule_payload;
+            if (is_array($payload) && $payload !== []) {
+                $summary = $this->scheduleSummaryFromResolvedDays($payload);
+                if ($summary !== null && $assignment->snapshot?->schedule_name) {
+                    $summary['name'] = $assignment->snapshot->schedule_name;
+                }
+
+                return $summary;
+            }
+        }
+
         $user->loadMissing('workingSchedule');
         if ($user->workingSchedule) {
             return $this->workingScheduleSummary($user->workingSchedule);
@@ -428,6 +452,39 @@ class MyScheduleController extends Controller
         }
 
         return null;
+    }
+
+    private function applyMaturedPendingSchedule(User $user): User
+    {
+        if (! $user->pending_working_schedule_id || ! $user->pending_schedule_effective_from) {
+            return $user;
+        }
+
+        $today = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfDay();
+        if ($user->pending_schedule_effective_from->copy()->startOfDay()->greaterThan($today)) {
+            return $user;
+        }
+
+        $effectiveAssignment = EmployeeScheduleResolver::assignmentForDate($user, $today);
+        if ($effectiveAssignment?->schedule_template_id) {
+            $user->forceFill([
+                'schedule' => null,
+                'working_schedule_id' => (int) $effectiveAssignment->schedule_template_id,
+                'pending_working_schedule_id' => null,
+                'pending_schedule_effective_from' => null,
+            ])->save();
+
+            return $user->fresh(['workingSchedule', 'pendingWorkingSchedule']) ?? $user;
+        }
+
+        $user->forceFill([
+            'schedule' => null,
+            'working_schedule_id' => $user->pending_working_schedule_id,
+            'pending_working_schedule_id' => null,
+            'pending_schedule_effective_from' => null,
+        ])->save();
+
+        return $user->fresh(['workingSchedule', 'pendingWorkingSchedule']) ?? $user;
     }
 
     /**

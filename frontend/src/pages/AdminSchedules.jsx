@@ -35,6 +35,7 @@ import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ScheduleEditorDialog } from '@/components/schedules/ScheduleEditorDialog'
+import { ScheduleAdjustmentDialog } from '@/components/schedules/ScheduleAdjustmentDialog'
 import { ShiftPill } from '@/components/schedules/ShiftPill'
 import { ndOverlapMinutes, computePaidMinutes, SHIFT_TYPES, formatPaidHours } from '@/lib/scheduleLib'
 import {
@@ -46,6 +47,7 @@ import {
 } from '@/components/ui/dialog'
 import {
   getWorkingSchedules,
+  getScheduleActivity,
   createWorkingSchedule,
   updateWorkingSchedule,
   deleteWorkingSchedule,
@@ -202,6 +204,20 @@ function applyAssignResultToEmployees(prev, res, scheduleId) {
   })
 }
 
+function formatActivityTimestamp(value) {
+  if (!value) return 'Just now'
+  const date = new Date(value)
+  if (!isValid(date)) return 'Just now'
+  return `${formatDistanceToNow(date, { addSuffix: true })} - ${format(date, 'MMM d, yyyy h:mm a')}`
+}
+
+function activityToneClass(type) {
+  if (type === 'adjustment') return 'bg-brand/10 text-brand ring-brand/20'
+  if (type === 'assignment') return 'bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 dark:text-emerald-300'
+  if (type === 'template_updated') return 'bg-sky-500/10 text-sky-700 ring-sky-500/20 dark:text-sky-300'
+  return 'bg-muted text-muted-foreground ring-border/70'
+}
+
 export default function AdminSchedules() {
   const queryClient = useQueryClient()
 
@@ -218,6 +234,7 @@ export default function AdminSchedules() {
   const [error, setError] = useState(null)
 
   const [editOpen, setEditOpen] = useState(false)
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
   const [editForm, setEditForm] = useState({
@@ -267,6 +284,9 @@ export default function AdminSchedules() {
   const [coverageDept, setCoverageDept] = useState('')
   const [coverageBranch, setCoverageBranch] = useState('')
   const [coverageStatus, setCoverageStatus] = useState('active')
+  const [recentActivities, setRecentActivities] = useState([])
+  const [activityLoading, setActivityLoading] = useState(false)
+  const [activityError, setActivityError] = useState(null)
   const [rowSelection, setRowSelection] = useState({})
 
   async function loadSchedules({ silent = false, fresh = false } = {}) {
@@ -299,11 +319,26 @@ export default function AdminSchedules() {
     }
   }
 
+  async function loadScheduleActivity({ fresh = false } = {}) {
+    setActivityLoading(true)
+    setActivityError(null)
+    try {
+      const data = await getScheduleActivity({ limit: 40, fresh })
+      setRecentActivities(data.activities || [])
+    } catch (e) {
+      setActivityError(e.message || 'Failed to load recent schedule activity')
+      setRecentActivities([])
+    } finally {
+      setActivityLoading(false)
+    }
+  }
+
   /** Refresh roster + stats after assign/unassign without skeleton flicker or stale GET cache. */
   async function refreshAfterScheduleAssign(scheduleId) {
     notifySchedulePropagation()
     const list = await loadEmployees({ fresh: true })
     await loadSchedules({ silent: true, fresh: true })
+    await loadScheduleActivity({ fresh: true })
     if (scheduleId != null) {
       const onShiftIds = list.filter((e) => isOnThisSchedule(e, { id: scheduleId })).map((e) => e.id)
       setSelectedEmployeeIds(onShiftIds)
@@ -312,7 +347,7 @@ export default function AdminSchedules() {
   }
 
   useEffect(() => {
-    Promise.all([loadSchedules(), loadEmployees()])
+    Promise.all([loadSchedules(), loadEmployees(), loadScheduleActivity()])
   }, [])
 
   function openCreate() {
@@ -437,6 +472,7 @@ export default function AdminSchedules() {
       setEditOpen(false)
       setEditingSchedule(null)
       await loadSchedules()
+      await loadScheduleActivity({ fresh: true })
       notifySchedulePropagation()
     } catch (err) {
       setError(err.message)
@@ -453,6 +489,7 @@ export default function AdminSchedules() {
       await deleteWorkingSchedule(deleteConfirmSchedule.id)
       setDeleteConfirmSchedule(null)
       await loadSchedules()
+      await loadScheduleActivity({ fresh: true })
       notifySchedulePropagation()
     } catch (err) {
       setError(err.message)
@@ -703,6 +740,7 @@ export default function AdminSchedules() {
       await createWorkingSchedule(payload)
       toast.success('Schedule duplicated')
       await loadSchedules()
+      await loadScheduleActivity({ fresh: true })
       notifySchedulePropagation()
     } catch (err) {
       setError(err.message)
@@ -930,10 +968,16 @@ export default function AdminSchedules() {
             <span className="block">Optimized for clear scanning at night.</span>
           </p>
         </div>
-        <Button onClick={openCreate} className={cn(workSchedulePrimaryButtonClass, 'shrink-0')}>
-          <Plus className="size-4" />
-          New schedule
-        </Button>
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={openCreate} className={cn(workSchedulePrimaryButtonClass, 'shrink-0')}>
+            <Plus className="size-4" />
+            New Work Schedule
+          </Button>
+          <Button onClick={() => setAdjustmentOpen(true)} variant="outline" className={cn(workScheduleOutlineButtonClass, 'shrink-0')}>
+            <CalendarCheck className="size-4" />
+            Add Schedule Adjustment
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -1000,7 +1044,7 @@ export default function AdminSchedules() {
 
       <Tabs value={mainTab} onValueChange={setMainTab} className="space-y-6">
         {/* Flex + fixed trigger height: TabsList defaults to h-9 while Trigger used min-h-11 — caused active pill to overflow the track */}
-        <TabsList className="flex w-full max-w-lg items-stretch gap-0 rounded-xl border border-border/70 bg-card p-0 shadow-sm !h-auto overflow-hidden dark:border-white/10">
+        <TabsList className="flex w-full max-w-2xl items-stretch gap-0 rounded-xl border border-border/70 bg-card p-0 shadow-sm !h-auto overflow-hidden dark:border-white/10">
           <TabsTrigger
             value="templates"
             className="flex min-h-0 flex-1 items-center justify-center gap-2 rounded-none border-b-2 border-transparent px-5 py-0 text-base font-semibold !h-14 text-muted-foreground data-[state=active]:border-brand data-[state=active]:bg-brand/5 data-[state=active]:text-brand data-[state=active]:shadow-none"
@@ -1014,6 +1058,13 @@ export default function AdminSchedules() {
           >
             <Users className="size-4 shrink-0" />
             Team coverage
+          </TabsTrigger>
+          <TabsTrigger
+            value="activity"
+            className="flex min-h-0 flex-1 items-center justify-center gap-2 rounded-none border-b-2 border-transparent px-5 py-0 text-base font-semibold !h-14 text-muted-foreground data-[state=active]:border-brand data-[state=active]:bg-brand/5 data-[state=active]:text-brand data-[state=active]:shadow-none"
+          >
+            <Clock className="size-4 shrink-0" />
+            Recent activity
           </TabsTrigger>
         </TabsList>
 
@@ -1340,6 +1391,106 @@ export default function AdminSchedules() {
             </table>
             {coverageRows.length === 0 && (
               <p className="px-4 py-10 text-center text-sm text-muted-foreground">No employees match these filters.</p>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="activity" className="space-y-4 outline-none">
+          <div className="rounded-xl border border-border/60 bg-card p-5 shadow-sm">
+            <div className="flex flex-col gap-3 @md:flex-row @md:items-center @md:justify-between">
+              <div>
+                <h2 className="text-lg font-black tracking-tight text-foreground">Recent schedule activity</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Schedule adjustments, assignments, and template changes appear here as they happen.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className={workScheduleOutlineButtonClass}
+                onClick={() => loadScheduleActivity({ fresh: true })}
+                disabled={activityLoading}
+              >
+                {activityLoading ? <Loader2 className="size-4 animate-spin" /> : <Clock className="size-4" />}
+                Refresh
+              </Button>
+            </div>
+          </div>
+
+          {activityError ? (
+            <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 size-4" />
+              <span>{activityError}</span>
+            </div>
+          ) : null}
+
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+            {activityLoading && recentActivities.length === 0 ? (
+              <div className="flex min-h-64 items-center justify-center">
+                <Loader2 className="size-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : recentActivities.length === 0 ? (
+              <div className="flex min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
+                <Clock className="mb-3 size-10 text-muted-foreground/60" />
+                <p className="text-base font-semibold text-foreground">No schedule activity yet</p>
+                <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                  Create a schedule, update a template, or apply an adjustment to start the activity trail.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border/60 dark:divide-white/10">
+                {recentActivities.map((activity) => {
+                  const employees = Array.isArray(activity.employees) ? activity.employees : []
+                  const extraCount = Math.max(0, Number(activity.employee_count || 0) - employees.length)
+                  return (
+                    <article key={activity.id} className="grid gap-4 px-5 py-4 transition-colors hover:bg-muted/25 @lg:grid-cols-[1fr_auto]">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className={cn('border-0 font-semibold ring-1', activityToneClass(activity.type))}>
+                            {activity.type === 'adjustment'
+                              ? 'Adjustment'
+                              : activity.type === 'assignment'
+                                ? 'Assignment'
+                                : activity.type === 'template_updated'
+                                  ? 'Template update'
+                                  : 'Template'}
+                          </Badge>
+                          {activity.status ? (
+                            <Badge variant="secondary" className="font-normal capitalize">{activity.status}</Badge>
+                          ) : null}
+                        </div>
+                        <h3 className="mt-2 text-base font-black text-foreground">{activity.title}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">{activity.description}</p>
+                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                          {activity.schedule_time ? <span>Shift: {activity.schedule_time}</span> : null}
+                          {activity.effective_start_date ? <span>Effective: {activity.effective_start_date}</span> : null}
+                          {activity.actor ? <span>By: {activity.actor}</span> : null}
+                        </div>
+                        {activity.reason ? (
+                          <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">Reason: {activity.reason}</p>
+                        ) : null}
+                        {employees.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {employees.map((employee) => (
+                              <span key={`${activity.id}-${employee.id}`} className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
+                                {employee.name}
+                              </span>
+                            ))}
+                            {extraCount > 0 ? (
+                              <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                                +{extraCount} more
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="text-left text-xs font-semibold text-muted-foreground @lg:text-right">
+                        {formatActivityTimestamp(activity.created_at)}
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
             )}
           </div>
         </TabsContent>
@@ -1799,6 +1950,18 @@ export default function AdminSchedules() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ScheduleAdjustmentDialog
+        open={adjustmentOpen}
+        onOpenChange={setAdjustmentOpen}
+        schedules={schedules}
+        onApplied={async () => {
+          await loadSchedules({ silent: true, fresh: true })
+          await loadEmployees({ fresh: true })
+          await loadScheduleActivity({ fresh: true })
+          notifySchedulePropagation()
+        }}
+      />
     </div>
   )
 }

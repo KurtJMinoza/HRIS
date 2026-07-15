@@ -429,9 +429,11 @@ class PayrollComputationService
     /**
      * @return array{0: array, 1: bool} [schedule, usedFallback]
      */
-    private function resolveEffectiveScheduleForDailyComputation(User $user): array
+    private function resolveEffectiveScheduleForDailyComputation(User $user, Carbon|string|null $date = null): array
     {
-        $assigned = $this->resolveEffectiveSchedule($user);
+        $assigned = $date !== null
+            ? EmployeeScheduleResolver::resolveForDate($user, $date)
+            : $this->resolveEffectiveSchedule($user);
         if ($assigned !== null) {
             return [$assigned, false];
         }
@@ -1246,7 +1248,7 @@ class PayrollComputationService
         ?string $tz = null
     ): int {
         $tz = $tz ?? $this->getTimezone();
-        [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user);
+        [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user, $dateKey);
         // Peso amounts use this rate; minute ledger for worked days is invariant for any positive stub.
         $day = $this->computeDayPayroll($user, $dateKey, $timeIn, $timeOut, $effectiveSchedule, 1000.0, $tz);
         $reg = (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0);
@@ -1770,12 +1772,13 @@ class PayrollComputationService
             while ($cursor->lessThanOrEqualTo($to)) {
                 $dateKey = $cursor->toDateString();
                 [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
+                [$dayScheduleForDate] = $this->resolveEffectiveScheduleForDailyComputation($user, $dateKey);
                 $dayPayroll = $this->computeDayPayroll(
                     $user,
                     $dateKey,
                     $timeIn,
                     $timeOut,
-                    $effectiveSchedule,
+                    $dayScheduleForDate,
                     $dailyRate,
                     $tz
                 );
@@ -3336,7 +3339,7 @@ class PayrollComputationService
                 continue;
             }
             $dateKey = $cell['date'];
-            $sched = $scheduleCache[$user->id] ?? $this->defaultOfficeScheduleFallback();
+            [$sched] = $this->resolveEffectiveScheduleForDailyComputation($user, $dateKey);
             $dailyRate = (float) ($dailyRateCache[$user->id] ?? 0.0);
             [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
             $day = $this->computeDayPayroll($user, $dateKey, $timeIn, $timeOut, $sched, $dailyRate, $tz);
@@ -3621,7 +3624,7 @@ class PayrollComputationService
                 continue;
             }
             $dateKey = $cell['date'];
-            $sched = $scheduleCache[$user->id] ?? $this->defaultOfficeScheduleFallback();
+            [$sched] = $this->resolveEffectiveScheduleForDailyComputation($user, $dateKey);
             $dailyRate = (float) ($dailyRateCache[$user->id] ?? 0.0);
             [$timeIn, $timeOut] = $this->getTimesForDate($user, $dateKey, $tz);
             $day = $this->computeDayPayroll($user, $dateKey, $timeIn, $timeOut, $sched, $dailyRate, $tz);
@@ -3685,7 +3688,7 @@ class PayrollComputationService
         $scheduledNetMin = 0;
         $daySchedule = null;
         if ($user && $dateKey && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateKey)) {
-            $effective = EmployeeScheduleResolver::resolve($user);
+            $effective = EmployeeScheduleResolver::resolveForDate($user, $dateKey);
             if (is_array($effective)) {
                 $dayKey = EmployeeScheduleResolver::dayKeyForDate(Carbon::parse($dateKey, $tz));
                 $candidate = $effective[$dayKey] ?? null;
@@ -4395,12 +4398,13 @@ class PayrollComputationService
                 continue;
             }
 
+            [$scheduleForHolidayDate] = $this->resolveEffectiveScheduleForDailyComputation($user, $dateKey);
             $dayPayroll = $this->computeDayPayroll(
                 $user,
                 $dateKey,
                 null,
                 null,
-                $effectiveSchedule,
+                $scheduleForHolidayDate,
                 $dailyRate,
                 $tz
             );

@@ -3723,6 +3723,16 @@ export async function getWorkingSchedules(params = {}) {
   })
 }
 
+export async function getScheduleActivity(params = {}) {
+  const query = new URLSearchParams()
+  if (params.limit) query.set('limit', String(params.limit))
+  if (params.fresh) query.set('_ts', String(Date.now()))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return cachedAuthenticatedGetJson(`/admin/schedules/activity${suffix}`, {
+    ttlMs: params.fresh ? 0 : 60 * 1000,
+  })
+}
+
 /**
  * @param {{ name: string, time_in: string, break_start?: string|null, break_end?: string|null, time_out: string, grace_period_minutes?: number, rest_days?: string[] }} payload
  */
@@ -3782,6 +3792,32 @@ export async function assignWorkingSchedule(id, payload) {
     const err = new Error(data.message || 'Failed to assign schedule')
     err.conflicts = data.conflicts
     err.status = res.status
+    throw err
+  }
+  clearGetCacheByPrefix('/admin/employees')
+  clearGetCacheByPrefix('/admin/schedules')
+  return data
+}
+
+export async function previewScheduleAdjustment(payload) {
+  const res = await authenticatedFetch('/admin/schedules/adjustments/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to preview schedule adjustment')
+  return data
+}
+
+export async function applyScheduleAdjustment(payload) {
+  const res = await authenticatedFetch('/admin/schedules/adjustments', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const err = new Error(firstValidationMessage(data) || data.message || 'Failed to apply schedule adjustment')
+    err.failed = data.failed
     throw err
   }
   clearGetCacheByPrefix('/admin/employees')

@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use App\Models\EmployeeScheduleAssignment;
+use App\Models\ScheduleAssignmentSnapshot;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use Carbon\Carbon;
@@ -70,6 +72,70 @@ final class EmployeeScheduleResolver
      * @return array<string, array<string, mixed>|null>|null
      */
     public static function resolve(User $user): ?array
+    {
+        $today = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')));
+
+        return self::resolveForDate($user, $today) ?? self::resolveLegacy($user);
+    }
+
+    /**
+     * Resolve the immutable schedule snapshot that applies to a specific attendance/payroll date.
+     *
+     * @return array<string, array<string, mixed>|null>|null
+     */
+    public static function resolveForDate(User|int $employee, Carbon|string $attendanceDate): ?array
+    {
+        $employeeId = $employee instanceof User ? (int) $employee->id : (int) $employee;
+        $date = $attendanceDate instanceof Carbon
+            ? $attendanceDate->toDateString()
+            : Carbon::parse($attendanceDate)->toDateString();
+
+        $assignment = EmployeeScheduleAssignment::query()
+            ->active()
+            ->where('employee_id', $employeeId)
+            ->coveringDate($date)
+            ->with('snapshot')
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($assignment?->snapshot instanceof ScheduleAssignmentSnapshot) {
+            $payload = $assignment->snapshot->schedule_payload;
+            if (is_array($payload) && $payload !== []) {
+                return $payload;
+            }
+        }
+
+        if ($employee instanceof User) {
+            return self::resolveLegacy($employee);
+        }
+
+        $user = User::query()->with('workingSchedule')->find($employeeId);
+
+        return $user ? self::resolveLegacy($user) : null;
+    }
+
+    public static function assignmentForDate(User|int $employee, Carbon|string $attendanceDate): ?EmployeeScheduleAssignment
+    {
+        $employeeId = $employee instanceof User ? (int) $employee->id : (int) $employee;
+        $date = $attendanceDate instanceof Carbon
+            ? $attendanceDate->toDateString()
+            : Carbon::parse($attendanceDate)->toDateString();
+
+        return EmployeeScheduleAssignment::query()
+            ->active()
+            ->where('employee_id', $employeeId)
+            ->coveringDate($date)
+            ->with('snapshot')
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    /**
+     * @return array<string, array<string, mixed>|null>|null
+     */
+    private static function resolveLegacy(User $user): ?array
     {
         if ($user->working_schedule_id !== null) {
             $user->loadMissing('workingSchedule');

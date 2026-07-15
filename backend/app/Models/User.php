@@ -1075,6 +1075,11 @@ class User extends Authenticatable
         return $this->belongsTo(WorkingSchedule::class, 'working_schedule_id');
     }
 
+    public function scheduleAssignments(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(EmployeeScheduleAssignment::class, 'employee_id');
+    }
+
     public function pendingWorkingSchedule(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(WorkingSchedule::class, 'pending_working_schedule_id');

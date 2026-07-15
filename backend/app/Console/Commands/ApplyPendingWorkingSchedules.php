@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\User;
 use App\Services\UserScheduleAssignmentService;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -29,6 +30,19 @@ class ApplyPendingWorkingSchedules extends Command
 
         $count = 0;
         foreach ($users as $user) {
+            $effectiveAssignment = EmployeeScheduleResolver::assignmentForDate($user, $today);
+            if ($effectiveAssignment?->schedule_template_id) {
+                $user->forceFill([
+                    'schedule' => null,
+                    'working_schedule_id' => (int) $effectiveAssignment->schedule_template_id,
+                    'pending_working_schedule_id' => null,
+                    'pending_schedule_effective_from' => null,
+                ])->save();
+                $count++;
+
+                continue;
+            }
+
             $schedule = $user->pendingWorkingSchedule;
             if (! $schedule) {
                 $user->forceFill([
@@ -39,7 +53,15 @@ class ApplyPendingWorkingSchedules extends Command
                 continue;
             }
 
-            $assignmentService->assign($user, $schedule);
+            $assignmentService->assign(
+                $user,
+                $schedule,
+                $user->pending_schedule_effective_from
+                    ? $user->pending_schedule_effective_from->copy()
+                    : $today->copy(),
+                null,
+                'Approved pending schedule change'
+            );
             $user->forceFill([
                 'pending_working_schedule_id' => null,
                 'pending_schedule_effective_from' => null,

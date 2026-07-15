@@ -419,7 +419,10 @@ Route::middleware('auth:sanctum')->group(function () {
             ->whereNumber('applicantId');
 
         Route::middleware('permission:manage-schedules|schedule.view')->get('/admin/schedules', [ScheduleController::class, 'index']);
+        Route::middleware('permission:manage-schedules|schedule.view')->get('/admin/schedules/activity', [ScheduleController::class, 'activity']);
         Route::middleware('permission:manage-schedules|schedule.manage')->post('/admin/schedules', [ScheduleController::class, 'store']);
+        Route::middleware('permission:manage-schedules|schedule.assign')->post('/admin/schedules/adjustments/preview', [ScheduleController::class, 'adjustmentPreview']);
+        Route::middleware('permission:manage-schedules|schedule.assign')->post('/admin/schedules/adjustments', [ScheduleController::class, 'applyAdjustment']);
         Route::middleware('permission:manage-schedules|schedule.manage')->patch('/admin/schedules/{id}', [ScheduleController::class, 'update']);
         Route::middleware('permission:manage-schedules|schedule.manage')->delete('/admin/schedules/{id}', [ScheduleController::class, 'destroy']);
         Route::middleware('permission:manage-schedules|schedule.assign')->post('/admin/schedules/{id}/assign', [ScheduleController::class, 'assign']);
