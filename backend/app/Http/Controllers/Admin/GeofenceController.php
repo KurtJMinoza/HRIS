@@ -48,6 +48,7 @@ class GeofenceController extends Controller
         $this->dataScopeService->restrictBranchQuery($request->user(), $query);
 
         $branches = $query->orderBy('name')->get()->map(fn (Branch $branch): array => $this->branchPayload($branch))->values();
+        $employeeExemptionIds = $this->geofenceValidation->employeeExemptionIds();
 
         return response()->json([
             'branches' => $branches,
@@ -60,6 +61,10 @@ class GeofenceController extends Controller
                     ->filter(fn (array $branch): bool => (bool) $branch['allowed_without_geofence'])
                     ->pluck('id')
                     ->values(),
+            ],
+            'employee_exemptions' => [
+                'employee_ids' => $employeeExemptionIds,
+                'employees' => $this->employeeExemptionCandidates($request),
             ],
             'defaults' => [
                 'accuracy_threshold_meters' => GeofenceValidationService::DEFAULT_ACCURACY_THRESHOLD_METERS,
@@ -74,6 +79,52 @@ class GeofenceController extends Controller
                 'maximum_samples' => 5,
                 'sample_timeout_seconds' => 15,
                 'require_backend_validation' => true,
+            ],
+        ]);
+    }
+
+    public function updateEmployeeExemptions(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'employee_ids' => ['present', 'array'],
+            'employee_ids.*' => ['integer', 'exists:users,id'],
+        ]);
+
+        $requestedIds = collect($validated['employee_ids'])
+            ->map(fn ($id): int => (int) $id)
+            ->filter(fn (int $id): bool => $id > 0)
+            ->unique()
+            ->values();
+
+        $employeeQuery = User::query()
+            ->activeRoster()
+            ->whereIn('id', $requestedIds->all());
+        $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeeQuery);
+        $accessibleIds = $employeeQuery->pluck('id')->map(fn ($id): int => (int) $id)->sort()->values();
+
+        if ($accessibleIds->all() !== $requestedIds->sort()->values()->all()) {
+            abort(403, 'One or more selected employees are outside your data scope.');
+        }
+
+        $settings = GeofenceGlobalSetting::query()->firstOrNew(['id' => 1]);
+        $settings->fill([
+            'geofence_module_enabled' => (bool) ($settings->geofence_module_enabled ?? $this->geofenceValidation->geofenceModuleEnabled()),
+            'attendance_without_geofence_enabled' => (bool) ($settings->attendance_without_geofence_enabled ?? $this->geofenceValidation->attendanceWithoutGeofenceEnabled()),
+            'employee_exemption_ids' => $requestedIds->all(),
+            'updated_by' => $request->user()?->id,
+        ])->save();
+
+        GeofenceValidationService::forgetGlobalCache();
+
+        $this->audit($request, 'geofence_employee_exemptions_updated', null, null, [
+            'employee_ids' => $requestedIds->all(),
+        ]);
+
+        return response()->json([
+            'message' => 'Employee geofence exemptions updated.',
+            'employee_exemptions' => [
+                'employee_ids' => $requestedIds->all(),
+                'employees' => $this->employeeExemptionCandidates($request),
             ],
         ]);
     }
@@ -692,6 +743,40 @@ class GeofenceController extends Controller
             'notes' => $geofence->notes,
             'updated_at' => $geofence->updated_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function employeeExemptionCandidates(Request $request): array
+    {
+        $query = User::query()
+            ->activeRoster()
+            ->with([
+                'branch:id,name,company_id',
+                'departmentRelation:id,name,branch_id',
+                'division:id,name,branch_id,company_id',
+                'sectionUnit:id,name,branch_id,department_id,division_id,company_id',
+            ]);
+
+        $this->dataScopeService->restrictEmployeeQuery($request->user(), $query);
+
+        return $query
+            ->orderByLastName()
+            ->get(['id', 'name', 'employee_code', 'first_name', 'middle_name', 'last_name', 'suffix', 'branch_id', 'department_id', 'division_id', 'section_unit_id'])
+            ->map(fn (User $employee): array => [
+                'id' => (int) $employee->id,
+                'name' => $employee->display_name,
+                'employee_number' => $employee->employee_code ?: sprintf('EMP-%05d', (int) $employee->id),
+                'profile_image_url' => $employee->profile_image_url,
+                'branch_id' => $employee->branch_id ? (int) $employee->branch_id : null,
+                'branch' => $employee->branch?->name,
+                'department' => $employee->departmentRelation?->name,
+                'division' => $employee->division?->name,
+                'section_unit' => $employee->sectionUnit?->name,
+            ])
+            ->values()
+            ->all();
     }
 
     /**

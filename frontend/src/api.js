@@ -8163,6 +8163,16 @@ export async function updateAttendanceWithoutGeofenceSettings(payload) {
   return data
 }
 
+export async function updateGeofenceEmployeeExemptions(payload) {
+  const res = await authenticatedFetch('/admin/geofencing/employee-exemptions', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update employee geofence exemptions')
+  return data
+}
+
 function geofenceLiveMonitorQuery(params = {}) {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {

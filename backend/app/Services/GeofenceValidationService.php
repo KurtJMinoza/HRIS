@@ -54,6 +54,7 @@ class GeofenceValidationService
         Cache::forget('geofence:global-settings');
         Cache::forget('geofence:global-settings:module-enabled');
         Cache::forget('geofence:global-settings:attendance-without-geofence-enabled');
+        Cache::forget('geofence:global-settings:employee-exemption-ids');
     }
 
     /**
@@ -79,6 +80,26 @@ class GeofenceValidationService
                 'user_id' => (int) $employee->id,
                 'company_id' => (int) (($branch ?? $assignedBranch)?->company_id ?? $employee->getEffectiveCompanyId()),
                 'attempted_branch_id' => $selectedBranchId,
+            ]);
+        }
+
+        if ($this->employeeExemptFromGeofence($employee)) {
+            $branch = $this->resolveBranchForEmployee($employee, $selectedBranchId);
+
+            return $this->finalizeResult($branch ?? $assignedBranch, null, null, null, [
+                ...$options,
+                'allowed' => true,
+                'validation_status' => 'skipped',
+                'enforcement_mode' => 'disabled',
+                'skip_reason' => 'employee_geofence_exempt',
+                'failure_reason' => null,
+                'message' => 'This employee is exempt from geofence validation.',
+                'suppress_location_capture' => true,
+                'employee_id' => (int) $employee->id,
+                'user_id' => (int) $employee->id,
+                'company_id' => (int) (($branch ?? $assignedBranch)?->company_id ?? $employee->getEffectiveCompanyId()),
+                'attempted_branch_id' => $selectedBranchId,
+                'log' => $options['log'] ?? true,
             ]);
         }
 
@@ -315,6 +336,24 @@ class GeofenceValidationService
             return $result;
         }
 
+        if ($this->employeeExemptFromGeofence($employee)) {
+            $result = $this->validateForEmployee(
+                $employee,
+                null,
+                null,
+                null,
+                [
+                    'branch_id' => $request->input('branch_id') !== null ? (int) $request->input('branch_id') : null,
+                    'clock_type' => $this->normalizeClockType($request->input('clock_type') ?: $request->input('type')),
+                    'device_type' => $deviceType,
+                    'method' => $method ?? $request->input('method'),
+                ],
+            );
+            $request->attributes->set('geofence_result', $result);
+
+            return $result;
+        }
+
         $lat = $request->input('latitude');
         $lng = $request->input('longitude');
         $validationId = $request->input('geofence_validation_id');
@@ -530,6 +569,29 @@ class GeofenceValidationService
                     'name' => $branch->name,
                     'company_id' => (int) $branch->company_id,
                 ],
+            ];
+        }
+
+        if ($validation->validation_status === 'skipped'
+            && $validation->skip_reason === 'employee_geofence_exempt'
+            && $this->employeeExemptFromGeofence($employee)) {
+            return [
+                'allowed' => true,
+                'validation_status' => 'skipped',
+                'status' => 'skipped',
+                'skip_reason' => 'employee_geofence_exempt',
+                'suppress_location_capture' => true,
+                'geofence_validation_id' => (int) $validation->id,
+                'id' => (int) $validation->id,
+                'latitude' => $validation->latitude,
+                'longitude' => $validation->longitude,
+                'accuracy_meters' => $validation->accuracy_meters,
+                'device_type' => $validation->device_type,
+                'branch' => $branch ? [
+                    'id' => (int) $branch->id,
+                    'name' => $branch->name,
+                    'company_id' => (int) $branch->company_id,
+                ] : null,
             ];
         }
 
@@ -783,6 +845,38 @@ class GeofenceValidationService
     }
 
     /**
+     * @return list<int>
+     */
+    public function employeeExemptionIds(): array
+    {
+        if (! Schema::hasTable('geofence_global_settings')
+            || ! Schema::hasColumn('geofence_global_settings', 'employee_exemption_ids')) {
+            return [];
+        }
+
+        return Cache::remember('geofence:global-settings:employee-exemption-ids', self::CACHE_TTL_SECONDS, function (): array {
+            $ids = GeofenceGlobalSetting::query()->find(1)?->employee_exemption_ids ?? [];
+            if (! is_array($ids)) {
+                return [];
+            }
+
+            return collect($ids)
+                ->map(fn ($id): int => (int) $id)
+                ->filter(fn (int $id): bool => $id > 0)
+                ->unique()
+                ->values()
+                ->all();
+        });
+    }
+
+    public function employeeExemptFromGeofence(User|int $employee): bool
+    {
+        $employeeId = $employee instanceof User ? (int) $employee->id : (int) $employee;
+
+        return $employeeId > 0 && in_array($employeeId, $this->employeeExemptionIds(), true);
+    }
+
+    /**
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
@@ -845,7 +939,7 @@ class GeofenceValidationService
         $payload = [
             'allowed' => (bool) ($result['allowed'] ?? false),
             'status' => $this->publicStatus($status, $isInside),
-            'message' => $result['failure_reason'] ?? $result['warning'] ?? (($result['allowed'] ?? false) ? 'Geofence validation passed.' : 'Geofence validation failed.'),
+            'message' => $result['message'] ?? $result['failure_reason'] ?? $result['warning'] ?? (($result['allowed'] ?? false) ? 'Geofence validation passed.' : 'Geofence validation failed.'),
             'latitude' => $latitude,
             'longitude' => $longitude,
             'matched_geofence' => $result['matched_geofence'] ?? null,
@@ -868,6 +962,7 @@ class GeofenceValidationService
             'selected_best_accuracy' => $result['selected_best_accuracy'] ?? $accuracyMeters,
             'expires_at' => now()->addMinutes(self::VALIDATION_TTL_MINUTES)->toIso8601String(),
             'location_settings' => $branch ? $this->branchLocationSettings($branch) : null,
+            'suppress_location_capture' => (bool) ($result['suppress_location_capture'] ?? false),
             'branch' => $branch ? [
                 'id' => (int) $branch->id,
                 'name' => $branch->name,

@@ -10,6 +10,7 @@ class GeofenceGlobalSetting extends Model
     protected $fillable = [
         'geofence_module_enabled',
         'attendance_without_geofence_enabled',
+        'employee_exemption_ids',
         'updated_by',
     ];
 
@@ -18,6 +19,7 @@ class GeofenceGlobalSetting extends Model
         return [
             'geofence_module_enabled' => 'boolean',
             'attendance_without_geofence_enabled' => 'boolean',
+            'employee_exemption_ids' => 'array',
         ];
     }
 

@@ -35,11 +35,13 @@ import {
   updateAttendanceWithoutGeofenceSettings,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
+  updateGeofenceEmployeeExemptions,
   updateGeofenceModuleSettings,
 } from '@/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -145,6 +147,15 @@ const POI_CATEGORIES = [
   { value: 'fuel', label: 'Fuel Stations' },
   { value: 'hotel', label: 'Hotels' },
 ]
+
+function employeeInitials(name) {
+  return String(name || 'Employee')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'E'
+}
 
 function blankForm(branchId = null, branchName = '') {
   return {
@@ -1345,6 +1356,10 @@ export default function AdminGeofencing() {
   const [geofenceModuleSaving, setGeofenceModuleSaving] = useState(false)
   const [attendanceWithoutGeofenceEnabled, setAttendanceWithoutGeofenceEnabled] = useState(true)
   const [allowedWithoutGeofenceBranchIds, setAllowedWithoutGeofenceBranchIds] = useState([])
+  const [geofenceExemptEmployeeIds, setGeofenceExemptEmployeeIds] = useState([])
+  const [geofenceExemptionEmployees, setGeofenceExemptionEmployees] = useState([])
+  const [geofenceExemptionSearch, setGeofenceExemptionSearch] = useState('')
+  const [employeeExemptionSaving, setEmployeeExemptionSaving] = useState(false)
   const [bypassSaving, setBypassSaving] = useState(false)
   const [selectedBranchId, setSelectedBranchId] = useState(null)
   const [geofences, setGeofences] = useState([])
@@ -1400,6 +1415,19 @@ export default function AdminGeofencing() {
     ].some((value) => String(value || '').toLowerCase().includes(q)))
   }, [branches, branchSearch])
 
+  const filteredGeofenceExemptionEmployees = useMemo(() => {
+    const q = geofenceExemptionSearch.trim().toLowerCase()
+    if (!q) return geofenceExemptionEmployees
+    return geofenceExemptionEmployees.filter((employee) => [
+      employee.name,
+      employee.employee_number,
+      employee.branch,
+      employee.department,
+      employee.division,
+      employee.section_unit,
+    ].some((value) => String(value || '').toLowerCase().includes(q)))
+  }, [geofenceExemptionEmployees, geofenceExemptionSearch])
+
   const totalPages = Math.max(1, Math.ceil(filteredBranches.length / PAGE_SIZE))
   const pagedBranches = filteredBranches.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   const rangeStart = filteredBranches.length ? (page - 1) * PAGE_SIZE + 1 : 0
@@ -1428,6 +1456,8 @@ export default function AdminGeofencing() {
       setGeofenceModuleEnabled(data.geofence_module?.enabled !== false)
       setAttendanceWithoutGeofenceEnabled(data.attendance_without_geofence?.enabled !== false)
       setAllowedWithoutGeofenceBranchIds(data.attendance_without_geofence?.branch_ids || [])
+      setGeofenceExemptEmployeeIds(data.employee_exemptions?.employee_ids || [])
+      setGeofenceExemptionEmployees(data.employee_exemptions?.employees || [])
       setSelectedBranchId((current) => current || nextBranches[0]?.id || null)
     } catch (error) {
       toast({ title: 'Failed to load geofencing', description: error.message, variant: 'error' })
@@ -1874,6 +1904,27 @@ export default function AdminGeofencing() {
       ? [...new Set([...allowedWithoutGeofenceBranchIds, branchId])]
       : allowedWithoutGeofenceBranchIds.filter((id) => String(id) !== String(branchId))
     saveAttendanceWithoutGeofence(attendanceWithoutGeofenceEnabled, nextIds)
+  }
+
+  async function saveEmployeeGeofenceExemptions(employeeIds) {
+    setEmployeeExemptionSaving(true)
+    try {
+      const data = await updateGeofenceEmployeeExemptions({ employee_ids: employeeIds })
+      setGeofenceExemptEmployeeIds(data.employee_exemptions?.employee_ids || [])
+      setGeofenceExemptionEmployees(data.employee_exemptions?.employees || geofenceExemptionEmployees)
+      toast({ title: 'Employee geofence exemptions updated', variant: 'success' })
+    } catch (error) {
+      toast({ title: 'Employee exemption update failed', description: error.message, variant: 'error' })
+    } finally {
+      setEmployeeExemptionSaving(false)
+    }
+  }
+
+  function toggleEmployeeGeofenceExemption(employeeId, checked) {
+    const nextIds = checked
+      ? [...new Set([...geofenceExemptEmployeeIds, employeeId])]
+      : geofenceExemptEmployeeIds.filter((id) => String(id) !== String(employeeId))
+    saveEmployeeGeofenceExemptions(nextIds)
   }
 
   async function testCurrentLocation() {
@@ -2359,7 +2410,8 @@ export default function AdminGeofencing() {
         </section>
       </div>
 
-      <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.8fr)_minmax(320px,1fr)]">
+      <section className="grid gap-4">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-border dark:bg-card">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -2437,105 +2489,147 @@ export default function AdminGeofencing() {
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100 dark:divide-border">
-                  {branchEmployees.map((employee) => (
-                    <div key={employee.id} className="grid grid-cols-[1fr_auto] gap-3 py-2.5 text-xs">
-                      <div className="min-w-0">
-                        <div className="truncate font-bold text-slate-950 dark:text-foreground">{employee.name}</div>
-                        <div className="mt-0.5 truncate text-slate-500 dark:text-muted-foreground">
-                          {employee.employee_number || 'No number'} - {employee.department || 'No department'}
+                  {branchEmployees.map((employee) => {
+                    const exempt = geofenceExemptEmployeeIds.some((id) => String(id) === String(employee.id))
+                    return (
+                      <div key={employee.id} className="grid grid-cols-[1fr_auto] gap-3 py-2.5 text-xs">
+                        <div className="min-w-0">
+                          <div className="truncate font-bold text-slate-950 dark:text-foreground">{employee.name}</div>
+                          <div className="mt-0.5 truncate text-slate-500 dark:text-muted-foreground">
+                            {employee.employee_number || 'No number'} - {employee.department || 'No department'}
+                          </div>
+                          <div className="mt-0.5 truncate text-slate-500 dark:text-muted-foreground">
+                            {employee.section_unit || employee.division || 'No section/unit'} - {employee.assignment_type || 'assignment'}
+                          </div>
                         </div>
-                        <div className="mt-0.5 truncate text-slate-500 dark:text-muted-foreground">
-                          {employee.section_unit || employee.division || 'No section/unit'} - {employee.assignment_type || 'assignment'}
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge variant={employee.active ? 'default' : 'secondary'} className={cn('h-6 rounded-md', employee.active ? 'bg-emerald-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-200')}>
+                            {employee.active ? 'Active' : 'Inactive'}
+                          </Badge>
+                          {exempt ? (
+                            <Badge variant="secondary" className="h-6 rounded-md bg-orange-100 text-orange-700 hover:bg-orange-100 dark:bg-orange-500/10 dark:text-orange-200">
+                              Geofence exempt
+                            </Badge>
+                          ) : null}
                         </div>
                       </div>
-                      <Badge variant={employee.active ? 'default' : 'secondary'} className={cn('h-6 rounded-md', employee.active ? 'bg-emerald-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-200')}>
-                        {employee.active ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
           </div>
+        </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-border dark:bg-card">
-          <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Branch settings</h2>
-          <div className="mt-3 grid gap-3">
-            <div className="grid grid-cols-[116px_1fr] items-center gap-3">
-              <span className="text-xs font-semibold leading-tight text-slate-700 dark:text-muted-foreground">Enforcement</span>
-              <SelectBox value={selectedBranch?.geofence_enforcement_mode || 'enforce'} onChange={(e) => updateSettings({ geofence_enforcement_mode: e.target.value })}>
-                <option value="enforce">Enforce</option>
-                <option value="warn_only">Warn only</option>
-                <option value="disabled">Disabled</option>
-              </SelectBox>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Branch settings</h2>
+              <p className="text-xs text-slate-500 dark:text-muted-foreground">Rules used when employees clock in/out at this branch.</p>
             </div>
-            <div className="grid grid-cols-[116px_1fr] items-center gap-3">
-              <span className="text-xs font-semibold leading-tight text-slate-700 dark:text-muted-foreground">Allow without geofence</span>
-              <div className="flex h-9 items-center justify-between rounded-md border border-slate-200 px-3 dark:border-border">
-                <span className="text-[11px]">{allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(selectedBranchId)) ? 'Allowed' : 'Required'}</span>
-                <Switch
-                  checked={allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(selectedBranchId))}
-                  disabled={bypassSaving || !selectedBranchId}
-                  onCheckedChange={(checked) => toggleAllowedWithoutGeofenceBranch(selectedBranchId, checked)}
-                />
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-4">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-border dark:bg-muted/20">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-muted-foreground">Enforcement</h3>
+              <div className="mt-3 grid gap-3">
+                <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                  Mode
+                  <SelectBox className="mt-1" value={selectedBranch?.geofence_enforcement_mode || 'enforce'} onChange={(e) => updateSettings({ geofence_enforcement_mode: e.target.value })}>
+                    <option value="enforce">Enforce</option>
+                    <option value="warn_only">Warn only</option>
+                    <option value="disabled">Disabled</option>
+                  </SelectBox>
+                </Label>
+                <div className="flex h-10 items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 dark:border-border dark:bg-background">
+                  <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Allow without geofence</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">{allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(selectedBranchId)) ? 'Allowed' : 'Required'}</span>
+                    <Switch
+                      checked={allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(selectedBranchId))}
+                      disabled={bypassSaving || !selectedBranchId}
+                      onCheckedChange={(checked) => toggleAllowedWithoutGeofenceBranch(selectedBranchId, checked)}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="grid grid-cols-[116px_1fr] items-center gap-3">
-              <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Desktop accuracy mode</span>
-              <SelectBox value={selectedBranch?.geofence_accuracy_policy || 'balanced'} onChange={(e) => updateSettings({ geofence_accuracy_policy: e.target.value })}>
-                <option value="strict">Strict</option>
-                <option value="balanced">Balanced</option>
-                <option value="lenient">Lenient</option>
-              </SelectBox>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-border dark:bg-muted/20">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-muted-foreground">Accuracy</h3>
+              <div className="mt-3 grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                    Mode
+                    <SelectBox className="mt-1" value={selectedBranch?.geofence_accuracy_policy || 'balanced'} onChange={(e) => updateSettings({ geofence_accuracy_policy: e.target.value })}>
+                      <option value="strict">Strict</option>
+                      <option value="balanced">Balanced</option>
+                      <option value="lenient">Lenient</option>
+                    </SelectBox>
+                  </Label>
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                    Buffer
+                    <SelectBox className="mt-1" value={selectedBranch?.geofence_accuracy_buffer_mode || 'strict'} onChange={(e) => updateSettings({ geofence_accuracy_buffer_mode: e.target.value })}>
+                      <option value="strict">Strict: no buffer</option>
+                      <option value="balanced">Balanced: + max 25m</option>
+                      <option value="lenient">Lenient: + max 50m</option>
+                    </SelectBox>
+                  </Label>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                    Mobile threshold
+                    <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="5000" value={selectedBranch?.geofence_mobile_accuracy_threshold_meters ?? 50} onChange={(e) => updateSettings({ geofence_mobile_accuracy_threshold_meters: Number(e.target.value) })} />
+                  </Label>
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                    Desktop threshold
+                    <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="5000" value={selectedBranch?.geofence_desktop_accuracy_threshold_meters ?? 100} onChange={(e) => updateSettings({ geofence_desktop_accuracy_threshold_meters: Number(e.target.value) })} />
+                  </Label>
+                </div>
+              </div>
             </div>
-            <div className="grid grid-cols-[116px_1fr] items-center gap-3">
-              <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Accuracy buffer</span>
-              <SelectBox value={selectedBranch?.geofence_accuracy_buffer_mode || 'strict'} onChange={(e) => updateSettings({ geofence_accuracy_buffer_mode: e.target.value })}>
-                <option value="strict">Strict: no buffer</option>
-                <option value="balanced">Balanced: + max 25m</option>
-                <option value="lenient">Lenient: + max 50m</option>
-              </SelectBox>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-border dark:bg-muted/20">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-muted-foreground">Sampling</h3>
+              <div className="mt-3 grid gap-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                    Min
+                    <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="1" max="5" value={selectedBranch?.geofence_minimum_samples ?? 3} onChange={(e) => updateSettings({ geofence_minimum_samples: Number(e.target.value) })} />
+                  </Label>
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                    Max
+                    <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="1" max="5" value={selectedBranch?.geofence_maximum_samples ?? 5} onChange={(e) => updateSettings({ geofence_maximum_samples: Number(e.target.value) })} />
+                  </Label>
+                  <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                    Timeout
+                    <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="30" value={selectedBranch?.geofence_sample_timeout_seconds ?? 15} onChange={(e) => updateSettings({ geofence_sample_timeout_seconds: Number(e.target.value) })} />
+                  </Label>
+                </div>
+                <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
+                  Poor GPS accuracy
+                  <SelectBox className="mt-1" value={selectedBranch?.geofence_poor_accuracy_action || 'block'} onChange={(e) => updateSettings({ geofence_poor_accuracy_action: e.target.value })}>
+                    <option value="block">Block</option>
+                    <option value="warn">Warn</option>
+                  </SelectBox>
+                </Label>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
-                Mobile threshold
-                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="5000" value={selectedBranch?.geofence_mobile_accuracy_threshold_meters ?? 50} onChange={(e) => updateSettings({ geofence_mobile_accuracy_threshold_meters: Number(e.target.value) })} />
-              </Label>
-              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
-                Desktop threshold
-                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="5000" value={selectedBranch?.geofence_desktop_accuracy_threshold_meters ?? 100} onChange={(e) => updateSettings({ geofence_desktop_accuracy_threshold_meters: Number(e.target.value) })} />
-              </Label>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-border dark:bg-muted/20">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-muted-foreground">Validation</h3>
+              <div className="mt-3 grid gap-3">
+                <div className="flex h-10 items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 dark:border-border dark:bg-background">
+                  <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Cross-branch use</span>
+                  <Switch checked={Boolean(selectedBranch?.geofence_allow_cross_branch)} onCheckedChange={(checked) => updateSettings({ geofence_allow_cross_branch: checked })} />
+                </div>
+                <div className="flex h-10 items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 dark:border-border dark:bg-background">
+                  <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Backend validation</span>
+                  <Switch checked={selectedBranch?.geofence_require_backend_validation !== false} onCheckedChange={(checked) => updateSettings({ geofence_require_backend_validation: checked })} />
+                </div>
+              </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
-                Min samples
-                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="1" max="5" value={selectedBranch?.geofence_minimum_samples ?? 3} onChange={(e) => updateSettings({ geofence_minimum_samples: Number(e.target.value) })} />
-              </Label>
-              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
-                Max samples
-                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="1" max="5" value={selectedBranch?.geofence_maximum_samples ?? 5} onChange={(e) => updateSettings({ geofence_maximum_samples: Number(e.target.value) })} />
-              </Label>
-              <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
-                Timeout sec
-                <Input className="mt-1 h-9 rounded-md border-slate-200 text-xs shadow-sm dark:border-border" type="number" min="5" max="30" value={selectedBranch?.geofence_sample_timeout_seconds ?? 15} onChange={(e) => updateSettings({ geofence_sample_timeout_seconds: Number(e.target.value) })} />
-              </Label>
-            </div>
-            <div className="grid grid-cols-[116px_1fr] items-center gap-3">
-              <span className="text-xs font-semibold leading-tight text-slate-700 dark:text-muted-foreground">Poor GPS accuracy</span>
-              <SelectBox value={selectedBranch?.geofence_poor_accuracy_action || 'block'} onChange={(e) => updateSettings({ geofence_poor_accuracy_action: e.target.value })}>
-                <option value="block">Block</option>
-                <option value="warn">Warn</option>
-              </SelectBox>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Allow other company branches</span>
-              <Switch checked={Boolean(selectedBranch?.geofence_allow_cross_branch)} onCheckedChange={(checked) => updateSettings({ geofence_allow_cross_branch: checked })} />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">Require backend validation</span>
-              <Switch checked={selectedBranch?.geofence_require_backend_validation !== false} onCheckedChange={(checked) => updateSettings({ geofence_require_backend_validation: checked })} />
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-border dark:bg-muted/30 dark:text-muted-foreground lg:col-span-2 2xl:col-span-4">
               <Button type="button" variant="outline" className="h-9 w-full gap-2 rounded-md bg-white text-xs shadow-sm dark:bg-background" onClick={testCurrentLocation} disabled={locationTestLoading || !selectedBranchId}>
                 <RefreshCw className={cn('size-4', locationTestLoading && 'animate-spin')} />
                 Test Current Location
@@ -2557,7 +2651,7 @@ export default function AdminGeofencing() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
+      <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
         <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Branch geofence directory</h2>
@@ -2697,69 +2791,130 @@ export default function AdminGeofencing() {
         ) : null}
       </section>
 
-      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
-        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Attendance Without Geofence Settings</h2>
-            <p className="text-xs text-slate-500 dark:text-muted-foreground">Selected branches skip location validation while face liveness and identity checks continue.</p>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
+          <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Employee Geofence Exemptions</h2>
+              <p className="text-xs text-slate-500 dark:text-muted-foreground">Employees who can clock in/out without location validation.</p>
+            </div>
+            <div className="shrink-0 rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
+              {geofenceExemptEmployeeIds.length} exempt
+            </div>
           </div>
-          <div className="flex items-center gap-3 text-xs font-semibold">
-            <span>Allow for selected branches</span>
-            <Switch
-              checked={attendanceWithoutGeofenceEnabled}
-              disabled={bypassSaving || !geofenceModuleEnabled}
-              onCheckedChange={(checked) => saveAttendanceWithoutGeofence(checked, allowedWithoutGeofenceBranchIds)}
-            />
+          <div className="border-b border-slate-200 p-3 dark:border-border">
+            <div className="relative w-full">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={geofenceExemptionSearch}
+                onChange={(event) => setGeofenceExemptionSearch(event.target.value)}
+                placeholder="Search employee, number, branch..."
+                className="h-10 rounded-md border-slate-200 pl-9 text-xs shadow-sm placeholder:text-slate-500 focus-visible:ring-orange-100 dark:border-border"
+              />
+            </div>
           </div>
-        </div>
-        <div className="max-h-[360px] overflow-auto">
-          <table className="w-full min-w-[900px] text-left text-xs">
-            <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase text-slate-600 dark:bg-muted dark:text-muted-foreground">
-              <tr>
-                {['Select', 'Branch', 'Company', 'Geofence Required', 'Active Geofences Count', 'Allowed Without Geofence', 'Actions'].map((heading) => (
-                  <th key={heading} className="px-4 py-3 font-bold">{heading}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-border">
-              {branches.map((branch) => {
-                const allowed = allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(branch.id))
+          <div className="max-h-[520px] space-y-2 overflow-auto p-3">
+            {filteredGeofenceExemptionEmployees.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500 dark:border-border">
+                No employees found.
+              </div>
+            ) : (
+              filteredGeofenceExemptionEmployees.map((employee) => {
+                const exempt = geofenceExemptEmployeeIds.some((id) => String(id) === String(employee.id))
                 return (
-                  <tr key={branch.id}>
-                    <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
-                        className="size-4 accent-[#f04414]"
-                        checked={allowed}
-                        disabled={bypassSaving || !geofenceModuleEnabled}
-                        onChange={(event) => toggleAllowedWithoutGeofenceBranch(branch.id, event.target.checked)}
-                        aria-label={`Allow ${branch.branch_name} without geofence`}
+                  <div
+                    key={employee.id}
+                    className={cn(
+                      'flex items-center justify-between gap-3 rounded-lg border p-3 transition',
+                      exempt
+                        ? 'border-orange-200 bg-orange-50/70 dark:border-orange-500/30 dark:bg-orange-500/10'
+                        : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-border dark:bg-card dark:hover:bg-muted/40',
+                    )}
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Avatar className="size-10 shrink-0 rounded-full border border-slate-200 bg-slate-100 dark:border-border dark:bg-muted">
+                        <AvatarImage src={employee.profile_image_url || undefined} alt="" className="object-cover" />
+                        <AvatarFallback className="rounded-full bg-orange-100 text-xs font-bold text-orange-700 dark:bg-orange-500/10 dark:text-orange-200">
+                          {employeeInitials(employee.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-slate-950 dark:text-foreground">{employee.name}</div>
+                        <div className="truncate text-[11px] text-slate-500 dark:text-muted-foreground">
+                          {employee.employee_number || 'No number'} - {employee.branch || 'No branch'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <Badge variant="secondary" className={cn('rounded-full text-[10px]', exempt ? 'bg-orange-100 text-orange-700 hover:bg-orange-100 dark:bg-orange-500/10 dark:text-orange-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-100 dark:bg-muted dark:text-muted-foreground')}>
+                        {exempt ? 'Exempt' : 'Required'}
+                      </Badge>
+                      <Switch
+                        checked={exempt}
+                        disabled={employeeExemptionSaving || !geofenceModuleEnabled}
+                        onCheckedChange={(checked) => toggleEmployeeGeofenceExemption(employee.id, checked)}
+                        aria-label={`Exempt ${employee.name} from geofence`}
                       />
-                    </td>
-                    <td className="px-4 py-3 font-bold">{branch.branch_name}</td>
-                    <td className="px-4 py-3">{branch.company_name || '-'}</td>
-                    <td className="px-4 py-3">{!geofenceModuleEnabled ? 'Module off' : (attendanceWithoutGeofenceEnabled && allowed ? 'No' : 'Yes')}</td>
-                    <td className="px-4 py-3">{Number(branch.active_geofences_count || 0)}</td>
-                    <td className="px-4 py-3">{!geofenceModuleEnabled ? 'N/A' : (attendanceWithoutGeofenceEnabled && allowed ? 'Yes' : 'No')}</td>
-                    <td className="px-4 py-3">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px]"
-                        disabled={bypassSaving || !geofenceModuleEnabled}
-                        onClick={() => toggleAllowedWithoutGeofenceBranch(branch.id, !allowed)}
-                      >
-                        {allowed ? 'Require geofence' : 'Allow without'}
-                      </Button>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              })
+            )}
+          </div>
+        </section>
+
+        <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
+          <div className="flex flex-col gap-3 border-b border-slate-200 p-4 dark:border-border sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Attendance Without Geofence Settings</h2>
+              <p className="text-xs text-slate-500 dark:text-muted-foreground">Branches where all employees can skip location validation.</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold dark:border-border dark:bg-muted/40">
+              <span>{attendanceWithoutGeofenceEnabled ? 'Enabled' : 'Disabled'}</span>
+              <Switch
+                checked={attendanceWithoutGeofenceEnabled}
+                disabled={bypassSaving || !geofenceModuleEnabled}
+                onCheckedChange={(checked) => saveAttendanceWithoutGeofence(checked, allowedWithoutGeofenceBranchIds)}
+              />
+            </div>
+          </div>
+          <div className="max-h-[520px] space-y-2 overflow-auto p-3">
+            {branches.map((branch) => {
+              const allowed = allowedWithoutGeofenceBranchIds.some((id) => String(id) === String(branch.id))
+              const effectivelyAllowed = geofenceModuleEnabled && attendanceWithoutGeofenceEnabled && allowed
+              return (
+                <div
+                  key={branch.id}
+                  className={cn(
+                    'flex items-center justify-between gap-3 rounded-lg border p-3 transition',
+                    effectivelyAllowed
+                      ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-500/30 dark:bg-emerald-500/10'
+                      : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-border dark:bg-card dark:hover:bg-muted/40',
+                  )}
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-slate-950 dark:text-foreground">{branch.branch_name}</div>
+                    <div className="truncate text-[11px] text-slate-500 dark:text-muted-foreground">
+                      {branch.company_name || 'No company'} - {Number(branch.active_geofences_count || 0)} active geofence{Number(branch.active_geofences_count || 0) === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <Badge variant="secondary" className={cn('rounded-full text-[10px]', effectivelyAllowed ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-200' : 'bg-slate-100 text-slate-600 hover:bg-slate-100 dark:bg-muted dark:text-muted-foreground')}>
+                      {effectivelyAllowed ? 'Allowed' : 'Required'}
+                    </Badge>
+                    <Switch
+                      checked={allowed}
+                      disabled={bypassSaving || !geofenceModuleEnabled}
+                      onCheckedChange={(checked) => toggleAllowedWithoutGeofenceBranch(branch.id, checked)}
+                      aria-label={`Allow ${branch.branch_name} without geofence`}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      </div>
 
         </>
       )}
