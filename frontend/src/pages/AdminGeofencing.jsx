@@ -28,9 +28,7 @@ import {
   deleteBranchGeofence,
   getAdminGeofencing,
   getBranchGeofences,
-  getNearbyGeofenceOsmPoi,
   searchGeofenceLocation,
-  searchGeofenceOsmPoi,
   testAttendanceGeofence,
   updateAttendanceWithoutGeofenceSettings,
   updateBranchGeofence,
@@ -128,26 +126,6 @@ const OSM_RASTER_STYLE = {
     },
   ],
 }
-const POI_RADIUS_OPTIONS = [
-  { value: 100, label: '100m' },
-  { value: 250, label: '250m' },
-  { value: 500, label: '500m' },
-  { value: 1000, label: '1km' },
-  { value: 2000, label: '2km' },
-]
-const POI_CATEGORIES = [
-  { value: 'all', label: 'All' },
-  { value: 'building', label: 'Buildings' },
-  { value: 'restaurant', label: 'Restaurants' },
-  { value: 'bank', label: 'Banks' },
-  { value: 'school', label: 'Schools' },
-  { value: 'hospital', label: 'Hospitals' },
-  { value: 'office', label: 'Offices' },
-  { value: 'mall', label: 'Malls' },
-  { value: 'fuel', label: 'Fuel Stations' },
-  { value: 'hotel', label: 'Hotels' },
-]
-
 function employeeInitials(name) {
   return String(name || 'Employee')
     .split(/\s+/)
@@ -232,6 +210,23 @@ function validLatLngPair(point) {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
   if (lat === 0 && lng === 0) return null
   return [lat, lng]
+}
+
+function coordinateTextToLatLng(value) {
+  const match = String(value || '').match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/)
+  if (!match) return null
+
+  const first = Number(match[1])
+  const second = Number(match[2])
+  return validLatLngPair([first, second]) || validLatLngPair([second, first])
+}
+
+function mapSearchDisplayText(result, fallback = '') {
+  const text = String(result?.address || result?.label || fallback || '').trim()
+  return text
+    .replace(/\s*,?\s*Philippines\s*$/i, '')
+    .replace(/\s*,\s*$/, '')
+    .trim() || fallback
 }
 
 function mapillaryGraphUrl(point, radiusMeters = 50) {
@@ -388,12 +383,6 @@ function poiMatchesCategory(poi, category) {
   if (category === 'all') return true
   if (category === 'building') return ['building', 'mall', 'office'].includes(poi?.category)
   return poi?.category === category
-}
-
-function formatDistanceMeters(value) {
-  const distance = Number(value)
-  if (!Number.isFinite(distance)) return null
-  return distance >= 1000 ? `${(distance / 1000).toFixed(1)}km` : `${Math.round(distance)}m`
 }
 
 function escapeHtml(value) {
@@ -1299,7 +1288,7 @@ function GeofenceMapOptimized({
   }, [form, mapReady, setForm])
 
   return (
-    <div className="relative h-[520px] min-h-[420px] w-full overflow-hidden rounded-b-lg border-t border-slate-200 bg-slate-100 dark:border-border dark:bg-muted">
+    <div className="relative h-[680px] min-h-[560px] w-full overflow-hidden rounded-b-lg border-t border-slate-200 bg-slate-100 dark:border-border dark:bg-muted">
       <div ref={mapEl} className="h-full w-full" />
       <div className="pointer-events-none absolute left-3 top-3 z-500 rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-700 shadow-sm backdrop-blur dark:border-border dark:bg-background/90 dark:text-foreground">
         {baseMap === 'satellite' ? 'Esri World Imagery + Labels + MapLibre GL' : 'OpenStreetMap + MapLibre GL'}
@@ -1377,12 +1366,6 @@ export default function AdminGeofencing() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deletingGeofenceId, setDeletingGeofenceId] = useState(null)
-  const [poiSearch, setPoiSearch] = useState('')
-  const [poiResults, setPoiResults] = useState([])
-  const [poiLoading, setPoiLoading] = useState(false)
-  const [poiRadius, setPoiRadius] = useState(500)
-  const [poiCategory, setPoiCategory] = useState('all')
-  const [selectedPoiId, setSelectedPoiId] = useState(null)
   const [mapillaryImage, setMapillaryImage] = useState(null)
   const [mapillaryLoading, setMapillaryLoading] = useState(false)
   const [mapillaryError, setMapillaryError] = useState('')
@@ -1390,8 +1373,8 @@ export default function AdminGeofencing() {
   const [locationTestResult, setLocationTestResult] = useState(null)
   const mapSearchCacheRef = useRef(new Map())
   const mapSearchAbortRef = useRef(null)
-  const poiSearchCacheRef = useRef(new Map())
-  const poiSearchAbortRef = useRef(null)
+  const coordinateLookupCacheRef = useRef(new Map())
+  const coordinateLookupAbortRef = useRef(null)
   const mapillaryAbortRef = useRef(null)
   const formGeofenceIdRef = useRef(null)
   const { toast } = useToast()
@@ -1434,14 +1417,6 @@ export default function AdminGeofencing() {
   const rangeEnd = Math.min(page * PAGE_SIZE, filteredBranches.length)
 
   const shapeEditable = canEditGeofenceShape(form)
-  const poiCenter = useMemo(
-    () => validLatLngPair(geofenceCenter(form)) || validLatLngPair(branchLocation(selectedBranch)) || DEFAULT_CENTER,
-    [form, selectedBranch],
-  )
-  const filteredPoiResults = useMemo(
-    () => poiResults.filter((poi) => poiMatchesCategory(poi, poiCategory)),
-    [poiCategory, poiResults],
-  )
   const streetviewTarget = useMemo(
     () => validLatLngPair(geofenceCenter(form)) || validLatLngPair(branchLocation(selectedBranch)),
     [form, selectedBranch],
@@ -1611,6 +1586,33 @@ export default function AdminGeofencing() {
       return undefined
     }
 
+    const coordinateCenter = coordinateTextToLatLng(query)
+    if (coordinateCenter) {
+      setMapSearchResults([])
+      setMapSearchLoading(false)
+
+      const nextLat = Number(coordinateCenter[0].toFixed(7))
+      const nextLng = Number(coordinateCenter[1].toFixed(7))
+      const currentCenter = validLatLngPair([form.center_lat, form.center_lng])
+      const alreadyCentered = currentCenter
+        && Math.abs(currentCenter[0] - nextLat) < 0.0000001
+        && Math.abs(currentCenter[1] - nextLng) < 0.0000001
+
+      if (shapeEditable && !alreadyCentered) {
+        setForm((current) => ({
+          ...current,
+          type: 'circle',
+          center_lat: nextLat,
+          center_lng: nextLng,
+        }))
+        setDrawMode('circle')
+        setFocusPoint({ latitude: nextLat, longitude: nextLng })
+        setFocusKey((key) => key + 1)
+      }
+
+      return undefined
+    }
+
     const cacheKey = `${mapSearchMode}:${normalizedQuery}`
     const cached = mapSearchCacheRef.current.get(cacheKey)
     if (cached) {
@@ -1666,67 +1668,55 @@ export default function AdminGeofencing() {
       window.clearTimeout(timeout)
       controller.abort()
     }
-  }, [form, geofences, mapSearch, mapSearchMode, selectedBranch, toast])
+  }, [form, geofences, mapSearch, mapSearchMode, selectedBranch, shapeEditable, toast])
 
   useEffect(() => {
-    const query = poiSearch.trim()
-    const normalizedQuery = query.toLowerCase()
-    poiSearchAbortRef.current?.abort()
+    if (form.type !== 'circle') return undefined
 
-    if (query.length < 3) {
-      setPoiLoading(false)
-      return undefined
-    }
+    const center = validLatLngPair([form.center_lat, form.center_lng])
+    coordinateLookupAbortRef.current?.abort()
+    if (!center) return undefined
 
-    const center = poiCenter
-    const cacheKey = `${normalizedQuery}:${center[0].toFixed(4)}:${center[1].toFixed(4)}:5000`
-    const cached = poiSearchCacheRef.current.get(cacheKey)
+    const coordinateText = `${center[0].toFixed(7)}, ${center[1].toFixed(7)}`
+    const cacheKey = `reverse:${coordinateText}`
+    const cached = coordinateLookupCacheRef.current.get(cacheKey)
     if (cached) {
-      setPoiResults(cached)
-      setPoiLoading(false)
+      setMapSearch(cached)
+      setMapSearchResults([])
       return undefined
     }
 
     const controller = new AbortController()
-    poiSearchAbortRef.current = controller
+    coordinateLookupAbortRef.current = controller
     const timeout = window.setTimeout(async () => {
-      setPoiLoading(true)
       try {
-        const data = await searchGeofenceOsmPoi(query, {
-          lat: center[0],
-          lng: center[1],
-          radius: 5000,
-          signal: controller.signal,
-        })
-        const results = data.results || []
-        poiSearchCacheRef.current.set(cacheKey, results)
-        setPoiResults(results)
-        setSelectedPoiId(results[0]?.id || null)
-        if (results.length === 0) {
-          toast({
-            title: 'No OSM places found',
-            description: 'Try another building, business, landmark, or nearby street name.',
-            variant: 'error',
+        const data = await searchGeofenceLocation(coordinateText, { signal: controller.signal, mode: 'address' })
+        const result = data.results?.[0]
+        const resolvedPlace = mapSearchDisplayText(result, coordinateText)
+        coordinateLookupCacheRef.current.set(cacheKey, resolvedPlace)
+        if (!controller.signal.aborted) {
+          const normalizedResolvedPlace = resolvedPlace.trim().toLowerCase()
+          const searchModes = ['address', 'establishment', 'branch']
+          searchModes.forEach((mode) => {
+            mapSearchCacheRef.current.set(`${mode}:${normalizedResolvedPlace}`, [])
           })
+          setMapSearch(resolvedPlace)
+          setMapSearchResults([])
         }
       } catch (error) {
-        if (error?.name !== 'AbortError') {
-          toast({
-            title: 'OSM search unavailable',
-            description: 'OpenStreetMap search is taking longer than expected. Try narrowing your search or pin manually.',
-            variant: 'error',
-          })
+        if (error?.name !== 'AbortError' && !controller.signal.aborted) {
+          coordinateLookupCacheRef.current.set(cacheKey, coordinateText)
+          setMapSearch(coordinateText)
+          setMapSearchResults([])
         }
-      } finally {
-        if (!controller.signal.aborted) setPoiLoading(false)
       }
-    }, 500)
+    }, 650)
 
     return () => {
       window.clearTimeout(timeout)
       controller.abort()
     }
-  }, [poiCenter, poiSearch, toast])
+  }, [form.center_lat, form.center_lng, form.type])
 
   async function saveGeofence(options = {}) {
     if (!selectedBranchId) return
@@ -1964,61 +1954,6 @@ export default function AdminGeofencing() {
     }
   }
 
-  async function loadNearbyPois() {
-    const center = poiCenter
-    if (!center) return
-    setPoiLoading(true)
-    try {
-      const data = await getNearbyGeofenceOsmPoi({
-        lat: center[0],
-        lng: center[1],
-        radius: Number(poiRadius) || 500,
-      })
-      const results = data.results || []
-      setPoiResults(results)
-      setSelectedPoiId(results[0]?.id || null)
-      if (results.length === 0) {
-        toast({
-          title: 'No nearby OSM places found',
-          description: 'Try increasing the radius or search by a specific building/business name.',
-          variant: 'error',
-        })
-      }
-    } catch (error) {
-      toast({
-        title: 'OSM search unavailable',
-        description: error.message || 'You can still pin manually.',
-        variant: 'error',
-      })
-    } finally {
-      setPoiLoading(false)
-    }
-  }
-
-  const applyPoiAsCenter = useCallback((poi) => {
-    if (!canEditGeofenceShape(form)) {
-      toast({
-        title: 'Active geofence is locked',
-        description: 'Disable it first to save as draft before moving its center.',
-        variant: 'error',
-      })
-      return
-    }
-    const lat = Number(poi?.latitude)
-    const lng = Number(poi?.longitude)
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
-    setSelectedPoiId(poi.id || null)
-    setForm((s) => ({
-      ...s,
-      center_lat: Number(lat.toFixed(7)),
-      center_lng: Number(lng.toFixed(7)),
-      name: s.name || poi.name || poi.label || s.name,
-      notes: s.notes || (poi.address ? `OSM address: ${poi.address}` : s.notes),
-    }))
-    setFocusPoint({ latitude: lat, longitude: lng })
-    setFocusKey((key) => key + 1)
-  }, [form, toast])
-
   async function applySearchResult(result) {
     if (!canEditGeofenceShape(form)) {
       toast({
@@ -2038,7 +1973,7 @@ export default function AdminGeofencing() {
       longitude: lng,
     })
     setFocusKey((key) => key + 1)
-    setMapSearch(result.address || result.label || mapSearch)
+    setMapSearch(mapSearchDisplayText(result, mapSearch))
     setMapSearchResults([])
   }
 
@@ -2176,66 +2111,6 @@ export default function AdminGeofencing() {
                 <Search className="size-5" />
               </Button>
             </div>
-            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-border dark:bg-muted/30">
-              <div className="flex flex-col gap-2 lg:flex-row">
-                <div className="relative min-w-0 flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    value={poiSearch}
-                    onChange={(e) => setPoiSearch(e.target.value)}
-                    placeholder="Search buildings, businesses, landmarks..."
-                    className="h-9 rounded-md border-slate-200 pl-9 text-xs shadow-sm placeholder:text-slate-500 focus-visible:ring-orange-100 dark:border-border"
-                  />
-                </div>
-                <SelectBox className="lg:w-28" value={poiRadius} onChange={(e) => setPoiRadius(Number(e.target.value))}>
-                  {POI_RADIUS_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </SelectBox>
-                <Button type="button" variant="outline" size="sm" className="h-9 rounded-md text-xs" disabled={poiLoading} onClick={loadNearbyPois}>
-                  {poiLoading ? 'Loading...' : 'Load Nearby Places'}
-                </Button>
-              </div>
-              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-                {POI_CATEGORIES.map((category) => (
-                  <button
-                    key={category.value}
-                    type="button"
-                    className={cn(
-                      'shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-orange-50 dark:border-border dark:bg-background dark:text-muted-foreground',
-                      poiCategory === category.value && 'border-[#f04414] bg-orange-50 text-[#f04414] dark:border-orange-500 dark:bg-orange-500/10 dark:text-orange-300',
-                    )}
-                    onClick={() => setPoiCategory(category.value)}
-                  >
-                    {category.label}
-                  </button>
-                ))}
-              </div>
-              {(poiLoading || filteredPoiResults.length > 0) ? (
-                <div className="mt-2 max-h-44 overflow-auto rounded-md border border-slate-200 bg-white text-xs dark:border-border dark:bg-background">
-                  {poiLoading ? <div className="px-3 py-2 text-slate-500">Searching OpenStreetMap places...</div> : null}
-                  {filteredPoiResults.map((poi) => (
-                    <button
-                      key={poi.id || `${poi.latitude}:${poi.longitude}`}
-                      type="button"
-                      className={cn(
-                        'block w-full border-t border-slate-100 px-3 py-2 text-left first:border-t-0 hover:bg-orange-50 dark:border-border dark:hover:bg-orange-500/10',
-                        String(selectedPoiId || '') === String(poi.id || '') && 'bg-orange-50 text-[#f04414] dark:bg-orange-500/10 dark:text-orange-300',
-                      )}
-                      onClick={() => applyPoiAsCenter(poi)}
-                    >
-                      <span className="block font-semibold text-slate-900 dark:text-foreground">{poi.name || poi.label || 'OSM place'}</span>
-                      <span className="block truncate text-[11px] text-slate-500 dark:text-muted-foreground">
-                        {[poi.category_label, poi.address, formatDistanceMeters(poi.distance_meters)].filter(Boolean).join(' - ')}
-                      </span>
-                      <span className="block text-[10px] text-slate-400">
-                        {Number(poi.latitude).toFixed(6)}, {Number(poi.longitude).toFixed(6)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
           </div>
           <GeofenceMapOptimized
             branch={selectedBranch}
@@ -2246,10 +2121,6 @@ export default function AdminGeofencing() {
             drawMode={drawMode}
             focusKey={focusKey}
             focusPoint={focusPoint}
-            poiResults={filteredPoiResults}
-            poiCategory={poiCategory}
-            selectedPoiId={selectedPoiId}
-            onUsePoi={applyPoiAsCenter}
             onSelectMapillaryImage={selectMapillaryImage}
           />
           <MapillaryStreetviewPanel

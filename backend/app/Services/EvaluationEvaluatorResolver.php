@@ -132,8 +132,10 @@ class EvaluationEvaluatorResolver
             if ($role === 'custom') {
                 foreach ($customEvaluatorIds as $userId) {
                     $user = User::query()->activeRoster()->find((int) $userId);
-                    if ($user && (int) $user->id !== (int) $employee->id) {
-                        $resolved[] = ['role' => 'custom', 'user' => $user];
+                    if ($user) {
+                        // Picking the employee themselves as a custom evaluator counts as a self evaluation.
+                        $isSelf = (int) $user->id === (int) $employee->id;
+                        $resolved[] = ['role' => $isSelf ? 'self' : 'custom', 'user' => $user];
                     }
                 }
                 continue;
@@ -144,7 +146,7 @@ class EvaluationEvaluatorResolver
             }
 
             $user = $this->resolveRole($employee, $role);
-            if ($user && (int) $user->id !== (int) $employee->id) {
+            if ($user && ($role === 'self' || (int) $user->id !== (int) $employee->id)) {
                 $resolved[] = ['role' => $role, 'user' => $user];
             }
         }

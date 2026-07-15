@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\GeofenceAttendanceEventCreated;
 use App\Models\AttendanceGeofenceEvent;
+use App\Models\AttendanceLog;
 use App\Models\BranchGeofence;
 use App\Models\GeofenceValidationLog;
 use App\Models\User;
@@ -68,6 +69,10 @@ class GeofenceLiveMonitorService
                 ])
                 ->whereNotNull('latitude')
                 ->whereNotNull('longitude')
+                ->where(function (Builder $q): void {
+                    $q->whereNotNull('attendance_log_id')
+                        ->orWhereIn('geofence_status', ['outside', 'failed']);
+                })
                 ->whereDate('created_at', $date);
 
             if ($scopedBranchIds !== null) {
@@ -131,7 +136,12 @@ class GeofenceLiveMonitorService
         $cacheKey = "geofence_live:summary:{$date}:{$scopeKey}:{$version}";
 
         return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($date, $scopedBranchIds): array {
-            $query = AttendanceGeofenceEvent::query()->whereDate('created_at', $date);
+            $query = AttendanceGeofenceEvent::query()
+                ->where(function (Builder $q): void {
+                    $q->whereNotNull('attendance_log_id')
+                        ->orWhereIn('geofence_status', ['outside', 'failed']);
+                })
+                ->whereDate('created_at', $date);
             if ($scopedBranchIds !== null) {
                 if ($scopedBranchIds === []) {
                     return [
@@ -247,8 +257,16 @@ class GeofenceLiveMonitorService
             $deviceInfo = $this->deviceInfo($userAgent);
             $branch = $log->branch ?? $log->attemptedBranch ?? $log->employee?->branch;
             $company = $branch?->company ?? $log->company ?? $log->employee?->company;
-            $clockType = $this->normalizeClockType($log->clock_type ?? $log->attendanceLog?->type);
             $status = $this->publicStatus($log);
+            $attendanceLog = $log->attendanceLog;
+            if (! $attendanceLog && $attendanceLogId) {
+                $attendanceLog = AttendanceLog::query()->select(['id', 'type'])->find($attendanceLogId);
+            }
+            if (! $attendanceLog && ! in_array($status, ['outside', 'failed'], true)) {
+                return null;
+            }
+
+            $clockType = $this->normalizeClockType($attendanceLog?->type ?? $log->clock_type);
 
             $event = AttendanceGeofenceEvent::query()->updateOrCreate(
                 ['geofence_validation_log_id' => (int) $log->id],

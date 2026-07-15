@@ -465,6 +465,18 @@ class GeofenceController extends Controller
 
         $query = trim(preg_replace('/\s+/', ' ', (string) $validated['query']));
         $mode = $validated['mode'] ?? 'address';
+        $coordinatePair = $this->parseCoordinateQuery($query);
+        if ($coordinatePair !== null) {
+            $cacheKey = 'geofence:map_reverse:v1:'.sha1(number_format($coordinatePair['lat'], 7, '.', '').'|'.number_format($coordinatePair['lng'], 7, '.', ''));
+            $results = Cache::remember($cacheKey, now()->addHour(), fn (): array => $this->nominatimReverse($coordinatePair['lat'], $coordinatePair['lng']));
+
+            return response()->json([
+                'query' => $query,
+                'provider' => 'nominatim_reverse',
+                'results' => $results,
+            ]);
+        }
+
         $localResults = $this->localBranchSearch($request, $query);
         $placeResults = [];
 
@@ -854,6 +866,23 @@ class GeofenceController extends Controller
     }
 
     /**
+     * @return array{lat: float, lng: float}|null
+     */
+    private function parseCoordinateQuery(string $query): ?array
+    {
+        if (! preg_match('/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/', $query, $matches)) {
+            return null;
+        }
+
+        $first = (float) $matches[1];
+        $second = (float) $matches[2];
+        $latLng = $this->withinPhilippinesBounds($first, $second) ? ['lat' => $first, 'lng' => $second] : null;
+        $lngLat = $this->withinPhilippinesBounds($second, $first) ? ['lat' => $second, 'lng' => $first] : null;
+
+        return $latLng ?? $lngLat;
+    }
+
+    /**
      * @return list<array<string, mixed>>
      */
     private function nominatimRequest(string $query, string $mode): array
@@ -910,6 +939,56 @@ class GeofenceController extends Controller
                 ->filter()
                 ->values()
                 ->all();
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function nominatimReverse(float $lat, float $lng): array
+    {
+        try {
+            $response = Http::timeout(8)
+                ->connectTimeout(3)
+                ->acceptJson()
+                ->withHeaders([
+                    'Accept-Language' => 'en',
+                    'User-Agent' => config('app.name', 'HRIS').'/geofence-reverse-search',
+                ])
+                ->get('https://nominatim.openstreetmap.org/reverse', [
+                    'format' => 'jsonv2',
+                    'addressdetails' => 1,
+                    'lat' => $lat,
+                    'lon' => $lng,
+                ]);
+
+            if (! $response->successful()) {
+                return [];
+            }
+
+            $row = $response->json() ?: [];
+            $address = $row['address'] ?? [];
+            $label = $row['name']
+                ?? $address['building']
+                ?? $address['amenity']
+                ?? $address['road']
+                ?? $row['display_name']
+                ?? 'Map result';
+
+            return [[
+                'id' => 'osm:reverse:'.($row['osm_type'] ?? 'place').':'.($row['osm_id'] ?? md5($lat.'|'.$lng)),
+                'label' => $label,
+                'address' => $row['display_name'] ?? null,
+                'latitude' => $lat,
+                'longitude' => $lng,
+                'city' => $address['city'] ?? $address['town'] ?? $address['municipality'] ?? null,
+                'province' => $address['state'] ?? $address['province'] ?? null,
+                'country' => $address['country'] ?? null,
+                'importance' => isset($row['importance']) ? (float) $row['importance'] : null,
+                'source' => 'reverse_geocode',
+            ]];
         } catch (\Throwable) {
             return [];
         }

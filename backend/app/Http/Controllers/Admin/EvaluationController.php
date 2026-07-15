@@ -1027,25 +1027,78 @@ class EvaluationController extends Controller
     {
         $user = $request->user();
 
-        $evaluation = Evaluation::query()
-            ->with(['evaluator:id,first_name,middle_name,last_name,suffix'])
+        $evaluations = Evaluation::query()
+            ->with([
+                'evaluationForm:id,title',
+                'evaluator:id,first_name,middle_name,last_name,suffix',
+            ])
             ->where('employee_id', $user->id)
-            ->orderBy('created_at', 'desc')
-            ->first();
+            ->orderByDesc('evaluated_at')
+            ->orderByDesc('created_at')
+            ->get();
 
-        if (!$evaluation) {
+        $statusCounts = $evaluations->groupBy('status')->map->count();
+        $completed = $evaluations
+            ->where('status', Evaluation::STATUS_COMPLETED)
+            ->filter(fn (Evaluation $evaluation): bool => $evaluation->overall_score !== null);
+        $percentages = $completed
+            ->map(fn (Evaluation $evaluation): ?float => $this->evaluationScoringService->resolveOverallPercentage($evaluation->scores, $evaluation->overall_score))
+            ->filter(fn (?float $percentage): bool => $percentage !== null)
+            ->values();
+
+        $latest = $evaluations->first();
+        $latestPercentage = $latest
+            ? $this->evaluationScoringService->resolveOverallPercentage($latest->scores, $latest->overall_score)
+            : null;
+
+        $activeAssignments = EvaluationAssignment::query()
+            ->where('employee_id', $user->id)
+            ->whereIn('status', [EvaluationAssignment::STATUS_PENDING, EvaluationAssignment::STATUS_IN_PROGRESS])
+            ->count();
+        $overdueAssignments = EvaluationAssignment::query()
+            ->where('employee_id', $user->id)
+            ->whereNotIn('status', [EvaluationAssignment::STATUS_COMPLETED, EvaluationAssignment::STATUS_CANCELLED])
+            ->whereDate('end_date', '<', now()->toDateString())
+            ->count();
+
+        if (! $latest && $activeAssignments === 0) {
             return response()->json(['widget' => null]);
         }
 
-        $evaluatorLabel = $this->resolveEvaluatorLabel($evaluation);
-
         return response()->json([
             'widget' => [
-                'status' => $evaluation->status,
-                'latest_score' => $evaluation->overall_score,
-                'latest_rating' => $evaluation->overall_rating,
-                'last_evaluated' => $evaluation->evaluated_at?->format('F d, Y') ?? '—',
-                'evaluator' => $evaluatorLabel,
+                'status' => $latest?->status,
+                'latest_score' => $latest?->overall_score,
+                'latest_percentage' => $latestPercentage !== null ? round($latestPercentage, 2) : null,
+                'latest_rating' => $latest?->overall_rating,
+                'last_evaluated' => $latest?->evaluated_at?->format('F d, Y') ?? '—',
+                'evaluator' => $latest ? $this->resolveEvaluatorLabel($latest) : null,
+                'template' => $latest?->evaluationForm?->title,
+                'average_percentage' => $percentages->isNotEmpty() ? round($percentages->avg(), 2) : null,
+                'stats' => [
+                    'total' => $evaluations->count(),
+                    'completed' => (int) ($statusCounts[Evaluation::STATUS_COMPLETED] ?? 0),
+                    'draft' => (int) ($statusCounts[Evaluation::STATUS_DRAFT] ?? 0),
+                    'submitted' => (int) ($statusCounts[Evaluation::STATUS_SUBMITTED] ?? 0),
+                    'under_review' => (int) ($statusCounts[Evaluation::STATUS_UNDER_REVIEW] ?? 0),
+                    'active_assignments' => (int) $activeAssignments,
+                    'overdue_assignments' => (int) $overdueAssignments,
+                ],
+                'history' => $evaluations
+                    ->take(8)
+                    ->map(fn (Evaluation $evaluation): array => [
+                        'id' => (int) $evaluation->id,
+                        'template' => $evaluation->evaluationForm?->title,
+                        'status' => $evaluation->status,
+                        'score' => $evaluation->overall_score,
+                        'percentage' => ($percentage = $this->evaluationScoringService->resolveOverallPercentage($evaluation->scores, $evaluation->overall_score)) !== null
+                            ? round($percentage, 2)
+                            : null,
+                        'rating' => $evaluation->overall_rating,
+                        'evaluated_at' => $evaluation->evaluated_at?->format('F d, Y') ?? '—',
+                        'evaluator' => $this->resolveEvaluatorLabel($evaluation),
+                    ])
+                    ->values(),
             ],
         ]);
     }

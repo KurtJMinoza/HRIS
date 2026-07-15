@@ -8536,8 +8536,8 @@ export async function getEvaluationDashboardSummary() {
   return data
 }
 
-export async function getEmployeeEvaluationWidget() {
-  const res = await authenticatedFetch('/employee/evaluations/widget')
+export async function getEmployeeEvaluationWidget(options = {}) {
+  const res = await authenticatedFetch('/employee/evaluations/widget', { signal: options.signal })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation widget')
   return data

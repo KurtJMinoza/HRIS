@@ -17,8 +17,8 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import {
   getEmployeeDashboardAttendanceCalendar,
-  getEmployeeDashboardRecentRequests,
   getEmployeeDashboardSummary,
+  getEmployeeEvaluationWidget,
   getMyHolidays,
 } from '@/api'
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
@@ -580,8 +580,8 @@ export default function EmployeeDashboard() {
 
   const [summary, setSummary] = useState(null)
   const [days, setDays] = useState([])
-  const [leaveSummary, setLeaveSummary] = useState(null)
-  const [leaveRequests, setLeaveRequests] = useState([])
+  const [evaluationWidget, setEvaluationWidget] = useState(null)
+  const [evaluationLoading, setEvaluationLoading] = useState(true)
   const [holidayRows, setHolidayRows] = useState([])
   const [holidaySummary, setHolidaySummary] = useState(null)
   const [holidayLoading, setHolidayLoading] = useState(true)
@@ -593,6 +593,7 @@ export default function EmployeeDashboard() {
   const [monthOtRequests, setMonthOtRequests] = useState([])
   const [absentCounts, setAbsentCounts] = useState({ absent: 0, leave: 0, holiday: 0 })
   const [attendanceSummaryModalOpen, setAttendanceSummaryModalOpen] = useState(false)
+  const [evaluationDetailsOpen, setEvaluationDetailsOpen] = useState(false)
   const [attendanceSummarySearch, setAttendanceSummarySearch] = useState('')
   const [attendanceSummaryFilter, setAttendanceSummaryFilter] = useState('all')
   const [attendanceSummaryPage, setAttendanceSummaryPage] = useState(1)
@@ -605,7 +606,7 @@ export default function EmployeeDashboard() {
   const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth())
   const summaryAbortRef = useRef(null)
   const calendarAbortRef = useRef(null)
-  const recentAbortRef = useRef(null)
+  const evaluationAbortRef = useRef(null)
   const calendarCacheRef = useRef(new Map())
 
   const mergeSummary = useCallback((next) => {
@@ -721,21 +722,21 @@ export default function EmployeeDashboard() {
     }
   }, [mergeSummary, prefetchAdjacentMonths])
 
-  const loadRecentRequests = useCallback(async () => {
-    recentAbortRef.current?.abort()
+  const loadEvaluationWidget = useCallback(async () => {
+    evaluationAbortRef.current?.abort()
     const controller = new AbortController()
-    recentAbortRef.current = controller
+    evaluationAbortRef.current = controller
+    setEvaluationLoading(true)
     try {
-      const data = await getEmployeeDashboardRecentRequests({ signal: controller.signal })
-      setLeaveSummary(data.leave_summary || null)
-      setLeaveRequests(Array.isArray(data.leave_requests) ? data.leave_requests : [])
+      const data = await getEmployeeEvaluationWidget({ signal: controller.signal })
+      setEvaluationWidget(data.widget || null)
     } catch {
       if (controller.signal.aborted) return
-      setLeaveSummary(null)
-      setLeaveRequests([])
+      setEvaluationWidget(null)
     } finally {
-      if (recentAbortRef.current === controller) {
-        recentAbortRef.current = null
+      if (evaluationAbortRef.current === controller) {
+        evaluationAbortRef.current = null
+        setEvaluationLoading(false)
       }
     }
   }, [])
@@ -744,15 +745,15 @@ export default function EmployeeDashboard() {
     const id = window.setTimeout(() => {
       void (async () => {
         await loadDashboardSummary()
-        void loadRecentRequests()
+        void loadEvaluationWidget()
       })()
     }, 80)
     return () => {
       window.clearTimeout(id)
       summaryAbortRef.current?.abort()
-      recentAbortRef.current?.abort()
+      evaluationAbortRef.current?.abort()
     }
-  }, [loadDashboardSummary, loadRecentRequests])
+  }, [loadDashboardSummary, loadEvaluationWidget])
 
   useEffect(() => {
     if (!summaryReady) return undefined
@@ -1277,6 +1278,7 @@ export default function EmployeeDashboard() {
   const dismissOverlays = useCallback(() => {
     setSelectedDay(null)
     setAttendanceSummaryModalOpen(false)
+    setEvaluationDetailsOpen(false)
     setOtDetailsOpen(false)
     setFaceAttendanceOpen(false)
   }, [])
@@ -1289,16 +1291,20 @@ export default function EmployeeDashboard() {
     navigateAfterOverlayDismiss(navigate, to)
   }, [navigate, selectedDayDetails])
 
-  const hasLeaveActivity = useMemo(() => {
-    if (loading) return true
-    const stats = leaveSummary || {}
-    const hasCounts =
-      (stats.pending ?? 0) > 0 ||
-      (stats.approved ?? 0) > 0 ||
-      (stats.rejected ?? 0) > 0 ||
-      (stats.upcoming ?? 0) > 0
-    return hasCounts || leaveRequests.length > 0
-  }, [loading, leaveSummary, leaveRequests])
+  const evaluationStats = evaluationWidget?.stats || {}
+  const evaluationHistory = Array.isArray(evaluationWidget?.history) ? evaluationWidget.history : []
+  const evaluationLatestPercentage = Number(evaluationWidget?.latest_percentage ?? evaluationWidget?.average_percentage)
+  const hasEvaluationScore = Number.isFinite(evaluationLatestPercentage)
+  const evaluationStatusSlices = useMemo(() => {
+    const reviewCount = Number(evaluationStats.submitted || 0) + Number(evaluationStats.under_review || 0)
+    return [
+      { id: 'completed', label: 'Completed', count: Number(evaluationStats.completed || 0), color: '#22c55e' },
+      { id: 'review', label: 'In review', count: reviewCount, color: '#f97316' },
+      { id: 'draft', label: 'Draft', count: Number(evaluationStats.draft || 0), color: '#94a3b8' },
+      { id: 'pending', label: 'Assigned', count: Number(evaluationStats.active_assignments || 0), color: '#6366f1' },
+    ].filter((slice) => slice.count > 0)
+  }, [evaluationStats.active_assignments, evaluationStats.completed, evaluationStats.draft, evaluationStats.submitted, evaluationStats.under_review])
+  const evaluationChartTotal = evaluationStatusSlices.reduce((sum, slice) => sum + slice.count, 0)
 
   const otMonthBreakdown = useMemo(() => {
     const pendingH = monthOtRequests
@@ -2141,76 +2147,99 @@ export default function EmployeeDashboard() {
         <Card className="overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
-              Leave Overview
+              Evaluation Results
             </CardTitle>
-            <div className="rounded-lg bg-muted p-2">
-              <ScanLine className="size-4 text-muted-foreground" />
+            <div className="rounded-lg bg-violet-500/10 p-2">
+              <FileCheck className="size-4 text-violet-600 dark:text-violet-300" />
             </div>
           </CardHeader>
           <CardContent>
             <p className="mb-4 text-sm font-semibold text-foreground">
               {getMonthLabel()}
             </p>
-            {!loading && !hasLeaveActivity ? (
+            {evaluationLoading ? (
+              <div className="flex h-28 items-center justify-center text-xs text-muted-foreground">Loading evaluation results…</div>
+            ) : !evaluationWidget ? (
               <div className="flex items-center gap-4 rounded-lg border border-border bg-muted/30 px-4 py-5 text-sm">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-orange-200/70 bg-card text-orange-600 dark:bg-card/80">
-                  <CalendarDays className="size-6" />
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-violet-200/70 bg-card text-violet-600 dark:bg-card/80 dark:text-violet-300">
+                  <FileCheck className="size-6" />
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-extrabold uppercase tracking-wide text-foreground">
-                    No leave activity this month
+                    No evaluation results yet
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    You&apos;re fully available for your current schedule.
+                    Completed evaluation results will appear here once submitted.
                   </p>
                 </div>
               </div>
             ) : (
-              <>
-                <div className="grid grid-cols-2 gap-2 text-base">
-                  <div>
-                    <div className="text-sm text-muted-foreground">Pending</div>
-                    <div className="mt-0.5 text-lg font-medium">
-                      {loading ? '—' : <AnimatedNumber value={leaveSummary?.pending ?? 0} />}
+              <button
+                type="button"
+                className="w-full rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                onClick={() => setEvaluationDetailsOpen(true)}
+                aria-label="View evaluation result details"
+              >
+                <div className="grid grid-cols-[1fr_auto] gap-4 rounded-lg border border-violet-500/20 bg-violet-500/4 p-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-3xl font-extrabold tabular-nums tracking-tight text-foreground">
+                        {hasEvaluationScore ? Number(evaluationLatestPercentage).toFixed(1) : '—'}
+                        {hasEvaluationScore ? <span className="ml-0.5 text-lg font-semibold text-muted-foreground">%</span> : null}
+                      </span>
+                      {evaluationWidget.latest_rating ? (
+                        <Badge variant="secondary" className="rounded-full bg-violet-500/10 text-violet-700 dark:text-violet-200">
+                          {evaluationWidget.latest_rating}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 truncate text-sm font-semibold text-foreground">
+                      {evaluationWidget.template || 'Latest evaluation'}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Evaluator: <span className="font-medium text-foreground">{evaluationWidget.evaluator || '—'}</span>
+                      {' · '}
+                      Last evaluated: <span className="font-medium text-foreground">{evaluationWidget.last_evaluated || '—'}</span>
+                    </p>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                      <div className="rounded-md bg-background/80 px-2 py-2">
+                        <div className="font-bold text-foreground"><AnimatedNumber value={evaluationStats.completed ?? 0} duration={700} /></div>
+                        <div className="text-muted-foreground">Done</div>
+                      </div>
+                      <div className="rounded-md bg-background/80 px-2 py-2">
+                        <div className="font-bold text-foreground"><AnimatedNumber value={(evaluationStats.submitted ?? 0) + (evaluationStats.under_review ?? 0)} duration={700} /></div>
+                        <div className="text-muted-foreground">Review</div>
+                      </div>
+                      <div className="rounded-md bg-background/80 px-2 py-2">
+                        <div className="font-bold text-foreground"><AnimatedNumber value={evaluationStats.active_assignments ?? 0} duration={700} /></div>
+                        <div className="text-muted-foreground">Assigned</div>
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <div className="text-sm text-muted-foreground">Approved</div>
-                    <div className="mt-0.5 text-lg font-medium">
-                      {loading ? '—' : <AnimatedNumber value={leaveSummary?.approved ?? 0} />}
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <div className="relative size-20">
+                      {evaluationChartTotal > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie data={evaluationStatusSlices} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius="55%" outerRadius="90%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2}>
+                              {evaluationStatusSlices.map((slice) => (
+                                <Cell key={slice.id} fill={slice.color} />
+                              ))}
+                            </Pie>
+                          </PieChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-background/70 text-[10px] text-muted-foreground">No chart</div>
+                      )}
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-sm font-bold tabular-nums text-foreground">{evaluationChartTotal}</span>
+                        <span className="text-[8px] text-muted-foreground">items</span>
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-muted-foreground">Rejected</div>
-                    <div className="mt-0.5 text-lg font-medium">
-                      {loading ? '—' : <AnimatedNumber value={leaveSummary?.rejected ?? 0} />}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-sm text-muted-foreground">Upcoming</div>
-                    <div className="mt-0.5 text-lg font-medium">
-                      {loading ? '—' : <AnimatedNumber value={leaveSummary?.upcoming ?? 0} />}
-                    </div>
+                    <Badge variant="outline" className="rounded-full text-[10px]">KPI coming soon</Badge>
                   </div>
                 </div>
-                {leaveRequests.length > 0 && (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Last request:{' '}
-                    {new Date(`${leaveRequests[0].start_date}T12:00:00`).toLocaleDateString('en-PH', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}{' '}
-                    –{' '}
-                    {new Date(`${leaveRequests[0].end_date}T12:00:00`).toLocaleDateString('en-PH', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}{' '}
-                    ({leaveRequests[0].status})
-                  </p>
-                )}
-              </>
+              </button>
             )}
           </CardContent>
         </Card>
@@ -3144,6 +3173,162 @@ export default function EmployeeDashboard() {
               </section>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={evaluationDetailsOpen} onOpenChange={setEvaluationDetailsOpen}>
+        <DialogContent
+          className="w-[calc(100vw-1rem)] max-w-4xl gap-0 overflow-hidden rounded-2xl border-border/70 bg-background p-0 shadow-[0_30px_90px_-28px_rgba(15,23,42,0.55)] sm:max-w-4xl"
+          innerClassName="max-h-[92vh] gap-0 overflow-y-auto p-0"
+        >
+          <DialogHeader className="border-b-0 px-5 pb-3 pt-6 pr-14 text-left sm:px-7 sm:pb-4 sm:pt-7">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
+                  Evaluation Results
+                </DialogTitle>
+                <DialogDescription className="mt-1.5 text-sm text-muted-foreground sm:text-base">
+                  {employeeDisplayName}
+                  <span className="px-1.5">•</span>
+                  Performance evaluation results from the evaluation module.
+                </DialogDescription>
+              </div>
+              <Badge variant="outline" className="w-fit rounded-full border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200">
+                Performance KPI coming soon
+              </Badge>
+            </div>
+          </DialogHeader>
+
+          <div className="px-5 pb-6 sm:px-7">
+            {evaluationLoading ? (
+              <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">Loading evaluation details…</div>
+            ) : !evaluationWidget ? (
+              <div className="rounded-2xl border border-dashed border-border bg-muted/25 p-8 text-center">
+                <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
+                  <FileCheck className="size-7" />
+                </div>
+                <h3 className="mt-4 text-base font-bold text-foreground">No evaluation results yet</h3>
+                <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+                  Completed evaluation results, evaluator details, and rating history will appear here once available.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-5 lg:grid-cols-[1fr_1.15fr]">
+                <section className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:bg-card/85">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Latest Evaluation</p>
+                      <p className="mt-2 text-4xl font-extrabold tabular-nums tracking-tight text-foreground">
+                        {hasEvaluationScore ? Number(evaluationLatestPercentage).toFixed(2) : '—'}
+                        {hasEvaluationScore ? <span className="ml-1 text-xl font-semibold text-muted-foreground">%</span> : null}
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-foreground">{evaluationWidget.template || 'Evaluation result'}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {evaluationWidget.latest_rating || 'No rating yet'} · {evaluationWidget.last_evaluated || '—'}
+                      </p>
+                    </div>
+                    <div className="relative size-28 shrink-0">
+                      {evaluationChartTotal > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie data={evaluationStatusSlices} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="92%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2}>
+                              {evaluationStatusSlices.map((slice) => (
+                                <Cell key={slice.id} fill={slice.color} />
+                              ))}
+                            </Pie>
+                          </PieChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-xs text-muted-foreground">No chart</div>
+                      )}
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-lg font-bold tabular-nums text-foreground">{evaluationChartTotal}</span>
+                        <span className="text-[10px] text-muted-foreground">items</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                    {[
+                      { label: 'Completed', value: evaluationStats.completed ?? 0, color: '#22c55e' },
+                      { label: 'In review', value: (evaluationStats.submitted ?? 0) + (evaluationStats.under_review ?? 0), color: '#f97316' },
+                      { label: 'Assigned', value: evaluationStats.active_assignments ?? 0, color: '#6366f1' },
+                      { label: 'Overdue', value: evaluationStats.overdue_assignments ?? 0, color: '#ef4444' },
+                    ].map((item) => (
+                      <div key={item.label} className="rounded-xl border border-border/60 bg-muted/20 p-3">
+                        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
+                          {item.label}
+                        </span>
+                        <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{item.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-5 rounded-xl border border-dashed border-border bg-muted/20 p-4">
+                    <p className="text-sm font-bold text-foreground">Performance (KPI)</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      KPI scoring will be connected here once the performance KPI module is available.
+                    </p>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:bg-card/85">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold uppercase tracking-wide text-foreground">Evaluation History</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">Recent evaluation results and evaluator details.</p>
+                    </div>
+                    {evaluationWidget.average_percentage != null ? (
+                      <Badge variant="secondary" className="rounded-full">
+                        Avg {Number(evaluationWidget.average_percentage).toFixed(1)}%
+                      </Badge>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 max-h-[420px] overflow-y-auto rounded-xl border border-border/60">
+                    {evaluationHistory.length === 0 ? (
+                      <div className="p-8 text-center text-sm text-muted-foreground">No completed evaluation history yet.</div>
+                    ) : (
+                      <ul className="divide-y divide-border/60">
+                        {evaluationHistory.map((row) => (
+                          <li key={row.id} className="p-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-bold text-foreground">{row.template || 'Evaluation'}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {row.evaluator || '—'} · {row.evaluated_at || '—'}
+                                </p>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <p className="text-sm font-bold tabular-nums text-foreground">
+                                  {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : '—'}
+                                </p>
+                                <p className="text-xs text-muted-foreground">{row.rating || row.status || '—'}</p>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex justify-end">
+                    <Button
+                      type="button"
+                      className="rounded-lg"
+                      onClick={() => {
+                        setEvaluationDetailsOpen(false)
+                        navigateAfterOverlayDismiss(navigate, '/employee/evaluations')
+                      }}
+                    >
+                      Open Evaluations
+                    </Button>
+                  </div>
+                </section>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 

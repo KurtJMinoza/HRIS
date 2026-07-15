@@ -193,12 +193,16 @@ class EvaluationAssignmentService
         EvaluationForm $form,
     ): void {
         $employeeName = trim($employee->first_name . ' ' . $employee->last_name);
+        $isSelfEvaluation = (int) $employee->id === (int) $evaluator->id;
+        $message = $isSelfEvaluation
+            ? "You have been assigned to complete your self evaluation using \"{$form->title}\"."
+            : "You have been assigned to evaluate {$employeeName} using \"{$form->title}\".";
 
         $this->notificationService->notifyUser($evaluator, [
             'type' => 'evaluation_assigned',
             'module' => 'evaluations',
-            'title' => 'Performance Evaluation Assigned',
-            'message' => "You have been assigned to evaluate {$employeeName} using \"{$form->title}\".",
+            'title' => $isSelfEvaluation ? 'Self Evaluation Assigned' : 'Performance Evaluation Assigned',
+            'message' => $message,
             'entity_id' => $assignment->id,
             'entity_type' => EvaluationAssignment::class,
             'action_url' => '/employee/evaluations',
