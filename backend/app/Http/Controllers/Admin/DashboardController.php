@@ -60,13 +60,15 @@ class DashboardController extends Controller
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
     /**
-     * Employee user IDs in scope for the actor (optionally active only).
+     * Non-admin employee user IDs in scope for dashboard headcount/attendance cards.
      *
      * @return array<int, int>
      */
     private function scopedEmployeeIds(User $actor, bool $onlyActive): array
     {
-        $q = User::query()->visibleEmployees();
+        $q = User::query()
+            ->visibleEmployees()
+            ->where('role', User::ROLE_EMPLOYEE);
         if ($onlyActive) {
             $q->active();
         }
