@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
+use App\Models\EmployeeScheduleAssignment;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
+use App\Models\WorkingSchedule;
 use App\Services\AttendanceDailySummaryService;
 use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusResolver;
@@ -65,7 +67,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::summaryKey($employeeId, $todayDate);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 8) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 10) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             Log::debug('[EmployeeDashboard] summary cache HIT', [
@@ -190,8 +192,9 @@ class EmployeeDashboardController extends Controller
             ],
             'upcoming_payroll' => $upcomingBatch,
             'latest_payslip' => $latestPayslipSummary,
+            'pending_schedule_change' => $this->pendingScheduleChangeSummary($user, $todayNow),
             'meta' => [
-                'schema_version' => 8,
+                'schema_version' => 10,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -766,6 +769,118 @@ class EmployeeDashboardController extends Controller
 
             return ['has_payslip' => false];
         }
+    }
+
+    private function pendingScheduleChangeSummary($user, Carbon $now): ?array
+    {
+        $today = $now->copy()->startOfDay();
+
+        $futureAssignment = EmployeeScheduleAssignment::query()
+            ->active()
+            ->where('employee_id', (int) $user->id)
+            ->whereDate('effective_start_date', '>', $today->toDateString())
+            ->with(['template', 'snapshot'])
+            ->orderBy('effective_start_date')
+            ->orderBy('id')
+            ->first();
+
+        if ($futureAssignment instanceof EmployeeScheduleAssignment) {
+            $schedule = $this->scheduleSummaryFromAssignment($futureAssignment);
+            if ($schedule !== null) {
+                return [
+                    'effective_from' => $futureAssignment->effective_start_date?->toDateString(),
+                    'schedule' => $schedule,
+                ];
+            }
+        }
+
+        $user->loadMissing('pendingWorkingSchedule');
+        if (! $user->pending_working_schedule_id || ! $user->pending_schedule_effective_from) {
+            return null;
+        }
+
+        if ($user->pending_schedule_effective_from->copy()->startOfDay()->lessThanOrEqualTo($today)) {
+            return null;
+        }
+
+        if (! $user->pendingWorkingSchedule instanceof WorkingSchedule) {
+            return null;
+        }
+
+        return [
+            'effective_from' => $user->pending_schedule_effective_from->toDateString(),
+            'schedule' => $this->workingScheduleSummary($user->pendingWorkingSchedule),
+        ];
+    }
+
+    private function scheduleSummaryFromAssignment(EmployeeScheduleAssignment $assignment): ?array
+    {
+        if ($assignment->template instanceof WorkingSchedule) {
+            return $this->workingScheduleSummary($assignment->template);
+        }
+
+        $payload = $assignment->snapshot?->schedule_payload;
+        if (! is_array($payload) || $payload === []) {
+            return null;
+        }
+
+        $summary = $this->scheduleSummaryFromResolvedDays($payload);
+        if ($summary !== null && $assignment->snapshot?->schedule_name) {
+            $summary['name'] = $assignment->snapshot->schedule_name;
+        }
+
+        return $summary;
+    }
+
+    private function workingScheduleSummary(WorkingSchedule $schedule): array
+    {
+        return [
+            'id' => $schedule->id,
+            'name' => $schedule->name,
+            'time_in' => $schedule->time_in,
+            'time_out' => $schedule->time_out,
+            'break_start' => $schedule->break_start,
+            'break_end' => $schedule->break_end,
+            'rest_days' => $schedule->rest_days ?? [],
+        ];
+    }
+
+    private function scheduleSummaryFromResolvedDays(array $resolved): ?array
+    {
+        $orderedDays = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+        $restDays = [];
+        $timeIn = null;
+        $timeOut = null;
+        $breakStart = null;
+        $breakEnd = null;
+
+        foreach ($orderedDays as $day) {
+            $dayConfig = $resolved[$day] ?? null;
+            if (! is_array($dayConfig) || trim((string) ($dayConfig['in'] ?? '')) === '') {
+                $restDays[] = $day;
+
+                continue;
+            }
+
+            $timeIn ??= (string) ($dayConfig['in'] ?? '');
+            $timeOut ??= (string) ($dayConfig['out'] ?? '');
+            $breakStart ??= ($dayConfig['break_start'] ?? null);
+            $breakEnd ??= ($dayConfig['break_end'] ?? null);
+        }
+
+        if ($timeIn === null || $timeOut === null) {
+            return null;
+        }
+
+        return [
+            'id' => null,
+            'name' => 'Assigned Schedule',
+            'time_in' => $timeIn,
+            'time_out' => $timeOut,
+            'break_start' => $breakStart,
+            'break_end' => $breakEnd,
+            'rest_days' => $restDays,
+        ];
     }
 
     private function buildTodayPayload(

@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\GenerateDetailedReportCsvJob;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
+use App\Models\EmployeeScheduleAssignment;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\ReportExportRun;
@@ -281,6 +282,38 @@ class ReportsController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Resolve the immutable schedule assignment that covered a specific report date.
+     *
+     * @param  \Illuminate\Support\Collection<int, EmployeeScheduleAssignment>|null  $assignments
+     */
+    private function resolveEffectiveScheduleForDate(User $user, string $dateKey, ?Collection $assignments): ?array
+    {
+        if ($assignments instanceof Collection) {
+            foreach ($assignments as $assignment) {
+                if (! $assignment instanceof EmployeeScheduleAssignment) {
+                    continue;
+                }
+
+                $startsOn = $assignment->effective_start_date?->toDateString();
+                $endsOn = $assignment->effective_end_date?->toDateString();
+                if ($startsOn !== null && $startsOn <= $dateKey && ($endsOn === null || $endsOn >= $dateKey)) {
+                    $snapshotPayload = $assignment->snapshot?->schedule_payload;
+                    if (is_array($snapshotPayload) && $snapshotPayload !== []) {
+                        return $snapshotPayload;
+                    }
+
+                    $fromTemplate = $this->buildScheduleFromWorkingSchedule($assignment->template);
+                    if ($fromTemplate !== null) {
+                        return $fromTemplate;
+                    }
+                }
+            }
+        }
+
+        return $this->resolveEffectiveSchedule($user);
     }
 
     /** Format a Carbon (UTC or any) as time string in attendance timezone to avoid double conversion. */
@@ -821,15 +854,33 @@ class ReportsController extends Controller
         $payrollImpactMemo = [];
         /** @var array<int, array{effective_schedule: ?array, company_id: ?int, hourly_rate: float}> */
         $premiumCtxCache = [];
+        /** @var array<int, \Illuminate\Support\Collection<int, EmployeeScheduleAssignment>> $scheduleAssignmentsByEmployee */
+        $scheduleAssignmentsByEmployee = EmployeeScheduleAssignment::query()
+            ->active()
+            ->whereIn('employee_id', $userIds)
+            ->whereDate('effective_start_date', '<=', $to->toDateString())
+            ->where(function ($q) use ($from): void {
+                $q->whereNull('effective_end_date')
+                    ->orWhereDate('effective_end_date', '>=', $from->toDateString());
+            })
+            ->with(['snapshot', 'template'])
+            ->orderByDesc('effective_start_date')
+            ->orderByDesc('id')
+            ->get()
+            ->groupBy('employee_id')
+            ->all();
 
         /** @var User $employee */
         foreach ($employees as $employee) {
-            $effectiveSchedule = $this->resolveEffectiveSchedule($employee);
-
             $cursor = $from->copy();
             while ($cursor->lessThanOrEqualTo($to)) {
                 $dayKey = self::DAY_KEYS[(int) $cursor->format('w')];
                 $dateKey = $cursor->toDateString();
+                $effectiveSchedule = $this->resolveEffectiveScheduleForDate(
+                    $employee,
+                    $dateKey,
+                    $scheduleAssignmentsByEmployee[$employee->id] ?? null
+                );
 
                 $todaySchedule = is_array($effectiveSchedule) && isset($effectiveSchedule[$dayKey]) ? $effectiveSchedule[$dayKey] : null;
 
@@ -1303,8 +1354,11 @@ class ReportsController extends Controller
                     if (! isset($premiumCtxCache[$employee->id])) {
                         $premiumCtxCache[$employee->id] = $this->premiumReport->premiumContextForEmployee($employee);
                     }
+                    $premiumContext = array_merge($premiumCtxCache[$employee->id], [
+                        'effective_schedule' => $effectiveSchedule,
+                    ]);
                     $premiumDay = $this->premiumReport->computeDayPremiumFromResolvedTimes(
-                        $premiumCtxCache[$employee->id],
+                        $premiumContext,
                         $dateKey,
                         $effectiveTimeIn,
                         $virtualClockOutFromOt ? null : $effectiveTimeOut,
@@ -1313,7 +1367,7 @@ class ReportsController extends Controller
                     );
                     $premiumDay = $this->applyApprovedOvertimePayToPremiumDay(
                         $premiumDay,
-                        $premiumCtxCache[$employee->id],
+                        $premiumContext,
                         $approvedOvertimeRecords,
                         $actualRenderedOtMinutes,
                     );
@@ -1410,7 +1464,7 @@ class ReportsController extends Controller
                         $actualRenderedOtHours,
                         $otPayableBasis,
                         $payableOtHours,
-                        $premiumCtxCache[$employee->id]['hourly_rate'] ?? 0,
+                        $premiumContext['hourly_rate'] ?? 0,
                         $this->otMultiplierLabelForRecords($approvedOvertimeRecords),
                         (float) ($premiumDay['overtime_pay'] ?? 0),
                         $payrollImpactHours,

@@ -30,6 +30,7 @@ use App\Services\OvertimeService;
 use App\Services\PayrollComputationService;
 use App\Services\PremiumPayCalculatorService;
 use App\Services\PresenceFilingCorrectionFormatter;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -2466,16 +2467,10 @@ class AttendanceController extends Controller
         $todayPresenceIssue = null;
         $todayLeavePayStatus = null;
 
-        // Resolve effective schedule once: prefer legacy JSON, fall back to working_schedule_id.
+        // Resolve today's schedule for summary-level flags; each row resolves its own historical schedule below.
         $profileStart = microtime(true);
         $user->loadMissing('workingSchedule');
-        $effectiveSchedule = $user->schedule;
-        if ((! is_array($effectiveSchedule) || $effectiveSchedule === []) && $user->working_schedule_id !== null) {
-            $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
-            if ($derived !== null) {
-                $effectiveSchedule = $derived;
-            }
-        }
+        $todayEffectiveSchedule = EmployeeScheduleResolver::resolveForDate($user, $todayDate);
         $profileMs = (int) round((microtime(true) - $profileStart) * 1000);
 
         $cursor = $from->copy();
@@ -2485,6 +2480,7 @@ class AttendanceController extends Controller
             $isToday = $dateKey === $todayDate;
             $isFuture = $cursor->greaterThan($todayNow->copy()->startOfDay());
 
+            $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($user, $dateKey);
             $schedule = $effectiveSchedule;
             $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
 
@@ -3017,7 +3013,7 @@ class AttendanceController extends Controller
         $hydratePayrollMs = (int) round((microtime(true) - $hydratePayrollStart) * 1000);
         $transformMs = (int) round((microtime(true) - $transformStart) * 1000);
 
-        $scheduleAssigned = is_array($effectiveSchedule) && $effectiveSchedule !== [];
+        $scheduleAssigned = is_array($todayEffectiveSchedule) && $todayEffectiveSchedule !== [];
 
         $otDetection = $this->otDetectionService->detectForToday($user, $attendanceTz);
 

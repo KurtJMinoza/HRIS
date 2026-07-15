@@ -616,6 +616,9 @@ export default function EmployeeDashboard() {
       pending_requests: next?.pending_requests ?? current?.pending_requests,
       upcoming_payroll: next?.upcoming_payroll ?? current?.upcoming_payroll,
       latest_payslip: next?.latest_payslip ?? current?.latest_payslip,
+      pending_schedule_change: Object.prototype.hasOwnProperty.call(next || {}, 'pending_schedule_change')
+        ? next.pending_schedule_change
+        : current?.pending_schedule_change,
     }))
   }, [])
 
@@ -995,6 +998,25 @@ export default function EmployeeDashboard() {
     } catch {
       return dateStr
     }
+  }
+
+  function formatScheduleChangeDate(dateStr) {
+    if (!dateStr) return '-'
+    try {
+      const d = new Date(`${dateStr}T12:00:00`)
+      if (Number.isNaN(d.getTime())) return dateStr
+      return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
+    } catch {
+      return dateStr
+    }
+  }
+
+  function formatScheduleChangeRange(schedule) {
+    if (!schedule?.time_in || !schedule?.time_out) return null
+    const start = formatClockTimeDisplay(schedule.time_in)
+    const end = formatClockTimeDisplay(schedule.time_out)
+    if (!start || !end) return null
+    return `${start} - ${end}`
   }
 
   function getMonthLabel() {
@@ -1418,6 +1440,12 @@ export default function EmployeeDashboard() {
     !['leave', 'rest', 'rest_day', 'no_schedule_rest'].includes(String(todayStatus || '')) &&
     !(todayTimeIn && todayTimeOut)
   const faceClockType = todayTimeIn && !todayTimeOut ? 'clock_out' : 'clock_in'
+  const pendingScheduleChange = summary?.pending_schedule_change?.schedule
+    ? summary.pending_schedule_change
+    : null
+  const pendingScheduleRange = pendingScheduleChange
+    ? formatScheduleChangeRange(pendingScheduleChange.schedule)
+    : null
 
   const currentStatus = useMemo(() => {
     const t = summary?.today
@@ -1713,6 +1741,22 @@ export default function EmployeeDashboard() {
               )}
             </div>
           )}
+          {pendingScheduleChange ? (
+            <div className="flex max-w-3xl items-start gap-3 rounded-lg border border-brand/20 bg-brand/5 px-3 py-2.5 text-sm shadow-sm">
+              <CalendarDays className="mt-0.5 size-4 shrink-0 text-brand" />
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground">Upcoming schedule change</p>
+                <p className="mt-0.5 leading-relaxed text-muted-foreground">
+                  Starting <span className="font-semibold tabular-nums text-foreground">{formatScheduleChangeDate(pendingScheduleChange.effective_from)}</span>, your schedule will update to{' '}
+                  <span className="font-semibold text-foreground">{pendingScheduleChange.schedule.name}</span>
+                  {pendingScheduleRange ? (
+                    <span className="text-muted-foreground"> ({pendingScheduleRange})</span>
+                  ) : null}
+                  .
+                </p>
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="flex w-full min-w-0 flex-wrap items-stretch justify-start @lg:w-auto @lg:justify-end">
           <LiveClock />
