@@ -159,14 +159,7 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                 });
                 if ($createdUserId !== null) {
                     $this->createdUserIds[] = $createdUserId;
-                    $created = User::query()->find($createdUserId);
-                    if ($created instanceof User) {
-                        app(EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
-                            $created,
-                            $this->actor,
-                            initializeLeaveCredits: true
-                        );
-                    }
+                    $this->syncAutomaticStatusAfterCreate($createdUserId, $excelRowNumber);
                 }
                 $this->rememberImportIdentifiers($basePayload, $excelRowNumber);
                 $this->imported++;
@@ -193,6 +186,28 @@ class EmployeeImport implements ToCollection, WithHeadingRow
                     ]);
                 }
             }
+        }
+    }
+
+    private function syncAutomaticStatusAfterCreate(int $createdUserId, int $excelRowNumber): void
+    {
+        $created = User::query()->find($createdUserId);
+        if (! $created instanceof User) {
+            return;
+        }
+
+        try {
+            app(EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
+                $created,
+                $this->actor,
+                initializeLeaveCredits: true
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Employee import post-create status sync failed', [
+                'row' => $excelRowNumber,
+                'user_id' => $createdUserId,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 

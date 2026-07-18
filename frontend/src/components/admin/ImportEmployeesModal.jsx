@@ -421,6 +421,7 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
   const [previewRows, setPreviewRows] = useState([])
   const [previewHeaders, setPreviewHeaders] = useState([])
   const fileInputRef = useRef(null)
+  const importInFlightRef = useRef(false)
 
   const metrics = useMemo(() => {
     const total = previewRows.length
@@ -534,7 +535,8 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
   }
 
   const startImport = async () => {
-    if (!(file instanceof File)) return
+    if (!(file instanceof File) || importInFlightRef.current) return
+    importInFlightRef.current = true
     setStep(3)
     setImporting(true)
     setProgress(5)
@@ -560,6 +562,7 @@ export default function ImportEmployeesModal({ open, onOpenChange, onImported, t
       setBackendResult({ imported: 0, failed: metrics.total, total_rows: metrics.total, errors: [{ row: 0, message: e?.message || 'Import failed.' }] })
       toast?.({ title: 'Import failed', description: e?.message || 'Failed to import employees.', variant: 'destructive' })
     } finally {
+      importInFlightRef.current = false
       setImporting(false)
     }
   }

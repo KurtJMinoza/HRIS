@@ -20,6 +20,7 @@ import {
   X,
   ScanFace,
   ChevronDown,
+  ChevronRight,
   ArrowUp,
   ArrowDown,
   Upload,
@@ -2244,26 +2245,32 @@ export default function AdminEmployees() {
           }
         }}
       >
-        <DialogContent className="max-w-md gap-4">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ScanFace className="size-5 text-primary" />
+        <DialogContent
+          className="max-w-xl rounded-2xl border-slate-200/90 bg-white p-0 shadow-[0_24px_70px_-34px_rgba(15,23,42,0.62)] dark:border-slate-800 dark:bg-card"
+          innerClassName="gap-0 overflow-y-auto p-0"
+          closeButtonClassName="right-5 top-5 size-10 rounded-xl border-slate-300 bg-white text-slate-950 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-card dark:text-slate-50"
+        >
+          <DialogHeader className="px-5 pb-5 pt-5 pr-20 text-left sm:px-6 sm:pb-6 sm:pt-6">
+            <DialogTitle className="flex items-center gap-4 text-2xl font-black tracking-tight text-slate-950 dark:text-slate-50">
+              <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-orange-100/75 text-orange-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] dark:bg-orange-500/10 dark:text-orange-300">
+                <ScanFace className="size-7" strokeWidth={2.2} aria-hidden />
+              </span>
               Manage face
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="ml-16 mt-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">
               {manageFaceEmployee && (
-                <span className="font-medium text-foreground">{manageFaceEmployee.name}</span>
+                <span className="font-black text-slate-950 dark:text-slate-50">{manageFaceEmployee.name}</span>
               )}
               {' — '}View, register, change, or remove face recognition.
             </DialogDescription>
           </DialogHeader>
           {manageFaceEmployee && (
-            <div className="flex flex-col gap-2">
+            <div className="space-y-3 px-5 pb-5 sm:px-6">
               {manageFaceEmployee.has_face ? (
                 <>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-2"
+                  <button
+                    type="button"
+                    className="group flex w-full items-center gap-4 rounded-xl border border-slate-300 bg-white px-4 py-4 text-left transition-colors hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:bg-card dark:hover:bg-slate-900/40"
                     onClick={() => {
                       const emp = manageFaceEmployee
                       setManageFaceOpen(false)
@@ -2271,12 +2278,18 @@ export default function AdminEmployees() {
                       openViewFace(emp)
                     }}
                   >
-                    <Eye className="size-4" />
-                    View face
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-2"
+                    <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-slate-50">
+                      <Eye className="size-6" strokeWidth={2.4} aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-base font-black text-slate-950 dark:text-slate-50">View face</span>
+                      <span className="mt-1 block text-sm leading-relaxed text-slate-500 dark:text-slate-400">View the current face recognition.</span>
+                    </span>
+                    <ChevronRight className="size-5 shrink-0 text-slate-950 transition-transform group-hover:translate-x-0.5 dark:text-slate-50" strokeWidth={2.2} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="group flex w-full items-center gap-4 rounded-xl border border-slate-300 bg-white px-4 py-4 text-left transition-colors hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:bg-card dark:hover:bg-slate-900/40"
                     onClick={() => {
                       const emp = manageFaceEmployee
                       setManageFaceOpen(false)
@@ -2284,12 +2297,18 @@ export default function AdminEmployees() {
                       openFaceRegister(emp)
                     }}
                   >
-                    <RefreshCw className="size-4" />
-                    Change face
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-slate-50">
+                      <RefreshCw className="size-6" strokeWidth={2.4} aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-base font-black text-slate-950 dark:text-slate-50">Change face</span>
+                      <span className="mt-1 block text-sm leading-relaxed text-slate-500 dark:text-slate-400">Update the current face recognition.</span>
+                    </span>
+                    <ChevronRight className="size-5 shrink-0 text-slate-950 transition-transform group-hover:translate-x-0.5 dark:text-slate-50" strokeWidth={2.2} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="group flex w-full items-center gap-4 rounded-xl border border-red-500 bg-red-50/45 px-4 py-4 text-left transition-colors hover:bg-red-50 dark:border-red-500/80 dark:bg-red-500/10 dark:hover:bg-red-500/15"
                     onClick={() => {
                       const emp = manageFaceEmployee
                       setManageFaceOpen(false)
@@ -2297,14 +2316,20 @@ export default function AdminEmployees() {
                       setRemoveFaceConfirmEmployee(emp)
                     }}
                   >
-                    <Trash2 className="size-4" />
-                    Remove face
-                  </Button>
+                    <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-300">
+                      <Trash2 className="size-6" strokeWidth={2.4} aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-base font-black text-red-600 dark:text-red-300">Remove face</span>
+                      <span className="mt-1 block text-sm leading-relaxed text-slate-500 dark:text-slate-400">Remove the current face recognition.</span>
+                    </span>
+                    <ChevronRight className="size-5 shrink-0 text-red-600 transition-transform group-hover:translate-x-0.5 dark:text-red-300" strokeWidth={2.2} aria-hidden />
+                  </button>
                 </>
               ) : (
-                <Button
-                  variant="default"
-                  className="w-full justify-start gap-2"
+                <button
+                  type="button"
+                  className="group flex w-full items-center gap-4 rounded-xl border border-orange-500 bg-orange-50/60 px-4 py-4 text-left transition-colors hover:bg-orange-50 dark:border-orange-400/80 dark:bg-orange-500/10 dark:hover:bg-orange-500/15"
                   onClick={() => {
                     const emp = manageFaceEmployee
                     setManageFaceOpen(false)
@@ -2312,14 +2337,24 @@ export default function AdminEmployees() {
                     openFaceRegister(emp)
                   }}
                 >
-                  <ScanFace className="size-4" />
-                  Register face
-                </Button>
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                    <ScanFace className="size-6" strokeWidth={2.4} aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-base font-black text-orange-700 dark:text-orange-300">Register face</span>
+                    <span className="mt-1 block text-sm leading-relaxed text-slate-500 dark:text-slate-400">Add face recognition for this employee.</span>
+                  </span>
+                  <ChevronRight className="size-5 shrink-0 text-orange-600 transition-transform group-hover:translate-x-0.5 dark:text-orange-300" strokeWidth={2.2} aria-hidden />
+                </button>
               )}
             </div>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setManageFaceOpen(false); setManageFaceEmployee(null); }}>
+          <DialogFooter className="border-t border-slate-200 bg-white px-5 py-4 dark:border-slate-800 dark:bg-card sm:px-6">
+            <Button
+              variant="outline"
+              className="h-10 min-w-24 rounded-lg border-slate-950 px-6 text-sm text-slate-950 hover:bg-slate-50 dark:border-slate-200 dark:text-slate-50 dark:hover:bg-slate-900/40"
+              onClick={() => { setManageFaceOpen(false); setManageFaceEmployee(null); }}
+            >
               Close
             </Button>
           </DialogFooter>

@@ -3362,107 +3362,139 @@ export default function EmployeeDashboard() {
                   </div>
                 </section>
 
-                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-card shadow-sm dark:border-slate-800/80 dark:bg-card/85">
-                  <div className="flex flex-col gap-3 border-b border-border/70 bg-linear-to-br from-slate-50 via-card to-card p-5 dark:from-slate-900/50 dark:via-card dark:to-card sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex items-start gap-3">
-                      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-slate-900/5 text-slate-700 dark:bg-white/10 dark:text-slate-200">
-                        <FileCheck className="size-5" aria-hidden />
+                <section className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_14px_36px_-32px_rgba(15,23,42,0.45)] dark:border-slate-800/80 dark:bg-card/95">
+                  <div className="flex flex-col gap-3 border-b border-slate-200/90 px-4 py-3 dark:border-slate-800/80 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-orange-100/70 text-orange-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.85)] dark:bg-orange-500/10 dark:text-orange-300">
+                        <FileCheck className="size-6" strokeWidth={2.2} aria-hidden />
                       </span>
-                      <div>
-                        <h3 className="text-sm font-bold uppercase tracking-wide text-foreground">Evaluation Module</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">Separate evaluation results. These are not used to compute KPI Performance.</p>
+                      <div className="min-w-0">
+                        <h3 className="text-base font-black uppercase leading-tight tracking-[0.01em] text-slate-950 dark:text-slate-50">
+                          Evaluation Module
+                        </h3>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-900 dark:text-slate-300">
+                          Separate evaluation results. These are not used to compute KPI Performance.
+                        </p>
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {evaluationModuleWidget?.average_percentage != null ? (
-                        <Badge variant="secondary" className="rounded-full">
-                          Eval Avg {Number(evaluationModuleWidget.average_percentage).toFixed(1)}%
-                        </Badge>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8 rounded-full"
-                        onClick={() => {
-                          setEvaluationDetailsOpen(false)
-                          navigateAfterOverlayDismiss(navigate, '/employee/evaluations')
-                        }}
-                      >
-                        Open Evaluations
-                      </Button>
-                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 w-full justify-center gap-2 rounded-lg border-orange-600 bg-white px-4 text-xs font-medium text-orange-600 shadow-none hover:bg-orange-50 hover:text-orange-700 dark:border-orange-400 dark:bg-card dark:text-orange-300 dark:hover:bg-orange-500/10 sm:w-auto"
+                      onClick={() => {
+                        setEvaluationDetailsOpen(false)
+                        navigateAfterOverlayDismiss(navigate, '/employee/evaluations')
+                      }}
+                    >
+                      <ArrowUpRight className="size-4" strokeWidth={2.4} aria-hidden />
+                      Open Evaluations
+                    </Button>
                   </div>
 
-                  <div className="grid gap-4 p-5 lg:grid-cols-[0.85fr_1.15fr]">
-                    <div className="rounded-2xl border border-border/60 bg-muted/15 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Latest Completed Result</p>
-                          <p className="mt-2 text-4xl font-extrabold tabular-nums tracking-tight text-foreground">
-                            {latestCompletedEvaluation?.percentage != null
-                              ? Number(latestCompletedEvaluation.percentage).toFixed(1)
-                              : evaluationModuleWidget?.latest_percentage != null
-                                ? Number(evaluationModuleWidget.latest_percentage).toFixed(1)
-                                : '—'}
-                            {latestCompletedEvaluation?.percentage != null || evaluationModuleWidget?.latest_percentage != null ? (
-                              <span className="ml-1 text-lg font-semibold text-muted-foreground">%</span>
-                            ) : null}
-                          </p>
-                        </div>
-                        <Badge variant="outline" className="rounded-full">
+                  <div className="grid gap-3 p-3 lg:grid-cols-[0.97fr_1.03fr]">
+                    <div className="rounded-xl border border-slate-200/95 bg-white p-3 dark:border-slate-800 dark:bg-card/80">
+                      <div className="flex items-center justify-between gap-3">
+                        <h4 className="text-xs font-black uppercase tracking-[0.01em] text-slate-950 dark:text-slate-50">
+                          Latest Completed Result
+                        </h4>
+                        <span className="inline-flex min-h-6 items-center rounded-lg bg-orange-50 px-2.5 text-[11px] font-medium text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
                           {completedEvaluationHistory.length > 0 ? 'Completed' : 'No result'}
-                        </Badge>
+                        </span>
                       </div>
 
-                      <div className="mt-4 rounded-xl border border-border/50 bg-background/80 p-3">
-                        <p className="text-sm font-bold text-foreground">
+                      <div className="flex min-h-[122px] flex-col items-center justify-center px-2 py-2.5 text-center">
+                        <div className="relative flex size-16 items-center justify-center">
+                          <span className="absolute inset-2.5 rounded-full bg-orange-100/70 dark:bg-orange-500/10" />
+                          <span className="absolute left-1 top-4 size-1.5 rounded-full border border-orange-300 bg-white dark:bg-card" />
+                          <span className="absolute right-3 top-1 size-1.5 rounded-full border border-slate-300 bg-white dark:border-slate-600 dark:bg-card" />
+                          <span className="absolute bottom-4 left-3 size-1 rounded-full bg-orange-300/80" />
+                          <span className="absolute right-1 top-7 size-1 rounded-full bg-orange-300" />
+                          <span className="relative block h-10 w-8 rounded-md border-2 border-slate-900 bg-white shadow-[0_5px_14px_-10px_rgba(15,23,42,0.75)] dark:border-slate-100 dark:bg-card">
+                            <span className="absolute left-1.5 right-2 top-2 h-0.5 rounded-full bg-orange-500" />
+                            <span className="absolute left-1.5 right-1.5 top-4 h-0.5 rounded-full bg-slate-300 dark:bg-slate-600" />
+                            <span className="absolute left-1.5 right-2.5 top-6 h-0.5 rounded-full bg-slate-300 dark:bg-slate-600" />
+                            <span className="absolute -right-1.5 top-1.5 size-3 rotate-45 border-b-2 border-r-2 border-slate-900 bg-white dark:border-slate-100 dark:bg-card" />
+                            <span className="absolute -bottom-0.5 -right-3 size-5 rounded-full border-[3px] border-orange-600 bg-white/80 dark:border-orange-300 dark:bg-card/90" />
+                            <span className="absolute -bottom-2.5 -right-5 h-3.5 w-[3px] -rotate-45 rounded-full bg-orange-600 dark:bg-orange-300" />
+                          </span>
+                        </div>
+
+                        <h5 className="mt-2 text-sm font-black tracking-tight text-slate-950 dark:text-slate-50">
                           {latestCompletedEvaluation?.template || (evaluationModuleWidget?.latest_percentage != null ? evaluationModuleWidget?.template : null) || 'No completed evaluation result'}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {(latestCompletedEvaluation?.rating || evaluationModuleWidget?.latest_rating || 'No rating')}
-                          <span className="px-1">·</span>
-                          {latestCompletedEvaluation?.evaluated_at || evaluationModuleWidget?.last_evaluated || '—'}
+                        </h5>
+                        <p className="mt-1.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                          {latestCompletedEvaluation?.percentage != null
+                            ? `${Number(latestCompletedEvaluation.percentage).toFixed(1)}%`
+                            : evaluationModuleWidget?.latest_percentage != null
+                              ? `${Number(evaluationModuleWidget.latest_percentage).toFixed(1)}%`
+                              : 'No rating yet'}
+                          <span className="px-2 text-slate-300">&bull;</span>
+                          {latestCompletedEvaluation?.rating || evaluationModuleWidget?.latest_rating || <>&mdash;</>}
                         </p>
                       </div>
 
-                      <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                        <div className="rounded-lg bg-background/80 p-2">
-                          <div className="font-bold tabular-nums text-foreground">{evaluationStats.completed ?? 0}</div>
-                          <div className="text-muted-foreground">Completed</div>
-                        </div>
-                        <div className="rounded-lg bg-background/80 p-2">
-                          <div className="font-bold tabular-nums text-foreground">{evaluationStats.active_assignments ?? 0}</div>
-                          <div className="text-muted-foreground">Assigned</div>
-                        </div>
-                        <div className="rounded-lg bg-background/80 p-2">
-                          <div className="font-bold tabular-nums text-foreground">{evaluationStats.overdue_assignments ?? 0}</div>
-                          <div className="text-muted-foreground">Overdue</div>
+                      <div className="border-t border-slate-200 pt-3 dark:border-slate-800">
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          {[
+                            { label: 'Completed', value: evaluationStats.completed ?? 0, Icon: FileCheck },
+                            { label: 'Assigned', value: evaluationStats.active_assignments ?? 0, Icon: User },
+                            { label: 'Overdue', value: evaluationStats.overdue_assignments ?? 0, Icon: Clock },
+                          ].map(({ label, value, Icon }) => (
+                            <div key={label} className="min-h-[72px] rounded-lg border border-slate-200/95 bg-white p-2.5 dark:border-slate-800 dark:bg-background/50">
+                              <span className="flex size-7 items-center justify-center rounded-lg bg-orange-100/70 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
+                                <Icon className="size-3.5" strokeWidth={2.2} aria-hidden />
+                              </span>
+                              <p className="mt-2 text-xl font-black tabular-nums tracking-tight text-slate-950 dark:text-slate-50">{value}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </div>
 
-                    <div className="overflow-hidden rounded-2xl border border-border/60">
-                      <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-4 py-3">
+                    <div className="rounded-xl border border-slate-200/95 bg-white p-3 dark:border-slate-800 dark:bg-card/80">
+                      <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Evaluation Activity</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
+                          <h4 className="text-xs font-black uppercase tracking-[0.01em] text-slate-950 dark:text-slate-50">
+                            Evaluation Activity
+                          </h4>
+                          <p className="mt-1.5 max-w-md text-xs leading-relaxed text-slate-900 dark:text-slate-300">
                             Completed results are separated from drafts and assigned evaluations.
                           </p>
                         </div>
-                        <Badge variant="secondary" className="rounded-full">
+                        <span className="inline-flex min-h-6 shrink-0 items-center rounded-lg bg-orange-50 px-2.5 text-[11px] font-medium text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
                           {evaluationHistory.length} total
-                        </Badge>
+                        </span>
                       </div>
 
-                      <div className="max-h-[360px] overflow-y-auto">
+                      <div className="mt-3 max-h-[235px] overflow-y-auto">
                         {completedEvaluationHistory.length === 0 && openEvaluationHistory.length === 0 ? (
-                          <div className="p-8 text-center text-sm text-muted-foreground">No evaluation activity yet.</div>
+                          <div className="flex min-h-[160px] flex-col items-center justify-center px-2 pb-2 text-center">
+                            <div className="relative flex size-20 items-center justify-center">
+                              <span className="absolute inset-4 rounded-full bg-orange-100/60 dark:bg-orange-500/10" />
+                              <span className="absolute left-3 top-5 size-1.5 rounded-full border border-orange-300 bg-white dark:bg-card" />
+                              <span className="absolute bottom-4 left-4 size-1.5 rounded-full border border-slate-300 bg-white dark:border-slate-600 dark:bg-card" />
+                              <span className="absolute bottom-3 left-6 size-1 rounded-full bg-orange-300" />
+                              <span className="absolute right-3 bottom-4 size-1 rounded-full bg-orange-600 dark:bg-orange-300" />
+                              <span className="absolute right-1 top-2 h-16 w-8 rounded-r-full border-r-2 border-dashed border-orange-500" />
+                              <FileText className="relative size-11 rotate-[-7deg] text-slate-300 dark:text-slate-600" strokeWidth={2.5} aria-hidden />
+                              <span className="absolute top-[27px] flex h-3 w-7 items-center justify-center rounded-t bg-orange-500 text-white">
+                                <span className="size-1 rounded-full bg-orange-100" />
+                              </span>
+                            </div>
+                            <h5 className="mt-1.5 text-base font-black tracking-tight text-slate-950 dark:text-slate-50">
+                              No evaluation activity yet.
+                            </h5>
+                            <p className="mt-2 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                              Assigned evaluations and completed results<br className="hidden sm:block" />
+                              will appear here.
+                            </p>
+                          </div>
                         ) : (
-                          <div className="divide-y divide-border/60">
+                          <div className="space-y-5">
                             {completedEvaluationHistory.length > 0 ? (
-                              <div className="p-4">
-                                <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Completed Results</p>
+                              <div>
+                                <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Completed Results</p>
                                 <ul className="space-y-2">
                                   {completedEvaluationHistory.map((row) => (
                                     <li key={row.id} className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
@@ -3470,12 +3502,12 @@ export default function EmployeeDashboard() {
                                         <div className="min-w-0">
                                           <p className="truncate text-sm font-bold text-foreground">{row.template || 'Evaluation'}</p>
                                           <p className="mt-1 text-xs text-muted-foreground">
-                                            {row.evaluator || '—'} · {row.evaluated_at || '—'}
+                                            {row.evaluator || <>&mdash;</>} <span>&bull;</span> {row.evaluated_at || <>&mdash;</>}
                                           </p>
                                         </div>
                                         <div className="shrink-0 text-right">
                                           <p className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
-                                            {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : '—'}
+                                            {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : <>&mdash;</>}
                                           </p>
                                           <p className="text-xs text-muted-foreground">{row.rating || 'Completed'}</p>
                                         </div>
@@ -3486,21 +3518,21 @@ export default function EmployeeDashboard() {
                               </div>
                             ) : null}
 
-                            <div className="p-4">
-                              <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Open Evaluations</p>
+                            <div>
+                              <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Open Evaluations</p>
                               {openEvaluationHistory.length === 0 ? (
-                                <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-center text-sm text-muted-foreground">
+                                <div className="rounded-xl border border-dashed border-slate-200 bg-orange-50/35 p-5 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-orange-500/5 dark:text-slate-400">
                                   No draft or assigned evaluations.
                                 </div>
                               ) : (
                                 <ul className="space-y-2">
                                   {openEvaluationHistory.map((row) => (
-                                    <li key={row.id} className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
+                                    <li key={row.id} className="rounded-xl border border-orange-500/20 bg-orange-500/[0.04] p-3">
                                       <div className="flex items-start justify-between gap-4">
                                         <div className="min-w-0">
                                           <p className="truncate text-sm font-bold text-foreground">{row.template || 'Evaluation'}</p>
                                           <p className="mt-1 text-xs text-muted-foreground">
-                                            Evaluator: {row.evaluator || '—'}
+                                            Evaluator: {row.evaluator || <>&mdash;</>}
                                           </p>
                                         </div>
                                         <Badge variant="outline" className="shrink-0 rounded-full capitalize">
@@ -3517,8 +3549,9 @@ export default function EmployeeDashboard() {
                       </div>
                     </div>
                   </div>
-
                 </section>
+
+
               </div>
             )}
           </div>
