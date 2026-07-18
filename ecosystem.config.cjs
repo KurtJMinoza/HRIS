@@ -41,9 +41,10 @@ const php = resolveBinary('PHP_BIN', isWin ? 'C:\\xampp\\php\\php.exe' : 'php', 
 const python = resolveBinary('FACE_SERVICE_PYTHON', 'python', ['python', 'python3']);
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const octaneHost = process.env.OCTANE_HOST || '127.0.0.1';
-const octanePort = process.env.OCTANE_PORT || '8000';
+const octanePort = process.env.OCTANE_PORT || '8100';
 const frontendVite = path.join(root, 'frontend', 'node_modules', 'vite', 'bin', 'vite.js');
 const backendDir = path.join(root, 'backend');
+const octaneStart = path.join(backendDir, isWin ? 'octane-start.cmd' : 'artisan');
 const faceServiceDir = path.join(root, 'face_service');
 
 const faceServicePorts = (process.env.FACE_SERVICE_PORTS || '5000,5002,5003,5004,5005')
@@ -71,6 +72,27 @@ function laravelApp(name, args) {
   };
 }
 
+function octaneApp() {
+  if (isWin) {
+    return {
+      name: 'laravel-octane',
+      cwd: backendDir,
+      script: octaneStart,
+      args: [`--host=${octaneHost}`, `--port=${octanePort}`],
+      interpreter: 'none',
+      ...pm2Defaults,
+    };
+  }
+
+  return laravelApp('laravel-octane', [
+    'artisan',
+    'octane:start',
+    '--server=roadrunner',
+    `--host=${octaneHost}`,
+    `--port=${octanePort}`,
+  ]);
+}
+
 function faceServiceApp(port) {
   return {
     name: `face-service-${port}`,
@@ -88,13 +110,7 @@ function faceServiceApp(port) {
 
 module.exports = {
   apps: [
-    laravelApp('octane', [
-      'artisan',
-      'octane:start',
-      '--server=roadrunner',
-      `--host=${octaneHost}`,
-      `--port=${octanePort}`,
-    ]),
+    octaneApp(),
     {
       name: 'frontend-dev',
       cwd: path.join(root, 'frontend'),

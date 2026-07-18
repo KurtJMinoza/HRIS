@@ -17,7 +17,9 @@ use App\Services\EvaluationEvaluatorResolver;
 use App\Services\EvaluationPrefillService;
 use App\Services\EvaluationScoringService;
 use App\Services\HrRoleResolver;
+use App\Services\MergedKpiPerformanceService;
 use App\Services\RbacService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +33,7 @@ class EvaluationController extends Controller
         private readonly EvaluationAssignmentService $assignmentService,
         private readonly EvaluationEvaluatorResolver $evaluatorResolver,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly MergedKpiPerformanceService $mergedKpiPerformanceService,
         private readonly RbacService $rbacService,
     ) {}
 
@@ -1026,6 +1029,16 @@ class EvaluationController extends Controller
     public function employeeDashboardWidget(Request $request): JsonResponse
     {
         $user = $request->user();
+        $validated = $request->validate([
+            'month' => ['nullable', 'regex:/^\d{4}-\d{2}$/'],
+        ]);
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $monthStart = isset($validated['month'])
+            ? Carbon::createFromFormat('Y-m-d', $validated['month'].'-01', $tz)->startOfMonth()
+            : now($tz)->startOfMonth();
+        $monthEnd = $monthStart->copy()->endOfMonth();
+        $monthStartDate = $monthStart->toDateString();
+        $monthEndDate = $monthEnd->toDateString();
 
         $evaluations = Evaluation::query()
             ->with([
@@ -1033,6 +1046,13 @@ class EvaluationController extends Controller
                 'evaluator:id,first_name,middle_name,last_name,suffix',
             ])
             ->where('employee_id', $user->id)
+            ->where(function ($query) use ($monthStart, $monthEnd): void {
+                $query->whereBetween('evaluated_at', [$monthStart, $monthEnd])
+                    ->orWhere(function ($draftQuery) use ($monthStart, $monthEnd): void {
+                        $draftQuery->whereNull('evaluated_at')
+                            ->whereBetween('created_at', [$monthStart, $monthEnd]);
+                    });
+            })
             ->orderByDesc('evaluated_at')
             ->orderByDesc('created_at')
             ->get();
@@ -1054,19 +1074,81 @@ class EvaluationController extends Controller
         $activeAssignments = EvaluationAssignment::query()
             ->where('employee_id', $user->id)
             ->whereIn('status', [EvaluationAssignment::STATUS_PENDING, EvaluationAssignment::STATUS_IN_PROGRESS])
+            ->whereDate('start_date', '<=', $monthEndDate)
+            ->whereDate('end_date', '>=', $monthStartDate)
             ->count();
         $overdueAssignments = EvaluationAssignment::query()
             ->where('employee_id', $user->id)
             ->whereNotIn('status', [EvaluationAssignment::STATUS_COMPLETED, EvaluationAssignment::STATUS_CANCELLED])
+            ->whereDate('end_date', '>=', $monthStartDate)
+            ->whereDate('end_date', '<=', $monthEndDate)
             ->whereDate('end_date', '<', now()->toDateString())
             ->count();
 
-        if (! $latest && $activeAssignments === 0) {
+        $performanceBundle = $this->mergedKpiPerformanceService->getPerformanceForRange(
+            $monthStart->toDateString(),
+            $monthEnd->toDateString(),
+            [(int) $user->id],
+        );
+        $performance = ($performanceBundle['by_employee'] ?? collect())->get((int) $user->id);
+        $byDate = is_array($performance) && is_array($performance['by_date'] ?? null)
+            ? $performance['by_date']
+            : [];
+        krsort($byDate);
+        $latestKpiDate = $byDate !== [] ? array_key_first($byDate) : null;
+        $snapshotAveragePct = $byDate !== []
+            ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
+            : null;
+        $performancePct = is_array($performance) && isset($performance['performance_percentage'])
+            ? round((float) $performance['performance_percentage'], 2)
+            : null;
+        $performanceSource = is_array($performance)
+            ? (string) ($performance['source'] ?? 'merged_kpi_period_snapshots')
+            : null;
+        $performancePayload = is_array($performance) ? [
+            'source' => $performanceSource,
+            'source_label' => 'KPI snapshots',
+            'from_date' => $monthStart->toDateString(),
+            'to_date' => $monthEnd->toDateString(),
+            'average_percentage' => $performancePct,
+            'snapshot_average_percentage' => $snapshotAveragePct,
+            'latest_percentage' => $latestKpiDate !== null && isset($byDate[$latestKpiDate])
+                ? round((float) $byDate[$latestKpiDate], 2)
+                : null,
+            'latest_rating' => $latestKpiDate !== null && isset($byDate[$latestKpiDate])
+                ? $this->evaluationScoringService->ratingLabelFromPercentage((float) $byDate[$latestKpiDate])
+                : null,
+            'latest_date' => $latestKpiDate !== null
+                ? Carbon::parse($latestKpiDate)->format('F d, Y')
+                : null,
+            'snapshot_count' => (int) ($performance['snapshot_count'] ?? count($byDate)),
+            'history' => collect($byDate)
+                ->map(fn ($pct, string $date): array => [
+                    'date' => $date,
+                    'date_label' => Carbon::parse($date)->format('F d, Y'),
+                    'percentage' => round((float) $pct, 2),
+                    'rating' => $this->evaluationScoringService->ratingLabelFromPercentage((float) $pct),
+                ])
+                ->values(),
+        ] : null;
+
+        if (! $latest && $activeAssignments === 0 && $performancePayload === null) {
             return response()->json(['widget' => null]);
         }
 
         return response()->json([
             'widget' => [
+                'performance' => $performancePayload,
+                'evaluation' => [
+                    'status' => $latest?->status,
+                    'latest_score' => $latest?->overall_score,
+                    'latest_percentage' => $latestPercentage !== null ? round($latestPercentage, 2) : null,
+                    'latest_rating' => $latest?->overall_rating,
+                    'last_evaluated' => $latest?->evaluated_at?->format('F d, Y') ?? '—',
+                    'evaluator' => $latest ? $this->resolveEvaluatorLabel($latest) : null,
+                    'template' => $latest?->evaluationForm?->title,
+                    'average_percentage' => $percentages->isNotEmpty() ? round($percentages->avg(), 2) : null,
+                ],
                 'status' => $latest?->status,
                 'latest_score' => $latest?->overall_score,
                 'latest_percentage' => $latestPercentage !== null ? round($latestPercentage, 2) : null,

@@ -726,9 +726,10 @@ export default function EmployeeDashboard() {
     evaluationAbortRef.current?.abort()
     const controller = new AbortController()
     evaluationAbortRef.current = controller
+    const monthKey = calendarMonthSelectKey(calendarYear, calendarMonth)
     setEvaluationLoading(true)
     try {
-      const data = await getEmployeeEvaluationWidget({ signal: controller.signal })
+      const data = await getEmployeeEvaluationWidget({ month: monthKey, signal: controller.signal })
       setEvaluationWidget(data.widget || null)
     } catch {
       if (controller.signal.aborted) return
@@ -739,7 +740,7 @@ export default function EmployeeDashboard() {
         setEvaluationLoading(false)
       }
     }
-  }, [])
+  }, [calendarMonth, calendarYear])
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -1202,6 +1203,12 @@ export default function EmployeeDashboard() {
     setCalendarMonth(parsed.monthIndex)
   }, [])
 
+  const handlePerformanceCalendarCellSelect = useCallback((cell) => {
+    if (!cell?.isAdjacent) return
+    setCalendarYear(cell.year)
+    setCalendarMonth(cell.month)
+  }, [])
+
   const attendanceSummaryModalDays = useMemo(
     () => (Array.isArray(days) ? days : [])
       .filter(isScheduledWorkDay)
@@ -1291,20 +1298,48 @@ export default function EmployeeDashboard() {
     navigateAfterOverlayDismiss(navigate, to)
   }, [navigate, selectedDayDetails])
 
+  const performanceWidget = evaluationWidget?.performance || null
+  const evaluationModuleWidget = evaluationWidget?.evaluation || null
   const evaluationStats = evaluationWidget?.stats || {}
-  const evaluationHistory = Array.isArray(evaluationWidget?.history) ? evaluationWidget.history : []
-  const evaluationLatestPercentage = Number(evaluationWidget?.latest_percentage ?? evaluationWidget?.average_percentage)
-  const hasEvaluationScore = Number.isFinite(evaluationLatestPercentage)
-  const evaluationStatusSlices = useMemo(() => {
-    const reviewCount = Number(evaluationStats.submitted || 0) + Number(evaluationStats.under_review || 0)
-    return [
-      { id: 'completed', label: 'Completed', count: Number(evaluationStats.completed || 0), color: '#22c55e' },
-      { id: 'review', label: 'In review', count: reviewCount, color: '#f97316' },
-      { id: 'draft', label: 'Draft', count: Number(evaluationStats.draft || 0), color: '#94a3b8' },
-      { id: 'pending', label: 'Assigned', count: Number(evaluationStats.active_assignments || 0), color: '#6366f1' },
-    ].filter((slice) => slice.count > 0)
-  }, [evaluationStats.active_assignments, evaluationStats.completed, evaluationStats.draft, evaluationStats.submitted, evaluationStats.under_review])
-  const evaluationChartTotal = evaluationStatusSlices.reduce((sum, slice) => sum + slice.count, 0)
+  const evaluationHistory = useMemo(
+    () => (Array.isArray(evaluationWidget?.history) ? evaluationWidget.history : []),
+    [evaluationWidget?.history],
+  )
+  const performanceHistory = useMemo(
+    () => (Array.isArray(performanceWidget?.history) ? performanceWidget.history : []),
+    [performanceWidget?.history],
+  )
+  const completedEvaluationHistory = useMemo(
+    () => evaluationHistory.filter((row) => row?.percentage != null || String(row?.status || '').toLowerCase() === 'completed'),
+    [evaluationHistory],
+  )
+  const openEvaluationHistory = useMemo(
+    () => evaluationHistory.filter((row) => row?.percentage == null && String(row?.status || '').toLowerCase() !== 'completed'),
+    [evaluationHistory],
+  )
+  const latestCompletedEvaluation = completedEvaluationHistory[0] || null
+  const performanceSnapshotAveragePercentage = Number(performanceWidget?.snapshot_average_percentage)
+  const performanceLatestPercentage = Number(performanceWidget?.latest_percentage)
+  const hasPerformanceSnapshotAverage = Number.isFinite(performanceSnapshotAveragePercentage)
+  const hasPerformanceLatestScore = Number.isFinite(performanceLatestPercentage)
+  const performanceSnapshotCount = Number(performanceWidget?.snapshot_count || 0)
+  const performanceStatusSlices = useMemo(() => (
+    performanceSnapshotCount > 0
+      ? [{ id: 'snapshots', label: 'Snapshots', count: performanceSnapshotCount, color: '#8b5cf6' }]
+      : []
+  ), [performanceSnapshotCount])
+  const performanceChartTotal = performanceStatusSlices.reduce((sum, slice) => sum + slice.count, 0)
+  const performanceByDate = useMemo(() => {
+    const map = new Map()
+    for (const row of performanceHistory) {
+      if (row?.date) map.set(row.date, row)
+    }
+    return map
+  }, [performanceHistory])
+  const performanceCalendarCells = useMemo(
+    () => getCalendarCells(calendarYear, calendarMonth),
+    [calendarYear, calendarMonth],
+  )
 
   const otMonthBreakdown = useMemo(() => {
     const pendingH = monthOtRequests
@@ -2147,96 +2182,67 @@ export default function EmployeeDashboard() {
         <Card className="overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
-              Evaluation Results
+              Performance
             </CardTitle>
             <div className="rounded-lg bg-violet-500/10 p-2">
               <FileCheck className="size-4 text-violet-600 dark:text-violet-300" />
             </div>
           </CardHeader>
           <CardContent>
-            <p className="mb-4 text-sm font-semibold text-foreground">
-              {getMonthLabel()}
-            </p>
             {evaluationLoading ? (
-              <div className="flex h-28 items-center justify-center text-xs text-muted-foreground">Loading evaluation results…</div>
-            ) : !evaluationWidget ? (
-              <div className="flex items-center gap-4 rounded-lg border border-border bg-muted/30 px-4 py-5 text-sm">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-violet-200/70 bg-card text-violet-600 dark:bg-card/80 dark:text-violet-300">
-                  <FileCheck className="size-6" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-extrabold uppercase tracking-wide text-foreground">
-                    No evaluation results yet
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Completed evaluation results will appear here once submitted.
-                  </p>
-                </div>
-              </div>
+              <div className="flex h-28 items-center justify-center text-xs text-muted-foreground">Loading performance…</div>
             ) : (
               <button
                 type="button"
-                className="w-full rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                className="w-full rounded-2xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 onClick={() => setEvaluationDetailsOpen(true)}
-                aria-label="View evaluation result details"
+                aria-label="View performance details"
               >
-                <div className="grid grid-cols-[1fr_auto] gap-4 rounded-lg border border-violet-500/20 bg-violet-500/4 p-4">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-3xl font-extrabold tabular-nums tracking-tight text-foreground">
-                        {hasEvaluationScore ? Number(evaluationLatestPercentage).toFixed(1) : '—'}
-                        {hasEvaluationScore ? <span className="ml-0.5 text-lg font-semibold text-muted-foreground">%</span> : null}
+                <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/15 p-3 transition-colors hover:border-violet-500/35 hover:bg-violet-500/[0.03] sm:grid-cols-2">
+                  <div className="rounded-xl border border-violet-500/25 bg-linear-to-br from-violet-500/[0.10] to-background p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex size-9 items-center justify-center rounded-lg bg-violet-500/10 text-violet-700 dark:text-violet-200">
+                        <Zap className="size-4" aria-hidden />
                       </span>
-                      {evaluationWidget.latest_rating ? (
-                        <Badge variant="secondary" className="rounded-full bg-violet-500/10 text-violet-700 dark:text-violet-200">
-                          {evaluationWidget.latest_rating}
-                        </Badge>
-                      ) : null}
+                      <Badge variant="outline" className="rounded-full border-violet-500/30 bg-background/80 text-violet-700 dark:text-violet-200">
+                        KPI
+                      </Badge>
                     </div>
-                    <p className="mt-1 truncate text-sm font-semibold text-foreground">
-                      {evaluationWidget.template || 'Latest evaluation'}
+                    <p className="mt-4 text-xs font-bold uppercase tracking-wide text-violet-700 dark:text-violet-200">
+                      KPI Performance
+                    </p>
+                    <p className="mt-1 text-3xl font-extrabold tabular-nums tracking-tight text-foreground">
+                      {hasPerformanceSnapshotAverage ? Number(performanceSnapshotAveragePercentage).toFixed(1) : '—'}
+                      {hasPerformanceSnapshotAverage ? <span className="ml-1 text-base font-semibold text-muted-foreground">%</span> : null}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Evaluator: <span className="font-medium text-foreground">{evaluationWidget.evaluator || '—'}</span>
-                      {' · '}
-                      Last evaluated: <span className="font-medium text-foreground">{evaluationWidget.last_evaluated || '—'}</span>
+                      {hasPerformanceSnapshotAverage ? 'Monthly KPI snapshot result' : 'No monthly KPI snapshots'}
                     </p>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                      <div className="rounded-md bg-background/80 px-2 py-2">
-                        <div className="font-bold text-foreground"><AnimatedNumber value={evaluationStats.completed ?? 0} duration={700} /></div>
-                        <div className="text-muted-foreground">Done</div>
-                      </div>
-                      <div className="rounded-md bg-background/80 px-2 py-2">
-                        <div className="font-bold text-foreground"><AnimatedNumber value={(evaluationStats.submitted ?? 0) + (evaluationStats.under_review ?? 0)} duration={700} /></div>
-                        <div className="text-muted-foreground">Review</div>
-                      </div>
-                      <div className="rounded-md bg-background/80 px-2 py-2">
-                        <div className="font-bold text-foreground"><AnimatedNumber value={evaluationStats.active_assignments ?? 0} duration={700} /></div>
-                        <div className="text-muted-foreground">Assigned</div>
-                      </div>
-                    </div>
                   </div>
-                  <div className="flex flex-col items-center justify-center gap-2">
-                    <div className="relative size-20">
-                      {evaluationChartTotal > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie data={evaluationStatusSlices} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius="55%" outerRadius="90%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2}>
-                              {evaluationStatusSlices.map((slice) => (
-                                <Cell key={slice.id} fill={slice.color} />
-                              ))}
-                            </Pie>
-                          </PieChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-background/70 text-[10px] text-muted-foreground">No chart</div>
-                      )}
-                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-sm font-bold tabular-nums text-foreground">{evaluationChartTotal}</span>
-                        <span className="text-[8px] text-muted-foreground">items</span>
-                      </div>
+
+                  <div className="rounded-xl border border-blue-500/25 bg-linear-to-br from-blue-500/[0.08] to-background p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex size-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-700 dark:text-blue-200">
+                        <FileCheck className="size-4" aria-hidden />
+                      </span>
+                      <Badge variant="outline" className="rounded-full border-blue-500/30 bg-background/80 text-blue-700 dark:text-blue-200">
+                        Evaluation
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className="rounded-full text-[10px]">KPI coming soon</Badge>
+                    <p className="mt-4 text-xs font-bold uppercase tracking-wide text-blue-700 dark:text-blue-200">
+                      Evaluation Module
+                    </p>
+                    <p className="mt-1 text-3xl font-extrabold tabular-nums tracking-tight text-foreground">
+                      {evaluationModuleWidget?.latest_percentage != null ? Number(evaluationModuleWidget.latest_percentage).toFixed(1) : '—'}
+                      {evaluationModuleWidget?.latest_percentage != null ? <span className="ml-1 text-base font-semibold text-muted-foreground">%</span> : null}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {(evaluationStats.active_assignments ?? 0) > 0
+                        ? `${evaluationStats.active_assignments} open evaluation${Number(evaluationStats.active_assignments) === 1 ? '' : 's'}`
+                        : evaluationModuleWidget?.latest_percentage != null
+                          ? 'Latest evaluation result'
+                          : 'No evaluation result'}
+                    </p>
                   </div>
                 </div>
               </button>
@@ -3185,146 +3191,333 @@ export default function EmployeeDashboard() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                  Evaluation Results
+                  Performance
                 </DialogTitle>
                 <DialogDescription className="mt-1.5 text-sm text-muted-foreground sm:text-base">
                   {employeeDisplayName}
                   <span className="px-1.5">•</span>
-                  Performance evaluation results from the evaluation module.
+                  KPI performance and evaluation results are shown separately.
                 </DialogDescription>
               </div>
               <Badge variant="outline" className="w-fit rounded-full border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-200">
-                Performance KPI coming soon
+                KPI Performance
               </Badge>
             </div>
           </DialogHeader>
 
           <div className="px-5 pb-6 sm:px-7">
             {evaluationLoading ? (
-              <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">Loading evaluation details…</div>
+              <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">Loading performance details…</div>
             ) : !evaluationWidget ? (
               <div className="rounded-2xl border border-dashed border-border bg-muted/25 p-8 text-center">
                 <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-600 dark:text-violet-300">
                   <FileCheck className="size-7" />
                 </div>
-                <h3 className="mt-4 text-base font-bold text-foreground">No evaluation results yet</h3>
+                <h3 className="mt-4 text-base font-bold text-foreground">No performance data yet</h3>
                 <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-                  Completed evaluation results, evaluator details, and rating history will appear here once available.
+                  KPI performance snapshots and evaluation-module results will appear here once available.
                 </p>
               </div>
             ) : (
-              <div className="grid gap-5 lg:grid-cols-[1fr_1.15fr]">
+              <div className="space-y-5">
                 <section className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:bg-card/85">
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Latest Evaluation</p>
-                      <p className="mt-2 text-4xl font-extrabold tabular-nums tracking-tight text-foreground">
-                        {hasEvaluationScore ? Number(evaluationLatestPercentage).toFixed(2) : '—'}
-                        {hasEvaluationScore ? <span className="ml-1 text-xl font-semibold text-muted-foreground">%</span> : null}
-                      </p>
-                      <p className="mt-2 text-sm font-semibold text-foreground">{evaluationWidget.template || 'Evaluation result'}</p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {evaluationWidget.latest_rating || 'No rating yet'} · {evaluationWidget.last_evaluated || '—'}
-                      </p>
+                      <p className="text-xs font-bold uppercase tracking-wide text-violet-700 dark:text-violet-200">KPI Month</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Select a previous month to load its KPI snapshots.</p>
                     </div>
-                    <div className="relative size-28 shrink-0">
-                      {evaluationChartTotal > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie data={evaluationStatusSlices} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="92%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2}>
-                              {evaluationStatusSlices.map((slice) => (
-                                <Cell key={slice.id} fill={slice.color} />
-                              ))}
-                            </Pie>
-                          </PieChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-xs text-muted-foreground">No chart</div>
-                      )}
-                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                        <span className="text-lg font-bold tabular-nums text-foreground">{evaluationChartTotal}</span>
-                        <span className="text-[10px] text-muted-foreground">items</span>
-                      </div>
+                    <div className="flex min-w-0 items-center gap-1 rounded-lg border border-violet-500/25 bg-background/80 p-1 shadow-sm sm:w-72">
+                      <button
+                        type="button"
+                        className="flex size-8 shrink-0 items-center justify-center rounded-md text-violet-700 hover:bg-violet-500/10 dark:text-violet-300"
+                        onClick={goPrevCalendarMonth}
+                        aria-label="Previous KPI month"
+                      >
+                        <ChevronLeft className="size-4" />
+                      </button>
+                      <Select value={attendanceMonthValue} onValueChange={handleAttendanceMonthSelect}>
+                        <SelectTrigger size="sm" className="h-8 min-w-0 flex-1 border-0 bg-transparent px-2 text-xs font-semibold text-foreground shadow-none ring-0 focus:ring-0 focus-visible:ring-0">
+                          <CalendarDays className="size-3.5 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden />
+                          <SelectValue placeholder="Select KPI month" />
+                        </SelectTrigger>
+                        <SelectContent position="popper" className="max-h-64 rounded-xl">
+                          {attendanceMonthOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value} className="rounded-lg">
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <button
+                        type="button"
+                        className="flex size-8 shrink-0 items-center justify-center rounded-md text-violet-700 hover:bg-violet-500/10 disabled:opacity-40 dark:text-violet-300"
+                        onClick={goNextCalendarMonth}
+                        disabled={!canGoNextMonth || loading || calendarLoading || evaluationLoading}
+                        aria-label="Next KPI month"
+                      >
+                        <ChevronRight className="size-4" />
+                      </button>
                     </div>
                   </div>
-
-                  <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
-                    {[
-                      { label: 'Completed', value: evaluationStats.completed ?? 0, color: '#22c55e' },
-                      { label: 'In review', value: (evaluationStats.submitted ?? 0) + (evaluationStats.under_review ?? 0), color: '#f97316' },
-                      { label: 'Assigned', value: evaluationStats.active_assignments ?? 0, color: '#6366f1' },
-                      { label: 'Overdue', value: evaluationStats.overdue_assignments ?? 0, color: '#ef4444' },
-                    ].map((item) => (
-                      <div key={item.label} className="rounded-xl border border-border/60 bg-muted/20 p-3">
-                        <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
-                          {item.label}
-                        </span>
-                        <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{item.value}</p>
+                  <div className="grid gap-5 lg:grid-cols-[0.9fr_1.35fr]">
+                    <div>
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Performance Avg (KPI)</p>
+                          <p className="mt-2 text-4xl font-extrabold tabular-nums tracking-tight text-foreground">
+                            {hasPerformanceSnapshotAverage ? Number(performanceSnapshotAveragePercentage).toFixed(2) : '—'}
+                            {hasPerformanceSnapshotAverage ? <span className="ml-1 text-xl font-semibold text-muted-foreground">%</span> : null}
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-foreground">KPI snapshot average for {getMonthLabel()}</p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {performanceWidget?.latest_rating || 'No rating yet'} · Latest snapshot: {performanceWidget?.latest_date || '—'}
+                          </p>
+                        </div>
+                        <div className="relative size-24 shrink-0">
+                          {performanceChartTotal > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                <Pie data={performanceStatusSlices} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="92%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2}>
+                                  {performanceStatusSlices.map((slice) => (
+                                    <Cell key={slice.id} fill={slice.color} />
+                                  ))}
+                                </Pie>
+                              </PieChart>
+                            </ResponsiveContainer>
+                          ) : (
+                            <div className="flex h-full items-center justify-center rounded-full border border-dashed border-border bg-muted/20 text-xs text-muted-foreground">No KPI</div>
+                          )}
+                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                            <span className="text-lg font-bold tabular-nums text-foreground">{performanceChartTotal}</span>
+                            <span className="text-[10px] text-muted-foreground">days</span>
+                          </div>
+                        </div>
                       </div>
-                    ))}
-                  </div>
 
-                  <div className="mt-5 rounded-xl border border-dashed border-border bg-muted/20 p-4">
-                    <p className="text-sm font-bold text-foreground">Performance (KPI)</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      KPI scoring will be connected here once the performance KPI module is available.
-                    </p>
+                      <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                        {[
+                          { label: 'Snapshot Days', value: performanceSnapshotCount, color: '#22c55e' },
+                          { label: 'Latest KPI %', value: hasPerformanceLatestScore ? Number(performanceLatestPercentage).toFixed(1) : '—', color: '#8b5cf6' },
+                          { label: 'Average KPI %', value: hasPerformanceSnapshotAverage ? Number(performanceSnapshotAveragePercentage).toFixed(1) : '—', color: '#6366f1' },
+                          { label: 'KPI Rows', value: performanceHistory.length, color: '#14b8a6' },
+                        ].map((item) => (
+                          <div key={item.label} className="rounded-xl border border-border/60 bg-muted/20 p-3">
+                            <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
+                              {item.label}
+                            </span>
+                            <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">{item.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-border/60 bg-muted/10 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-bold uppercase tracking-wide text-foreground">Monthly KPI Calendar</h3>
+                          <p className="mt-1 text-xs text-muted-foreground">Daily KPI snapshots for {getMonthLabel()}.</p>
+                        </div>
+                        <Badge variant="secondary" className="rounded-full">
+                          {performanceSnapshotCount} days
+                        </Badge>
+                      </div>
+                      <div className="mt-4 grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                          <div key={day}>{day}</div>
+                        ))}
+                      </div>
+                      <div className="mt-2 grid grid-cols-7 gap-1">
+                        {performanceCalendarCells.map((cell) => {
+                          const row = performanceByDate.get(cell.dateStr)
+                          return (
+                            <div
+                              key={cell.dateStr}
+                              onClick={() => handlePerformanceCalendarCellSelect(cell)}
+                              className={cn(
+                                'min-h-16 rounded-lg border p-1.5 text-left transition-colors',
+                                cell.isAdjacent
+                                  ? 'border-border/30 bg-muted/10 text-muted-foreground/50'
+                                  : row
+                                    ? 'border-violet-500/30 bg-violet-500/10 text-foreground'
+                                    : 'border-border/50 bg-background/70 text-muted-foreground',
+                              )}
+                            >
+                              <div className="text-xs font-bold tabular-nums">{cell.day}</div>
+                              {row ? (
+                                <div className="mt-1">
+                                  <div className="text-xs font-extrabold tabular-nums text-violet-700 dark:text-violet-200">
+                                    {Number(row.percentage).toFixed(1)}%
+                                  </div>
+                                  <div className="mt-0.5 truncate text-[9px] text-muted-foreground">{row.rating || '—'}</div>
+                                </div>
+                              ) : !cell.isAdjacent ? (
+                                <div className="mt-2 text-[10px] text-muted-foreground">—</div>
+                              ) : null}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:bg-card/85">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-bold uppercase tracking-wide text-foreground">Evaluation History</h3>
-                      <p className="mt-1 text-xs text-muted-foreground">Recent evaluation results and evaluator details.</p>
+                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-card shadow-sm dark:border-slate-800/80 dark:bg-card/85">
+                  <div className="flex flex-col gap-3 border-b border-border/70 bg-linear-to-br from-slate-50 via-card to-card p-5 dark:from-slate-900/50 dark:via-card dark:to-card sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-slate-900/5 text-slate-700 dark:bg-white/10 dark:text-slate-200">
+                        <FileCheck className="size-5" aria-hidden />
+                      </span>
+                      <div>
+                        <h3 className="text-sm font-bold uppercase tracking-wide text-foreground">Evaluation Module</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">Separate evaluation results. These are not used to compute KPI Performance.</p>
+                      </div>
                     </div>
-                    {evaluationWidget.average_percentage != null ? (
-                      <Badge variant="secondary" className="rounded-full">
-                        Avg {Number(evaluationWidget.average_percentage).toFixed(1)}%
-                      </Badge>
-                    ) : null}
+                    <div className="flex shrink-0 items-center gap-2">
+                      {evaluationModuleWidget?.average_percentage != null ? (
+                        <Badge variant="secondary" className="rounded-full">
+                          Eval Avg {Number(evaluationModuleWidget.average_percentage).toFixed(1)}%
+                        </Badge>
+                      ) : null}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 rounded-full"
+                        onClick={() => {
+                          setEvaluationDetailsOpen(false)
+                          navigateAfterOverlayDismiss(navigate, '/employee/evaluations')
+                        }}
+                      >
+                        Open Evaluations
+                      </Button>
+                    </div>
                   </div>
 
-                  <div className="mt-4 max-h-[420px] overflow-y-auto rounded-xl border border-border/60">
-                    {evaluationHistory.length === 0 ? (
-                      <div className="p-8 text-center text-sm text-muted-foreground">No completed evaluation history yet.</div>
-                    ) : (
-                      <ul className="divide-y divide-border/60">
-                        {evaluationHistory.map((row) => (
-                          <li key={row.id} className="p-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-bold text-foreground">{row.template || 'Evaluation'}</p>
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                  {row.evaluator || '—'} · {row.evaluated_at || '—'}
-                                </p>
+                  <div className="grid gap-4 p-5 lg:grid-cols-[0.85fr_1.15fr]">
+                    <div className="rounded-2xl border border-border/60 bg-muted/15 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Latest Completed Result</p>
+                          <p className="mt-2 text-4xl font-extrabold tabular-nums tracking-tight text-foreground">
+                            {latestCompletedEvaluation?.percentage != null
+                              ? Number(latestCompletedEvaluation.percentage).toFixed(1)
+                              : evaluationModuleWidget?.latest_percentage != null
+                                ? Number(evaluationModuleWidget.latest_percentage).toFixed(1)
+                                : '—'}
+                            {latestCompletedEvaluation?.percentage != null || evaluationModuleWidget?.latest_percentage != null ? (
+                              <span className="ml-1 text-lg font-semibold text-muted-foreground">%</span>
+                            ) : null}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="rounded-full">
+                          {completedEvaluationHistory.length > 0 ? 'Completed' : 'No result'}
+                        </Badge>
+                      </div>
+
+                      <div className="mt-4 rounded-xl border border-border/50 bg-background/80 p-3">
+                        <p className="text-sm font-bold text-foreground">
+                          {latestCompletedEvaluation?.template || (evaluationModuleWidget?.latest_percentage != null ? evaluationModuleWidget?.template : null) || 'No completed evaluation result'}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {(latestCompletedEvaluation?.rating || evaluationModuleWidget?.latest_rating || 'No rating')}
+                          <span className="px-1">·</span>
+                          {latestCompletedEvaluation?.evaluated_at || evaluationModuleWidget?.last_evaluated || '—'}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                        <div className="rounded-lg bg-background/80 p-2">
+                          <div className="font-bold tabular-nums text-foreground">{evaluationStats.completed ?? 0}</div>
+                          <div className="text-muted-foreground">Completed</div>
+                        </div>
+                        <div className="rounded-lg bg-background/80 p-2">
+                          <div className="font-bold tabular-nums text-foreground">{evaluationStats.active_assignments ?? 0}</div>
+                          <div className="text-muted-foreground">Assigned</div>
+                        </div>
+                        <div className="rounded-lg bg-background/80 p-2">
+                          <div className="font-bold tabular-nums text-foreground">{evaluationStats.overdue_assignments ?? 0}</div>
+                          <div className="text-muted-foreground">Overdue</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="overflow-hidden rounded-2xl border border-border/60">
+                      <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-4 py-3">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Evaluation Activity</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Completed results are separated from drafts and assigned evaluations.
+                          </p>
+                        </div>
+                        <Badge variant="secondary" className="rounded-full">
+                          {evaluationHistory.length} total
+                        </Badge>
+                      </div>
+
+                      <div className="max-h-[360px] overflow-y-auto">
+                        {completedEvaluationHistory.length === 0 && openEvaluationHistory.length === 0 ? (
+                          <div className="p-8 text-center text-sm text-muted-foreground">No evaluation activity yet.</div>
+                        ) : (
+                          <div className="divide-y divide-border/60">
+                            {completedEvaluationHistory.length > 0 ? (
+                              <div className="p-4">
+                                <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Completed Results</p>
+                                <ul className="space-y-2">
+                                  {completedEvaluationHistory.map((row) => (
+                                    <li key={row.id} className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="min-w-0">
+                                          <p className="truncate text-sm font-bold text-foreground">{row.template || 'Evaluation'}</p>
+                                          <p className="mt-1 text-xs text-muted-foreground">
+                                            {row.evaluator || '—'} · {row.evaluated_at || '—'}
+                                          </p>
+                                        </div>
+                                        <div className="shrink-0 text-right">
+                                          <p className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
+                                            {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : '—'}
+                                          </p>
+                                          <p className="text-xs text-muted-foreground">{row.rating || 'Completed'}</p>
+                                        </div>
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
-                              <div className="shrink-0 text-right">
-                                <p className="text-sm font-bold tabular-nums text-foreground">
-                                  {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : '—'}
-                                </p>
-                                <p className="text-xs text-muted-foreground">{row.rating || row.status || '—'}</p>
-                              </div>
+                            ) : null}
+
+                            <div className="p-4">
+                              <p className="mb-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">Open Evaluations</p>
+                              {openEvaluationHistory.length === 0 ? (
+                                <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-center text-sm text-muted-foreground">
+                                  No draft or assigned evaluations.
+                                </div>
+                              ) : (
+                                <ul className="space-y-2">
+                                  {openEvaluationHistory.map((row) => (
+                                    <li key={row.id} className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-3">
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="min-w-0">
+                                          <p className="truncate text-sm font-bold text-foreground">{row.template || 'Evaluation'}</p>
+                                          <p className="mt-1 text-xs text-muted-foreground">
+                                            Evaluator: {row.evaluator || '—'}
+                                          </p>
+                                        </div>
+                                        <Badge variant="outline" className="shrink-0 rounded-full capitalize">
+                                          {String(row.status || 'assigned').replace(/_/g, ' ')}
+                                        </Badge>
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
                             </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="mt-4 flex justify-end">
-                    <Button
-                      type="button"
-                      className="rounded-lg"
-                      onClick={() => {
-                        setEvaluationDetailsOpen(false)
-                        navigateAfterOverlayDismiss(navigate, '/employee/evaluations')
-                      }}
-                    >
-                      Open Evaluations
-                    </Button>
-                  </div>
                 </section>
               </div>
             )}

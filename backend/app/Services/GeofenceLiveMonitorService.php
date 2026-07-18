@@ -45,7 +45,7 @@ class GeofenceLiveMonitorService
         $scopeKey = $scopedBranchIds === null ? 'global' : sha1(implode(',', $scopedBranchIds));
         $version = (int) Cache::get($this->eventsVersionKey($date), 1);
 
-        $cacheKey = 'geofence_live:events:'.$date.':'.sha1(json_encode([
+        $cacheKey = GeofenceValidationService::scopedCacheKey('geofence_live:events:'.$date.':'.sha1(json_encode([
             'scope' => $scopeKey,
             'company_id' => $companyId,
             'branch_id' => $branchId,
@@ -54,7 +54,7 @@ class GeofenceLiveMonitorService
             'clock_type' => $clockType,
             'limit' => $limit,
             'version' => $version,
-        ], JSON_THROW_ON_ERROR));
+        ], JSON_THROW_ON_ERROR)));
 
         $events = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $limit, $scopedBranchIds): array {
             $query = AttendanceGeofenceEvent::query()
@@ -133,7 +133,7 @@ class GeofenceLiveMonitorService
         $scopedBranchIds = $this->scopedBranchIds($actor);
         $scopeKey = $scopedBranchIds === null ? 'global' : sha1(implode(',', $scopedBranchIds));
         $version = (int) Cache::get($this->eventsVersionKey($date), 1);
-        $cacheKey = "geofence_live:summary:{$date}:{$scopeKey}:{$version}";
+        $cacheKey = GeofenceValidationService::scopedCacheKey("geofence_live:summary:{$date}:{$scopeKey}:{$version}");
 
         return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($date, $scopedBranchIds): array {
             $query = AttendanceGeofenceEvent::query()
@@ -225,6 +225,7 @@ class GeofenceLiveMonitorService
 
     public static function forgetBranchBoundaryCache(int $branchId): void
     {
+        Cache::forget(GeofenceValidationService::scopedCacheKey("geofence:branch_boundaries:{$branchId}"));
         Cache::forget("geofence:branch_boundaries:{$branchId}");
     }
 
@@ -518,16 +519,17 @@ class GeofenceLiveMonitorService
 
     private function boundaryCacheKey(int $branchId): string
     {
-        return "geofence:branch_boundaries:{$branchId}";
+        return GeofenceValidationService::scopedCacheKey("geofence:branch_boundaries:{$branchId}");
     }
 
     private function eventsVersionKey(string $date): string
     {
-        return "geofence_live:version:{$date}";
+        return GeofenceValidationService::scopedCacheKey("geofence_live:version:{$date}");
     }
 
     private function invalidateForDate(string $date): void
     {
+        Cache::forget(GeofenceValidationService::scopedCacheKey("geofence_live:summary:{$date}"));
         Cache::forget("geofence_live:summary:{$date}");
         Cache::add($this->eventsVersionKey($date), 1, now()->addDay());
         Cache::increment($this->eventsVersionKey($date));

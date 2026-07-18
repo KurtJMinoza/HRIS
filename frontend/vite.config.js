@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
-  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8000'
+  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8100'
 
   // Set VITE_BASE=/HR/ in .env when the built app lives under a subpath (e.g. http://localhost/HR/).
   // Also set BrowserRouter basename in App.jsx via import.meta.env.BASE_URL.
@@ -24,7 +24,19 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 5173,
+      host: '0.0.0.0',
+      port: Number(env.VITE_DEV_SERVER_PORT || 5200),
+      allowedHosts: [
+        'localhost',
+        '127.0.0.1',
+        'hrdemo.agctek.co',
+        '.agctek.co',
+      ],
+      hmr: {
+        host: env.VITE_HMR_HOST || 'hrdemo.agctek.co',
+        protocol: env.VITE_HMR_PROTOCOL || 'ws',
+        clientPort: Number(env.VITE_HMR_CLIENT_PORT || 80),
+      },
       // Same-origin /api in dev → no CORS issues. Set VITE_API_URL=/api in .env (see .env.example).
       proxy: {
         '/api': {

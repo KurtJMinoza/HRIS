@@ -993,6 +993,7 @@ export default function AdminDashboard() {
       efficiency: Number(summary.efficiency_percentage ?? summary.efficiency ?? 0),
       efficiency_percentage: Number(summary.efficiency_percentage ?? summary.efficiency ?? 0),
       evaluation_avg: summary.evaluation_avg != null ? Number(summary.evaluation_avg) : null,
+      performance_avg: summary.performance_avg != null ? Number(summary.performance_avg) : null,
     }
     setSelectedEfficiencyCompany({ id: companyId, name: normalizedSummary.company_name, start_date: startDate, end_date: endDate })
     setCompanyEfficiencyAttendancePage(1)
@@ -1017,6 +1018,7 @@ export default function AdminDashboard() {
         total_scheduled_hours: normalizedSummary.scheduled_hours,
         total_payroll_impact_hours: normalizedSummary.payroll_impact_hours,
         evaluation_avg: normalizedSummary.evaluation_avg,
+        performance_avg: normalizedSummary.performance_avg,
         company_efficiency: normalizedSummary.efficiency_percentage,
         efficiency_percentage: normalizedSummary.efficiency_percentage,
       },
@@ -1085,6 +1087,7 @@ export default function AdminDashboard() {
         summary: {
           ...nextSummary,
           efficiency: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
+          performance_avg: nextSummary.performance_avg ?? res.breakdown?.performance_avg ?? null,
         },
         breakdown: {
           ...(prev?.breakdown ?? {}),
@@ -1097,6 +1100,7 @@ export default function AdminDashboard() {
           total_scheduled_hours: nextSummary.scheduled_hours ?? 0,
           total_payroll_impact_hours: nextSummary.payroll_impact_hours ?? 0,
           evaluation_avg: nextSummary.evaluation_avg ?? res.breakdown?.evaluation_avg ?? prev?.breakdown?.evaluation_avg ?? null,
+          performance_avg: nextSummary.performance_avg ?? res.breakdown?.performance_avg ?? prev?.breakdown?.performance_avg ?? null,
           company_efficiency: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
           efficiency_percentage: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
         },
@@ -4249,6 +4253,12 @@ export default function AdminDashboard() {
                           ? `${Number(companyEfficiencyModalData.breakdown.evaluation_avg).toFixed(2)}%`
                           : '—',
                       },
+                      {
+                        label: 'KPI Performance',
+                        value: companyEfficiencyModalData.breakdown?.performance_avg != null
+                          ? `${Number(companyEfficiencyModalData.breakdown.performance_avg).toFixed(2)}%`
+                          : '—',
+                      },
                     ].map((row) => (
                       <div key={row.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0 text-muted-foreground">
                         <span>{row.label}</span>
@@ -4343,7 +4353,11 @@ export default function AdminDashboard() {
                               : '—'
                             const scheduleLabel = emp.schedule ? formatScheduleLabel12h(emp.schedule) : '—'
                             const evalPct = emp.evaluation_percentage ?? emp.evaluation_pct
-                            const performanceLabel = emp.evaluation_rating || emp.performance || emp.efficiency_performance || '—'
+                            const kpiPct = emp.performance_percentage
+                            const kpiRating = emp.performance || emp.efficiency_performance || null
+                            const performanceLabel = kpiPct != null
+                              ? `${Number(kpiPct).toFixed(1)}%${kpiRating ? ` — ${kpiRating}` : ''}`
+                              : '—'
                             const remarksLabel = emp.remarks || '—'
 
                             return (

@@ -27,6 +27,7 @@ class CompanyEfficiencyService
         private readonly EmployeeClassificationService $employeeClassificationService,
         private readonly EmployeeEvaluationResultService $employeeEvaluationResultService,
         private readonly EvaluationScoringService $evaluationScoringService,
+        private readonly MergedKpiPerformanceService $mergedKpiPerformanceService,
     ) {}
 
     /**
@@ -122,6 +123,7 @@ class CompanyEfficiencyService
         $efficiency = (float) ($companyRow['efficiency_percentage'] ?? $companyRow['efficiency'] ?? 0);
         $attendanceEfficiency = (float) ($companyRow['attendance_efficiency'] ?? $efficiency);
         $evaluationAvg = $companyRow['evaluation_avg'] ?? null;
+        $performanceAvg = $companyRow['performance_avg'] ?? null;
         $totalScheduledHours = (float) ($companyRow['scheduled_hours'] ?? $companyRow['total_scheduled_hours'] ?? 0);
         $totalPayrollImpactHours = (float) ($companyRow['payroll_impact_hours'] ?? $companyRow['total_payroll_impact_hours'] ?? 0);
         $summary = [
@@ -151,6 +153,7 @@ class CompanyEfficiencyService
             'efficiency_percentage' => $efficiency,
             'attendance_efficiency' => $attendanceEfficiency,
             'evaluation_avg' => $evaluationAvg,
+            'performance_avg' => $performanceAvg,
         ];
 
         return [
@@ -183,6 +186,7 @@ class CompanyEfficiencyService
                 'total_payroll_impact_hours' => $totalPayrollImpactHours,
                 'attendance_efficiency' => $attendanceEfficiency,
                 'evaluation_avg' => $evaluationAvg,
+                'performance_avg' => $performanceAvg,
                 'company_efficiency' => $efficiency,
                 'efficiency_percentage' => $efficiency,
             ],
@@ -315,8 +319,10 @@ class CompanyEfficiencyService
                 $allEmployeeIds,
                 $fromDateKey,
                 $toDateKey,
-                EmployeeEvaluationResultService::MODE_LATEST_AS_OF_PERIOD_END,
+                EmployeeEvaluationResultService::MODE_WITHIN_PERIOD,
             );
+        $kpiBundle = $this->mergedKpiPerformanceService
+            ->getPerformanceForRange($fromDateKey, $toDateKey, $allEmployeeIds);
 
         return [
             'tz' => $tz,
@@ -337,6 +343,8 @@ class CompanyEfficiencyService
             'all_employees_by_company' => $allEmployeesByCompany,
             'excluded_execom_by_company' => $excludedExecomByCompany,
             'latest_evaluations' => $latestEvaluationsByEmployee,
+            'kpi_performance' => $kpiBundle['by_employee'] ?? collect(),
+            'kpi_performance_by_company' => $kpiBundle['by_company'] ?? collect(),
         ];
     }
 
@@ -401,7 +409,8 @@ class CompanyEfficiencyService
                 ? round(($payrollImpactMinutes / $scheduledMinutes) * 100, 2)
                 : null;
             $evaluationAvg = $this->averageCompanyEvaluationPct($ctx, $companyId);
-            $efficiency = $this->combineEfficiency($attendanceEfficiency, $evaluationAvg) ?? 0.0;
+            $performanceAvg = $this->averageCompanyPerformancePct($ctx, $companyId);
+            $efficiency = $this->combineEfficiency($attendanceEfficiency, $performanceAvg) ?? 0.0;
             $excludedExecomCount = (int) ($ctx['excluded_execom_by_company']->get($companyId, collect())->count());
             $totalCompanyEmployees = (int) ($ctx['all_employees_by_company']->get($companyId, collect())->count());
 
@@ -418,6 +427,7 @@ class CompanyEfficiencyService
                 'payroll_impact_minutes' => $payrollImpactMinutes,
                 'attendance_efficiency' => $attendanceEfficiency,
                 'evaluation_avg' => $evaluationAvg,
+                'performance_avg' => $performanceAvg,
                 'efficiency_percentage' => $efficiency,
                 'cache_hit' => false,
             ]);
@@ -452,6 +462,7 @@ class CompanyEfficiencyService
                 'payroll_impact_hours' => $totalPayrollImpactHours,
                 'attendance_efficiency' => $attendanceEfficiency ?? 0.0,
                 'evaluation_avg' => $evaluationAvg,
+                'performance_avg' => $performanceAvg,
                 'efficiency' => $efficiency,
                 'efficiency_percentage' => $efficiency,
                 'included_employee_count' => $headcount,
@@ -779,16 +790,23 @@ class CompanyEfficiencyService
         $correction = $ctx['approved_corrections']->get($employee->id.'|'.$dateKey);
         $remarks = $this->resolveAttendanceRemarks($dailySummary, $storedSummary, $correction);
         $latestEvaluation = $ctx['latest_evaluations']->get($employee->id);
-        $hrEvaluationPct = isset($latestEvaluation['evaluation_percentage'])
+        $evaluationDateKey = is_array($latestEvaluation ?? null) && ! empty($latestEvaluation['evaluated_at'])
+            ? Carbon::parse((string) $latestEvaluation['evaluated_at'])->toDateString()
+            : null;
+        $evaluationAppliesToRow = $evaluationDateKey === $dateKey;
+        $hrEvaluationPct = $evaluationAppliesToRow && isset($latestEvaluation['evaluation_percentage'])
             ? (float) $latestEvaluation['evaluation_percentage']
             : null;
-        $evaluationRating = is_string($latestEvaluation['performance_level'] ?? null)
+        $evaluationRating = $evaluationAppliesToRow && is_string($latestEvaluation['performance_level'] ?? null)
             && trim((string) $latestEvaluation['performance_level']) !== ''
             ? trim((string) $latestEvaluation['performance_level'])
             : ($hrEvaluationPct !== null
                 ? $this->evaluationScoringService->ratingLabelFromPercentage($hrEvaluationPct)
                 : null);
-        $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $hrEvaluationPct);
+        $performance = $this->resolveEmployeeKpiPerformance($ctx, (int) $employee->id, $dateKey);
+        $performancePct = $performance['percentage'];
+        $performanceRating = $performance['rating'];
+        $combinedEfficiencyPct = $this->combineEfficiency($attendanceEfficiencyPct, $performancePct);
 
         return [
             'id' => $employee->id,
@@ -819,15 +837,17 @@ class CompanyEfficiencyService
             'presence_issue' => $dailySummary['presence_issue'] ?? null,
             'classification' => $this->employeeClassificationService->label($employee, $ctx['from_date'], $ctx['to_date']),
             'is_execom' => $this->employeeClassificationService->isExecom($employee, $ctx['from_date'], $ctx['to_date']),
-            'evaluation_id' => $latestEvaluation['evaluation_id'] ?? null,
-            'evaluation_status' => $latestEvaluation['status'] ?? null,
+            'evaluation_id' => $evaluationAppliesToRow ? ($latestEvaluation['evaluation_id'] ?? null) : null,
+            'evaluation_status' => $evaluationAppliesToRow ? ($latestEvaluation['status'] ?? null) : null,
             'evaluation_pct' => $hrEvaluationPct,
             'evaluation_percentage' => $hrEvaluationPct,
             'evaluation_rating' => $evaluationRating,
+            'performance_percentage' => $performancePct,
+            'performance_source' => $performance['source'],
             'attendance_efficiency_pct' => $attendanceEfficiencyPct,
             'combined_efficiency_pct' => $combinedEfficiencyPct,
-            'efficiency_performance' => $evaluationRating,
-            'performance' => $evaluationRating,
+            'efficiency_performance' => $performanceRating,
+            'performance' => $performanceRating,
         ];
     }
 
@@ -919,6 +939,73 @@ class CompanyEfficiencyService
         }
 
         return round(array_sum($pcts) / count($pcts), 2);
+    }
+
+    /**
+     * Company KPI performance average from mergedatabase-demo snapshots.
+     * This is intentionally separate from Evaluation Avg.
+     *
+     * @param  array<string, mixed>  $ctx
+     */
+    private function averageCompanyPerformancePct(array $ctx, int $companyId): ?float
+    {
+        $companyKpi = ($ctx['kpi_performance_by_company'] ?? collect())->get($companyId);
+        if ($companyKpi !== null && is_numeric($companyKpi)) {
+            return round((float) $companyKpi, 2);
+        }
+
+        $employees = $ctx['all_employees_by_company']->get($companyId, collect());
+        $kpiRows = $ctx['kpi_performance'] ?? collect();
+        $pcts = [];
+
+        foreach ($employees as $employee) {
+            $kpi = $kpiRows->get((int) $employee->id);
+            if (! is_array($kpi) || ! isset($kpi['performance_percentage'])) {
+                continue;
+            }
+            $pcts[] = (float) $kpi['performance_percentage'];
+        }
+
+        if ($pcts === []) {
+            return null;
+        }
+
+        return round(array_sum($pcts) / count($pcts), 2);
+    }
+
+    /**
+     * Employee daily KPI performance from mergedatabase-demo snapshots only.
+     * Daily rows require an exact date match to avoid carrying KPI data onto
+     * dates without actual snapshots.
+     *
+     * @param  array<string, mixed>  $ctx
+     * @return array{percentage: float|null, rating: string|null, source: string|null}
+     */
+    private function resolveEmployeeKpiPerformance(array $ctx, int $employeeId, string $dateKey): array
+    {
+        $empty = [
+            'percentage' => null,
+            'rating' => null,
+            'source' => null,
+        ];
+
+        $kpi = ($ctx['kpi_performance'] ?? collect())->get($employeeId);
+        if (! is_array($kpi)) {
+            return $empty;
+        }
+
+        $byDate = $kpi['by_date'] ?? [];
+        if (! is_array($byDate) || ! isset($byDate[$dateKey]) || ! is_numeric($byDate[$dateKey])) {
+            return $empty;
+        }
+
+        $pct = round((float) $byDate[$dateKey], 2);
+
+        return [
+            'percentage' => $pct,
+            'rating' => $this->evaluationScoringService->ratingLabelFromPercentage($pct),
+            'source' => $kpi['source'] ?? 'merged_kpi_period_snapshots',
+        ];
     }
 
     /** @return array<string, int|float> */

@@ -53,8 +53,8 @@ if ([Environment]::GetEnvironmentVariable("START_FACE_SERVICE") -eq "true") {
   Start-FaceServices $ports
 }
 
-Write-Host "Starting PHP server on :8000" -ForegroundColor Yellow
-Start-Process php -ArgumentList "artisan serve --port=8000" -WorkingDirectory $backendPath -WindowStyle Hidden | Out-Null
+Write-Host "Starting PHP server on :8100" -ForegroundColor Yellow
+Start-Process php -ArgumentList "artisan serve --port=8100" -WorkingDirectory $backendPath -WindowStyle Hidden | Out-Null
 
 Write-Host "Starting Redis queue workers" -ForegroundColor Yellow
 Start-QueueWorker "payroll" 300 (Get-WorkerCount "PAYROLL_QUEUE_WORKERS")

@@ -746,7 +746,7 @@ function wrapNetworkError(promise) {
     }
     if (msg === 'Failed to fetch' || err?.name === 'TypeError') {
       throw new Error(
-        'Cannot connect to the server. Make sure the backend is running (e.g. run "php artisan serve" in the backend folder).'
+        'Cannot connect to the server. Make sure the backend is running (e.g. run ".\\octane-start.ps1 --port=8100" in the backend folder).'
       )
     }
     throw err
@@ -757,7 +757,7 @@ function normalizeApiClientError(err, fallbackMessage) {
   const msg = String(err?.message || '').trim()
   if (/timed out/i.test(msg)) return TIMEOUT_ERROR_MSG
   if (msg === 'Failed to fetch' || err?.name === 'TypeError') {
-    return 'Cannot connect to the server. Make sure the backend is running (e.g. run "php artisan serve" in the backend folder).'
+    return 'Cannot connect to the server. Make sure the backend is running (e.g. run ".\\octane-start.ps1 --port=8100" in the backend folder).'
   }
   return msg || fallbackMessage
 }
@@ -8537,7 +8537,10 @@ export async function getEvaluationDashboardSummary() {
 }
 
 export async function getEmployeeEvaluationWidget(options = {}) {
-  const res = await authenticatedFetch('/employee/evaluations/widget', { signal: options.signal })
+  const qs = new URLSearchParams()
+  if (options.month) qs.set('month', String(options.month))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await authenticatedFetch(`/employee/evaluations/widget${suffix}`, { signal: options.signal })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load evaluation widget')
   return data

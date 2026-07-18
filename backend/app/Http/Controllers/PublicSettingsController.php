@@ -13,7 +13,7 @@ class PublicSettingsController extends Controller
     public function index(): JsonResponse
     {
         $start = microtime(true);
-        $cacheKey = 'app:public-settings';
+        $cacheKey = GeofenceValidationService::scopedCacheKey('app:public-settings');
         $cacheHit = Cache::has($cacheKey);
 
         $settings = Cache::remember($cacheKey, now()->addMinutes(30), function () {

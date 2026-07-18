@@ -143,6 +143,7 @@ class GeofenceController extends Controller
         ])->save();
 
         GeofenceValidationService::forgetGlobalCache();
+        Cache::forget(GeofenceValidationService::scopedCacheKey('app:public-settings'));
         Cache::forget('app:public-settings');
 
         $this->audit($request, 'geofence_module_settings_updated', null, null, [
@@ -380,6 +381,7 @@ class GeofenceController extends Controller
         ]);
 
         GeofenceValidationService::forgetGlobalCache();
+        Cache::forget(GeofenceValidationService::scopedCacheKey('app:public-settings'));
         Cache::forget('app:public-settings');
 
         return response()->json([

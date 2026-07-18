@@ -39,18 +39,43 @@ class GeofenceValidationService
 
     public const DEVICE_TYPES = ['desktop', 'laptop', 'mobile', 'tablet', 'kiosk'];
 
+    public static function scopedCacheKey(string $key): string
+    {
+        $parts = [
+            config('app.url'),
+            config('app.name'),
+            config('database.connections.mysql.database'),
+        ];
+
+        return 'app-scope:'.substr(sha1(implode('|', array_map(static fn ($part): string => (string) $part, $parts))), 0, 16).':'.$key;
+    }
+
+    private static function cachePrefix(): string
+    {
+        return self::scopedCacheKey('geofence');
+    }
+
     public static function branchCacheKey(int $branchId): string
     {
-        return "geofence:branch:{$branchId}";
+        return self::cachePrefix().":branch:{$branchId}";
+    }
+
+    private static function globalCacheKey(string $name): string
+    {
+        return self::cachePrefix().":global-settings:{$name}";
     }
 
     public static function forgetBranchCache(int $branchId): void
     {
         Cache::forget(self::branchCacheKey($branchId));
+        Cache::forget("geofence:branch:{$branchId}");
     }
 
     public static function forgetGlobalCache(): void
     {
+        Cache::forget(self::globalCacheKey('module-enabled'));
+        Cache::forget(self::globalCacheKey('attendance-without-geofence-enabled'));
+        Cache::forget(self::globalCacheKey('employee-exemption-ids'));
         Cache::forget('geofence:global-settings');
         Cache::forget('geofence:global-settings:module-enabled');
         Cache::forget('geofence:global-settings:attendance-without-geofence-enabled');
@@ -825,7 +850,7 @@ class GeofenceValidationService
         }
 
         return (bool) Cache::remember(
-            'geofence:global-settings:module-enabled',
+            self::globalCacheKey('module-enabled'),
             self::CACHE_TTL_SECONDS,
             fn (): bool => (bool) (GeofenceGlobalSetting::query()->find(1)?->geofence_module_enabled ?? true),
         );
@@ -838,7 +863,7 @@ class GeofenceValidationService
         }
 
         return (bool) Cache::remember(
-            'geofence:global-settings:attendance-without-geofence-enabled',
+            self::globalCacheKey('attendance-without-geofence-enabled'),
             self::CACHE_TTL_SECONDS,
             fn (): bool => (bool) (GeofenceGlobalSetting::query()->find(1)?->attendance_without_geofence_enabled ?? true),
         );
@@ -854,7 +879,7 @@ class GeofenceValidationService
             return [];
         }
 
-        return Cache::remember('geofence:global-settings:employee-exemption-ids', self::CACHE_TTL_SECONDS, function (): array {
+        return Cache::remember(self::globalCacheKey('employee-exemption-ids'), self::CACHE_TTL_SECONDS, function (): array {
             $ids = GeofenceGlobalSetting::query()->find(1)?->employee_exemption_ids ?? [];
             if (! is_array($ids)) {
                 return [];

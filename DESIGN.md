@@ -662,8 +662,8 @@ Do not commit:
 
 Typical local services:
 
-- Laravel API at `http://127.0.0.1:8000`
-- Vite frontend at `http://localhost:5173`
+- Laravel API at `http://127.0.0.1:8100`
+- Vite frontend at `http://localhost:5200`
 - FastAPI face service at `http://127.0.0.1:5000`
 - MySQL
 - Redis for cache/queues

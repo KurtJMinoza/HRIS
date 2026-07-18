@@ -16,13 +16,14 @@ class BranchEmployeeResolver
 
     public static function cacheKey(int $branchId): string
     {
-        return "geofence:branch_employee_count:{$branchId}";
+        return GeofenceValidationService::scopedCacheKey("geofence:branch_employee_count:{$branchId}");
     }
 
     public function forgetBranch(int $branchId): void
     {
         if ($branchId > 0) {
             Cache::forget(self::cacheKey($branchId));
+            Cache::forget("geofence:branch_employee_count:{$branchId}");
         }
     }
 
