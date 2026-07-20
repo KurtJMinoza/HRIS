@@ -6,6 +6,7 @@ use App\Models\PayrollBatchRun;
 use App\Models\User;
 use App\Services\FinalizePayrollService;
 use App\Services\PayrollComputationService;
+use App\Services\PayrollQueueService;
 use App\Services\ReportsCacheService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -56,8 +57,11 @@ class FinalizePayrollJob implements ShouldQueue
         return [(new WithoutOverlapping('finalize-payroll-'.$this->batchRunId))->expireAfter(600)];
     }
 
-    public function handle(FinalizePayrollService $finalizePayrollService, PayrollComputationService $payrollComputation): void
-    {
+    public function handle(
+        FinalizePayrollService $finalizePayrollService,
+        PayrollComputationService $payrollComputation,
+        PayrollQueueService $payrollQueueService,
+    ): void {
         // HTTP requests use max_execution_time (e.g. 60s); this job runs in a queue worker and must
         // not inherit that ceiling for PDF generation, cache, and bulk DB work.
         if (function_exists('set_time_limit')) {
@@ -136,9 +140,7 @@ class FinalizePayrollJob implements ShouldQueue
             $finalizeStartedAt = microtime(true);
             $finalizeResult = $finalizePayrollService->finalizeQueuedRun($run->fresh(), $actor);
             if (! (($finalizeResult['skipped'] ?? false) && ($finalizeResult['already_finalized'] ?? false))) {
-                GeneratePayslipsJob::dispatch((int) $run->id, (int) $this->actorUserId)
-                    ->onConnection('redis')
-                    ->onQueue('payslip-pdf');
+                $payrollQueueService->dispatchGeneratePayslips((int) $run->id, (int) ($this->actorUserId ?? 0));
             }
             dispatch(static function (): void {
                 ReportsCacheService::invalidate();

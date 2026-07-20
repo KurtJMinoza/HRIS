@@ -13,11 +13,51 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="icon" href="%BASE_URL%logo/AGCTek.png">
     <link rel="preload" as="image" href="%BASE_URL%logo/AGCTek.png" />
-     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-store, max-age=0, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <script>
+      (() => {
+        const version = '2026-07-09-hris-frontend-cache-reset-1'
+        const key = 'hris_frontend_cache_version'
+        const marker = '_hris_cache_refreshed'
+
+        try {
+          const current = window.localStorage.getItem(key)
+          const params = new URLSearchParams(window.location.search)
+
+          if (current !== version && !params.has(marker)) {
+            window.localStorage.setItem(key, version)
+
+            const clearCaches = []
+            if ('caches' in window) {
+              clearCaches.push(
+                window.caches.keys().then((names) => Promise.all(names.map((name) => window.caches.delete(name))))
+              )
+            }
+            if ('serviceWorker' in navigator) {
+              clearCaches.push(
+                navigator.serviceWorker.getRegistrations().then((registrations) =>
+                  Promise.all(registrations.map((registration) => registration.unregister()))
+                )
+              )
+            }
+
+            Promise.allSettled(clearCaches).finally(() => {
+              params.set(marker, version)
+              window.location.replace(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
+            })
+          }
+        } catch (_) {
+          // Cache reset is best-effort; the app should still boot if browser storage is unavailable.
+        }
+      })()
+    </script>
     <title>Human Resource Information System</title>
   </head>
   <body>
     <div id="root" class="min-h-screen bg-white dark:bg-background"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="/src/main.jsx?v=2026-07-09-hris-frontend-cache-reset-1"></script>
   </body>
 </html>

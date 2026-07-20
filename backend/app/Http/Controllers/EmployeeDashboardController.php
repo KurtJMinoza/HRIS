@@ -14,8 +14,10 @@ use App\Services\AttendanceStatusResolver;
 use App\Services\AttendanceStatusService;
 use App\Services\EmployeeDashboardCacheService;
 use App\Services\EmployeeClassificationService;
+use App\Services\EvaluationScoringService;
 use App\Services\HolidayService;
 use App\Services\HolidayEligibilityService;
+use App\Services\MergedKpiPerformanceService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
 use App\Services\PayrollComputationService;
@@ -50,7 +52,86 @@ class EmployeeDashboardController extends Controller
         private readonly HolidayEligibilityService $holidayEligibility,
         private readonly PolicyResolverService $policyResolver,
         private readonly EmployeeClassificationService $employeeClassification,
+        private readonly MergedKpiPerformanceService $mergedKpiPerformanceService,
+        private readonly EvaluationScoringService $evaluationScoringService,
     ) {}
+
+    /**
+     * Employee Dashboard → Performance card (mergedatabase-live KPI).
+     * Independent of evaluations.view so every employee can see their own KPI.
+     */
+    public function performanceKpi(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $validated = $request->validate([
+            'month' => ['nullable', 'regex:/^\d{4}-\d{2}$/'],
+        ]);
+        $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
+        $monthStart = isset($validated['month'])
+            ? Carbon::createFromFormat('Y-m-d', $validated['month'].'-01', $tz)->startOfMonth()
+            : now($tz)->startOfMonth();
+        $monthEnd = $monthStart->copy()->endOfMonth();
+        $monthStartDate = $monthStart->toDateString();
+        $monthEndDate = $monthEnd->toDateString();
+
+        $performanceBundle = $this->mergedKpiPerformanceService->getPerformanceForRange(
+            $monthStartDate,
+            $monthEndDate,
+            [(int) $user->id],
+        );
+        $performance = ($performanceBundle['by_employee'] ?? collect())->get((int) $user->id);
+        if (! is_array($performance) || ! isset($performance['performance_percentage'])) {
+            return response()->json(['performance' => null]);
+        }
+
+        $byDate = is_array($performance['by_date'] ?? null) ? $performance['by_date'] : [];
+        $byDate = array_filter(
+            $byDate,
+            static fn ($pct, string $date): bool => $date >= $monthStartDate && $date <= $monthEndDate,
+            ARRAY_FILTER_USE_BOTH,
+        );
+        krsort($byDate);
+        $latestKpiDate = $byDate !== [] ? array_key_first($byDate) : null;
+        $performancePct = round((float) $performance['performance_percentage'], 2);
+        $snapshotAveragePct = $byDate !== []
+            ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
+            : $performancePct;
+        $source = (string) ($performance['source'] ?? 'merged_kpi_period_snapshots');
+
+        return response()->json([
+            'performance' => [
+                'source' => $source,
+                'source_label' => $source === 'merged_kpi_user_averages'
+                    ? 'KPI overall average'
+                    : 'KPI snapshots',
+                'from_date' => $monthStartDate,
+                'to_date' => $monthEndDate,
+                'as_of_date' => $performance['as_of_date'] ?? null,
+                'average_percentage' => $performancePct,
+                'snapshot_average_percentage' => $snapshotAveragePct,
+                'latest_percentage' => $latestKpiDate !== null && isset($byDate[$latestKpiDate])
+                    ? round((float) $byDate[$latestKpiDate], 2)
+                    : $performancePct,
+                'latest_rating' => $latestKpiDate !== null && isset($byDate[$latestKpiDate])
+                    ? $this->evaluationScoringService->ratingLabelFromPercentage((float) $byDate[$latestKpiDate])
+                    : $this->evaluationScoringService->ratingLabelFromPercentage($performancePct),
+                'latest_date' => $latestKpiDate !== null
+                    ? Carbon::parse($latestKpiDate)->format('F d, Y')
+                    : null,
+                'snapshot_count' => $byDate !== []
+                    ? count($byDate)
+                    : (int) ($performance['snapshot_count'] ?? 0),
+                'history' => collect($byDate)
+                    ->map(fn ($pct, string $date): array => [
+                        'date' => $date,
+                        'date_label' => Carbon::parse($date)->format('F d, Y'),
+                        'percentage' => round((float) $pct, 2),
+                        'rating' => $this->evaluationScoringService->ratingLabelFromPercentage((float) $pct),
+                    ])
+                    ->values(),
+            ],
+        ]);
+    }
 
     /**
      * Lightweight dashboard shell: today's status + pending request counts.

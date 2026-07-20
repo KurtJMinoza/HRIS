@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { PanelOutlet } from '@/components/layout/PanelOutlet'
 import { dispatchDismissOverlays, scheduleRadixModalLockReset } from '@/lib/radixModalLock'
@@ -12,6 +12,9 @@ export function OrganizationsLayout() {
     if (prevPathRef.current === pathname) return
     prevPathRef.current = pathname
     dispatchDismissOverlays()
+  }, [pathname])
+
+  useEffect(() => {
     scheduleRadixModalLockReset()
   }, [pathname])
 

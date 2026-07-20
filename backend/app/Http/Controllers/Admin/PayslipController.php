@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Models\PayslipBulkDownload;
 use App\Services\DataScopeService;
 use App\Services\HrRoleResolver;
+use App\Services\PayrollQueueService;
 use App\Services\PayslipBulkDownloadService;
 use App\Services\PayslipService;
 use App\Services\PayrollEmployeeEligibilityService;
@@ -39,6 +40,7 @@ class PayslipController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollEmployeeEligibilityService $payrollEligibility,
+        private readonly PayrollQueueService $payrollQueueService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -664,18 +666,14 @@ class PayslipController extends Controller
             abort(422, 'This payroll period is already finalized for the selected scope.');
         }
         if ($existing instanceof PayrollBatchRun
-            && $existing->isActiveBackgroundGeneration()
+            && (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING
             && ! $existing->isStaleBackgroundGeneration()) {
-            $isProcessing = (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING;
-
             return response()->json([
-                'message' => $isProcessing
-                    ? 'Payroll draft is already processing.'
-                    : 'Payroll draft generation is already queued.',
+                'message' => 'Payroll draft is already processing.',
                 'queued' => true,
                 'payroll_batch_run_id' => (int) $existing->id,
                 'status' => (string) $existing->status,
-                'progress_status' => $isProcessing ? 'processing' : 'pending',
+                'progress_status' => 'processing',
                 'pay_period_start' => $periodStart->toDateString(),
                 'pay_period_end' => $periodEnd->toDateString(),
                 'employee_count' => max((int) ($existing->employee_count ?? 0), (int) ($existing->total_employees ?? 0)),
@@ -719,9 +717,7 @@ class PayslipController extends Controller
             ? tap($existing)->update($runPayload)->fresh()
             : PayrollBatchRun::query()->create($runPayload);
 
-        GeneratePayrollBatchJob::dispatch((int) $run->id, (int) $actor->id)
-            ->onConnection('redis')
-            ->onQueue('payroll');
+        GeneratePayrollBatchJob::dispatchFresh((int) $run->id, (int) $actor->id);
 
         return response()->json([
             'message' => 'Payroll draft generation queued.',

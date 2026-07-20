@@ -37,9 +37,9 @@ import {
   getAdminEmployeeLogs,
   getEmployees,
   normalizeAttendancePerPage,
-  profileImageUrl,
 } from '@/api'
 import { formatEmployeeName } from '@/lib/employeeSort'
+import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { cn } from '@/lib/utils'
 
 const CATEGORY_OPTIONS = [
@@ -336,17 +336,22 @@ export default function AdminEmployeeLogs() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {rows.map((row) => {
+                    const avatarSrc = employeeAvatarSrc(row)
+                    return (
                     <tr key={row.id} className="border-b border-border/60 transition-colors hover:bg-muted/15">
                       <td className="whitespace-nowrap px-4 py-3">
                         <div className="font-medium text-foreground">{row.occurred_at_label || '—'}</div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
-                          {row.profile_image ? (
-                            <img src={profileImageUrl(row.profile_image)} alt="" className="size-8 rounded-full object-cover" />
+                          {avatarSrc ? (
+                            <img src={avatarSrc} alt="" className="size-8 shrink-0 rounded-full object-cover ring-1 ring-border/60" />
                           ) : (
-                            <div className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+                            <div className={cn(
+                              'flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                              getEmployeeAvatarColorClass(row.user_id, row.employee_name),
+                            )}>
                               {(row.employee_name || '?').slice(0, 1)}
                             </div>
                           )}
@@ -388,7 +393,8 @@ export default function AdminEmployeeLogs() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
-import { clearBlockingOverlays, scheduleRadixModalLockReset } from '@/lib/radixModalLock'
+import { resetRadixModalLock, scheduleRadixModalLockReset } from '@/lib/radixModalLock'
 
 /** Close page overlays when switching HR modules so Radix modal lock cannot trap navigation. */
 export function useDismissOnRouteChange(onDismiss) {
@@ -20,10 +20,14 @@ export function useDismissOnRouteChange(onDismiss) {
   useLayoutEffect(() => {
     if (!mountedRef.current) {
       mountedRef.current = true
-      clearBlockingOverlays()
+      resetRadixModalLock()
       return
     }
     dismissRef.current?.()
+  }, [pathname])
+
+  useEffect(() => {
+    if (!mountedRef.current) return
     scheduleRadixModalLockReset()
   }, [pathname])
 }

@@ -7,6 +7,7 @@
 /** Full HR admin (legacy `users.role = admin` or resolved `admin_hr`). */
 export function isAdminHrUser(userLike) {
   if (!userLike) return false
+  if (userLike.is_hr_admin === true) return true
   const role = String(userLike.role || '').trim().toLowerCase()
   const hrRole = String(userLike.hr_role || '').trim().toLowerCase()
   if (role === 'admin' || role === 'super_admin') return true

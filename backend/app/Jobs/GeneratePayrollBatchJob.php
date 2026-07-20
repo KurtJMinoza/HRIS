@@ -6,6 +6,7 @@ use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
 use App\Services\PayrollComputationService;
+use App\Services\PayrollQueueService;
 use App\Services\PayslipService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -23,7 +24,7 @@ use Throwable;
  * Computes a draft payroll batch in the background and persists draft payslip rows.
  *
  * Run with:
- *   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=1
+ *   php artisan queue:work redis --queue=payroll --timeout=300 --sleep=1 --tries=3
  */
 class GeneratePayrollBatchJob implements ShouldQueue
 {
@@ -31,7 +32,7 @@ class GeneratePayrollBatchJob implements ShouldQueue
 
     public int $timeout = 300;
 
-    public int $tries = 1;
+    public int $tries = 3;
 
     /** @var list<string>|null */
     private static ?array $payrollBatchRunColumns = null;
@@ -49,7 +50,19 @@ class GeneratePayrollBatchJob implements ShouldQueue
      */
     public function middleware(): array
     {
-        return [(new WithoutOverlapping('generate-payroll-batch-'.$this->batchRunId))->expireAfter(600)];
+        return [
+            (new WithoutOverlapping('generate-payroll-batch-'.$this->batchRunId))
+                ->expireAfter(600)
+                ->releaseAfter(15),
+        ];
+    }
+
+    public static function dispatchFresh(int $batchRunId, ?int $actorUserId = null): void
+    {
+        app(PayrollQueueService::class)->dispatchGeneratePayrollBatch(
+            $batchRunId,
+            (int) ($actorUserId ?? 0)
+        );
     }
 
     public function handle(PayslipService $payslipService, PayrollComputationService $payrollComputation): void
@@ -99,6 +112,19 @@ class GeneratePayrollBatchJob implements ShouldQueue
                 'batch_run_id' => $this->batchRunId,
                 'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
             ]);
+
+            return;
+        }
+
+        if ((string) $run->status === PayrollBatchRun::STATUS_PROCESSING && ! $run->isStaleBackgroundGeneration()) {
+            Log::info('GeneratePayrollBatchJob skipped: batch already processing', [
+                'batch_run_id' => $this->batchRunId,
+                'started_at' => $run->started_at?->toIso8601String(),
+                'elapsed_ms' => round((microtime(true) - $jobStartedAt) * 1000, 2),
+            ]);
+            if (app()->runningInConsole()) {
+                fwrite(STDOUT, 'GeneratePayrollBatchJob skipped batch_run_id='.$this->batchRunId.' already processing'.PHP_EOL);
+            }
 
             return;
         }

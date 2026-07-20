@@ -942,7 +942,7 @@ class CompanyEfficiencyService
     }
 
     /**
-     * Company KPI performance average from mergedatabase-demo snapshots.
+     * Company KPI performance average from mergedatabase-live snapshots.
      * This is intentionally separate from Evaluation Avg.
      *
      * @param  array<string, mixed>  $ctx
@@ -974,9 +974,9 @@ class CompanyEfficiencyService
     }
 
     /**
-     * Employee daily KPI performance from mergedatabase-demo snapshots only.
-     * Daily rows require an exact date match to avoid carrying KPI data onto
-     * dates without actual snapshots.
+     * Employee daily KPI performance from mergedatabase-live snapshots.
+     * Prefers an exact date match. For single-day periods (Today) when that
+     * day has no snapshot yet, uses the range average from lookback.
      *
      * @param  array<string, mixed>  $ctx
      * @return array{percentage: float|null, rating: string|null, source: string|null}
@@ -995,17 +995,33 @@ class CompanyEfficiencyService
         }
 
         $byDate = $kpi['by_date'] ?? [];
-        if (! is_array($byDate) || ! isset($byDate[$dateKey]) || ! is_numeric($byDate[$dateKey])) {
-            return $empty;
+        if (is_array($byDate) && isset($byDate[$dateKey]) && is_numeric($byDate[$dateKey])) {
+            $pct = round((float) $byDate[$dateKey], 2);
+
+            return [
+                'percentage' => $pct,
+                'rating' => $this->evaluationScoringService->ratingLabelFromPercentage($pct),
+                'source' => $kpi['source'] ?? 'merged_kpi_period_snapshots',
+            ];
         }
 
-        $pct = round((float) $byDate[$dateKey], 2);
+        $isSingleDay = ($ctx['from_date_key'] ?? null) === ($ctx['to_date_key'] ?? null)
+            && ($ctx['from_date_key'] ?? null) === $dateKey;
+        if (
+            $isSingleDay
+            && isset($kpi['performance_percentage'])
+            && is_numeric($kpi['performance_percentage'])
+        ) {
+            $pct = round((float) $kpi['performance_percentage'], 2);
 
-        return [
-            'percentage' => $pct,
-            'rating' => $this->evaluationScoringService->ratingLabelFromPercentage($pct),
-            'source' => $kpi['source'] ?? 'merged_kpi_period_snapshots',
-        ];
+            return [
+                'percentage' => $pct,
+                'rating' => $this->evaluationScoringService->ratingLabelFromPercentage($pct),
+                'source' => $kpi['source'] ?? 'merged_kpi_period_snapshots',
+            ];
+        }
+
+        return $empty;
     }
 
     /** @return array<string, int|float> */

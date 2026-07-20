@@ -4576,7 +4576,7 @@ export default function AdminEmployeeProfile() {
                       />
                     )}
                     {mapsLoadError && (
-                      <p className="text-xs text-amber-600">Address autocomplete unavailable: {mapsLoadError}</p>
+                      <p className="text-xs text-amber-600">Address autocomplete unavailable: {mapsLoadError.message || String(mapsLoadError)}</p>
                     )}
                   </div>
                   <div className="space-y-2">

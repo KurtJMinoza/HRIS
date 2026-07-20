@@ -64,12 +64,17 @@ return [
             ]) : [],
         ],
 
+        /*
+        | Performance KPI (MergedKpiPerformanceService / CompanyEfficiencyService).
+        | Reads merged_kpi_* tables from mergedatabase-live while the app
+        | default connection (mysql) stays on hris.
+        */
         'mergedatabase' => [
             'driver' => 'mysql',
             'url' => env('DB_MERGE_URL'),
             'host' => env('DB_MERGE_HOST', env('DB_HOST', '127.0.0.1')),
             'port' => env('DB_MERGE_PORT', env('DB_PORT', '3306')),
-            'database' => env('DB_MERGE_DATABASE', 'mergedatabase-demo'),
+            'database' => env('DB_MERGE_DATABASE', 'mergedatabase-live'),
             'username' => env('DB_MERGE_USERNAME', env('DB_USERNAME', 'root')),
             'password' => env('DB_MERGE_PASSWORD', env('DB_PASSWORD', '')),
             'unix_socket' => env('DB_MERGE_SOCKET', env('DB_SOCKET', '')),

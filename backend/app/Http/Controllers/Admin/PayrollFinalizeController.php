@@ -3,11 +3,11 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\FinalizePayrollJob;
 use App\Models\PayrollBatchRun;
 use App\Models\User;
 use App\Services\FinalizePayrollService;
 use App\Services\HrRoleResolver;
+use App\Services\PayrollQueueService;
 use App\Services\PayslipDeliveryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,6 +23,7 @@ class PayrollFinalizeController extends Controller
         private readonly FinalizePayrollService $finalizePayrollService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PayslipDeliveryService $payslipDeliveryService,
+        private readonly PayrollQueueService $payrollQueueService,
     ) {}
 
     /**
@@ -193,9 +194,7 @@ class PayrollFinalizeController extends Controller
             );
             $run = $queued['run'];
             if (($queued['should_dispatch'] ?? false) === true) {
-                FinalizePayrollJob::dispatch((int) $run->id, (int) $user->id)
-                    ->onConnection('redis')
-                    ->onQueue('payroll');
+                $this->payrollQueueService->dispatchFinalizePayroll((int) $run->id, (int) $user->id);
             }
             Log::info('Payroll finalize execute queued', [
                 'batch_run_id' => (int) $run->id,
@@ -232,6 +231,11 @@ class PayrollFinalizeController extends Controller
     {
         $this->ensurePayrollFinalizeAccess($request);
         $run = PayrollBatchRun::query()->findOrFail($batchRunId);
+        $this->payrollQueueService->recoverStuckQueuedRun(
+            $run,
+            (int) $request->user()?->id
+        );
+        $run = $run->fresh() ?? $run;
         Log::info('Payroll finalize execute status fetch', [
             'batch_run_id' => (int) $run->id,
             'status' => (string) $run->status,

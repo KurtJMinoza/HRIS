@@ -2987,7 +2987,7 @@ export default function EmployeeProfile() {
                     placeholder="Start typing to search an address..."
                   />
                 )}
-                {mapsLoadError && <p className="text-xs text-amber-600">Address autocomplete unavailable: {mapsLoadError}</p>}
+                {mapsLoadError && <p className="text-xs text-amber-600">Address autocomplete unavailable: {mapsLoadError.message || String(mapsLoadError)}</p>}
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-2 text-sm font-medium text-foreground">

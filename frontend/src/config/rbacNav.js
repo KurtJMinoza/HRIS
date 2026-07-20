@@ -35,7 +35,7 @@ const pathToPermissions = {
   '/admin/holiday': ['holidays.view', 'holiday.view'],
   '/admin/leave': ['leave.view'],
   '/admin/attendance': ['can_view_subordinate_attendance'],
-  '/admin/employee-logs': ['audit_logs.view', 'can_view_subordinate_attendance'],
+  '/admin/employee-logs': ['audit_logs.view', 'attendance.view', 'can_view_subordinate_attendance'],
   '/admin/geofencing': ['geofence.view'],
   /** Show nav if user can approve corrections OR at least view attendance (API still enforces approve on actions). */
   '/admin/attendance-corrections': ['attendance.corrections.approve', 'attendance.view'],
@@ -75,14 +75,38 @@ const pathToPermissions = {
   '/admin/profile': [],
 }
 
+/** Permission slugs mirrored as boolean flags on GET /user (not always in permissions[]). */
+const PERMISSION_FLAG_ALIASES = {
+  can_view_admin_dashboard: (user) => Boolean(user?.can_view_admin_dashboard),
+  can_view_employee_module: (user) => Boolean(user?.can_view_employee_module),
+  can_view_subordinate_attendance: (user) => Boolean(user?.can_view_subordinate_attendance),
+  can_view_subordinate_reports: (user) => Boolean(user?.can_view_subordinate_reports),
+  can_view_own_reports: (user) => Boolean(user?.can_view_own_reports),
+  can_view_all_reports: (user) => Boolean(user?.can_view_all_reports),
+  can_access_reports_module: (user) => Boolean(user?.can_access_reports_module),
+}
+
+function userHasNavPermission(user, permission) {
+  if (!permission) return false
+  const set = new Set(user?.permissions ?? [])
+  if (set.has(permission)) return true
+  const flagCheck = PERMISSION_FLAG_ALIASES[permission]
+  return flagCheck ? flagCheck(user) : false
+}
+
+function canAccessAdminHrOnlyNav(user) {
+  if (!user) return false
+  if (user.is_super_admin || user.is_hr_admin) return true
+  return isAdminHrUser(user)
+}
+
 function canSee(user, permissionLists) {
   if (!user) return false
   if (user.is_super_admin) return true
   // Admin (HR) super-role: full sidebar (matches backend permission bypass).
   if (isAdminHrUser(user)) return true
   if (permissionLists.length === 0) return true
-  const set = new Set(user.permissions ?? [])
-  return permissionLists.some((list) => list.length === 0 || list.some((p) => set.has(p)))
+  return permissionLists.some((list) => list.length === 0 || list.some((p) => userHasNavPermission(user, p)))
 }
 
 /** Map manager panel URLs to the same permission keys as `/admin/...`. */
@@ -176,7 +200,7 @@ export function buildManagerNav(user, basePath) {
       if (mappedTo === `${prefix}/organizations/areas` && (hr === 'branch_head' || hr === 'department_head' || hr === 'division_head' || hr === 'section_unit_head')) {
         continue
       }
-      if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrUser(user)) continue
+      if (PATHS_ADMIN_HR_ONLY.has(to) && !canAccessAdminHrOnlyNav(user)) continue
       const need = permissionsForPath(normalizePathForPermission(mappedTo))
       if (!canSee(user, [need])) continue
       const navItem = { ...item, to: mappedTo }
@@ -211,7 +235,7 @@ export function buildAdminNav(user) {
       }
       const to = item.to
       if (!to) continue
-      if (PATHS_ADMIN_HR_ONLY.has(to) && !isAdminHrUser(user)) continue
+      if (PATHS_ADMIN_HR_ONLY.has(to) && !canAccessAdminHrOnlyNav(user)) continue
       const need = permissionsForPath(normalizePathForPermission(to))
       if (!canSee(user, [need])) continue
       out.push(item)

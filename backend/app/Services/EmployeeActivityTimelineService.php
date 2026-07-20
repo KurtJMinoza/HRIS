@@ -192,7 +192,8 @@ class EmployeeActivityTimelineService
             'user_id' => $user?->id,
             'employee_name' => $this->employeeDisplayName($user),
             'employee_code' => $user?->employee_code,
-            'profile_image' => $user?->profile_image,
+            'profile_image' => $user?->profile_image_url,
+            'profile_image_url' => $user?->profile_image_url,
             'department_name' => $user?->departmentRelation?->name ?? $user?->department,
             'company_name' => $user?->company?->name,
         ];

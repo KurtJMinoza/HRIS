@@ -6892,6 +6892,19 @@ export async function getEmployeeDashboardPayslipSummary(params = {}) {
   return data
 }
 
+/** Employee Dashboard → Performance card KPI from mergedatabase-live. */
+export async function getEmployeeDashboardPerformanceKpi(options = {}) {
+  const qs = new URLSearchParams()
+  if (options.month) qs.set('month', String(options.month))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await authenticatedFetch(`/employee-dashboard/performance-kpi${suffix}`, {
+    signal: options.signal,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employee KPI performance')
+  return data
+}
+
 /** Employee: submit presence filing (pending approval). */
 export async function submitPresenceFiling(payload) {
   const ti = payload.time_in != null ? String(payload.time_in).trim() : ''

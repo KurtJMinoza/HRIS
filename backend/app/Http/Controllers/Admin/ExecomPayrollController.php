@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\FinalizePayrollJob;
 use App\Jobs\GeneratePayrollBatchJob;
 use App\Models\Company;
 use App\Models\PayrollBatchRun;
@@ -11,6 +10,7 @@ use App\Models\Payslip;
 use App\Models\User;
 use App\Services\DataScopeService;
 use App\Services\PayrollEmployeeEligibilityService;
+use App\Services\PayrollQueueService;
 use App\Services\PayrollReportService;
 use App\Services\PayslipService;
 use Carbon\Carbon;
@@ -25,6 +25,7 @@ class ExecomPayrollController extends Controller
         private readonly PayrollEmployeeEligibilityService $payrollEligibility,
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollReportService $payrollReportService,
+        private readonly PayrollQueueService $payrollQueueService,
     ) {}
 
     public function generateDraft(Request $request): JsonResponse
@@ -102,18 +103,14 @@ class ExecomPayrollController extends Controller
             abort(422, 'This EXECOM payroll period is already finalized. Void the finalized batch before generating a new draft.');
         }
         if ($existing instanceof PayrollBatchRun
-            && $existing->isActiveBackgroundGeneration()
+            && (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING
             && ! $existing->isStaleBackgroundGeneration()) {
-            $isProcessing = (string) $existing->status === PayrollBatchRun::STATUS_PROCESSING;
-
             return response()->json([
-                'message' => $isProcessing
-                    ? 'EXECOM payroll draft is already processing.'
-                    : 'EXECOM payroll draft generation is already queued.',
+                'message' => 'EXECOM payroll draft is already processing.',
                 'queued' => true,
                 'payroll_batch_run_id' => (int) $existing->id,
                 'status' => (string) $existing->status,
-                'progress_status' => $isProcessing ? 'processing' : 'pending',
+                'progress_status' => 'processing',
                 'pay_period_start' => $from->toDateString(),
                 'pay_period_end' => $to->toDateString(),
                 'employee_count' => max((int) ($existing->employee_count ?? 0), (int) ($existing->total_employees ?? 0)),
@@ -162,9 +159,7 @@ class ExecomPayrollController extends Controller
             ]
         );
 
-        GeneratePayrollBatchJob::dispatch((int) $run->id, (int) $actor->id)
-            ->onConnection('redis')
-            ->onQueue('payroll');
+        GeneratePayrollBatchJob::dispatchFresh((int) $run->id, (int) $actor->id);
 
         return response()->json([
             'message' => 'EXECOM payroll draft generation queued.',
@@ -204,9 +199,7 @@ class ExecomPayrollController extends Controller
             'error_message' => null,
         ]);
 
-        GeneratePayrollBatchJob::dispatch((int) $run->id, (int) $request->user()?->id)
-            ->onConnection('redis')
-            ->onQueue('payroll');
+        GeneratePayrollBatchJob::dispatchFresh((int) $run->id, (int) $request->user()?->id);
 
         return response()->json([
             'message' => 'EXECOM payroll draft recompute queued.',
@@ -255,9 +248,7 @@ class ExecomPayrollController extends Controller
             'finalized_at' => null,
         ])->save();
 
-        FinalizePayrollJob::dispatch((int) $run->id, (int) $request->user()?->id)
-            ->onConnection('redis')
-            ->onQueue('payroll');
+        $this->payrollQueueService->dispatchFinalizePayroll((int) $run->id, (int) $request->user()?->id);
 
         $run = $run->fresh() ?? $run;
 
@@ -271,9 +262,14 @@ class ExecomPayrollController extends Controller
         ], 202);
     }
 
-    public function batchStatus(int $batchRunId): JsonResponse
+    public function batchStatus(Request $request, int $batchRunId): JsonResponse
     {
         $run = $this->execomRun($batchRunId);
+        $this->payrollQueueService->recoverStuckQueuedRun(
+            $run->fresh() ?? $run,
+            (int) $request->user()?->id
+        );
+        $run = $run->fresh() ?? $run;
         $aggregate = $this->payslipService->aggregateForBatchRun($run, false);
         $payslipCount = (int) ($aggregate['payslip_count'] ?? 0);
         $isVoided = (string) $run->status === PayrollBatchRun::STATUS_VOIDED;

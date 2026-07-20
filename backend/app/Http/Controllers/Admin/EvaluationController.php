@@ -1094,34 +1094,47 @@ class EvaluationController extends Controller
         $byDate = is_array($performance) && is_array($performance['by_date'] ?? null)
             ? $performance['by_date']
             : [];
+        // Keep calendar history inside the selected month only (drop lookback aliases).
+        $byDate = array_filter(
+            $byDate,
+            static fn ($pct, string $date): bool => $date >= $monthStart->toDateString() && $date <= $monthEnd->toDateString(),
+            ARRAY_FILTER_USE_BOTH,
+        );
         krsort($byDate);
         $latestKpiDate = $byDate !== [] ? array_key_first($byDate) : null;
-        $snapshotAveragePct = $byDate !== []
-            ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
-            : null;
         $performancePct = is_array($performance) && isset($performance['performance_percentage'])
             ? round((float) $performance['performance_percentage'], 2)
             : null;
+        $snapshotAveragePct = $byDate !== []
+            ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
+            : $performancePct;
         $performanceSource = is_array($performance)
             ? (string) ($performance['source'] ?? 'merged_kpi_period_snapshots')
             : null;
-        $performancePayload = is_array($performance) ? [
+        $performancePayload = is_array($performance) && $performancePct !== null ? [
             'source' => $performanceSource,
-            'source_label' => 'KPI snapshots',
+            'source_label' => $performanceSource === 'merged_kpi_user_averages'
+                ? 'KPI overall average'
+                : 'KPI snapshots',
             'from_date' => $monthStart->toDateString(),
             'to_date' => $monthEnd->toDateString(),
+            'as_of_date' => $performance['as_of_date'] ?? null,
             'average_percentage' => $performancePct,
             'snapshot_average_percentage' => $snapshotAveragePct,
             'latest_percentage' => $latestKpiDate !== null && isset($byDate[$latestKpiDate])
                 ? round((float) $byDate[$latestKpiDate], 2)
-                : null,
+                : $performancePct,
             'latest_rating' => $latestKpiDate !== null && isset($byDate[$latestKpiDate])
                 ? $this->evaluationScoringService->ratingLabelFromPercentage((float) $byDate[$latestKpiDate])
-                : null,
+                : ($performancePct !== null
+                    ? $this->evaluationScoringService->ratingLabelFromPercentage($performancePct)
+                    : null),
             'latest_date' => $latestKpiDate !== null
                 ? Carbon::parse($latestKpiDate)->format('F d, Y')
                 : null,
-            'snapshot_count' => (int) ($performance['snapshot_count'] ?? count($byDate)),
+            'snapshot_count' => $byDate !== []
+                ? count($byDate)
+                : (int) ($performance['snapshot_count'] ?? 0),
             'history' => collect($byDate)
                 ->map(fn ($pct, string $date): array => [
                     'date' => $date,

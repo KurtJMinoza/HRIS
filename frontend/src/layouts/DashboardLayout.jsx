@@ -206,6 +206,7 @@ function SidebarContent({
   onToggleCollapse,
   pathname,
   moduleCounts = {},
+  navRef,
 }) {
   const sidebarAvatarSrc = employeeAvatarSrc(user)
   const [manualExpanded, setManualExpanded] = useState({})
@@ -225,6 +226,14 @@ function SidebarContent({
     walk(navItems)
     return next
   }, [navItems, pathname])
+
+  useEffect(() => {
+    if (collapsed) return
+    const nav = navRef?.current
+    if (!nav) return
+    const activeEl = nav.querySelector(`[data-hr-sidebar-href="${CSS.escape(pathname)}"]`)
+    activeEl?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [pathname, navItems, collapsed, autoExpanded, manualExpanded, navRef])
 
   const handleNavIntent = useCallback((to) => {
     onNavIntent?.(to)
@@ -271,7 +280,8 @@ function SidebarContent({
     }
 
     if (hasChildren) {
-      const isOpen = manualExpanded[key] ?? !!autoExpanded[key]
+      const defaultOpen = item.label === 'Administration' ? true : !!autoExpanded[key]
+      const isOpen = manualExpanded[key] ?? defaultOpen
       return (
         <div key={key} className="space-y-1">
           <button
@@ -366,7 +376,7 @@ function SidebarContent({
           <span className="sr-only">HRIS — home</span>
         </Link>
       </div>
-      <nav className={cn('flex flex-1 flex-col gap-1 overflow-y-auto p-3', collapsed && 'px-2')}>
+      <nav ref={navRef} className={cn('flex flex-1 flex-col gap-1 overflow-y-auto p-3', collapsed && 'px-2')}>
         {navItems.map((item) => renderItem(item))}
       </nav>
       <div className={cn('border-t border-border/40 p-2', collapsed ? 'space-y-1' : 'space-y-2')}>
@@ -492,6 +502,9 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
 
   useLayoutEffect(() => {
     dispatchDismissOverlays()
+  }, [location.pathname])
+
+  useEffect(() => {
     scheduleRadixModalLockReset()
   }, [location.pathname])
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -594,8 +607,23 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   const [employeesLoading, setEmployeesLoading] = useState(false)
   const requestSeqRef = useRef(0)
   const closeTimeoutRef = useRef(null)
+  const sidebarNavRef = useRef(null)
 
   const trimmedQuery = searchQuery.trim()
+
+  useEffect(() => {
+    if (!treatAsHrPanel) return
+    const activeLeaf = flattenNavItems(navItems).find(
+      (item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`),
+    )
+    if (!activeLeaf?.to) return
+    const isNestedActive = navItems.some(
+      (group) => Array.isArray(group.children) && group.children.some((child) => child.to === activeLeaf.to),
+    )
+    if (isNestedActive && sidebarCollapsed) {
+      setSidebarCollapsed(false)
+    }
+  }, [location.pathname, navItems, sidebarCollapsed, treatAsHrPanel])
 
   const pageSuggestions = useMemo(() => {
     if (!isHrPanelSearch) return { pages: [], settings: [] }
@@ -733,6 +761,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
           pathname={location.pathname}
           moduleCounts={notificationModuleCounts}
+          navRef={sidebarNavRef}
         />
       </aside>
 

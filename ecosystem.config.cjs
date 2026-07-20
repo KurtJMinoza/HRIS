@@ -41,13 +41,14 @@ const php = resolveBinary('PHP_BIN', isWin ? 'C:\\xampp\\php\\php.exe' : 'php', 
 const python = resolveBinary('FACE_SERVICE_PYTHON', 'python', ['python', 'python3']);
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const octaneHost = process.env.OCTANE_HOST || '127.0.0.1';
-const octanePort = process.env.OCTANE_PORT || '8100';
+const octanePort = process.env.OCTANE_PORT || '8200';
 const frontendVite = path.join(root, 'frontend', 'node_modules', 'vite', 'bin', 'vite.js');
 const backendDir = path.join(root, 'backend');
 const octaneStart = path.join(backendDir, isWin ? 'octane-start.cmd' : 'artisan');
 const faceServiceDir = path.join(root, 'face_service');
 
-const faceServicePorts = (process.env.FACE_SERVICE_PORTS || '5000,5002,5003,5004,5005')
+// Match backend/.env FACE_VERIFICATION_URLS (2000-2004). Override with FACE_SERVICE_PORTS.
+const faceServicePorts = (process.env.FACE_SERVICE_PORTS || '2000,2001,2002,2003,2004')
   .split(',')
   .map((p) => p.trim())
   .filter(Boolean);
@@ -137,6 +138,15 @@ module.exports = {
       '--sleep=1',
       '--tries=1',
       '--max-jobs=100',
+    ]),
+    laravelApp('queue-payslip-pdf', [
+      'artisan',
+      'queue:work',
+      'redis',
+      '--queue=payslip-pdf',
+      '--timeout=600',
+      '--sleep=1',
+      '--tries=2',
     ]),
     laravelApp('queue-emails', [
       'artisan',

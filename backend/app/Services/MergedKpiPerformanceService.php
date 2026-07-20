@@ -9,13 +9,19 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Date-aware KPI performance from mergedatabase-demo.
- * Scores come only from merged_kpi_period_snapshots in the selected range.
- * Never spills lifetime averages onto days without a snapshot.
+ * Date-aware KPI performance from mergedatabase-live (connection: mergedatabase).
+ * Powers employee KPI Performance and admin Company Efficiency performance.
+ * Scores come from merged_kpi_period_snapshots in the selected range, including
+ * per-contributor progress for sub-assignees.
+ * When a short range (e.g. Today) has no snapshots yet, falls back to the
+ * latest DAILY snapshot on or before the end date (lookback window).
  */
 class MergedKpiPerformanceService
 {
     private const CONNECTION = 'mergedatabase';
+
+    /** Max days to look back when the requested range has no DAILY snapshots. */
+    private const EMPTY_RANGE_LOOKBACK_DAYS = 14;
 
     /**
      * @param  list<int>|Collection<int, int>  $hrisUserIds
@@ -62,15 +68,83 @@ class MergedKpiPerformanceService
                 }
             }
 
-            $periodStats = $this->loadPeriodStatsBySourceUser($fromDate, $toDate);
-            $companyAvgsFromSnapshots = $this->loadCompanyAveragesFromSnapshots($fromDate, $toDate);
+            $effectiveFrom = $fromDate;
+            $effectiveTo = $toDate;
+            $asOfDate = null;
+            $asOfBySource = [];
 
+            $periodStats = $this->loadPeriodStatsBySourceUser($effectiveFrom, $effectiveTo);
+            $companyAvgsFromSnapshots = $this->loadCompanyAveragesFromSnapshots($effectiveFrom, $effectiveTo);
+
+            // Today / empty ETL lag: use latest daily snapshot on or before end date.
             if ($periodStats === [] && $companyAvgsFromSnapshots === []) {
-                return $empty;
+                $fallbackDate = $this->latestDailySnapshotDateOnOrBefore(
+                    $toDate,
+                    self::EMPTY_RANGE_LOOKBACK_DAYS,
+                );
+                if ($fallbackDate !== null) {
+                    $effectiveFrom = $fallbackDate;
+                    $effectiveTo = $fallbackDate;
+                    $asOfDate = $fallbackDate;
+                    $periodStats = $this->loadPeriodStatsBySourceUser($effectiveFrom, $effectiveTo);
+                    $companyAvgsFromSnapshots = $this->loadCompanyAveragesFromSnapshots($effectiveFrom, $effectiveTo);
+                }
+            }
+
+            // Single-day request with lookback: alias snapshot day onto the requested day
+            // so Company Efficiency employee rows (exact date match) still show KPI.
+            if ($asOfDate !== null && $fromDate === $toDate && $asOfDate !== $fromDate) {
+                foreach ($periodStats as $sourceUserId => $period) {
+                    $byDate = is_array($period['by_date'] ?? null) ? $period['by_date'] : [];
+                    if (isset($byDate[$asOfDate]) && is_numeric($byDate[$asOfDate])) {
+                        $periodStats[$sourceUserId]['by_date'][$fromDate] = (float) $byDate[$asOfDate];
+                    }
+                }
+            }
+
+            if ($fromDate === $toDate) {
+                $lookbackFrom = Carbon::parse($toDate)
+                    ->subDays(self::EMPTY_RANGE_LOOKBACK_DAYS)
+                    ->toDateString();
+                $lookbackStats = $this->loadPeriodStatsBySourceUser($lookbackFrom, $toDate);
+                foreach ($hrisToSource as $sourceUserId) {
+                    $sourceUserId = (int) $sourceUserId;
+                    if (isset($periodStats[$sourceUserId]) || ! isset($lookbackStats[$sourceUserId])) {
+                        continue;
+                    }
+
+                    $byDate = is_array($lookbackStats[$sourceUserId]['by_date'] ?? null)
+                        ? $lookbackStats[$sourceUserId]['by_date']
+                        : [];
+                    if ($byDate === []) {
+                        continue;
+                    }
+                    ksort($byDate);
+                    $latestDate = array_key_last($byDate);
+                    if (! is_string($latestDate) || ! is_numeric($byDate[$latestDate] ?? null)) {
+                        continue;
+                    }
+
+                    $pct = round((float) $byDate[$latestDate], 2);
+                    $periodStats[$sourceUserId] = [
+                        'average_percent' => $pct,
+                        'by_date' => [$fromDate => $pct],
+                        'snapshot_count' => 1,
+                    ];
+                    $asOfBySource[$sourceUserId] = $latestDate;
+                }
             }
 
             $scoring = app(EvaluationScoringService::class);
             $byEmployee = collect();
+
+            // Identity averages only for windows near real KPI data (not empty historical ranges).
+            $kpiAnchorDate = $this->latestDailySnapshotDateOnOrBefore(
+                max($toDate, Carbon::now(config('attendance.timezone', config('app.timezone', 'UTC')))->toDateString()),
+                800,
+            );
+            $allowIdentityFallback = $kpiAnchorDate !== null
+                && $toDate >= Carbon::parse($kpiAnchorDate)->startOfMonth()->subMonth()->toDateString();
 
             foreach ($ids as $hrisUserId) {
                 $sourceUserId = $hrisToSource[$hrisUserId] ?? null;
@@ -84,11 +158,23 @@ class MergedKpiPerformanceService
                     ? $period['by_date']
                     : [];
 
-                if (! is_array($period) || $byDate === [] || ! isset($period['average_percent'])) {
+                if (is_array($period) && $byDate !== [] && isset($period['average_percent'])) {
+                    $pct = (float) $period['average_percent'];
+                    $source = 'merged_kpi_period_snapshots';
+                    $snapshotCount = (int) ($period['snapshot_count'] ?? count($byDate));
+                } elseif ($allowIdentityFallback && is_array($identity)) {
+                    // No daily snapshots in range (or unassigned maintenance) — use identity averages
+                    // so Employee Dashboard Performance still reflects KPI for mapped agents.
+                    $pct = $this->resolvePerformancePercentage($identity);
+                    if ($pct === null) {
+                        continue;
+                    }
+                    $byDate = [];
+                    $source = 'merged_kpi_user_averages';
+                    $snapshotCount = (int) ($identity['snapshot_count'] ?? 0);
+                } else {
                     continue;
                 }
-
-                $pct = (float) $period['average_percent'];
 
                 $byEmployee->put($hrisUserId, [
                     'employee_id' => $hrisUserId,
@@ -102,12 +188,17 @@ class MergedKpiPerformanceService
                     'task_efficiency' => is_array($identity) ? ($identity['task_efficiency'] ?? null) : null,
                     'ticket_efficiency' => is_array($identity) ? ($identity['ticket_efficiency'] ?? null) : null,
                     'performance_level' => $scoring->ratingLabelFromPercentage($pct),
-                    'source' => 'merged_kpi_period_snapshots',
+                    'source' => $source,
+                    'as_of_date' => $asOfBySource[$sourceUserId] ?? $asOfDate,
                     'display_name' => is_array($identity) ? ($identity['display_name'] ?? null) : null,
                     'agent_email' => is_array($identity) ? ($identity['agent_email'] ?? null) : null,
                     'computed_at' => is_array($identity) ? ($identity['computed_at'] ?? null) : null,
-                    'snapshot_count' => is_array($period) ? (int) ($period['snapshot_count'] ?? count($byDate)) : 0,
+                    'snapshot_count' => $snapshotCount,
                 ]);
+            }
+
+            if ($byEmployee->isEmpty() && $companyAvgsFromSnapshots === []) {
+                return $empty;
             }
 
             $byCompany = collect($companyAvgsFromSnapshots);
@@ -131,8 +222,8 @@ class MergedKpiPerformanceService
             }
 
             return [
-                'by_employee' => $byEmployee,
-                'by_company' => $byCompany,
+            'by_employee' => $byEmployee,
+            'by_company' => $byCompany,
             ];
         } catch (Throwable $e) {
             Log::warning('[MergedKpiPerformance] failed to load date-scoped KPI', [
@@ -158,11 +249,7 @@ class MergedKpiPerformanceService
         return $this->getPerformanceForRange($today, $today, $hrisUserIds)['by_employee'];
     }
 
-    /**
-     * Prefer overall KPI % when the user has KPI activity; otherwise use overall_efficiency.
-     *
-     * @param  array<string, mixed>  $kpi
-     */
+    /** @param  array<string, mixed>  $kpi */
     public function resolvePerformancePercentage(array $kpi): ?float
     {
         $hasActivity = ((int) ($kpi['kpi_count'] ?? 0)) > 0
@@ -175,29 +262,13 @@ class MergedKpiPerformanceService
         $average = array_key_exists('average_percent', $kpi) && $kpi['average_percent'] !== null
             ? (float) $kpi['average_percent']
             : null;
-        $overallEfficiency = array_key_exists('overall_efficiency', $kpi) && $kpi['overall_efficiency'] !== null
-            ? (float) $kpi['overall_efficiency']
-            : null;
-
         if ($hasActivity) {
-            if ($overall !== null) {
-                return round(max(0.0, min(100.0, $overall)), 2);
-            }
             if ($average !== null) {
                 return round(max(0.0, min(100.0, $average)), 2);
             }
-        }
-
-        if ($overallEfficiency !== null) {
-            return round(max(0.0, min(100.0, $overallEfficiency)), 2);
-        }
-
-        if ($average !== null && $average > 0) {
-            return round(max(0.0, min(100.0, $average)), 2);
-        }
-
-        if ($overall !== null && $overall > 0) {
-            return round(max(0.0, min(100.0, $overall)), 2);
+            if ($overall !== null) {
+                return round(max(0.0, min(100.0, $overall)), 2);
+            }
         }
 
         return null;
@@ -208,36 +279,55 @@ class MergedKpiPerformanceService
      */
     private function loadPeriodStatsBySourceUser(string $fromDate, string $toDate): array
     {
+        $resolver = $this->buildContributorResolver();
         $rows = DB::connection(self::CONNECTION)
             ->table('merged_kpi_period_snapshots as s')
             ->join('merged_kpi_maintenance as m', 'm.source_id', '=', 's.kpi_maintenance_id')
-            ->whereNotNull('m.assigned_merged_source_user_id')
-            ->where('s.frequency', 'DAILY')
+            ->whereIn('s.frequency', ['DAILY', 'MONTHLY'])
             ->whereRaw("SUBSTRING_INDEX(s.period_key, ':', -1) BETWEEN ? AND ?", [$fromDate, $toDate])
             ->get([
                 's.period_key',
                 's.frequency',
                 's.percent',
+                's.done',
+                's.total',
+                's.contributor_progress',
                 'm.assigned_merged_source_user_id',
             ]);
 
         $buckets = [];
         foreach ($rows as $row) {
-            $sourceUserId = (int) $row->assigned_merged_source_user_id;
-            if ($sourceUserId <= 0) {
-                continue;
-            }
             $frequency = strtoupper((string) $row->frequency);
             $dateKey = $this->resolveSnapshotDateKey((string) $row->period_key, $frequency, $fromDate, $toDate);
             if ($dateKey === null) {
                 continue;
             }
-            $pct = max(0.0, min(100.0, (float) $row->percent));
-            if ($frequency === 'DAILY') {
-                $buckets[$sourceUserId]['daily'][] = $pct;
-                $buckets[$sourceUserId]['dates'][$dateKey][] = $pct;
-            } else {
-                $buckets[$sourceUserId]['monthly'][] = $pct;
+
+            $contributors = $this->resolveContributorProgressRows($row, $resolver);
+            $sourceUserId = (int) ($row->assigned_merged_source_user_id ?? 0);
+            if ($sourceUserId > 0 && ! $this->contributorsContainSourceUser($contributors, $sourceUserId)) {
+                $contributors[] = [
+                    'source_user_id' => $sourceUserId,
+                    'percent' => max(0.0, min(100.0, (float) $row->percent)),
+                ];
+            }
+            if ($contributors === []) {
+                continue;
+            }
+
+            foreach ($contributors as $contributor) {
+                $sourceUserId = (int) ($contributor['source_user_id'] ?? 0);
+                if ($sourceUserId <= 0) {
+                    continue;
+                }
+                $pct = max(0.0, min(100.0, (float) ($contributor['percent'] ?? 0)));
+                if ($frequency === 'DAILY') {
+                    $buckets[$sourceUserId]['daily'][] = $pct;
+                    $buckets[$sourceUserId]['dates'][$dateKey][] = $pct;
+                } else {
+                    $buckets[$sourceUserId]['monthly'][] = $pct;
+                    $buckets[$sourceUserId]['dates'][$dateKey][] = $pct;
+                }
             }
         }
 
@@ -262,6 +352,222 @@ class MergedKpiPerformanceService
         }
 
         return $out;
+    }
+
+    private function contributorsContainSourceUser(array $contributors, int $sourceUserId): bool
+    {
+        foreach ($contributors as $contributor) {
+            if ((int) ($contributor['source_user_id'] ?? 0) === $sourceUserId) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return list<array{source_user_id: int, percent: float}>
+     */
+    private function resolveContributorProgressRows(object $row, array $resolver): array
+    {
+        $raw = $row->contributor_progress ?? null;
+        if (! is_string($raw) || trim($raw) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (! is_array($decoded)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($decoded as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+
+            $sourceUserId = $this->resolveContributorSourceUserId($entry, $resolver);
+            if ($sourceUserId === null) {
+                continue;
+            }
+
+            $total = max(0, (int) ($entry['total'] ?? 0));
+            $done = max(0, (int) ($entry['done'] ?? 0));
+            $pct = $total > 0
+                ? round(($done / $total) * 100, 2)
+                : max(0.0, min(100.0, (float) ($row->percent ?? 0)));
+
+            $out[] = [
+                'source_user_id' => $sourceUserId,
+                'percent' => $pct,
+            ];
+        }
+
+        return $out;
+    }
+
+    private function resolveContributorSourceUserId(array $entry, array $resolver): ?int
+    {
+        $id = $this->normalizeIdentityKey((string) ($entry['id'] ?? ''));
+        if ($id !== '' && isset($resolver['keys'][$id])) {
+            return $resolver['keys'][$id];
+        }
+
+        $name = $this->normalizePersonKey((string) ($entry['name'] ?? ''));
+        if ($name !== '' && isset($resolver['names'][$name])) {
+            return $resolver['names'][$name];
+        }
+
+        if ($name === '') {
+            return null;
+        }
+
+        $bestId = null;
+        $bestScore = 0.0;
+        foreach ($resolver['name_candidates'] as $candidate) {
+            $candidateName = (string) ($candidate['name'] ?? '');
+            if ($candidateName === '') {
+                continue;
+            }
+
+            $score = $this->nameMatchScore($name, $candidateName);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestId = (int) $candidate['source_user_id'];
+            }
+        }
+
+        return $bestScore >= 0.84 ? $bestId : null;
+    }
+
+    /**
+     * @return array{keys: array<string, int>, names: array<string, int>, name_candidates: list<array{source_user_id: int, name: string}>}
+     */
+    private function buildContributorResolver(): array
+    {
+        $keys = [];
+        $names = [];
+        $candidates = [];
+
+        $addKey = static function (?string $key, int $sourceUserId) use (&$keys): void {
+            $key = $key !== null ? strtolower(trim($key)) : '';
+            if ($key !== '') {
+                $keys[$key] = $sourceUserId;
+            }
+        };
+
+        $addName = function (?string $name, int $sourceUserId) use (&$names, &$candidates): void {
+            $normalized = $this->normalizePersonKey((string) $name);
+            if ($normalized === '') {
+                return;
+            }
+            $names[$normalized] = $sourceUserId;
+            $candidates[] = [
+                'source_user_id' => $sourceUserId,
+                'name' => $normalized,
+            ];
+        };
+
+        $identityRows = DB::connection(self::CONNECTION)
+            ->table('merged_kpi_user_averages')
+            ->get(['source_user_id', 'portal_account_id', 'agent_email', 'display_name']);
+        $canonicalSourceIds = [];
+        foreach ($identityRows as $row) {
+            $sourceUserId = (int) $row->source_user_id;
+            $canonicalSourceIds[] = $sourceUserId;
+            $addKey((string) ($row->portal_account_id ?? ''), $sourceUserId);
+            $addKey((string) ($row->agent_email ?? ''), $sourceUserId);
+            $addName((string) ($row->display_name ?? ''), $sourceUserId);
+            $addName($this->flipCommaName((string) ($row->display_name ?? '')), $sourceUserId);
+        }
+
+        $mergedUsers = DB::connection(self::CONNECTION)
+            ->table('merged_users')
+            ->whereIn('source_user_id', $canonicalSourceIds)
+            ->get(['source_user_id', 'username', 'email', 'name']);
+        foreach ($mergedUsers as $row) {
+            $sourceUserId = (int) $row->source_user_id;
+            $addKey((string) ($row->username ?? ''), $sourceUserId);
+            $addKey((string) ($row->email ?? ''), $sourceUserId);
+            $addName((string) ($row->name ?? ''), $sourceUserId);
+            $addName($this->flipCommaName((string) ($row->name ?? '')), $sourceUserId);
+        }
+
+        $aliases = DB::connection(self::CONNECTION)
+            ->table('merged_username_aliases')
+            ->whereIn('source_user_id', $canonicalSourceIds)
+            ->get(['source_user_id', 'username']);
+        foreach ($aliases as $row) {
+            $sourceUserId = (int) $row->source_user_id;
+            $addKey((string) ($row->username ?? ''), $sourceUserId);
+            $addName((string) ($row->username ?? ''), $sourceUserId);
+        }
+
+        return [
+            'keys' => $keys,
+            'names' => $names,
+            'name_candidates' => $candidates,
+        ];
+    }
+
+    private function normalizeIdentityKey(string $value): string
+    {
+        return strtolower(trim($value));
+    }
+
+    private function normalizePersonKey(string $value): string
+    {
+        $value = strtolower(trim($value));
+        $value = preg_replace('/[^a-z0-9]+/', ' ', $value) ?? '';
+
+        return trim(preg_replace('/\s+/', ' ', $value) ?? '');
+    }
+
+    private function flipCommaName(string $value): ?string
+    {
+        if (! str_contains($value, ',')) {
+            return null;
+        }
+        [$last, $first] = array_map('trim', explode(',', $value, 2));
+
+        return trim($first.' '.$last);
+    }
+
+    private function nameMatchScore(string $a, string $b): float
+    {
+        if ($a === $b) {
+            return 1.0;
+        }
+
+        $aTokens = array_values(array_filter(explode(' ', $a)));
+        $bTokens = array_values(array_filter(explode(' ', $b)));
+        if ($aTokens === [] || $bTokens === []) {
+            return 0.0;
+        }
+
+        $aFirst = $aTokens[0] ?? '';
+        $aLast = $aTokens[count($aTokens) - 1] ?? '';
+        $bFirst = $bTokens[0] ?? '';
+        $bLast = $bTokens[count($bTokens) - 1] ?? '';
+
+        $firstMatches = $aFirst !== '' && in_array($aFirst, $bTokens, true);
+        $lastMatches = $aLast !== '' && in_array($aLast, $bTokens, true);
+        if ($firstMatches && $lastMatches) {
+            return 0.94;
+        }
+
+        $intersection = array_intersect($aTokens, $bTokens);
+        $tokenScore = count($intersection) / max(count(array_unique($aTokens)), count(array_unique($bTokens)));
+        similar_text($a, $b, $similarity);
+
+        if ($aFirst !== '' && $bFirst !== '' && levenshtein($aFirst, $bFirst) <= 1) {
+            $tokenScore += 0.1;
+        }
+        if ($aLast !== '' && $bLast !== '' && levenshtein($aLast, $bLast) <= 1) {
+            $tokenScore += 0.15;
+        }
+
+        return max(min($tokenScore, 1.0), ((float) $similarity) / 100);
     }
 
     /**
@@ -338,8 +644,53 @@ class MergedKpiPerformanceService
     private function connectionReady(): bool
     {
         $name = (string) config('database.connections.'.self::CONNECTION.'.database', '');
+        if ($name === '') {
+            return false;
+        }
 
-        return $name !== '';
+        try {
+            DB::connection(self::CONNECTION)->select('select 1 as ok');
+
+            return true;
+        } catch (Throwable $e) {
+            Log::warning('[MergedKpiPerformance] mergedatabase connection not ready', [
+                'database' => $name,
+                'message' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
+     * Latest DAILY snapshot calendar date on or before $onOrBefore, within $lookbackDays.
+     */
+    private function latestDailySnapshotDateOnOrBefore(string $onOrBefore, int $lookbackDays): ?string
+    {
+        $lookbackDays = max(1, $lookbackDays);
+        try {
+            $from = Carbon::parse($onOrBefore)->subDays($lookbackDays)->toDateString();
+        } catch (Throwable) {
+            return null;
+        }
+
+        $row = DB::connection(self::CONNECTION)
+            ->table('merged_kpi_period_snapshots')
+            ->where('frequency', 'DAILY')
+            ->whereRaw("SUBSTRING_INDEX(period_key, ':', -1) BETWEEN ? AND ?", [$from, $onOrBefore])
+            ->orderByRaw("SUBSTRING_INDEX(period_key, ':', -1) DESC")
+            ->first(['period_key']);
+
+        if ($row === null || ! is_string($row->period_key ?? null)) {
+            return null;
+        }
+
+        $parts = explode(':', (string) $row->period_key);
+        $rawDate = end($parts);
+
+        return is_string($rawDate) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawDate)
+            ? $rawDate
+            : null;
     }
 
     /**

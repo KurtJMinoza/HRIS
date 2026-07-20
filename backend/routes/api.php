@@ -130,6 +130,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/employee-dashboard/attendance-calendar', [EmployeeDashboardController::class, 'attendanceCalendar']);
     Route::get('/employee-dashboard/recent-requests', [EmployeeDashboardController::class, 'recentRequests']);
     Route::get('/employee-dashboard/payslip-summary', [EmployeeDashboardController::class, 'payslipSummary']);
+    Route::get('/employee-dashboard/performance-kpi', [EmployeeDashboardController::class, 'performanceKpi']);
 
     // Employee Dashboard → Profile module (tabbed). Each tab has independent validation/saving.
     Route::get('/employee/profile', [EmployeeProfileController::class, 'show']);

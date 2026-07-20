@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   getEmployeeDashboardAttendanceCalendar,
   getEmployeeDashboardSummary,
+  getEmployeeDashboardPerformanceKpi,
   getEmployeeEvaluationWidget,
   getMyHolidays,
 } from '@/api'
@@ -607,6 +608,7 @@ export default function EmployeeDashboard() {
   const summaryAbortRef = useRef(null)
   const calendarAbortRef = useRef(null)
   const evaluationAbortRef = useRef(null)
+  const evaluationWidgetRef = useRef(null)
   const calendarCacheRef = useRef(new Map())
 
   const mergeSummary = useCallback((next) => {
@@ -727,12 +729,25 @@ export default function EmployeeDashboard() {
     const controller = new AbortController()
     evaluationAbortRef.current = controller
     const monthKey = calendarMonthSelectKey(calendarYear, calendarMonth)
-    setEvaluationLoading(true)
+    // Only block the Performance card on the first load. Soft-refresh on month
+    // change so Select/Dialog portals are not unmounted mid-close (removeChild).
+    setEvaluationLoading((prev) => (evaluationWidgetRef.current == null ? true : prev))
     try {
-      const data = await getEmployeeEvaluationWidget({ month: monthKey, signal: controller.signal })
-      setEvaluationWidget(data.widget || null)
+      const [evalData, kpiData] = await Promise.all([
+        getEmployeeEvaluationWidget({ month: monthKey, signal: controller.signal }).catch(() => ({ widget: null })),
+        getEmployeeDashboardPerformanceKpi({ month: monthKey, signal: controller.signal }).catch(() => ({ performance: null })),
+      ])
+      if (controller.signal.aborted) return
+      const widget = evalData?.widget && typeof evalData.widget === 'object' ? { ...evalData.widget } : {}
+      // Prefer dedicated KPI endpoint (no evaluations.view required); fall back to widget payload.
+      widget.performance = kpiData?.performance ?? widget.performance ?? null
+      const hasEvalModule = widget.evaluation || widget.stats || (Array.isArray(widget.history) && widget.history.length > 0)
+      const next = widget.performance || hasEvalModule ? widget : null
+      evaluationWidgetRef.current = next
+      setEvaluationWidget(next)
     } catch {
       if (controller.signal.aborted) return
+      evaluationWidgetRef.current = null
       setEvaluationWidget(null)
     } finally {
       if (evaluationAbortRef.current === controller) {
@@ -1199,8 +1214,11 @@ export default function EmployeeDashboard() {
     const parsed = parseCalendarMonthSelectKey(value)
     if (!Number.isFinite(parsed.year) || !Number.isFinite(parsed.monthIndex)) return
     if (parsed.monthIndex < 0 || parsed.monthIndex > 11) return
-    setCalendarYear(parsed.year)
-    setCalendarMonth(parsed.monthIndex)
+    // Defer until Radix Select portal finishes closing — avoids removeChild races.
+    window.setTimeout(() => {
+      setCalendarYear(parsed.year)
+      setCalendarMonth(parsed.monthIndex)
+    }, 0)
   }, [])
 
   const handlePerformanceCalendarCellSelect = useCallback((cell) => {
@@ -1318,8 +1336,12 @@ export default function EmployeeDashboard() {
     [evaluationHistory],
   )
   const latestCompletedEvaluation = completedEvaluationHistory[0] || null
-  const performanceSnapshotAveragePercentage = Number(performanceWidget?.snapshot_average_percentage)
-  const performanceLatestPercentage = Number(performanceWidget?.latest_percentage)
+  const performanceSnapshotAveragePercentage = Number(
+    performanceWidget?.snapshot_average_percentage ?? performanceWidget?.average_percentage,
+  )
+  const performanceLatestPercentage = Number(
+    performanceWidget?.latest_percentage ?? performanceWidget?.average_percentage,
+  )
   const hasPerformanceSnapshotAverage = Number.isFinite(performanceSnapshotAveragePercentage)
   const hasPerformanceLatestScore = Number.isFinite(performanceLatestPercentage)
   const performanceSnapshotCount = Number(performanceWidget?.snapshot_count || 0)
@@ -2216,7 +2238,11 @@ export default function EmployeeDashboard() {
                       {hasPerformanceSnapshotAverage ? <span className="ml-1 text-base font-semibold text-muted-foreground">%</span> : null}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {hasPerformanceSnapshotAverage ? 'Monthly KPI snapshot result' : 'No monthly KPI snapshots'}
+                      {hasPerformanceSnapshotAverage
+                        ? (performanceWidget?.source === 'merged_kpi_user_averages'
+                          ? 'Overall KPI average'
+                          : 'Monthly KPI snapshot result')
+                        : 'No monthly KPI snapshots'}
                     </p>
                   </div>
 
@@ -3206,7 +3232,7 @@ export default function EmployeeDashboard() {
           </DialogHeader>
 
           <div className="px-5 pb-6 sm:px-7">
-            {evaluationLoading ? (
+            {evaluationLoading && !evaluationWidget ? (
               <div className="flex min-h-72 items-center justify-center text-sm text-muted-foreground">Loading performance details…</div>
             ) : !evaluationWidget ? (
               <div className="rounded-2xl border border-dashed border-border bg-muted/25 p-8 text-center">
@@ -3219,7 +3245,7 @@ export default function EmployeeDashboard() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-5">
+              <div className={cn('space-y-5', evaluationLoading && 'pointer-events-none opacity-70')}>
                 <section className="rounded-2xl border border-border/70 bg-card p-5 shadow-sm dark:bg-card/85">
                   <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -3277,7 +3303,7 @@ export default function EmployeeDashboard() {
                           {performanceChartTotal > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
                               <PieChart>
-                                <Pie data={performanceStatusSlices} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="92%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2}>
+                                <Pie data={performanceStatusSlices} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="92%" paddingAngle={2} stroke="hsl(var(--background))" strokeWidth={2} isAnimationActive={false}>
                                   {performanceStatusSlices.map((slice) => (
                                     <Cell key={slice.id} fill={slice.color} />
                                   ))}

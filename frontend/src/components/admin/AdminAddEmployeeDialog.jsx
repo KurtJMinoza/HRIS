@@ -699,7 +699,7 @@ export function AdminAddEmployeeDialog({
                       )}
                       {mapsLoadError && (
                         <p className="text-xs text-amber-600">
-                          Address autocomplete unavailable: {mapsLoadError}
+                          Address autocomplete unavailable: {mapsLoadError.message || String(mapsLoadError)}
                         </p>
                       )}
                     </div>
