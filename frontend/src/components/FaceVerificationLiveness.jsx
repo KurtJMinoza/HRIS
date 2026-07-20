@@ -448,8 +448,19 @@ export function FaceVerificationLiveness({
 
   if (error && !ready) {
     const locationError = /location|geolocation|position|permission|denied/i.test(error)
-    const permissionGranted = locationDiagnostic?.permission === 'granted'
-    const permissionDenied = locationDiagnostic?.permission === 'denied' || (!permissionGranted && /blocked|denied/i.test(error))
+    const permissionState = locationDiagnostic?.permission || 'unknown'
+    const permissionGranted = permissionState === 'granted'
+    const permissionDenied = permissionState === 'denied' || (!permissionGranted && /blocked/i.test(error))
+    const retryAttempted = Boolean(locationDiagnostic?.retryAttempted)
+    const locationRecoveryMessage = locationError
+      ? permissionDenied
+        ? 'Location is blocked for this HRIS site in this browser profile. Open the site settings from the address bar, set Location to Allow, refresh the tab, then retry.'
+        : permissionGranted
+          ? retryAttempted
+            ? 'The site is allowed, but this tab still returned a denied location response after an automatic retry. Refresh this tab or close and reopen it, then press Retry.'
+            : 'The site is allowed, but this browser tab returned a denied location response. If Retry does not work, refresh this tab or close and reopen it.'
+          : 'Allow the location prompt, then retry. If no prompt appears, refresh this tab or reset this site permission from the address bar.'
+      : 'Face verification could not be prepared. Please try again.'
     return (
       <div className={className}>
         <div className={cn(softPanelClass, lightSurface ? 'border-amber-200 bg-amber-50' : '')}>
@@ -458,13 +469,7 @@ export function FaceVerificationLiveness({
             <p className={cn('mt-1 text-xs', lightSurface ? 'text-slate-500' : 'text-white/55')}>Browser message: {locationBrowserMessage}</p>
           ) : null}
           <p className={cn('mt-2 text-xs', mutedTextClass)}>
-            {locationError
-              ? permissionDenied
-                ? 'Location is blocked in this browser for this HRIS site. Change the site permission to Allow, then retry.'
-                : permissionGranted
-                  ? 'The site permission is allowed, but Chrome or Windows still refused this location request. Confirm Windows Location access for desktop apps/Chrome, then retry.'
-                  : 'Allow location access, then try again before starting face verification.'
-              : 'Face verification could not be prepared. Please try again.'}
+            {locationRecoveryMessage}
           </p>
           {locationError && locationDiagnostic ? (
             <div className={cn('mx-auto mt-3 grid max-w-md grid-cols-2 gap-2 rounded-md p-3 text-left text-[11px]', lightSurface ? 'border border-slate-200 bg-white text-slate-500' : 'border border-white/10 bg-black/20 text-white/60')}>

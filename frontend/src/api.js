@@ -14,6 +14,7 @@ const TOKEN_KEY = 'hris_token'
 const ATTENDANCE_DEVICE_TYPE_KEY = 'hris_device_type'
 const ATTENDANCE_DEVICE_TYPES = ['desktop', 'laptop', 'mobile', 'tablet', 'kiosk']
 const ATTENDANCE_LOCATION_TIMEOUT_MS = 10000
+const ATTENDANCE_LOCATION_PERMISSION_RETRY_DELAY_MS = 350
 const USE_SANCTUM_SESSION = String(import.meta.env.VITE_USE_SANCTUM_SESSION ?? 'true') !== 'false'
 let csrfCookieBootPromise = null
 let geofenceModuleStatusCache = null
@@ -184,16 +185,19 @@ async function geolocationPermissionState() {
 
 function geolocationErrorMessage(error, permission) {
   const browserMessage = String(error?.message || '').trim()
-  if (error?.code === error?.PERMISSION_DENIED) {
+  if (Number(error?.code) === 1 || error?.code === error?.PERMISSION_DENIED) {
     if (permission === 'granted') {
-      return 'The browser could not return a location even though this site is allowed.'
+      return 'Location is allowed for this site, but this browser tab is still returning a denied location response.'
+    }
+    if (permission === 'prompt' || permission === 'unknown') {
+      return 'The browser denied this location request. Allow location access, refresh this tab, then try again.'
     }
     return 'Location access is blocked for this site.'
   }
-  if (error?.code === error?.TIMEOUT) {
+  if (Number(error?.code) === 3 || error?.code === error?.TIMEOUT) {
     return browserMessage || 'Location request timed out. Please try again or move closer to a window.'
   }
-  if (error?.code === error?.POSITION_UNAVAILABLE) {
+  if (Number(error?.code) === 2 || error?.code === error?.POSITION_UNAVAILABLE) {
     return browserMessage || 'Position unavailable. Check Windows Location and browser site permissions, then try again.'
   }
   return browserMessage || 'Could not get your current location.'
@@ -312,7 +316,7 @@ export async function captureAttendanceLocation({
     throw new Error('Location requires HTTPS or localhost. Open HRIS over HTTPS and try again.')
   }
 
-  const readPosition = () => new Promise((resolve, reject) => {
+  const readPosition = (requestOptions = options) => new Promise((resolve, reject) => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       reject(new Error('This browser does not support geolocation.'))
       return
@@ -330,16 +334,16 @@ export async function captureAttendanceLocation({
       timeoutError.code = 3
       timeoutError.TIMEOUT = 3
       finish(reject, timeoutError)
-    }, options.timeout)
+    }, requestOptions.timeout)
 
     navigator.geolocation.getCurrentPosition(
       (position) => finish(resolve, position),
       (error) => finish(reject, error),
-      options,
+      requestOptions,
     )
   })
 
-  const locationFromPosition = (position, permissionState) => {
+  const locationFromPosition = (position, permissionState, requestOptions = options, retryAttempted = false) => {
     const latitude = position.coords.latitude
     const longitude = position.coords.longitude
     const accuracy = position.coords.accuracy
@@ -352,7 +356,8 @@ export async function captureAttendanceLocation({
       longitude,
       accuracy,
       timeoutReached: false,
-      options,
+      options: requestOptions,
+      retryAttempted,
     })
     logAttendanceFlowTiming('LOCATION_RECEIVED', {
       location_requested_at: locationRequestedAt,
@@ -360,6 +365,7 @@ export async function captureAttendanceLocation({
       location_request_duration: receivedAtMs - requestedAtMs,
       location_accuracy: accuracy ?? null,
       device_type: deviceType,
+      retry_attempted: retryAttempted,
     })
     if (latitude == null || longitude == null) {
       throw new Error('Coordinates were not returned by the browser. Please try again.')
@@ -374,10 +380,11 @@ export async function captureAttendanceLocation({
       operating_system: operatingSystemName(),
       sampled_readings_count: 1,
       selected_best_accuracy: accuracy ?? null,
+      geolocation_retry_attempted: retryAttempted,
     }
   }
 
-  const logLocationError = (error, permissionState) => {
+  const logLocationError = (error, permissionState, requestOptions = options, retryAttempted = false) => {
     const failedAtMs = Date.now()
     logAttendanceGeolocationDiagnostics({
       permission: permissionState,
@@ -388,7 +395,8 @@ export async function captureAttendanceLocation({
       timeoutReached: error?.code === error?.TIMEOUT,
       errorCode: error?.code,
       errorMessage: error?.message,
-      options,
+      options: requestOptions,
+      retryAttempted,
     })
     logAttendanceFlowTiming('LOCATION_FAILED', {
       location_requested_at: locationRequestedAt,
@@ -397,19 +405,46 @@ export async function captureAttendanceLocation({
       error_code: error?.code ?? null,
       error_message: error?.message || 'Unable to obtain precise location.',
       device_type: deviceType,
+      retry_attempted: retryAttempted,
     })
   }
 
   try {
-    return locationFromPosition(await readPosition(), permission)
+    return locationFromPosition(await readPosition(options), permission)
   } catch (error) {
     logLocationError(error, permission)
+    const permissionAfterError = await geolocationPermissionState()
+    const browserDeniedButSiteNotBlocked =
+      Number(error?.code) === 1 &&
+      (permissionAfterError === 'granted' || permissionAfterError === 'prompt' || permissionAfterError === 'unknown')
+
+    if (browserDeniedButSiteNotBlocked) {
+      await delayMs(ATTENDANCE_LOCATION_PERMISSION_RETRY_DELAY_MS)
+      const retryPermission = await geolocationPermissionState()
+      const retryOptions = {
+        ...options,
+        enableHighAccuracy: false,
+        maximumAge: Math.max(Number(options.maximumAge) || 0, 30000),
+      }
+      try {
+        return locationFromPosition(await readPosition(retryOptions), retryPermission, retryOptions, true)
+      } catch (retryError) {
+        logLocationError(retryError, retryPermission, retryOptions, true)
+        if (Number(retryError?.code) === 3) {
+          const timeoutError = makeGeolocationError(retryError, retryPermission, true)
+          timeoutError.message = 'Unable to obtain precise location.'
+          throw timeoutError
+        }
+        throw makeGeolocationError(retryError, retryPermission, true)
+      }
+    }
+
     if (error?.code === 3) {
-      const timeoutError = makeGeolocationError(error, permission)
+      const timeoutError = makeGeolocationError(error, permissionAfterError || permission)
       timeoutError.message = 'Unable to obtain precise location.'
       throw timeoutError
     }
-    throw makeGeolocationError(error, permission)
+    throw makeGeolocationError(error, permissionAfterError || permission)
   }
 }
 

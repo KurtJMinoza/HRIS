@@ -544,7 +544,7 @@ export function MediaPipeLivenessCamera({
         </div>
 
         <div className="space-y-4 bg-slate-50 p-4 sm:p-5 max-[760px]:space-y-2 max-[760px]:p-2 max-[360px]:p-1.5 [@media(max-width:760px)_and_(orientation:landscape)]:space-y-1.5">
-          <div className="relative aspect-[4/3] overflow-hidden rounded-[18px] border border-slate-200 bg-slate-950 shadow-inner max-[760px]:aspect-auto max-[760px]:h-[clamp(12rem,min(112vw,58dvh),30rem)] max-[760px]:rounded-xl [@media(max-width:760px)_and_(orientation:landscape)]:h-[clamp(10rem,42dvh,18rem)]">
+          <div className="relative aspect-[4/3] overflow-hidden rounded-[18px] border border-slate-200 bg-slate-950 shadow-inner [--face-mask-x:34%] [--face-oval-w:56%] [--face-progress-w:60%] max-[760px]:aspect-auto max-[760px]:h-[clamp(12rem,min(112vw,58dvh),30rem)] max-[760px]:rounded-xl max-[760px]:[--face-mask-x:40%] max-[760px]:[--face-oval-w:66%] max-[760px]:[--face-progress-w:70%] max-[360px]:[--face-mask-x:42%] max-[360px]:[--face-oval-w:70%] max-[360px]:[--face-progress-w:74%] [@media(max-width:760px)_and_(orientation:landscape)]:h-[clamp(10rem,42dvh,18rem)] [@media(max-width:760px)_and_(orientation:landscape)]:[--face-mask-x:36%] [@media(max-width:760px)_and_(orientation:landscape)]:[--face-oval-w:60%] [@media(max-width:760px)_and_(orientation:landscape)]:[--face-progress-w:64%]">
             <video
               ref={videoRef}
               className="h-full w-full scale-x-[-1] object-cover"
@@ -555,14 +555,14 @@ export function MediaPipeLivenessCamera({
             <div
               className="pointer-events-none absolute inset-0 bg-slate-950/35"
               style={{
-                WebkitMaskImage: 'radial-gradient(ellipse 34% 43% at 50% 48%, transparent 0 98%, #000 100%)',
-                maskImage: 'radial-gradient(ellipse 34% 43% at 50% 48%, transparent 0 98%, #000 100%)',
+                WebkitMaskImage: 'radial-gradient(ellipse var(--face-mask-x) 43% at 50% 48%, transparent 0 98%, #000 100%)',
+                maskImage: 'radial-gradient(ellipse var(--face-mask-x) 43% at 50% 48%, transparent 0 98%, #000 100%)',
               }}
               aria-hidden
             />
             <div
               className={cn(
-                'pointer-events-none absolute left-1/2 top-[48%] h-[72%] w-[56%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-2 transition-colors',
+                'pointer-events-none absolute left-1/2 top-[48%] h-[72%] w-[var(--face-oval-w)] -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-2 transition-colors',
                 ready ? 'border-emerald-400/95' : 'border-blue-500/95'
               )}
               style={{ boxShadow: `0 0 0 1px ${accentColor}33, 0 0 34px ${accentColor}22` }}
@@ -570,7 +570,7 @@ export function MediaPipeLivenessCamera({
             />
             <div
               ref={progressFillRef}
-              className="pointer-events-none absolute left-1/2 top-[48%] h-[76%] w-[60%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] opacity-0 transition-opacity duration-100"
+              className="pointer-events-none absolute left-1/2 top-[48%] h-[76%] w-[var(--face-progress-w)] -translate-x-1/2 -translate-y-1/2 rounded-[50%] opacity-0 transition-opacity duration-100"
               style={{
                 '--hold-progress': `${progressValueRef.current * 360}deg`,
                 background:
@@ -580,7 +580,7 @@ export function MediaPipeLivenessCamera({
               }}
               aria-hidden
             />
-            <div className="pointer-events-none absolute left-1/2 top-[48%] h-[72%] w-[56%] -translate-x-1/2 -translate-y-1/2 rounded-[50%]" aria-hidden>
+            <div className="pointer-events-none absolute left-1/2 top-[48%] h-[72%] w-[var(--face-oval-w)] -translate-x-1/2 -translate-y-1/2 rounded-[50%]" aria-hidden>
               <span className="absolute left-1/2 top-0 h-3 w-px -translate-x-1/2 rounded-full bg-white/70" />
               <span className="absolute bottom-0 left-1/2 h-3 w-px -translate-x-1/2 rounded-full bg-white/70" />
               <span className="absolute left-0 top-1/2 h-px w-3 -translate-y-1/2 rounded-full bg-white/70" />
