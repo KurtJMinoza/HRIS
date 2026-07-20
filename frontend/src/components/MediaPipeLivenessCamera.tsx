@@ -527,24 +527,24 @@ export function MediaPipeLivenessCamera({
   }
 
   return (
-    <div className={cn('w-full min-w-0', className)}>
+    <div className={cn('w-full min-w-0 overflow-hidden', className)}>
       <div
         className={cn(
-          'overflow-hidden rounded-[20px] border bg-white shadow-[0_18px_45px_-34px_rgba(15,23,42,0.55)] max-sm:rounded-xl',
+          'overflow-hidden rounded-[20px] border bg-white shadow-[0_18px_45px_-34px_rgba(15,23,42,0.55)] max-[760px]:rounded-xl',
           lightSurface ? 'border-slate-200 text-slate-950' : 'border-white/10 text-white'
         )}
       >
-        <div className="border-b border-slate-200 bg-white px-5 py-4 text-slate-900 max-sm:px-3 max-sm:py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-200">
-              <Camera className="size-5" aria-hidden />
+        <div className="border-b border-slate-200 bg-white px-5 py-4 text-slate-900 max-[760px]:px-3 max-[760px]:py-3 max-[360px]:px-2.5 [@media(max-width:760px)_and_(orientation:landscape)]:py-2">
+          <div className="flex min-w-0 items-center gap-3 max-[360px]:gap-2">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-200 max-[360px]:size-9">
+              <Camera className="size-5 max-[360px]:size-4" aria-hidden />
             </span>
-            <h3 className="min-w-0 text-lg font-bold tracking-normal text-slate-950 max-[360px]:text-base">Attendance Verification</h3>
+            <h3 className="min-w-0 truncate text-lg font-bold tracking-normal text-slate-950 max-[360px]:text-base">Attendance Verification</h3>
           </div>
         </div>
 
-        <div className="space-y-4 bg-slate-50 p-4 sm:p-5 max-sm:space-y-3 max-sm:p-2">
-          <div className="relative aspect-[4/3] overflow-hidden rounded-[18px] border border-slate-200 bg-slate-950 shadow-inner max-sm:aspect-auto max-sm:h-[clamp(18rem,52dvh,30rem)] max-sm:rounded-xl">
+        <div className="space-y-4 bg-slate-50 p-4 sm:p-5 max-[760px]:space-y-2 max-[760px]:p-2 max-[360px]:p-1.5 [@media(max-width:760px)_and_(orientation:landscape)]:space-y-1.5">
+          <div className="relative aspect-[4/3] overflow-hidden rounded-[18px] border border-slate-200 bg-slate-950 shadow-inner max-[760px]:aspect-auto max-[760px]:h-[clamp(12rem,min(112vw,58dvh),30rem)] max-[760px]:rounded-xl [@media(max-width:760px)_and_(orientation:landscape)]:h-[clamp(10rem,42dvh,18rem)]">
             <video
               ref={videoRef}
               className="h-full w-full scale-x-[-1] object-cover"
@@ -589,7 +589,7 @@ export function MediaPipeLivenessCamera({
             {(tooFar || tooClose) ? (
               <div
                 className={cn(
-                  'pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full border px-4 py-1.5 text-sm font-extrabold shadow-[0_10px_30px_rgba(0,0,0,0.28)] backdrop-blur-md',
+                  'pointer-events-none absolute left-1/2 top-4 max-w-[calc(100%-1rem)] -translate-x-1/2 whitespace-nowrap rounded-full border px-4 py-1.5 text-sm font-extrabold shadow-[0_10px_30px_rgba(0,0,0,0.28)] backdrop-blur-md max-[760px]:top-3 max-[360px]:top-2 max-[360px]:px-3 max-[360px]:py-1 max-[360px]:text-xs',
                   tooClose
                     ? 'border-orange-200/80 bg-orange-500/90 text-white shadow-orange-500/25'
                     : 'border-blue-200/80 bg-blue-600/90 text-white shadow-blue-500/25'
@@ -608,7 +608,7 @@ export function MediaPipeLivenessCamera({
           <div className="flex justify-center">
             <p
               className={cn(
-                'inline-flex min-h-10 max-w-full items-center justify-center rounded-full border px-5 text-lg font-extrabold tracking-normal shadow-sm max-sm:min-h-10 max-sm:px-4 max-sm:text-lg',
+                'inline-flex min-h-10 max-w-full items-center justify-center rounded-full border px-5 text-center text-lg font-extrabold leading-tight tracking-normal shadow-sm max-[760px]:min-h-9 max-[760px]:px-4 max-[760px]:py-1.5 max-[360px]:px-3 max-[360px]:text-base [@media(max-width:760px)_and_(orientation:landscape)]:min-h-8 [@media(max-width:760px)_and_(orientation:landscape)]:py-1 [@media(max-width:760px)_and_(orientation:landscape)]:text-base',
                 statusTone
               )}
               aria-live="polite"
@@ -626,14 +626,14 @@ export function MediaPipeLivenessCamera({
           </div>
 
           {machineState === MEDIAPIPE_LIVENESS_STATE.PASSED ? (
-            <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-sm font-semibold text-emerald-700">
               <CheckCircle2 className="size-4" aria-hidden />
               Face verified
             </div>
           ) : null}
 
           {machineState === MEDIAPIPE_LIVENESS_STATE.FAILED ? (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 min-[380px]:grid-cols-2">
               <Button type="button" onClick={handleRetry} disabled={disabled} className="bg-blue-600 text-white hover:bg-blue-700">
                 <RefreshCw className="size-4" aria-hidden />
                 Try Again

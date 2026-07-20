@@ -411,7 +411,7 @@ export function FaceVerificationLiveness({
 
   if (!onVerified && !kioskMode && !attendanceDeviceProfile) {
     return (
-      <div className={className}>
+      <div className={cn('min-w-0 overflow-hidden', className)}>
         <div className={panelClass}>
           <p className={cn('text-sm font-semibold', strongTextClass)}>Select this device</p>
           <p className={cn('mt-1 text-xs', mutedTextClass)}>
@@ -435,7 +435,7 @@ export function FaceVerificationLiveness({
 
   if (loading) {
     return (
-      <div className={className}>
+      <div className={cn('min-w-0 overflow-hidden', className)}>
         <div className={cn(panelClass, 'flex flex-col items-center justify-center gap-4 p-8')}>
           <Loader2 className={cn('size-10 animate-spin', lightSurface ? 'text-orange-500' : 'text-emerald-400')} aria-hidden />
           <span className={cn('text-sm', strongTextClass)}>
@@ -489,9 +489,9 @@ export function FaceVerificationLiveness({
   }
 
   return (
-    <div className={className || ''}>
+    <div className={cn('min-w-0 overflow-hidden', className)}>
       {!onVerified && !kioskMode && (
-        <div className={cn('mb-3 flex items-center justify-between gap-3 rounded-md border px-3 py-2', lightSurface ? 'border-slate-200 bg-slate-50' : 'border-white/10 bg-black/20')}>
+        <div className={cn('mb-3 flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2 max-[360px]:flex-col max-[360px]:items-stretch', lightSurface ? 'border-slate-200 bg-slate-50' : 'border-white/10 bg-black/20')}>
           <span className={cn('text-xs', mutedTextClass)}>This device</span>
           <select
             value={attendanceDeviceProfile}

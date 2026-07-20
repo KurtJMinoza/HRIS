@@ -3724,19 +3724,19 @@ export default function EmployeeDashboard() {
 
       <Dialog open={faceAttendanceOpen} onOpenChange={setFaceAttendanceOpen}>
         <DialogContent
-          className="w-[calc(100vw-1rem)] max-w-2xl overflow-hidden rounded-2xl border-border bg-card p-0 text-card-foreground shadow-xl"
+          className="w-[calc(100vw-1rem)] max-w-2xl overflow-hidden rounded-2xl border-border bg-card p-0 text-card-foreground shadow-xl max-[760px]:left-0 max-[760px]:top-0 max-[760px]:h-[100dvh] max-[760px]:max-h-[100dvh] max-[760px]:w-screen max-[760px]:translate-x-0 max-[760px]:translate-y-0 max-[760px]:rounded-none"
           innerClassName="gap-0 p-0"
         >
-          <DialogHeader className="border-b border-border/70 bg-card px-5 py-4 text-left">
-            <DialogTitle className="flex items-center gap-2 text-lg font-extrabold text-foreground">
+          <DialogHeader className="border-b border-border/70 bg-card px-5 py-4 text-left max-[760px]:px-3 max-[760px]:py-3">
+            <DialogTitle className="flex min-w-0 items-center gap-2 text-lg font-extrabold text-foreground max-[360px]:text-base">
               <ScanFace className="size-5 text-orange-600" />
               {faceAttendanceType === 'clock_out' ? 'Face Clock Out' : 'Face Clock In'}
             </DialogTitle>
-            <DialogDescription className="text-sm text-muted-foreground">
+            <DialogDescription className="text-sm text-muted-foreground max-[360px]:text-xs">
               Complete face verification to record your {faceAttendanceType === 'clock_out' ? 'clock-out' : 'clock-in'} for today.
             </DialogDescription>
           </DialogHeader>
-          <div className="bg-card px-4 py-5 @sm:px-6">
+          <div className="min-w-0 overflow-x-hidden bg-card px-4 py-5 @sm:px-6 max-[760px]:px-2 max-[760px]:py-2">
             {faceAttendanceOpen ? (
               <FaceVerificationLiveness
                 kioskMode

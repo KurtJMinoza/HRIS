@@ -367,8 +367,8 @@ export default function EmployeeMyQr() {
       {/* Register/Change Face Dialog */}
       <Dialog open={faceRegisterOpen} onOpenChange={(open) => !open && !faceRegisterSubmitting && closeFaceRegister()}>
         <DialogContent
-          className="max-w-2xl gap-4 max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:w-screen max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none"
-          innerClassName="max-sm:px-3 max-sm:pb-4 max-sm:pr-3 max-sm:pt-14"
+          className="max-w-2xl gap-4 max-[760px]:left-0 max-[760px]:top-0 max-[760px]:h-[100dvh] max-[760px]:max-h-[100dvh] max-[760px]:w-screen max-[760px]:translate-x-0 max-[760px]:translate-y-0 max-[760px]:rounded-none"
+          innerClassName="overflow-x-hidden max-[760px]:px-2 max-[760px]:pb-3 max-[760px]:pr-2 max-[760px]:pt-14"
         >
           <DialogHeader>
             <DialogTitle>{hasFace ? 'Change face' : 'Register face'}</DialogTitle>

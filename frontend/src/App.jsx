@@ -963,8 +963,8 @@ function SmartDTRPreview({ className }) {
             </div>
           ) : (
             /* ── Face recognition capture ── */
-            <div className="space-y-3">
-              <p className="text-center text-xs text-[#6b7280] dark:text-muted-foreground">
+            <div className="min-w-0 space-y-3 overflow-hidden max-[760px]:space-y-2">
+              <p className="text-center text-xs text-[#6b7280] dark:text-muted-foreground max-[360px]:text-[11px]">
                 Look into the camera and hold still during the guided liveness check.
               </p>
               <Suspense fallback={<div className="rounded-xl border border-border bg-muted/30 p-4 text-center text-sm text-muted-foreground">Loading face scanner...</div>}>
