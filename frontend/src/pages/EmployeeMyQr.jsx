@@ -366,7 +366,10 @@ export default function EmployeeMyQr() {
 
       {/* Register/Change Face Dialog */}
       <Dialog open={faceRegisterOpen} onOpenChange={(open) => !open && !faceRegisterSubmitting && closeFaceRegister()}>
-        <DialogContent className="max-w-lg gap-4">
+        <DialogContent
+          className="max-w-2xl gap-4 max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:w-screen max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none"
+          innerClassName="max-sm:px-3 max-sm:pb-4 max-sm:pr-3 max-sm:pt-14"
+        >
           <DialogHeader>
             <DialogTitle>{hasFace ? 'Change face' : 'Register face'}</DialogTitle>
             <DialogDescription>
@@ -380,7 +383,7 @@ export default function EmployeeMyQr() {
             onVerified={handleFaceRegisterVerified}
             onSuccess={closeFaceRegister}
             hideInstruction
-            instructionText="Center your face and hold still to register your face."
+            instructionText="Center your face, adjust forward or back as prompted, then hold still."
           />
           {faceRegisterSubmitting && (
             <div

@@ -511,10 +511,10 @@ export function FaceVerificationLiveness({
         <p className={cn('text-center text-[11px]', instructionClass)}>
           {instructionText ??
             (onVerified
-              ? 'Center your face and hold still to verify the registration photo.'
+              ? 'Center your face, adjust forward or back as prompted, then hold still.'
               : kioskMode
-                ? 'Center your face, move closer if needed, then hold still.'
-                : 'Center your face, move closer if needed, then hold still.')}
+                ? 'Center your face, adjust forward or back as prompted, then hold still.'
+                : 'Center your face, adjust forward or back as prompted, then hold still.')}
         </p>
       )}
 

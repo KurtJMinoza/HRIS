@@ -10,6 +10,7 @@ export const MEDIAPIPE_LIVENESS_STATE = {
   MULTIPLE_FACES: 'MULTIPLE_FACES',
   CENTER_FACE: 'CENTER_FACE',
   MOVE_CLOSER: 'MOVE_CLOSER',
+  MOVE_BACK: 'MOVE_BACK',
   HOLD_STILL: 'HOLD_STILL',
   VERIFYING: 'VERIFYING',
   PASSED: 'PASSED',
@@ -41,7 +42,8 @@ const STATE_MESSAGE = {
   [MEDIAPIPE_LIVENESS_STATE.NO_FACE]: 'No face detected',
   [MEDIAPIPE_LIVENESS_STATE.MULTIPLE_FACES]: 'Multiple faces detected',
   [MEDIAPIPE_LIVENESS_STATE.CENTER_FACE]: 'Center your face',
-  [MEDIAPIPE_LIVENESS_STATE.MOVE_CLOSER]: 'Move closer',
+  [MEDIAPIPE_LIVENESS_STATE.MOVE_CLOSER]: 'Move forward',
+  [MEDIAPIPE_LIVENESS_STATE.MOVE_BACK]: 'Move back',
   [MEDIAPIPE_LIVENESS_STATE.HOLD_STILL]: 'Hold still',
   [MEDIAPIPE_LIVENESS_STATE.VERIFYING]: 'Verifying...',
   [MEDIAPIPE_LIVENESS_STATE.PASSED]: 'Face verified',
@@ -203,6 +205,8 @@ export function MediaPipeLivenessCamera({
     machineState === MEDIAPIPE_LIVENESS_STATE.HOLD_STILL ||
     machineState === MEDIAPIPE_LIVENESS_STATE.VERIFYING ||
     machineState === MEDIAPIPE_LIVENESS_STATE.PASSED
+  const tooFar = machineState === MEDIAPIPE_LIVENESS_STATE.MOVE_CLOSER
+  const tooClose = machineState === MEDIAPIPE_LIVENESS_STATE.MOVE_BACK
   const showActivity =
     machineState === MEDIAPIPE_LIVENESS_STATE.HOLD_STILL ||
     machineState === MEDIAPIPE_LIVENESS_STATE.VERIFYING
@@ -221,7 +225,8 @@ export function MediaPipeLivenessCamera({
     const next = Math.min(1, Math.max(0, Number(value) || 0))
     progressValueRef.current = next
     if (progressFillRef.current) {
-      progressFillRef.current.style.transform = `scaleX(${next})`
+      progressFillRef.current.style.setProperty('--hold-progress', `${next * 360}deg`)
+      progressFillRef.current.style.opacity = next > 0 ? '1' : '0'
     }
   }, [])
 
@@ -359,7 +364,12 @@ export function MediaPipeLivenessCamera({
     const videoTimeAdvanced = video.currentTime !== lastVideoTimeRef.current
     lastVideoTimeRef.current = video.currentTime
 
-    if (!centered || box.width > MAX_FACE_WIDTH || box.height > MAX_FACE_HEIGHT) {
+    if (box.width > MAX_FACE_WIDTH || box.height > MAX_FACE_HEIGHT) {
+      resetStability()
+      setStateSafely(MEDIAPIPE_LIVENESS_STATE.MOVE_BACK)
+      return
+    }
+    if (!centered) {
       resetStability()
       setStateSafely(MEDIAPIPE_LIVENESS_STATE.CENTER_FACE)
       return
@@ -517,24 +527,24 @@ export function MediaPipeLivenessCamera({
   }
 
   return (
-    <div className={cn('w-full', className)}>
+    <div className={cn('w-full min-w-0', className)}>
       <div
         className={cn(
-          'overflow-hidden rounded-[20px] border bg-white shadow-[0_18px_45px_-34px_rgba(15,23,42,0.55)]',
+          'overflow-hidden rounded-[20px] border bg-white shadow-[0_18px_45px_-34px_rgba(15,23,42,0.55)] max-sm:rounded-xl',
           lightSurface ? 'border-slate-200 text-slate-950' : 'border-white/10 text-white'
         )}
       >
-        <div className="border-b border-slate-200 bg-white px-5 py-3.5 text-slate-900">
-          <div className="flex items-center gap-3">
-            <span className="flex size-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600 ring-1 ring-blue-200">
-              <Camera className="size-4.5" aria-hidden />
+        <div className="border-b border-slate-200 bg-white px-5 py-4 text-slate-900 max-sm:px-3 max-sm:py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-200">
+              <Camera className="size-5" aria-hidden />
             </span>
-            <h3 className="text-base font-bold tracking-normal text-slate-950">Attendance Verification</h3>
+            <h3 className="min-w-0 text-lg font-bold tracking-normal text-slate-950 max-[360px]:text-base">Attendance Verification</h3>
           </div>
         </div>
 
-        <div className="space-y-4 bg-slate-50 p-4 sm:p-5">
-          <div className="relative overflow-hidden rounded-[18px] border border-slate-200 bg-slate-950 aspect-[4/3] shadow-inner">
+        <div className="space-y-4 bg-slate-50 p-4 sm:p-5 max-sm:space-y-3 max-sm:p-2">
+          <div className="relative aspect-[4/3] overflow-hidden rounded-[18px] border border-slate-200 bg-slate-950 shadow-inner max-sm:aspect-auto max-sm:h-[clamp(18rem,52dvh,30rem)] max-sm:rounded-xl">
             <video
               ref={videoRef}
               className="h-full w-full scale-x-[-1] object-cover"
@@ -558,19 +568,36 @@ export function MediaPipeLivenessCamera({
               style={{ boxShadow: `0 0 0 1px ${accentColor}33, 0 0 34px ${accentColor}22` }}
               aria-hidden
             />
-            {showActivity ? (
-              <div
-                className="pointer-events-none absolute left-1/2 top-[48%] h-[76%] w-[60%] -translate-x-1/2 -translate-y-1/2 animate-spin rounded-[50%] border-[3px] border-transparent border-r-emerald-300/30 border-t-emerald-300/90"
-                style={{ animationDuration: '1.25s' }}
-                aria-hidden
-              />
-            ) : null}
+            <div
+              ref={progressFillRef}
+              className="pointer-events-none absolute left-1/2 top-[48%] h-[76%] w-[60%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] opacity-0 transition-opacity duration-100"
+              style={{
+                '--hold-progress': `${progressValueRef.current * 360}deg`,
+                background:
+                  'conic-gradient(from -90deg, rgba(34,197,94,0.95) var(--hold-progress), rgba(34,197,94,0.12) 0deg)',
+                WebkitMaskImage: 'radial-gradient(ellipse at center, transparent 0 67%, #000 68% 100%)',
+                maskImage: 'radial-gradient(ellipse at center, transparent 0 67%, #000 68% 100%)',
+              }}
+              aria-hidden
+            />
             <div className="pointer-events-none absolute left-1/2 top-[48%] h-[72%] w-[56%] -translate-x-1/2 -translate-y-1/2 rounded-[50%]" aria-hidden>
               <span className="absolute left-1/2 top-0 h-3 w-px -translate-x-1/2 rounded-full bg-white/70" />
               <span className="absolute bottom-0 left-1/2 h-3 w-px -translate-x-1/2 rounded-full bg-white/70" />
               <span className="absolute left-0 top-1/2 h-px w-3 -translate-y-1/2 rounded-full bg-white/70" />
               <span className="absolute right-0 top-1/2 h-px w-3 -translate-y-1/2 rounded-full bg-white/70" />
             </div>
+            {(tooFar || tooClose) ? (
+              <div
+                className={cn(
+                  'pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 rounded-full border px-4 py-1.5 text-sm font-extrabold shadow-[0_10px_30px_rgba(0,0,0,0.28)] backdrop-blur-md',
+                  tooClose
+                    ? 'border-orange-200/80 bg-orange-500/90 text-white shadow-orange-500/25'
+                    : 'border-blue-200/80 bg-blue-600/90 text-white shadow-blue-500/25'
+                )}
+              >
+                {tooClose ? 'Move back' : 'Move forward'}
+              </div>
+            ) : null}
             {(machineState === MEDIAPIPE_LIVENESS_STATE.INITIALIZING || disabled) && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-950/50 text-white">
                 <Loader2 className="size-8 animate-spin text-blue-300" aria-hidden />
@@ -581,7 +608,7 @@ export function MediaPipeLivenessCamera({
           <div className="flex justify-center">
             <p
               className={cn(
-                'inline-flex min-h-9 min-w-40 items-center justify-center rounded-full border px-5 text-base font-extrabold tracking-normal shadow-sm',
+                'inline-flex min-h-10 max-w-full items-center justify-center rounded-full border px-5 text-lg font-extrabold tracking-normal shadow-sm max-sm:min-h-10 max-sm:px-4 max-sm:text-lg',
                 statusTone
               )}
               aria-live="polite"
@@ -596,17 +623,6 @@ export function MediaPipeLivenessCamera({
             {machineState === MEDIAPIPE_LIVENESS_STATE.FAILED ? (
               <p className="text-sm text-slate-500">Please try again.</p>
             ) : null}
-          </div>
-
-          <div className="h-2 overflow-hidden rounded-full bg-slate-200/80">
-            <div
-              ref={progressFillRef}
-              className={cn(
-                'h-full origin-left scale-x-0 rounded-full transition-transform duration-75 ease-out will-change-transform',
-                ready ? 'bg-emerald-500' : 'bg-blue-500'
-              )}
-              style={{ transform: `scaleX(${progressValueRef.current})` }}
-            />
           </div>
 
           {machineState === MEDIAPIPE_LIVENESS_STATE.PASSED ? (
