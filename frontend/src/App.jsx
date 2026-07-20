@@ -54,9 +54,9 @@ const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
 const VerifyOtp = lazy(() => import('@/pages/VerifyOtp'))
 const ResetPassword = lazy(() => import('@/pages/ResetPassword'))
 const RecruitmentExamPage = lazy(() => import('@/pages/RecruitmentExamPage'))
-const FaceRekognitionLiveness = lazy(() =>
-  import('@/components/FaceRekognitionLiveness').then((module) => ({
-    default: module.FaceRekognitionLiveness,
+const FaceVerificationLiveness = lazy(() =>
+  import('@/components/FaceVerificationLiveness').then((module) => ({
+    default: module.FaceVerificationLiveness,
   }))
 )
 
@@ -968,7 +968,7 @@ function SmartDTRPreview({ className }) {
                 Look into the camera and hold still during the guided liveness check.
               </p>
               <Suspense fallback={<div className="rounded-xl border border-border bg-muted/30 p-4 text-center text-sm text-muted-foreground">Loading face scanner...</div>}>
-                <FaceRekognitionLiveness
+                <FaceVerificationLiveness
                   kioskMode
                   kioskType={kioskType}
                   attemptMeta={kioskAttemptMeta}

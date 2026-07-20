@@ -1591,7 +1591,7 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Verify-only: run face verification on a frame (legacy; prefer Rekognition Face Liveness for login/kiosk).
+     * Verify-only: run face verification on a frame.
      */
     public function verifyFaceOnly(Request $request): JsonResponse
     {
@@ -1616,7 +1616,7 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Kiosk face scan: Amazon Rekognition Face Liveness session or legacy image.
+     * Kiosk face scan from a verified camera image.
      * Verify liveness → extract descriptor → identify user → record attendance.
      */
     public function scanAuthenticatedFace(Request $request): JsonResponse
@@ -1648,8 +1648,7 @@ class AttendanceController extends Controller
         $validated = $request->validate([
             'type' => ['required', 'string', 'in:clock_in,clock_out'],
             'login' => ['nullable', 'string', 'max:255'],
-            'liveness_session_id' => ['nullable', 'string', 'max:255'],
-            'image_base64' => ['nullable', 'string'],
+            'image_base64' => ['required', 'string'],
             'company_id' => ['nullable', 'integer', 'min:1'],
             'device_id' => ['nullable', 'string', 'max:120'],
             'camera_info' => ['nullable', 'string', 'max:255'],
@@ -1667,13 +1666,7 @@ class AttendanceController extends Controller
             'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
         ]);
         $login = trim((string) ($validated['login'] ?? ''));
-        $sessionId = $validated['liveness_session_id'] ?? null;
         $imageBase64 = $validated['image_base64'] ?? null;
-        if (! $sessionId && ! $imageBase64) {
-            throw ValidationException::withMessages([
-                'face' => ['Perform face liveness first, then submit the session.'],
-            ]);
-        }
 
         $claimedUser = null;
         if ($login !== '') {
@@ -1727,9 +1720,7 @@ class AttendanceController extends Controller
             ], 429);
         }
 
-        $result = $sessionId
-            ? FaceAuthService::verifyFaceWithLivenessSession($sessionId, false, $claimedUser?->id)
-            : FaceAuthService::verifyFace($imageBase64);
+        $result = FaceAuthService::verifyFace($imageBase64);
         if ($result === null) {
             $this->recordFailedAttempt(null, $request, false, 'service_unavailable');
             FaceRecognitionAuditService::record($request, [
@@ -1762,7 +1753,7 @@ class AttendanceController extends Controller
             ], 422);
         }
 
-        // Keep Amplify/Rekognition liveness mandatory and enforce a strict clock-in/out confidence floor.
+        // Enforce a strict clock-in/out liveness confidence floor before face matching.
         $minLiveness = (float) config('attendance.face_clock_min_liveness_score', 0.60);
         $spoofConfidence = isset($result['spoof_confidence']) ? (float) $result['spoof_confidence'] : null;
         if ($spoofConfidence === null || $spoofConfidence < $minLiveness) {
@@ -1804,14 +1795,7 @@ class AttendanceController extends Controller
         $matchStarted = microtime(true);
         $similarityScore = null;
         if ($claimedUser) {
-            $cachedVerification = FaceVerificationResultCacheService::getForSession($claimedUser->id, $request, $sessionId);
-            $strictMatch = $cachedVerification !== null
-                ? [
-                    'passes' => true,
-                    'similarity_score' => (float) ($cachedVerification['similarity_score'] ?? 1.0),
-                    'distance' => (float) ($cachedVerification['distance'] ?? 0.0),
-                ]
-                : FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor'], $spoofConfidence);
+            $strictMatch = FaceVerificationService::verifySpecificUserByFaceWithScore($claimedUser, $result['descriptor'], $spoofConfidence);
             $matchMs = round((microtime(true) - $matchStarted) * 1000, 1);
             if (! $strictMatch || ! $strictMatch['passes']) {
                 $mismatchMinSimilarity = (float) config('attendance.face_kiosk_account_mismatch_min_similarity', 0.60);
@@ -1895,7 +1879,6 @@ class AttendanceController extends Controller
             }
             $similarityScore = $strictMatch['similarity_score'];
             FaceVerificationResultCacheService::put($claimedUser->id, $request, [
-                'session_id' => $sessionId,
                 'similarity_score' => $strictMatch['similarity_score'],
                 'distance' => $strictMatch['distance'] ?? null,
                 'liveness_score' => $spoofConfidence,
@@ -1970,7 +1953,6 @@ class AttendanceController extends Controller
             }
             $similarityScore = $identified['similarity_score'];
             FaceVerificationResultCacheService::put($identifiedUser->id, $request, [
-                'session_id' => $sessionId,
                 'similarity_score' => $identified['similarity_score'],
                 'distance' => $identified['distance'] ?? null,
                 'second_best_score' => $identified['second_best_score'] ?? null,
@@ -2051,7 +2033,6 @@ class AttendanceController extends Controller
             'metadata' => [
                 'attendance_log_id' => $log->id,
                 'company_id' => $companyId,
-                'used_liveness_session' => ! empty($sessionId),
                 'clicked_at' => $log->verified_at?->toIso8601String(),
                 'server_received_at' => $serverReceivedAt->toIso8601String(),
                 'processing_delay_seconds' => $log->processing_delay_seconds,
@@ -2189,7 +2170,6 @@ class AttendanceController extends Controller
         Log::info('Kiosk face scan performance', [
             'user_id' => $user->id,
             'type' => $type,
-            'uses_liveness_session' => ! empty($sessionId),
             'server_processing_ms' => $payload['performance']['server_processing_ms'],
             'match_ms' => $matchMs,
             'similarity_score' => $similarityScore,

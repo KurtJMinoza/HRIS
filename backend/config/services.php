@@ -50,7 +50,7 @@ return [
         'base_url' => env('PHILSMS_BASE_URL', 'https://dashboard.philsms.com/api/v3'),
     ],
 
-    // Face verification (Python FastAPI: InsightFace ArcFace embeddings; liveness via Amazon Rekognition)
+    // Face verification (Python FastAPI: InsightFace ArcFace embeddings and anti-spoof checks)
     'face_verification' => [
         'url' => env('FACE_VERIFICATION_URL', 'http://127.0.0.1:5000'),
         'urls' => array_values(array_unique(array_filter(array_map(
@@ -67,23 +67,6 @@ return [
         'connect_timeout_seconds' => (int) env('FACE_VERIFICATION_CONNECT_TIMEOUT_SECONDS', 3),
         'embed_timeout_seconds' => (int) env('FACE_VERIFICATION_EMBED_TIMEOUT_SECONDS', 8),
         'verify_timeout_seconds' => (int) env('FACE_VERIFICATION_VERIFY_TIMEOUT_SECONDS', 10),
-    ],
-
-    // Amazon Rekognition Face Liveness (create session + get results; frontend uses Amplify FaceLivenessDetector)
-    // Face Liveness is ONLY available in us-east-1, us-east-2. Other regions return AccessDeniedException.
-    'rekognition' => [
-        'key' => env('AWS_ACCESS_KEY_ID'),
-        'secret' => env('AWS_SECRET_ACCESS_KEY'),
-        'region' => env('REKOGNITION_REGION', env('AWS_DEFAULT_REGION', 'us-east-1')),
-        'connect_timeout_seconds' => (int) env('REKOGNITION_CONNECT_TIMEOUT_SECONDS', 10),
-        'timeout_seconds' => (int) env('REKOGNITION_TIMEOUT_SECONDS', 30),
-    ],
-
-    // Cognito Identity Pool for FaceLivenessDetector (frontend needs this to sign Rekognition requests)
-    // MUST be in same region as Rekognition (us-east-1). ap-southeast-1 pool will cause SERVER_ERROR.
-    'cognito' => [
-        'identity_pool_id' => env('COGNITO_IDENTITY_POOL_ID'),
-        'region' => env('COGNITO_REGION', 'us-east-1'),
     ],
 
     // Time and Date Holidays API (dev.timeanddate.com)

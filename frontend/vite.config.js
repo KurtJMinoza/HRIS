@@ -23,6 +23,9 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, './src'),
       },
     },
+    optimizeDeps: {
+      include: ['@mediapipe/tasks-vision'],
+    },
     server: {
       port: 5100,
       host: true,

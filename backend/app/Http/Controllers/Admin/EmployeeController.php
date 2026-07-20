@@ -2056,27 +2056,18 @@ class EmployeeController extends Controller
     }
 
     /**
-     * Register employee face. Amazon Rekognition Face Liveness (session) or legacy image capture.
-     * Liveness + DeepFace embedding + duplicate check run in {@see ProcessFaceRegistrationJob} under cache/DB locks.
+     * Register employee face from a verified camera image.
+     * Face verification + embedding + duplicate check run in {@see ProcessFaceRegistrationJob} under cache/DB locks.
      */
     public function registerFace(Request $request, int $id): JsonResponse
     {
         $employee = $this->loadScopedEmployee($request, $id, true);
 
         $validated = $request->validate([
-            'liveness_session_id' => ['nullable', 'string', 'max:255'],
-            'image_base64' => ['nullable', 'string'],
-            'liveness_type' => ['nullable', 'string', 'in:rekognition,mediapipe,hybrid'],
+            'image_base64' => ['required', 'string'],
+            'liveness_type' => ['nullable', 'string', 'in:mediapipe,hybrid'],
         ]);
-        $sessionId = $validated['liveness_session_id'] ?? null;
         $imageBase64 = $validated['image_base64'] ?? null;
-        if (! $sessionId && ! $imageBase64) {
-            return response()->json([
-                'message' => 'Perform face liveness first or provide a face image.',
-                'errors' => ['face' => ['Face liveness session or face image is required.']],
-                'error_code' => 'validation_error',
-            ], 422);
-        }
 
         $trackId = (string) Str::uuid();
         FaceRegistrationStatusService::create($trackId, ['target_user_id' => $employee->id]);
@@ -2084,9 +2075,8 @@ class EmployeeController extends Controller
         ProcessFaceRegistrationJob::dispatch(
             $trackId,
             $employee->id,
-            $sessionId,
             $imageBase64,
-            $validated['liveness_type'] ?? 'rekognition',
+            $validated['liveness_type'] ?? 'mediapipe',
             $request->user()?->id,
             $request->ip(),
             $request->userAgent(),

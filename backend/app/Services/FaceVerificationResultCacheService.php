@@ -15,30 +15,6 @@ class FaceVerificationResultCacheService
     }
 
     /**
-     * @return array<string, mixed>|null
-     */
-    public static function getForSession(int $employeeId, Request $request, ?string $sessionId): ?array
-    {
-        if (empty($sessionId)) {
-            return null;
-        }
-
-        try {
-            $payload = self::cache()->get(self::key($employeeId, $request));
-        } catch (\Throwable $e) {
-            Log::warning('Face verification result cache read failed', [
-                'message' => $e->getMessage(),
-            ]);
-
-            return null;
-        }
-
-        return is_array($payload) && ($payload['session_id'] ?? null) === $sessionId
-            ? $payload
-            : null;
-    }
-
-    /**
      * @param  array<string, mixed>  $payload
      */
     public static function put(int $employeeId, Request $request, array $payload): void

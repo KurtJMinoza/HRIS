@@ -298,13 +298,11 @@ class AuthController extends Controller
     }
 
     /**
-     * Login via face recognition using Amazon Rekognition Face Liveness.
+     * Login via face recognition using a captured camera image.
      *
-     * Flow:
-     * 1. Frontend: Amplify FaceLivenessDetector completes guided liveness (sessionId).
      * 2. Backend: GetFaceLivenessSessionResults → reference image → Python /embed → match → DTR.
      *
-     * Accepts liveness_session_id (from Rekognition create session) or legacy image_base64.
+     * Accepts image_base64 from the camera verification flow.
      * Stores similarity_score, liveness_score, authentication_method in attendance log.
      */
     public function loginWithFace(Request $request): JsonResponse
@@ -313,8 +311,7 @@ class AuthController extends Controller
         $request->attributes->set('attendance_server_received_at', $serverReceivedAt);
         $startedAt = microtime(true);
         $validated = $request->validate([
-            'liveness_session_id' => ['nullable', 'string', 'max:255'],
-            'image_base64' => ['nullable', 'string'],
+            'image_base64' => ['required', 'string'],
             'client_capture_started_at_ms' => ['nullable', 'numeric'],
             'clicked_at' => ['nullable', 'string', 'max:80'],
             'timezone' => ['nullable', 'string', 'max:80'],
@@ -328,18 +325,8 @@ class AuthController extends Controller
             'geofence_validation_id' => ['nullable', 'integer', 'exists:geofence_validation_logs,id'],
             'sampled_readings_count' => ['nullable', 'integer', 'min:1', 'max:5'],
             'selected_best_accuracy' => ['nullable', 'numeric', 'min:0'],
-        ], [
-            'liveness_session_id.required_without' => 'Either liveness session or face image is required.',
         ]);
-        $sessionId = $validated['liveness_session_id'] ?? null;
         $imageBase64 = $validated['image_base64'] ?? null;
-        if (! $sessionId && ! $imageBase64) {
-            return response()->json([
-                'message' => 'Face liveness session or face image is required.',
-                'errors' => ['face' => ['Perform face liveness first, then submit the session.']],
-                'error_code' => 'validation_error',
-            ], 422);
-        }
 
         $throttle = FaceAttemptThrottleService::hit($request);
         if ($throttle !== null) {
@@ -359,9 +346,7 @@ class AuthController extends Controller
             ], 429);
         }
 
-        $result = $sessionId
-            ? FaceAuthService::verifyFaceWithLivenessSession($sessionId)
-            : FaceAuthService::verifyFace($imageBase64);
+        $result = FaceAuthService::verifyFace($imageBase64);
 
         if ($result === null) {
             $this->recordFaceLoginFailure($request, null, false, 'service_unavailable');
@@ -394,28 +379,22 @@ class AuthController extends Controller
             ], 422);
         }
 
-        // Rekognition Face Liveness path: RekognitionLivenessService already applied face_min_liveness_score.
-        // Avoid a second duplicate gate that could drift out of sync and increase false rejects.
-        //
-        // Legacy image path: Python /verify still supplies spoof_confidence; enforce minimum there.
-        if (! $sessionId) {
-            $minLiveness = (float) config('attendance.face_min_liveness_score', 0.52);
-            $spoofConfidence = isset($result['spoof_confidence']) ? (float) $result['spoof_confidence'] : null;
-            if ($spoofConfidence === null || $spoofConfidence < $minLiveness) {
-                $this->recordFaceLoginFailure($request, null, true, 'liveness_failed');
-                FaceRecognitionAuditService::record($request, [
-                    'liveness_score' => $spoofConfidence,
-                    'decision' => 'rejected',
-                    'reason' => 'liveness_failed',
-                    'mode' => 'face_login',
-                ]);
+        $minLiveness = (float) config('attendance.face_min_liveness_score', 0.52);
+        $spoofConfidence = isset($result['spoof_confidence']) ? (float) $result['spoof_confidence'] : null;
+        if ($spoofConfidence === null || $spoofConfidence < $minLiveness) {
+            $this->recordFaceLoginFailure($request, null, true, 'liveness_failed');
+            FaceRecognitionAuditService::record($request, [
+                'liveness_score' => $spoofConfidence,
+                'decision' => 'rejected',
+                'reason' => 'liveness_failed',
+                'mode' => 'face_login',
+            ]);
 
-                return response()->json([
-                    'message' => 'Liveness confidence too low. Please complete the face liveness check again.',
-                    'errors' => ['face' => ['Liveness confidence too low. Please complete the face liveness check again.']],
-                    'error_code' => 'spoof_detected',
-                ], 422);
-            }
+            return response()->json([
+                'message' => 'Liveness confidence too low. Please complete the face verification check again.',
+                'errors' => ['face' => ['Liveness confidence too low. Please complete the face verification check again.']],
+                'error_code' => 'spoof_detected',
+            ], 422);
         }
 
         if (empty($result['descriptor']) || count($result['descriptor']) !== FaceVerificationService::EMBEDDING_DIM) {
@@ -526,7 +505,6 @@ class AuthController extends Controller
 
         Log::info('Face login performance', [
             'user_id' => $user->id,
-            'uses_liveness_session' => ! empty($sessionId),
             'server_processing_ms' => $payload['performance']['server_processing_ms'],
             'client_capture_started_at_ms' => $payload['performance']['client_capture_started_at_ms'],
         ]);

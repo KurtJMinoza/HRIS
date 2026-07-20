@@ -154,20 +154,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Face Liveness: Amazon Rekognition Face Liveness (Amplify UI FaceLivenessDetector)
+    | Face Verification
     |--------------------------------------------------------------------------
-    | Frontend uses Amplify FaceLivenessDetector with session from Laravel; backend
-    | calls GetFaceLivenessSessionResults and uses reference image for embedding/match.
-    | No local anti-spoof (MiniFASNet) – Rekognition is the official liveness engine.
+    | Frontend captures a verified camera image; backend sends that image to the
+    | configured face verification service for anti-spoof checks and embedding.
     |--------------------------------------------------------------------------
     */
 
     /*
     |--------------------------------------------------------------------------
     | Minimum liveness confidence to allow clock-in/clock-out (PASS threshold).
-    | Rekognition returns 0–100; we allow when confidence >= this * 100.
     | Default 0.52 ≈ 52% — balances spoof resistance vs false rejects (raise to 0.65+ if needed).
-    | Backend validates and returns PASS/FAIL; React never calls Rekognition directly.
+    | Backend validates and returns PASS/FAIL.
     |--------------------------------------------------------------------------
     */
     'face_min_liveness_score' => (float) env('FACE_LIVENESS_MIN_SCORE', env('ATTENDANCE_FACE_MIN_LIVENESS_SCORE', 0.52)),
@@ -176,14 +174,14 @@ return [
     |--------------------------------------------------------------------------
     | Clock-in/out liveness floor (identity verification path)
     |--------------------------------------------------------------------------
-    | Additional guard for attendance scanFace endpoint. Keeps Amplify/Rekognition
-    | mandatory and requires a stronger confidence floor before face matching.
+    | Additional guard for attendance scanFace endpoint. Requires a stronger
+    | confidence floor before face matching.
     */
     'face_clock_min_liveness_score' => (float) env('FACE_LIVENESS_MIN_SCORE', env('ATTENDANCE_FACE_CLOCK_MIN_LIVENESS_SCORE', 0.60)),
 
     /*
     |--------------------------------------------------------------------------
-    | Stricter liveness for face *registration* (Amplify + Rekognition)
+    | Stricter liveness for face *registration*
     |--------------------------------------------------------------------------
     | Applied only when enrolling a new face template. Higher = fewer spoofs, more retakes.
     |--------------------------------------------------------------------------
@@ -192,7 +190,7 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Registration liveness (Rekognition) — lighter floor than strict registration
+    | Registration liveness: lighter floor than strict registration
     |--------------------------------------------------------------------------
     | When true, registration uses the same floor as clock-in/out (face_min_liveness_score only).
     | When false, max(face_min_liveness_score, face_registration_min_liveness_score) is used.
@@ -242,7 +240,6 @@ return [
     |--------------------------------------------------------------------------
     */
     'face_embedding_cache_ttl_seconds' => (int) env('FACE_EMBEDDING_CACHE_TTL_SECONDS', 86400),
-    'face_liveness_session_ttl_seconds' => (int) env('FACE_LIVENESS_SESSION_TTL_SECONDS', 300),
     'face_attempts_limit' => (int) env('FACE_ATTEMPTS_PER_MINUTE', 5),
     'face_attempts_window_seconds' => (int) env('FACE_ATTEMPTS_WINDOW_SECONDS', 60),
     'face_attempts_cooldown_seconds' => (int) env('FACE_ATTEMPTS_COOLDOWN_SECONDS', 60),
@@ -254,9 +251,8 @@ return [
     | Kiosk / clock-in-out: looser thresholds for faster, more reliable matching
     |--------------------------------------------------------------------------
     | Registration uses stricter duplicate thresholds (0.65+ cosine). Verification
-    | (kiosk clock in/out) can afford slightly looser gates because Rekognition
-    | liveness already authenticates a live person, and the ambiguity margin
-    | still prevents misidentification between enrolled employees.
+    | (kiosk clock in/out) can afford slightly looser gates for speed, while
+    | the ambiguity margin still prevents misidentification between employees.
     |
     | Set to null to use the same thresholds as general face identification.
     */

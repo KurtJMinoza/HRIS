@@ -11,10 +11,8 @@ class FaceAuthService
 {
     /**
      * Extract 512D face embedding via InsightFace ArcFace (no anti-spoof).
-     * Used with Amazon Rekognition Face Liveness: liveness is verified first
-     * by Rekognition, then the reference image is passed here for embedding.
      *
-     * @param  string  $imageBase64  Base64-encoded face image (Rekognition reference image)
+     * @param  string  $imageBase64  Base64-encoded face image
      * @return array{descriptor: array|null, message: string}|null  Null on service error
      */
     public static function embedFace(string $imageBase64): ?array
@@ -41,60 +39,7 @@ class FaceAuthService
     }
 
     /**
-     * Verify face using Amazon Rekognition Face Liveness session.
-     * Gets reference image from the session, then extracts InsightFace embedding.
-     * Liveness is evaluated before embedding (Rekognition session must PASS before /embed runs).
-     *
-     * @param  string  $sessionId  Rekognition Face Liveness session ID from frontend
-     * @param  bool  $forRegistration  When true and face_registration_light_liveness is false, applies stricter registration floor
-     * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float, reference_image_base64?: string}|null
-     */
-    public static function verifyFaceWithLivenessSession(string $sessionId, bool $forRegistration = false, ?int $employeeId = null): ?array
-    {
-        $registrationFloor = null;
-        if ($forRegistration && ! (bool) config('attendance.face_registration_light_liveness', true)) {
-            $registrationFloor = (float) config('attendance.face_registration_min_liveness_score', 0.62);
-        }
-        $result = RekognitionLivenessService::getSessionResults($sessionId, $registrationFloor);
-        if ($result === null) {
-            return null;
-        }
-        FaceLivenessSessionCacheService::put($sessionId, $result, $employeeId);
-        if (! $result['is_live']) {
-            return [
-                'is_live' => false,
-                'descriptor' => null,
-                'message' => $result['message'] ?? 'Liveness check failed.',
-                'spoof_confidence' => $result['confidence'] !== null ? $result['confidence'] / 100 : null,
-            ];
-        }
-        $referenceBase64 = $result['reference_image_base64'] ?? null;
-        if (empty($referenceBase64)) {
-            return [
-                'is_live' => true,
-                'descriptor' => null,
-                'message' => 'No reference image from liveness session.',
-                'spoof_confidence' => $result['confidence'] !== null ? $result['confidence'] / 100 : null,
-            ];
-        }
-        $embed = self::embedFace($referenceBase64);
-        if ($embed === null) {
-            return null;
-        }
-        $confidenceNorm = $result['confidence'] !== null ? (float) $result['confidence'] / 100 : null;
-
-        return [
-            'is_live' => true,
-            'descriptor' => $embed['descriptor'],
-            'message' => $embed['message'] ?: 'OK',
-            'spoof_confidence' => $confidenceNorm,
-            'reference_image_base64' => $referenceBase64,
-        ];
-    }
-
-    /**
-     * Legacy image path: verify + embed via Python /verify endpoint.
-     * Kept for backward compatibility when the Rekognition liveness flow is unavailable.
+     * Verify + embed via Python /verify endpoint.
      *
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float}|null
      */
@@ -127,8 +72,7 @@ class FaceAuthService
     }
 
     /**
-     * Legacy: extract 512D descriptor via Python /verify endpoint.
-     * Returns is_live=True and spoof_confidence=1.0 (liveness is always handled by Rekognition).
+     * Extract 512D descriptor via Python /verify endpoint.
      *
      * @param  string  $imageBase64  Base64-encoded face image
      * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float}|null

@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { useAuth } from '@/contexts/AuthContext'
 import { companyLogoUrl as resolveCompanyLogoUrl, getMyQr, regenerateMyQr, registerMyFace, removeMyFace, getMyFace } from '@/api'
-import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
+import { FaceVerificationLiveness } from '@/components/FaceVerificationLiveness'
 import { toast } from 'sonner'
 
 export default function EmployeeMyQr() {
@@ -128,11 +128,14 @@ export default function EmployeeMyQr() {
     }
   }
 
-  const handleFaceRegisterVerified = async (sessionId) => {
+  const handleFaceRegisterVerified = async (verificationPayload) => {
     setFaceRegisterSubmitting(true)
     setFaceRegisterError(null)
     try {
-      const data = await registerMyFace({ liveness_session_id: sessionId })
+      const data = await registerMyFace({
+        image_base64: verificationPayload?.image_base64,
+        liveness_type: 'mediapipe',
+      })
       if (data.user) {
         setUser((prev) => {
           if (!prev || typeof prev !== 'object') return data.user
@@ -361,23 +364,23 @@ export default function EmployeeMyQr() {
       </Card>
       </div>
 
-      {/* Register/Change Face Dialog – Amazon Rekognition Face Liveness */}
+      {/* Register/Change Face Dialog */}
       <Dialog open={faceRegisterOpen} onOpenChange={(open) => !open && !faceRegisterSubmitting && closeFaceRegister()}>
         <DialogContent className="max-w-lg gap-4">
           <DialogHeader>
             <DialogTitle>{hasFace ? 'Change face' : 'Register face'}</DialogTitle>
             <DialogDescription>
               {hasFace
-                ? 'Complete the guided face liveness check. Your existing face data will be replaced.'
-                : 'Complete the guided face liveness check to register for Facial Recognition attendance.'}
+                ? 'Complete face verification. Your existing face data will be replaced.'
+                : 'Complete face verification to register for Facial Recognition attendance.'}
             </DialogDescription>
           </DialogHeader>
-          <FaceRekognitionLiveness
+          <FaceVerificationLiveness
             key={faceRegisterRetryKey}
             onVerified={handleFaceRegisterVerified}
             onSuccess={closeFaceRegister}
             hideInstruction
-            instructionText="Complete the face liveness check to register your face."
+            instructionText="Center your face and hold still to register your face."
           />
           {faceRegisterSubmitting && (
             <div

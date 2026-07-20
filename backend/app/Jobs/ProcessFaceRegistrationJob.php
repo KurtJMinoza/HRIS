@@ -21,9 +21,7 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Face liveness + InsightFace embedding + duplicate check + DB write, serialized with locks to reduce races.
- *
- * Liveness runs before embedding in {@see FaceAuthService::verifyFaceWithLivenessSession()}.
+ * Face verification + InsightFace embedding + duplicate check + DB write, serialized with locks to reduce races.
  *
  * Requires a queue worker listening on the `face-registration` queue (see .env.example).
  * The worker `--timeout` value should be greater than this job's `$timeout` (e.g. 150 seconds).
@@ -34,7 +32,7 @@ class ProcessFaceRegistrationJob implements ShouldQueue
 
     /**
      * Seconds before the worker kills this job.
-     * InsightFace ONNX inference + Rekognition liveness fetch + global duplicate scan + DB write.
+     * InsightFace ONNX inference + global duplicate scan + DB write.
      * Set higher than the Python embed timeout (8s) + duplicate scan time + lock waits.
      */
     public int $timeout = 120;
@@ -44,17 +42,54 @@ class ProcessFaceRegistrationJob implements ShouldQueue
     /** Seconds to wait before each retry after a failure. */
     public int $backoff = 15;
 
+    public string $trackId;
+
+    public int $targetUserId;
+
+    public ?string $imageBase64;
+
+    public string $livenessType;
+
+    public ?int $actorUserId;
+
+    public ?string $ipAddress;
+
+    public ?string $userAgent;
+
+    public string $channel;
+
     public function __construct(
-        public string $trackId,
-        public int $targetUserId,
-        public ?string $livenessSessionId,
-        public ?string $imageBase64,
-        public string $livenessType,
-        public ?int $actorUserId,
-        public ?string $ipAddress,
-        public ?string $userAgent,
-        public string $channel,
+        string $trackId,
+        int $targetUserId,
+        ?string $imageBase64,
+        ?string $livenessType = 'mediapipe',
+        mixed $actorUserId = null,
+        mixed $ipAddress = null,
+        ?string $userAgent = null,
+        string $channel = 'self_service',
+        ?string $legacyChannel = null,
     ) {
+        if (is_string($actorUserId) && ! is_numeric($actorUserId)) {
+            $legacyImageBase64 = $livenessType;
+            $legacyLivenessType = $actorUserId;
+            $legacyActorUserId = $ipAddress;
+
+            $imageBase64 = $legacyImageBase64;
+            $livenessType = $legacyLivenessType;
+            $actorUserId = $legacyActorUserId;
+            $ipAddress = $userAgent;
+            $userAgent = $channel;
+            $channel = $legacyChannel ?? 'self_service';
+        }
+
+        $this->trackId = $trackId;
+        $this->targetUserId = $targetUserId;
+        $this->imageBase64 = $imageBase64;
+        $this->livenessType = $livenessType ?: 'mediapipe';
+        $this->actorUserId = is_numeric($actorUserId) ? (int) $actorUserId : null;
+        $this->ipAddress = is_string($ipAddress) ? $ipAddress : null;
+        $this->userAgent = $userAgent;
+        $this->channel = $channel;
         $this->onConnection('redis')->onQueue('face-registration');
     }
 
@@ -89,15 +124,12 @@ class ProcessFaceRegistrationJob implements ShouldQueue
             'track_id' => $this->trackId,
             'target_user_id' => $this->targetUserId,
             'channel' => $this->channel,
-            'has_liveness_session' => $this->livenessSessionId !== null,
             'queue' => $this->queue,
         ]);
 
         FaceRegistrationStatusService::markProcessing($this->trackId);
 
-        $result = $this->livenessSessionId
-            ? FaceAuthService::verifyFaceWithLivenessSession($this->livenessSessionId, true, $this->targetUserId)
-            : FaceAuthService::verifyFaceForRegistration((string) $this->imageBase64);
+        $result = FaceAuthService::verifyFaceForRegistration((string) $this->imageBase64);
 
         if ($result === null) {
             Log::warning('ProcessFaceRegistrationJob: face verification returned null (service down or timeout)', [
@@ -226,7 +258,7 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                         $user->face_image = $referenceImage;
                         $user->face_registered_at = now();
                         $user->face_status = 'registered';
-                        $user->face_liveness_type = $this->livenessType ?: 'rekognition';
+                        $user->face_liveness_type = $this->livenessType ?: 'mediapipe';
                         $user->save();
 
                         UserAdminActivityLog::query()->create([

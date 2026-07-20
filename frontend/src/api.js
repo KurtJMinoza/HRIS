@@ -1106,7 +1106,7 @@ export async function ensureSanctumCsrfCookie() {
  * must send `credentials: 'include'` and `X-XSRF-TOKEN` after `/sanctum/csrf-cookie`.
  * Retries once on HTTP 419 (session/token mismatch) with a fresh CSRF cookie.
  *
- * @param {string} path - API path starting with `/` (e.g. `/face/liveness/session`)
+ * @param {string} path - API path starting with `/` (e.g. `/attendance/face`)
  * @param {RequestInit & { timeoutMs?: number }} [options]
  * @returns {Promise<Response>}
  */
@@ -1255,77 +1255,8 @@ export async function loginWithQr(qrToken, options = {}) {
 }
 
 /**
- * Create Amazon Rekognition Face Liveness session for Amplify FaceLivenessDetector.
- * @returns {{ sessionId: string, region: string }}
- */
-export async function createLivenessSession(options = {}) {
-  const requestedAtMs = Date.now()
-  const requestedAt = new Date(requestedAtMs).toISOString()
-  const deviceType = normalizeAttendanceDeviceType(options.device_type ?? options.deviceType) || attendanceDeviceType()
-  const attendanceMethod = String(options.attendance_method ?? options.method ?? 'face')
-  logAttendanceFlowTiming('LIVENESS_CREATING', {
-    liveness_session_requested_at: requestedAt,
-    device_type: deviceType,
-    attendance_method: attendanceMethod,
-  })
-  let res
-  try {
-    res = await fetchWithSanctumCsrf('/face/liveness/session', {
-      method: 'POST',
-      body: JSON.stringify({
-        employee_id: options.employee_id ?? null,
-        device_type: deviceType,
-        attendance_method: attendanceMethod,
-      }),
-    })
-  } catch (error) {
-    const failedAtMs = Date.now()
-    logAttendanceFlowTiming('LIVENESS_FAILED', {
-      liveness_session_requested_at: requestedAt,
-      liveness_session_finished_at: new Date(failedAtMs).toISOString(),
-      liveness_session_duration: failedAtMs - requestedAtMs,
-      device_type: deviceType,
-      attendance_method: attendanceMethod,
-      error_message: error?.message || 'Could not create liveness session',
-    })
-    throw error
-  }
-  const data = await res.json().catch(() => ({}))
-  const createdAtMs = Date.now()
-  logAttendanceFlowTiming(res.ok && data.sessionId ? 'LIVENESS_READY' : 'LIVENESS_FAILED', {
-    liveness_session_requested_at: requestedAt,
-    liveness_session_created_at: new Date(createdAtMs).toISOString(),
-    liveness_session_duration: createdAtMs - requestedAtMs,
-    device_type: deviceType,
-    attendance_method: attendanceMethod,
-  })
-  if (!res.ok) throw new Error(data.message || 'Could not create liveness session')
-  if (!data.sessionId) throw new Error('Invalid liveness session response')
-  return {
-    sessionId: data.sessionId,
-    region: data.region || import.meta.env.VITE_AWS_REGION || 'us-east-1',
-    cognitoIdentityPoolId: data.cognitoIdentityPoolId ?? data.cognitoId,
-    cognitoRegion: data.cognitoRegion,
-  }
-}
-
-/**
- * Fetch Face Liveness session results (backend calls GetFaceLivenessSessionResults). Prefer over calling AWS from the browser.
- * Uses POST with CSRF for stateful SPA; same payload as GET /face/liveness/session/{id}.
- */
-export async function fetchLivenessSessionResults(sessionId) {
-  const res = await fetchWithSanctumCsrf('/face/liveness/results', {
-    method: 'POST',
-    body: JSON.stringify({ session_id: sessionId }),
-  })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.message || 'Could not retrieve liveness result')
-  return data
-}
-
-/**
- * Login via face recognition. Uses Amazon Rekognition Face Liveness session (recommended) or legacy image.
- * @param {{ liveness_session_id?: string, image_base64?: string }} payload - pass liveness_session_id after Amplify liveness, or image_base64 for legacy
+ * Login via face recognition.
+ * @param {{ image_base64?: string }} payload - pass image_base64 from the camera verification flow
  * On 422, throws an error with message and errorCode: 'spoof_detected' | 'no_face_detected' | 'face_not_recognized' | 'service_unavailable'.
  */
 export async function loginWithFace(payload, options = {}) {
@@ -1337,7 +1268,6 @@ export async function loginWithFace(payload, options = {}) {
     typeof payload === 'string'
       ? { image_base64: payload, ...attempt, ...location }
       : {
-          liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
           client_capture_started_at_ms: payload?.client_capture_started_at_ms,
           ...attempt,
@@ -1746,19 +1676,18 @@ async function pollFaceRegistrationUntilDone(pollUrl, options = {}) {
 }
 
 /**
- * Register the authenticated employee's face. Use Rekognition liveness (recommended) or legacy image.
+ * Register the authenticated employee's face.
  * Backend may return 202 + track_id (queued); this function polls until the face is stored or an error is returned.
- * @param {{ liveness_session_id?: string, image_base64?: string, liveness_type?: string }} payload - liveness_session_id after Amplify liveness, or image_base64 (legacy)
+ * @param {{ image_base64?: string, liveness_type?: string }} payload - image_base64 from camera verification
  * @returns {Promise<{ message: string, user: object, status?: string }>}
  */
 export async function registerMyFace(payload) {
   const body =
     typeof payload === 'string'
-      ? { image_base64: payload, liveness_type: 'rekognition' }
+      ? { image_base64: payload, liveness_type: 'mediapipe' }
       : {
-          liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
-          liveness_type: payload?.liveness_type ?? 'rekognition',
+          liveness_type: payload?.liveness_type ?? 'mediapipe',
         }
   const res = await authenticatedFetch('/profile/face/register', {
     method: 'POST',
@@ -6618,17 +6547,16 @@ export async function getMyFace() {
 }
 
 /**
- * Register employee face. Use Rekognition liveness (recommended) or legacy image.
+ * Register employee face.
  * @param {number} id - Employee ID
- * @param {{ liveness_session_id?: string, image_base64?: string } | string} payload - liveness_session_id after Amplify liveness, or base64 string (legacy)
- * @param {string} [livenessType] - 'rekognition' (default), 'hybrid', etc.
+ * @param {{ image_base64?: string } | string} payload - image_base64 from camera verification, or a base64 string
+ * @param {string} [livenessType] - 'mediapipe', 'hybrid', etc.
  */
-export async function registerEmployeeFace(id, payload, livenessType = 'rekognition') {
+export async function registerEmployeeFace(id, payload, livenessType = 'mediapipe') {
   const body =
     typeof payload === 'string'
       ? { image_base64: payload, liveness_type: livenessType }
       : {
-          liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
           liveness_type: livenessType,
         }
@@ -7309,9 +7237,9 @@ export async function recordAttendanceKiosk(type, qrTokenOrLogin, options = {}) 
 }
 
 /**
- * Record clock in/out by face on kiosk (no auth, face/liveness only).
+ * Record clock in/out by face on kiosk (no auth, face verification only).
  * @param {'clock_in'|'clock_out'} type
- * @param {{ liveness_session_id?: string, image_base64?: string } | string} payload - liveness_session_id (after Amplify liveness) or image_base64 (legacy), or raw base64 string
+ * @param {{ image_base64?: string } | string} payload - image_base64 from camera verification, or raw base64 string
  */
 export async function recordAttendanceKioskFace(type, payload) {
   const attempt = attendanceAttemptPayload(payload || {}, 'face')
@@ -7325,7 +7253,6 @@ export async function recordAttendanceKioskFace(type, payload) {
           type,
           clock_type: type,
           login: payload?.login,
-          liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
           company_id: payload?.company_id,
           device_id: payload?.device_id,
@@ -7352,9 +7279,9 @@ export async function recordAttendanceKioskFace(type, payload) {
 
 /**
  * Record clock in/out by face for the authenticated employee.
- * Uses Rekognition liveness and binds the face match to the logged-in account.
+ * Binds the face match to the logged-in account.
  * @param {'clock_in'|'clock_out'} type
- * @param {{ liveness_session_id?: string, image_base64?: string } | string} payload
+ * @param {{ image_base64?: string } | string} payload
  */
 export async function recordAttendanceFace(type, payload) {
   const attempt = attendanceAttemptPayload(payload || {}, 'face')
@@ -7386,7 +7313,6 @@ export async function recordAttendanceFace(type, payload) {
       : {
           type,
           clock_type: type,
-          liveness_session_id: payload?.liveness_session_id,
           image_base64: payload?.image_base64,
           device_id: payload?.device_id,
           camera_info: payload?.camera_info,

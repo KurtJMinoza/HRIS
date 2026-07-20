@@ -235,19 +235,10 @@ class ProfileController extends Controller
         }
 
         $validated = $request->validate([
-            'liveness_session_id' => ['nullable', 'string', 'max:255'],
-            'image_base64' => ['nullable', 'string'],
-            'liveness_type' => ['nullable', 'string', 'in:rekognition,mediapipe,hybrid'],
+            'image_base64' => ['required', 'string'],
+            'liveness_type' => ['nullable', 'string', 'in:mediapipe,hybrid'],
         ]);
-        $sessionId = $validated['liveness_session_id'] ?? null;
         $imageBase64 = $validated['image_base64'] ?? null;
-        if (! $sessionId && ! $imageBase64) {
-            return response()->json([
-                'message' => 'Perform face liveness first or provide a face image.',
-                'errors' => ['face' => ['Face liveness session or face image is required.']],
-                'error_code' => 'validation_error',
-            ], 422);
-        }
 
         $trackId = (string) Str::uuid();
         FaceRegistrationStatusService::create($trackId, ['target_user_id' => $user->id]);
@@ -255,9 +246,8 @@ class ProfileController extends Controller
         ProcessFaceRegistrationJob::dispatch(
             $trackId,
             $user->id,
-            $sessionId,
             $imageBase64,
-            $validated['liveness_type'] ?? 'rekognition',
+            $validated['liveness_type'] ?? 'mediapipe',
             $user->id,
             $request->ip(),
             $request->userAgent(),

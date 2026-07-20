@@ -10,9 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@aws-amplify/ui-react": "^6.15.1",
-    "@aws-amplify/ui-react-liveness": "^3.3.0",
     "@mediapipe/face_mesh": "^0.4.1657299874",
+    "@mediapipe/tasks-vision": "^0.10.35",
     "@radix-ui/react-slot": "^1.2.4",
     "@react-google-maps/api": "^2.20.8",
     "@react-pdf/renderer": "^4.3.2",
@@ -20,7 +19,6 @@
     "@tanstack/react-table": "^8.21.3",
     "@turf/turf": "^7.3.5",
     "@zxing/browser": "^0.1.5",
-    "aws-amplify": "^6.16.2",
     "axios": "^1.13.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

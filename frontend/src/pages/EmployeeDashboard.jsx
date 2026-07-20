@@ -6,7 +6,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
+import { FaceVerificationLiveness } from '@/components/FaceVerificationLiveness'
 import {
   Dialog,
   DialogContent,
@@ -3733,12 +3733,12 @@ export default function EmployeeDashboard() {
               {faceAttendanceType === 'clock_out' ? 'Face Clock Out' : 'Face Clock In'}
             </DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
-              Complete face liveness to record your {faceAttendanceType === 'clock_out' ? 'clock-out' : 'clock-in'} for today.
+              Complete face verification to record your {faceAttendanceType === 'clock_out' ? 'clock-out' : 'clock-in'} for today.
             </DialogDescription>
           </DialogHeader>
           <div className="bg-card px-4 py-5 @sm:px-6">
             {faceAttendanceOpen ? (
-              <FaceRekognitionLiveness
+              <FaceVerificationLiveness
                 kioskMode
                 authenticatedAttendance
                 surface="light"

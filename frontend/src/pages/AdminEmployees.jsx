@@ -81,7 +81,7 @@ import { QRCodeCanvas } from 'qrcode.react'
 import { useToast } from '@/components/ui/use-toast'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { hrPanelPath, isAdminHrUser } from '@/lib/hrRoutes'
-import { FaceRekognitionLiveness } from '@/components/FaceRekognitionLiveness'
+import { FaceVerificationLiveness } from '@/components/FaceVerificationLiveness'
 import { employmentStatusBadgeClassName, formatEmploymentStatusForViewer } from '@/lib/employmentStatus'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
 import { useAuth } from '@/contexts/AuthContext'
@@ -1167,12 +1167,19 @@ export default function AdminEmployees() {
     }
   }
 
-  const handleFaceRegisterVerified = async (sessionId) => {
+  const handleFaceRegisterVerified = async (verificationPayload) => {
     if (!faceRegisterEmployee || faceRegisterSubmitting) return
     setFaceRegisterSubmitting(true)
     setFaceRegisterError(null)
     try {
-      await registerEmployeeFace(faceRegisterEmployee.id, { liveness_session_id: sessionId })
+      await registerEmployeeFace(
+        faceRegisterEmployee.id,
+        {
+          image_base64: verificationPayload?.image_base64,
+          liveness_type: 'mediapipe',
+        },
+        'mediapipe'
+      )
       const wasChange = faceRegisterEmployee.has_face
       setFaceRegisterOpen(false)
       setFaceRegisterEmployee(null)
@@ -2495,7 +2502,7 @@ export default function AdminEmployees() {
         </DialogContent>
       </Dialog>
 
-      {/* Register face – Amazon Rekognition Face Liveness */}
+      {/* Register face */}
       <Dialog open={faceRegisterOpen} onOpenChange={(open) => !open && !faceRegisterSubmitting && closeFaceRegister()}>
         <DialogContent className="max-w-lg gap-4">
           <DialogHeader>
@@ -2505,23 +2512,23 @@ export default function AdminEmployees() {
                 <>
                   {faceRegisterEmployee.has_face ? (
                     <>
-                      Complete the guided face liveness check for <strong className="text-foreground">{faceRegisterEmployee.name}</strong>. Existing face data will be replaced.
+                      Complete face verification for <strong className="text-foreground">{faceRegisterEmployee.name}</strong>. Existing face data will be replaced.
                     </>
                   ) : (
                     <>
-                      Complete the guided face liveness check for <strong className="text-foreground">{faceRegisterEmployee.name}</strong>. Embedding is encrypted and stored securely.
+                      Complete face verification for <strong className="text-foreground">{faceRegisterEmployee.name}</strong>. Embedding is encrypted and stored securely.
                     </>
                   )}
                 </>
               )}
             </DialogDescription>
           </DialogHeader>
-          <FaceRekognitionLiveness
+          <FaceVerificationLiveness
             key={faceRegisterRetryKey}
             onVerified={handleFaceRegisterVerified}
             onSuccess={closeFaceRegister}
             hideInstruction
-            instructionText="Complete the face liveness check to register this employee's face."
+            instructionText="Center your face and hold still to register this employee's face."
           />
           {faceRegisterSubmitting && (
             <div

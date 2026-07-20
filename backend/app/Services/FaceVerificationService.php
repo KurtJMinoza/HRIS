@@ -722,7 +722,7 @@ class FaceVerificationService
      * similarity_score = cosine similarity (0–1) for storage in attendance log.
      *
      * @param  array<int, float>  $incomingDescriptor  128D descriptor
-     * @param  bool  $kioskMode  Use relaxed kiosk thresholds (liveness already proven by Rekognition)
+     * @param  bool  $kioskMode  Use relaxed kiosk thresholds for attendance scans
      * @return array{user: User, distance: float, similarity_score: float, second_best_score?: float|null, margin_score?: float|null}|null
      */
     public static function identifyUserByFaceWithScore(array $incomingDescriptor, bool $kioskMode = false, ?float $livenessScore = null, ?int $companyId = null): ?array
