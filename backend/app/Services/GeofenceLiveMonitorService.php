@@ -34,7 +34,6 @@ class GeofenceLiveMonitorService
     {
         $this->ensureAuthorized($actor);
 
-        $limit = max(1, min((int) ($filters['limit'] ?? 50), 100));
         $date = $this->normalizeDate($filters['date'] ?? null);
         $companyId = isset($filters['company_id']) && $filters['company_id'] !== '' ? (int) $filters['company_id'] : null;
         $branchId = isset($filters['branch_id']) && $filters['branch_id'] !== '' ? (int) $filters['branch_id'] : null;
@@ -52,11 +51,10 @@ class GeofenceLiveMonitorService
             'status' => $status,
             'device_type' => $deviceType,
             'clock_type' => $clockType,
-            'limit' => $limit,
             'version' => $version,
         ], JSON_THROW_ON_ERROR)));
 
-        $events = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $limit, $scopedBranchIds): array {
+        $events = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $scopedBranchIds): array {
             $query = AttendanceGeofenceEvent::query()
                 ->with([
                     'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
@@ -101,7 +99,6 @@ class GeofenceLiveMonitorService
 
             return $query
                 ->latest('created_at')
-                ->limit($limit)
                 ->get()
                 ->map(fn (AttendanceGeofenceEvent $event): array => $this->payloadFromEvent($event, includeDetail: true))
                 ->values()
@@ -117,7 +114,6 @@ class GeofenceLiveMonitorService
                 'status' => $status,
                 'device_type' => $deviceType,
                 'clock_type' => $clockType,
-                'limit' => $limit,
             ],
         ];
     }

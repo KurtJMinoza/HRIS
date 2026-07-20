@@ -160,7 +160,9 @@ class ProcessFaceRegistrationJob implements ShouldQueue
         }
 
         $descriptor = array_values(array_map('floatval', $result['descriptor']));
-        $referenceImage = $result['reference_image_base64'] ?? null;
+        // FaceAuthService /verify returns embeddings only; keep the capture the user submitted.
+        // Rekognition (if ever wired) may supply reference_image_base64 instead.
+        $referenceImage = $result['reference_image_base64'] ?? $this->imageBase64;
 
         // Per registering employee + global short lock so two accounts cannot commit the same face concurrently.
         $userLock = Cache::lock('face-registration-user:'.$this->targetUserId, 60);

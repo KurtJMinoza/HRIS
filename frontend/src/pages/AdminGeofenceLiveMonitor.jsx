@@ -350,7 +350,6 @@ export default function AdminGeofenceLiveMonitor() {
     device_type: '',
     clock_type: '',
     status: '',
-    limit: 50,
   })
   const [toggles, setToggles] = useState({
     autoFollow: true,
@@ -364,7 +363,7 @@ export default function AdminGeofenceLiveMonitor() {
   const [focusedEventId, setFocusedEventId] = useState('')
 
   const filteredEvents = useMemo(
-    () => events.filter((event) => passesClientToggles(event, toggles)).slice(0, 300),
+    () => events.filter((event) => passesClientToggles(event, toggles)),
     [events, toggles],
   )
 
@@ -378,10 +377,10 @@ export default function AdminGeofenceLiveMonitor() {
     setError('')
     try {
       const [eventsData, summaryData] = await Promise.all([
-        getGeofenceLiveMonitorEvents({ ...filters, limit: 50 }),
+        getGeofenceLiveMonitorEvents({ ...filters }),
         getGeofenceLiveMonitorSummary({ date: filters.date }),
       ])
-      setEvents((eventsData.events || []).map(normalizeEvent).filter(Boolean).slice(0, 50))
+      setEvents((eventsData.events || []).map(normalizeEvent).filter(Boolean))
       setSummary(summaryData.summary || null)
     } catch (err) {
       setError(err?.message || 'Failed to load live monitor events')
@@ -536,7 +535,7 @@ export default function AdminGeofenceLiveMonitor() {
     const handler = (payload) => {
       const event = normalizeEvent(payload)
       if (!event) return
-      setEvents((prev) => uniqueById([event, ...prev]).slice(0, 50))
+      setEvents((prev) => uniqueById([event, ...prev]))
       setSummary((prev) => prev ? {
         ...prev,
         total: Number(prev.total || 0) + 1,
@@ -582,7 +581,7 @@ export default function AdminGeofenceLiveMonitor() {
               Live
             </span>
           </div>
-          <p className="mt-0.5 text-xs font-medium text-slate-500">Live clock-in/out and outside geofence attempts. Latest 50 events only.</p>
+          <p className="mt-0.5 text-xs font-medium text-slate-500">Live clock-in/out and outside geofence attempts for the selected date.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {summary ? (
@@ -700,7 +699,7 @@ export default function AdminGeofenceLiveMonitor() {
           <span>Map</span>
         </div>
         <div className="max-h-[290px] overflow-y-auto">
-          {filteredEvents.slice(0, 50).map((event) => (
+          {filteredEvents.map((event) => (
             <LiveMonitorEventRow
               key={event.event_id}
               event={event}
