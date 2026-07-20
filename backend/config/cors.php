@@ -19,7 +19,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:5200,http://127.0.0.1:5200,http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1')))),
+    'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1')))),
 
     // Local dev: any port on localhost / 127.0.0.1 (Vite port changes, Laragon, etc.)
     'allowed_origins_patterns' => in_array(env('APP_ENV'), ['local', 'testing'], true)

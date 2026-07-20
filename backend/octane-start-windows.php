@@ -9,7 +9,7 @@
  *
  * Usage:
  *   php octane-start-windows.php
- *   php octane-start-windows.php --host=127.0.0.1 --port=8100 --workers=auto
+ *   php octane-start-windows.php --host=127.0.0.1 --port=8000 --workers=auto
  */
 
 use Illuminate\Contracts\Console\Kernel;

@@ -132,7 +132,7 @@ php artisan migrate
 php artisan serve
 ```
 
-API base is typically `http://localhost:8100/api` (see `routes/api.php`).
+API base is typically `http://localhost:8000/api` (see `routes/api.php`).
 
 ### 3. Redis workers (payroll, face registration, mail)
 
@@ -172,7 +172,7 @@ npm install
 npm run dev
 ```
 
-Default Vite dev URL: `http://localhost:5200`.
+Default Vite dev URL: `http://localhost:5173`.
 
 ### CloudFront / Amplify Hosting
 

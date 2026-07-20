@@ -2069,6 +2069,17 @@ class EmployeeController extends Controller
         ]);
         $imageBase64 = $validated['image_base64'] ?? null;
 
+        if (FaceVerificationService::targetHasRecentDuplicateRegistrationBlock((int) $employee->id)) {
+            $msg = FaceVerificationService::duplicateRegistrationUserMessage();
+
+            return response()->json([
+                'status' => 'failed',
+                'message' => $msg,
+                'errors' => ['face' => [$msg]],
+                'error_code' => 'face_already_registered',
+            ], 422);
+        }
+
         $trackId = (string) Str::uuid();
         FaceRegistrationStatusService::create($trackId, ['target_user_id' => $employee->id]);
 
@@ -2174,6 +2185,12 @@ class EmployeeController extends Controller
                             $locked = User::query()->whereKey($employee->id)->lockForUpdate()->first();
                             if (! $locked) {
                                 $outcome = ['status' => 'not_found'];
+
+                                return;
+                            }
+
+                            if (FaceVerificationService::targetHasRecentDuplicateRegistrationBlock((int) $locked->id)) {
+                                $outcome = ['status' => 'duplicate'];
 
                                 return;
                             }

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\DuplicateFaceRegistrationAttempt;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
@@ -20,6 +21,36 @@ class FaceVerificationService
     public static function duplicateRegistrationUserMessage(): string
     {
         return 'This face is already registered to another employee. Please use a different face or contact HR.';
+    }
+
+    /**
+     * After a duplicate face is detected for a target employee, temporarily block
+     * further registration attempts for that target. This prevents brute-force
+     * retries with slightly different angles from slipping under the embedding
+     * threshold after the system has already seen a known duplicate.
+     */
+    public static function duplicateRegistrationRetryLockoutMinutes(): int
+    {
+        return max(0, (int) config('attendance.face_duplicate_retry_lockout_minutes', 1440));
+    }
+
+    public static function recentDuplicateRegistrationAttemptForTarget(int $targetUserId): ?DuplicateFaceRegistrationAttempt
+    {
+        $minutes = self::duplicateRegistrationRetryLockoutMinutes();
+        if ($minutes <= 0) {
+            return null;
+        }
+
+        return DuplicateFaceRegistrationAttempt::query()
+            ->where('attempted_for_user_id', $targetUserId)
+            ->where('created_at', '>=', now()->subMinutes($minutes))
+            ->latest()
+            ->first();
+    }
+
+    public static function targetHasRecentDuplicateRegistrationBlock(int $targetUserId): bool
+    {
+        return self::recentDuplicateRegistrationAttemptForTarget($targetUserId) !== null;
     }
 
     /**

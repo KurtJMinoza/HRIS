@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
-  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8200'
+  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8000'
 
   // Set VITE_BASE=/HR/ in .env when the built app lives under a subpath (e.g. http://localhost/HR/).
   // Also set BrowserRouter basename in App.jsx via import.meta.env.BASE_URL.
@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
       include: ['@mediapipe/tasks-vision'],
     },
     server: {
-      port: 5100,
+      port: 5173,
       host: true,
       allowedHosts: mode === 'development' ? true : ['localhost', '127.0.0.1', 'hris.agctek.co'],
       headers: {

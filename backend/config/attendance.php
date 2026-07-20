@@ -449,6 +449,14 @@ return [
     ),
 
     /*
+    | After one duplicate-face registration attempt is detected for a target
+    | employee, block more attempts for this many minutes. This stops repeated
+    | captures from brute-forcing around embedding variance. HR can clear the
+    | block by resetting/removing that employee's face registration data.
+    */
+    'face_duplicate_retry_lockout_minutes' => (int) env('ATTENDANCE_FACE_DUPLICATE_RETRY_LOCKOUT_MINUTES', 1440),
+
+    /*
     |--------------------------------------------------------------------------
     | Duplicate embedding index (registration speed)
     |--------------------------------------------------------------------------

@@ -36,7 +36,7 @@ if [ "${START_FACE_SERVICE:-false}" = "true" ]; then
 fi
 
 # Start the web server in background
-php artisan serve --port=8100 &
+php artisan serve --port=8000 &
 
 start_queue_workers() {
   local queue="$1"

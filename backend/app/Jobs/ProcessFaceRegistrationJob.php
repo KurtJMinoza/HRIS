@@ -200,6 +200,22 @@ class ProcessFaceRegistrationJob implements ShouldQueue
                         //
                         // Both tiers query the live DB (no cache) inside per-user + global
                         // lock + DB transaction to prevent race conditions.
+                        if (FaceVerificationService::targetHasRecentDuplicateRegistrationBlock((int) $user->id)) {
+                            Log::warning('ProcessFaceRegistrationJob: recent duplicate-face block active; registration blocked before DB write', [
+                                'track_id' => $this->trackId,
+                                'target_user_id' => $user->id,
+                                'lockout_minutes' => FaceVerificationService::duplicateRegistrationRetryLockoutMinutes(),
+                            ]);
+                            FaceEmbeddingCacheService::invalidateFaceCache((int) $user->id, $user->company_id ? (int) $user->company_id : null);
+                            FaceRegistrationStatusService::fail(
+                                $this->trackId,
+                                FaceVerificationService::duplicateRegistrationUserMessage(),
+                                'face_already_registered'
+                            );
+
+                            return;
+                        }
+
                         Log::info('ProcessFaceRegistrationJob: starting combined duplicate scan (strict + multi-signal)', [
                             'track_id' => $this->trackId,
                             'target_user_id' => $user->id,

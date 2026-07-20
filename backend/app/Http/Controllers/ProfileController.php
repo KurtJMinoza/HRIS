@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\UserAdminActivityLog;
 use App\Jobs\ProcessFaceRegistrationJob;
 use App\Services\FaceRegistrationStatusService;
+use App\Services\FaceVerificationService;
 use App\Services\RbacService;
 use App\Support\FaceImageDataUrl;
 use Illuminate\Http\JsonResponse;
@@ -239,6 +240,17 @@ class ProfileController extends Controller
             'liveness_type' => ['nullable', 'string', 'in:mediapipe,hybrid'],
         ]);
         $imageBase64 = $validated['image_base64'] ?? null;
+
+        if (FaceVerificationService::targetHasRecentDuplicateRegistrationBlock((int) $user->id)) {
+            $msg = FaceVerificationService::duplicateRegistrationUserMessage();
+
+            return response()->json([
+                'status' => 'failed',
+                'message' => $msg,
+                'errors' => ['face' => [$msg]],
+                'error_code' => 'face_already_registered',
+            ], 422);
+        }
 
         $trackId = (string) Str::uuid();
         FaceRegistrationStatusService::create($trackId, ['target_user_id' => $user->id]);
