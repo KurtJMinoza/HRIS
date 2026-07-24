@@ -11,6 +11,7 @@ class GeofenceGlobalSetting extends Model
         'geofence_module_enabled',
         'attendance_without_geofence_enabled',
         'employee_exemption_ids',
+        'no_assignment_policy',
         'updated_by',
     ];
 

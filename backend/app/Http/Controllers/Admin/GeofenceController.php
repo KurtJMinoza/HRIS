@@ -9,8 +9,10 @@ use App\Models\BranchGeofenceSetting;
 use App\Models\GeofenceGlobalSetting;
 use App\Models\User;
 use App\Models\UserAdminActivityLog;
-use App\Services\DataScopeService;
+use App\Models\EmployeeGeofenceAssignment;
 use App\Services\BranchEmployeeResolver;
+use App\Services\DataScopeService;
+use App\Services\EmployeeGeofenceResolver;
 use App\Services\GeofenceLiveMonitorService;
 use App\Services\GeofenceValidationService;
 use Illuminate\Http\JsonResponse;
@@ -30,6 +32,7 @@ class GeofenceController extends Controller
         private readonly BranchEmployeeResolver $branchEmployeeResolver,
         private readonly GeofenceValidationService $geofenceValidation,
         private readonly GeofenceLiveMonitorService $geofenceLiveMonitor,
+        private readonly EmployeeGeofenceResolver $employeeGeofenceResolver,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -54,13 +57,6 @@ class GeofenceController extends Controller
             'branches' => $branches,
             'geofence_module' => [
                 'enabled' => $this->geofenceValidation->geofenceModuleEnabled(),
-            ],
-            'attendance_without_geofence' => [
-                'enabled' => $this->geofenceValidation->attendanceWithoutGeofenceEnabled(),
-                'branch_ids' => $branches
-                    ->filter(fn (array $branch): bool => (bool) $branch['allowed_without_geofence'])
-                    ->pluck('id')
-                    ->values(),
             ],
             'employee_exemptions' => [
                 'employee_ids' => $employeeExemptionIds,
@@ -175,7 +171,7 @@ class GeofenceController extends Controller
                 ->values(),
             'employees' => $this->branchEmployeeResolver
                 ->getEmployeesByBranch((int) $branch->id)
-                ->map(fn (User $employee): array => $this->branchEmployeeResolver->employeePayload($employee, (int) $branch->id))
+                ->map(fn (User $employee): array => $this->branchEmployeeWithGeofencePayload($employee, (int) $branch->id))
                 ->values(),
         ]);
     }
@@ -183,16 +179,35 @@ class GeofenceController extends Controller
     public function store(Request $request, int $branchId): JsonResponse
     {
         $branch = $this->scopedBranch($request, $branchId);
+        $request->validate([
+            'employee_id' => ['nullable', 'integer', 'exists:users,id'],
+        ]);
+        $employeeId = $request->filled('employee_id') ? (int) $request->input('employee_id') : null;
+        if ($employeeId) {
+            $employee = User::query()->findOrFail($employeeId);
+            $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);
+        }
+
         $payload = $this->validatedGeofencePayload($request);
 
-        $geofence = DB::transaction(function () use ($request, $branch, $payload): BranchGeofence {
-            $geofence = BranchGeofence::query()->create([
+        $geofence = DB::transaction(function () use ($request, $branch, $payload, $employeeId): BranchGeofence {
+            $create = [
                 ...$payload,
                 'company_id' => (int) $branch->company_id,
                 'branch_id' => (int) $branch->id,
                 'created_by' => $request->user()?->id,
                 'updated_by' => $request->user()?->id,
-            ]);
+            ];
+            if ($employeeId) {
+                $create['ownership_type'] = 'employee_specific';
+                $create['owner_employee_id'] = $employeeId;
+            }
+
+            $geofence = BranchGeofence::query()->create($create);
+
+            if ($employeeId) {
+                $this->ensureEmployeeGeofenceAssignment($employeeId, $geofence, (int) $request->user()->id);
+            }
 
             $this->audit($request, 'geofence_created', $branch, $geofence);
 
@@ -202,7 +217,7 @@ class GeofenceController extends Controller
         GeofenceValidationService::forgetBranchCache((int) $branch->id);
 
         return response()->json([
-            'message' => 'Geofence created.',
+            'message' => $employeeId ? 'Employee geofence created.' : 'Geofence created.',
             'geofence' => $this->geofencePayload($geofence),
         ], 201);
     }
@@ -225,13 +240,34 @@ class GeofenceController extends Controller
                 'message' => 'Geofence not found. Please refresh this branch and try again.',
             ], 404);
         }
+        $request->validate([
+            'employee_id' => ['nullable', 'integer', 'exists:users,id'],
+        ]);
+        $employeeId = $request->filled('employee_id')
+            ? (int) $request->input('employee_id')
+            : ($geofence->owner_employee_id !== null ? (int) $geofence->owner_employee_id : null);
+        if ($employeeId) {
+            $employee = User::query()->findOrFail($employeeId);
+            $this->dataScopeService->ensureEmployeeAccessible($request->user(), $employee);
+        }
+
         $payload = $this->validatedGeofencePayload($request, partial: true);
 
-        DB::transaction(function () use ($request, $branch, $geofence, $payload): void {
+        DB::transaction(function () use ($request, $branch, $geofence, $payload, $employeeId): void {
+            if ($employeeId && Schema::hasColumn('branch_geofences', 'owner_employee_id')) {
+                $payload['ownership_type'] = 'employee_specific';
+                $payload['owner_employee_id'] = $employeeId;
+            }
+
             $geofence->fill([
                 ...$payload,
                 'updated_by' => $request->user()?->id,
             ])->save();
+
+            if ($employeeId) {
+                $this->ensureEmployeeGeofenceAssignment($employeeId, $geofence, (int) $request->user()->id);
+            }
+
             $this->audit($request, 'geofence_updated', $branch, $geofence);
         });
 
@@ -865,6 +901,9 @@ class GeofenceController extends Controller
             'company_id' => (int) $geofence->company_id,
             'branch_id' => (int) $geofence->branch_id,
             'name' => $geofence->name,
+            'address' => $geofence->address,
+            'ownership_type' => $geofence->ownership_type ?? 'shared',
+            'owner_employee_id' => $geofence->owner_employee_id !== null ? (int) $geofence->owner_employee_id : null,
             'type' => $geofence->type,
             'device_scope' => $geofence->device_scope ?? 'all_devices',
             'center_lat' => $geofence->center_lat,
@@ -879,6 +918,150 @@ class GeofenceController extends Controller
             'notes' => $geofence->notes,
             'updated_at' => $geofence->updated_at?->toIso8601String(),
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function employeeAssignmentEmployeePayload(User $employee): array
+    {
+        return [
+            'id' => (int) $employee->id,
+            'name' => $employee->display_name,
+            'employee_number' => $employee->employee_code ?: sprintf('EMP-%05d', (int) $employee->id),
+            'company_name' => $employee->company?->name,
+            'branch_name' => $employee->branch?->name,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function employeeAssignmentRow(User $employee): array
+    {
+        $summary = Schema::hasTable('employee_geofence_assignments')
+            ? $this->employeeGeofenceResolver->employeeSummary((int) $employee->id)
+            : ['resolved' => [], 'active_assignments' => []];
+
+        $resolved = $summary['resolved'] ?? [];
+        $active = collect($summary['active_assignments'] ?? []);
+
+        if ($resolved['has_active_exemption'] ?? false) {
+            $status = 'exempt';
+        } elseif ($active->where('geofence_id', '!=', null)->isNotEmpty()) {
+            $status = 'active';
+        } else {
+            $status = 'none';
+        }
+
+        $primary = $active->first(fn (array $a): bool => ($a['is_primary'] ?? false))['geofence_name'] ?? null;
+
+        if (! $primary && ! empty($resolved['allowed_geofences'])) {
+            $primaryGeofence = collect($resolved['allowed_geofences'])->first(fn (array $g): bool => ($g['is_primary'] ?? false));
+            $primary = $primaryGeofence['name'] ?? ($resolved['allowed_geofences'][0]['name'] ?? null);
+        }
+
+        $additional = $active
+            ->filter(fn (array $a): bool => ! ($a['is_primary'] ?? false) && ($a['assignment_type'] ?? '') !== 'temporary' && ($a['assignment_type'] ?? '') !== 'exemption')
+            ->pluck('geofence_name')
+            ->filter()
+            ->values()
+            ->all();
+
+        $temporary = $active
+            ->filter(fn (array $a): bool => ($a['assignment_type'] ?? '') === 'temporary')
+            ->pluck('geofence_name')
+            ->filter()
+            ->values()
+            ->all();
+
+        $start = $active->pluck('effective_start_date')->filter()->sort()->first();
+        $end = $active->pluck('effective_end_date')->filter()->sort()->last();
+        $effectivePeriod = $start
+            ? $start.' – '.($end ?: 'ongoing')
+            : null;
+
+        return [
+            'employee' => $this->employeeAssignmentEmployeePayload($employee),
+            'primary_geofence' => $primary,
+            'additional_geofences' => $additional,
+            'temporary_geofences' => $temporary,
+            'assigned_geofence_ids' => collect($summary['active_assignments'] ?? [])
+                ->pluck('geofence_id')
+                ->filter()
+                ->map(fn ($id): int => (int) $id)
+                ->values()
+                ->all(),
+            'validation_mode' => $resolved['validation_mode'] ?? 'any_assigned_geofence',
+            'effective_period' => $effectivePeriod,
+            'status' => $status,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function branchEmployeeWithGeofencePayload(User $employee, int $branchId): array
+    {
+        $payload = $this->branchEmployeeResolver->employeePayload($employee, $branchId);
+        $row = $this->employeeAssignmentRow($employee);
+
+        return [
+            ...$payload,
+            'primary_geofence' => $row['primary_geofence'],
+            'additional_geofences' => $row['additional_geofences'],
+            'temporary_geofences' => $row['temporary_geofences'],
+            'assigned_geofence_ids' => $row['assigned_geofence_ids'] ?? [],
+            'validation_mode' => $row['validation_mode'],
+            'geofence_status' => $row['status'],
+        ];
+    }
+
+    private function ensureEmployeeGeofenceAssignment(int $employeeId, BranchGeofence $geofence, int $actorId): void
+    {
+        if (! Schema::hasTable('employee_geofence_assignments')) {
+            return;
+        }
+
+        if (Schema::hasColumn('branch_geofences', 'owner_employee_id')) {
+            $geofence->fill([
+                'ownership_type' => 'employee_specific',
+                'owner_employee_id' => $employeeId,
+            ])->save();
+        }
+
+        $existing = EmployeeGeofenceAssignment::query()
+            ->where('employee_id', $employeeId)
+            ->where('geofence_id', (int) $geofence->id)
+            ->whereNotIn('status', ['removed', 'replaced'])
+            ->first();
+
+        if ($existing) {
+            EmployeeGeofenceResolver::forgetEmployeeCache($employeeId);
+
+            return;
+        }
+
+        $hasPrimary = EmployeeGeofenceAssignment::query()
+            ->where('employee_id', $employeeId)
+            ->where('is_primary', true)
+            ->whereNotIn('status', ['removed', 'replaced'])
+            ->exists();
+
+        EmployeeGeofenceAssignment::query()->create([
+            'employee_id' => $employeeId,
+            'geofence_id' => (int) $geofence->id,
+            'assignment_type' => 'permanent',
+            'validation_mode' => 'any_assigned_geofence',
+            'is_primary' => ! $hasPrimary,
+            'effective_start_date' => now()->toDateString(),
+            'status' => 'active',
+            'clock_in_applies' => true,
+            'clock_out_applies' => true,
+            'created_by' => $actorId,
+        ]);
+
+        EmployeeGeofenceResolver::forgetEmployeeCache($employeeId);
     }
 
     /**

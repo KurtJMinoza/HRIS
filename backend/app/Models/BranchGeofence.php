@@ -22,7 +22,10 @@ class BranchGeofence extends Model
         'enforcement_mode',
         'priority',
         'accuracy_threshold_meters',
-        'notes',
+        'ownership_type',
+        'owner_employee_id',
+        'address',
+        'description',
         'created_by',
         'updated_by',
     ];
@@ -68,5 +71,10 @@ class BranchGeofence extends Model
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function isEmployeeSpecific(): bool
+    {
+        return ($this->ownership_type ?? 'shared') === 'employee_specific';
     }
 }
