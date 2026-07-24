@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
+use App\Enums\HrRole;
 use App\Jobs\BulkRejectionFollowUpJob;
 use App\Jobs\LeaveBulkFollowUpJob;
 use App\Models\LeaveApprovalAudit;
@@ -123,7 +124,6 @@ class LeaveController extends Controller
             ])
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,profile_image,company_id,department_id,employee_level,employee_level_label',
-                'filedBy:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
             ]);
 
         $this->applyFilingApprovalVisibility($actor, $query, $request);
@@ -139,19 +139,14 @@ class LeaveController extends Controller
 
         $paginator = $query->orderByDesc('created_at')->paginate($perPage)->withQueryString();
         $pageLeaves = $paginator->getCollection();
-        $this->syncLeaveApprovalRecordsForListRows($pageLeaves);
+        // ponytail: list/calendar reads stay read-only. Chain sync on file/review/approve only
+        // (ensureRecordsForRequest per pending row was the 5–10s open cost).
         $currentApprovals = $this->currentLeaveApprovalRecords($pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $actorIsAdminHr = $this->hrRoleResolver->isAdminHrAccount($actor);
 
-        $leaves = $pageLeaves->map(function (LeaveRequest $l) use ($actor, $currentApprovals) {
+        $leaves = $pageLeaves->map(function (LeaveRequest $l) use ($actor, $currentApprovals, $actorIsAdminHr) {
             $currentApproval = $currentApprovals[(int) $l->id] ?? null;
-            $auth = $currentApproval && $l->user
-                ? $this->approvalWorkflowService->authorizePendingRecord(
-                    $actor,
-                    $currentApproval,
-                    $l->user,
-                    OrgApprovalWorkflowService::MODULE_LEAVE,
-                )
-                : ['allowed' => false, 'deny_reason' => $l->status === LeaveRequest::STATUS_PENDING ? 'no_pending_approval_step' : 'request_is_not_pending'];
+            $canAct = $this->actorCanActOnListApproval($actor, $currentApproval, $actorIsAdminHr);
 
             return [
                 'id' => $l->id,
@@ -182,12 +177,12 @@ class LeaveController extends Controller
                 'created_at' => $l->created_at->toIso8601String(),
                 'display_status' => $this->leaveListDisplayStatus($l, $currentApproval),
                 'approval_stage' => $l->approval_stage,
-                'actor_can_approve' => (bool) ($auth['allowed'] ?? false),
-                'actor_can_reject' => (bool) ($auth['allowed'] ?? false),
-                'can_approve' => (bool) ($auth['allowed'] ?? false),
-                'can_reject' => (bool) ($auth['allowed'] ?? false),
+                'actor_can_approve' => $canAct,
+                'actor_can_reject' => $canAct,
+                'can_approve' => $canAct,
+                'can_reject' => $canAct,
                 'actor_can_delete' => $this->canDeleteLeaveRequest($actor, $l),
-                'hr_wait_message' => $this->leaveListWaitMessage($l, $currentApproval, (bool) ($auth['allowed'] ?? false)),
+                'hr_wait_message' => $this->leaveListWaitMessage($l, $currentApproval, $canAct),
             ];
         });
 
@@ -264,13 +259,23 @@ class LeaveController extends Controller
             ->groupBy('status')
             ->pluck('aggregate', 'status');
 
+        $pending = (int) ($statusCounts[LeaveRequest::STATUS_PENDING] ?? 0);
+        $approved = (int) ($statusCounts[LeaveRequest::STATUS_APPROVED] ?? 0);
+        $rejected = (int) ($statusCounts[LeaveRequest::STATUS_REJECTED] ?? 0);
+        $cancelled = (int) ($statusCounts['cancelled'] ?? 0);
+        $allFilings = $pending + $approved + $rejected + $cancelled;
+
         $payload = [
-            'pending' => (int) ($statusCounts[LeaveRequest::STATUS_PENDING] ?? 0),
-            'approved' => (int) ($statusCounts[LeaveRequest::STATUS_APPROVED] ?? 0),
-            'rejected' => (int) ($statusCounts[LeaveRequest::STATUS_REJECTED] ?? 0),
-            'cancelled' => (int) ($statusCounts['cancelled'] ?? 0),
-            'my_filings' => (int) (clone $base)->where('user_id', (int) $actor->id)->count(),
-            'all_filings' => (int) (clone $base)->count(),
+            'pending' => $pending,
+            'approvable_pending' => $this->bulkApprovalQuery->approvableCount(
+                $actor,
+                array_merge($filters, ['status' => LeaveRequest::STATUS_PENDING])
+            ),
+            'approved' => $approved,
+            'rejected' => $rejected,
+            'cancelled' => $cancelled,
+            'my_filings' => 0,
+            'all_filings' => $allFilings,
         ];
 
         RequestPerformanceLogger::finish($perf, $request, 1, [
@@ -686,19 +691,24 @@ class LeaveController extends Controller
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
         $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters, 10000);
-        $totalMatching = $this->bulkApprovalQuery->matchingPendingCount($actor, $filters);
+        // Select-all must use currently-approvable IDs only (not all pending in scope).
+        $eligibleCount = count($ids);
         $preview = $this->bulkApprovalCache->storePreview(
             'leave',
             $actor,
             $filters,
             $ids,
-            $totalMatching,
-            $totalMatching > count($ids) ? ['not_eligible_or_not_current_approver' => $totalMatching - count($ids)] : [],
+            $eligibleCount,
+            [],
         );
 
         return response()->json([
-            'approvable_count' => $preview['eligible_count'],
-            ...$preview,
+            'approvable_count' => $eligibleCount,
+            'eligible_count' => $eligibleCount,
+            'total_matching' => $eligibleCount,
+            'bulk_token' => $preview['bulk_token'],
+            'skipped_count' => 0,
+            'skipped_reasons_summary' => [],
         ]);
     }
 
@@ -1496,7 +1506,30 @@ class LeaveController extends Controller
     {
         $perPage = (int) $request->query('per_page', 25);
 
-        return in_array($perPage, [10, 25, 50], true) ? $perPage : 25;
+        return in_array($perPage, [10, 25, 50, 100], true) ? $perPage : 25;
+    }
+
+    private function actorCanActOnListApproval(User $actor, ?OrgApprovalRecord $currentApproval, bool $actorIsAdminHr): bool
+    {
+        if (! $currentApproval || $currentApproval->approval_status !== OrgApprovalRecord::STATUS_PENDING) {
+            return false;
+        }
+
+        if ($currentApproval->approver_role === HrRole::AdminHr->value) {
+            return $actorIsAdminHr;
+        }
+
+        $actorId = (int) $actor->id;
+        if ((int) $currentApproval->approver_id === $actorId) {
+            return true;
+        }
+
+        $eligible = $currentApproval->eligible_approver_ids;
+        if (! is_array($eligible) || $eligible === []) {
+            return false;
+        }
+
+        return in_array($actorId, array_map('intval', $eligible), true);
     }
 
     private function wantsLiteLeaveMutationResponse(Request $request): bool
@@ -1513,26 +1546,7 @@ class LeaveController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v4:v'.LeaveModuleCache::version();
-    }
-
-    private function syncLeaveApprovalRecordsForListRows($pageLeaves): void
-    {
-        foreach ($pageLeaves as $leave) {
-            if (! $leave instanceof LeaveRequest) {
-                continue;
-            }
-            if ($leave->status !== LeaveRequest::STATUS_PENDING || ! $leave->pending_approval || ! $leave->user) {
-                continue;
-            }
-
-            $this->approvalWorkflowService->ensureRecordsForRequest(
-                $leave,
-                OrgApprovalWorkflowService::MODULE_LEAVE,
-                $leave->user,
-                $leave->filedBy ?? $leave->user,
-            );
-        }
+        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v5:v'.LeaveModuleCache::version();
     }
 
     /**

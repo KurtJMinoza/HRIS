@@ -32,7 +32,7 @@ export function BulkApproveConfirmDialog({
       <DialogContent className="max-w-md gap-5" showCloseButton>
         <DialogHeader className="text-left">
           <DialogTitle>
-            {selectAllMatching ? `Approve all matching ${label}?` : `Approve selected ${label}?`}
+            {selectAllMatching ? `Approve all approvable ${label}?` : `Approve selected ${label}?`}
           </DialogTitle>
           <DialogDescription className="text-sm leading-relaxed">
             {selectAllMatching ? (
@@ -41,7 +41,7 @@ export function BulkApproveConfirmDialog({
                 <span className="font-semibold text-foreground">
                   {count} {count === 1 ? 'request' : 'requests'}
                 </span>{' '}
-                matching the current filters across all pages. This action cannot be undone from
+                you can approve under the current filters across all pages. This action cannot be undone from
                 this screen.
               </>
             ) : (

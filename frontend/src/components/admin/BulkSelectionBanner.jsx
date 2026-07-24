@@ -10,7 +10,6 @@ export function BulkSelectionBanner({
   totalCount = 0,
   selectAllMatching = false,
   showPageSelectAllBanner = false,
-  pageAllSelected = false,
   onSelectAllMatching,
   onClearSelection,
   entityLabel = 'requests',
@@ -29,7 +28,7 @@ export function BulkSelectionBanner({
         role="status"
       >
         <p className="text-foreground">
-          All <span className="font-semibold tabular-nums">{total}</span> matching {label} are
+          All <span className="font-semibold tabular-nums">{total}</span> approvable {label} are
           selected.
         </p>
         <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0" onClick={onClearSelection}>
@@ -52,20 +51,11 @@ export function BulkSelectionBanner({
       role="status"
     >
       <p className="text-muted-foreground">
-        {pageAllSelected ? (
-          <>
-            All <span className="font-semibold tabular-nums text-foreground">{page}</span> {label} on
-            this page are selected.
-          </>
-        ) : (
-          <>
-            <span className="font-semibold tabular-nums text-foreground">{total}</span> matching {label}
-            are available across all pages.
-          </>
-        )}
+        All <span className="font-semibold tabular-nums text-foreground">{page}</span> {label} on this
+        page are selected.
       </p>
       <Button type="button" variant="link" size="sm" className="h-8 shrink-0 px-0" onClick={onSelectAllMatching}>
-        Select all {total} matching {label}
+        Select all {total} to approve
       </Button>
     </div>
   )

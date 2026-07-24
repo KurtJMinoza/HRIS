@@ -5254,6 +5254,24 @@ export async function getLeaveRequests(filters) {
   return data
 }
 
+export async function getAdminLeaveCounts(filters = {}) {
+  const params = new URLSearchParams()
+  if (filters.from_date) params.set('from_date', String(filters.from_date))
+  if (filters.to_date) params.set('to_date', String(filters.to_date))
+  if (filters.date_from) params.set('date_from', String(filters.date_from))
+  if (filters.date_to) params.set('date_to', String(filters.date_to))
+  if (filters.employee_id) params.set('employee_id', String(filters.employee_id))
+  if (filters.company_id) params.set('company_id', String(filters.company_id))
+  if (filters.department_id) params.set('department_id', String(filters.department_id))
+  if (filters.search) params.set('search', String(filters.search))
+  const qs = params.toString()
+  const url = qs ? `/admin/leave/counts?${qs}` : '/admin/leave/counts'
+  const res = await authenticatedFetch(url, filters?.signal ? { signal: filters.signal } : {})
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load leave counts')
+  return data
+}
+
 /** Admin: fetch a single leave request by primary id (for dashboard deep-links). */
 export async function getAdminLeaveByRequestId(requestId) {
   const res = await authenticatedFetch(`/admin/leave/${encodeURIComponent(String(requestId))}`)

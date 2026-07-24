@@ -248,6 +248,7 @@ export default function AdminFinalizePayrollPage() {
   )
 
   const [loading, setLoading] = useState(true)
+  const [refreshingCalculation, setRefreshingCalculation] = useState(false)
   const [preview, setPreview] = useState(null)
   const hasPreviewRef = useRef(false)
   const [previewError, setPreviewError] = useState('')
@@ -395,11 +396,14 @@ export default function AdminFinalizePayrollPage() {
 
     if (!canFinalizePayroll || (isAdmin && !hasScope(effectivePayload))) {
       setLoading(false)
+      setRefreshingCalculation(false)
       setPreview(null)
       hasPreviewRef.current = false
       setPreviewError('')
     } else {
-      setLoading(!hasPreviewRef.current)
+      const hasExistingPreview = hasPreviewRef.current
+      setLoading(!hasExistingPreview)
+      setRefreshingCalculation(hasExistingPreview)
       setPreviewError('')
       ;(async () => {
         try {
@@ -421,7 +425,10 @@ export default function AdminFinalizePayrollPage() {
           toastRef.current({ title: 'Preview failed', description: message, variant: 'destructive' })
           if (!hasPreviewRef.current) setPreview(null)
         } finally {
-          if (!cancelled) setLoading(false)
+          if (!cancelled) {
+            setLoading(false)
+            setRefreshingCalculation(false)
+          }
         }
       })()
     }
@@ -430,20 +437,6 @@ export default function AdminFinalizePayrollPage() {
       cancelled = true
     }
   }, [canFinalizePayroll, isAdmin, previewScopeKey, page, pageSize, debouncedSearch])
-
-  // Real-time sync: when attendance logs/corrections change, the preview must recompute.
-  // Finalize payroll already supports a cache-busting `refresh_token`; we auto-rotate it
-  // periodically while the preview page is visible.
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.hidden) return
-      if (!canFinalizePayroll) return
-      if (periodFinalized || finalizing || loading) return
-      setRefreshToken(String(Date.now()))
-    }, 30000)
-
-    return () => window.clearInterval(timer)
-  }, [canFinalizePayroll, periodFinalized, finalizing, loading])
 
   useEffect(() => {
     let cancelled = false
@@ -513,7 +506,7 @@ export default function AdminFinalizePayrollPage() {
         const status = await adminFinalizePayrollStatus(pinnedBatchRunId)
         if (cancelled) return
         const s = String(status?.status || '').toLowerCase()
-        if (['queued', 'processing', 'draft', 'failed'].includes(s)) {
+        if (['queued', 'processing'].includes(s)) {
           setRefreshToken(String(Date.now()))
         }
       } catch {
@@ -1113,11 +1106,11 @@ export default function AdminFinalizePayrollPage() {
               size="sm"
               className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
               onClick={() => setRefreshToken(String(Date.now()))}
-              disabled={loading || periodFinalized}
+              disabled={loading || refreshingCalculation || periodFinalized}
               title={periodFinalized ? 'Preview refresh is disabled while this payroll is locked.' : undefined}
             >
-              <RefreshCw className={cn('h-4 w-4', loading ? 'animate-spin' : '')} />
-              Refresh calculation
+              <RefreshCw className={cn('h-4 w-4', (loading || refreshingCalculation) ? 'animate-spin' : '')} />
+              {refreshingCalculation ? 'Refreshing calculation...' : 'Refresh calculation'}
             </Button>
           </div>
         </div>

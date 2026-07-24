@@ -205,7 +205,6 @@ class OvertimeController extends Controller
             ])
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
-                'filedBy:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
             ])
             ->orderByDesc('date')
             ->orderByDesc('id');
@@ -256,7 +255,7 @@ class OvertimeController extends Controller
 
         $paginator = $query->paginate($perPage)->withQueryString();
         $pageRows = $paginator->getCollection();
-        $this->syncOvertimeApprovalRecordsForListRows($pageRows);
+        // ponytail: list reads stay read-only; approval records are created on submit/review/approve.
         $currentApprovals = $this->currentOvertimeApprovalRecords($pageRows->pluck('id')->map(fn ($id) => (int) $id)->all());
 
         $items = $pageRows->map(function (Overtime $o) use ($actor, $currentApprovals) {
@@ -320,13 +319,6 @@ class OvertimeController extends Controller
             ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
         })->values();
 
-        $today = today()->toDateString();
-        $startOfMonth = today()->startOfMonth()->toDateString();
-
-        $summaryBase = clone $query;
-        $pendingCount = (clone $summaryBase)->where('status', Overtime::STATUS_PENDING)->count();
-        $approvedThisMonthHours = (clone $summaryBase)->where('status', Overtime::STATUS_APPROVED)->whereDate('date', '>=', $startOfMonth)->sum('computed_hours');
-
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
             'scope' => 'admin',
             'per_page' => $paginator->perPage(),
@@ -345,8 +337,8 @@ class OvertimeController extends Controller
             ],
             'summary' => [
                 'total_ot_today_hours' => 0,
-                'pending_requests' => $pendingCount,
-                'approved_this_month_hours' => round((float) $approvedThisMonthHours, 2),
+                'pending_requests' => 0,
+                'approved_this_month_hours' => 0,
                 'approved_total_hours' => 0,
                 'pending_total_hours' => 0,
                 'top_employees' => [],
@@ -727,19 +719,24 @@ class OvertimeController extends Controller
 
         $filters = $this->normalizeBulkApproveFilters($validated['filters']);
         $ids = $this->bulkApprovalQuery->approvableIds($actor, $filters, 10000);
-        $totalMatching = $this->bulkApprovalQuery->matchingPendingCount($actor, $filters);
+        // Select-all must use currently-approvable IDs only (not all pending in scope).
+        $eligibleCount = count($ids);
         $preview = $this->bulkApprovalCache->storePreview(
             'overtime',
             $actor,
             $filters,
             $ids,
-            $totalMatching,
-            $totalMatching > count($ids) ? ['not_eligible_or_not_current_approver' => $totalMatching - count($ids)] : [],
+            $eligibleCount,
+            [],
         );
 
         return response()->json([
-            'approvable_count' => $preview['eligible_count'],
-            ...$preview,
+            'approvable_count' => $eligibleCount,
+            'eligible_count' => $eligibleCount,
+            'total_matching' => $eligibleCount,
+            'bulk_token' => $preview['bulk_token'],
+            'skipped_count' => 0,
+            'skipped_reasons_summary' => [],
         ]);
     }
 
@@ -1600,26 +1597,7 @@ class OvertimeController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v4:v'.OvertimeModuleCache::version();
-    }
-
-    private function syncOvertimeApprovalRecordsForListRows($pageRows): void
-    {
-        foreach ($pageRows as $overtime) {
-            if (! $overtime instanceof Overtime) {
-                continue;
-            }
-            if ($overtime->status !== Overtime::STATUS_PENDING || ! $overtime->pending_approval || ! $overtime->user) {
-                continue;
-            }
-
-            $this->approvalWorkflowService->ensureRecordsForRequest(
-                $overtime,
-                OrgApprovalWorkflowService::MODULE_OVERTIME,
-                $overtime->user,
-                $overtime->filedBy ?? $overtime->user,
-            );
-        }
+        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v5:v'.OvertimeModuleCache::version();
     }
 
     /**

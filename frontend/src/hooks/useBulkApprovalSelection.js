@@ -33,8 +33,9 @@ export function useBulkApprovalSelection({
   const pageAllSelected =
     pageCount > 0 && pageSelectableRows.every((row) => selectedIds.has(Number(row.id)))
 
+  // Show after the page checkbox is checked (Attendance-style), when more exist across pages.
   const showPageSelectAllBanner =
-    !selectAllMatching && totalCount > pageCount
+    !selectAllMatching && pageAllSelected && totalCount > pageCount
 
   const effectiveSelectedCount = selectAllMatching ? totalCount : selectedIds.size
 

@@ -94,35 +94,13 @@ class OvertimeBulkApprovalQuery implements ApprovableBulkQuery
             return $this->fastAdminHrApprovableIds($actor, $filters, $max);
         }
 
-        $filters = array_merge($filters, ['status' => Overtime::STATUS_PENDING]);
-        $query = $this->baseQuery($actor, $filters);
-        $query->where('status', Overtime::STATUS_PENDING);
-
-        $ids = [];
-        $query->select('id')->orderBy('id')->chunkById(200, function ($rows) use ($actor, &$ids, $max) {
-            $items = Overtime::query()
-                ->with([
-                    'user',
-                    'filedBy',
-                    'firstApprover',
-                    'secondApprover',
-                ])
-                ->whereIn('id', $rows->pluck('id'))
-                ->get();
-
-            foreach ($items as $overtime) {
-                if (count($ids) >= $max) {
-                    return false;
-                }
-                if ($this->overtimeApprovalService->canApprove($actor, $overtime)) {
-                    $ids[] = (int) $overtime->id;
-                }
-            }
-
-            return count($ids) < $max;
-        });
-
-        return $ids;
+        return $this->fastActorApprovableQuery($actor, $filters)
+            ->reorder()
+            ->orderBy('overtimes.id')
+            ->limit($max)
+            ->pluck('overtimes.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
     }
 
     /**
@@ -132,10 +110,15 @@ class OvertimeBulkApprovalQuery implements ApprovableBulkQuery
     {
         if ((string) ($actor->hr_role ?? '') === HrRole::AdminHr->value) {
             return (int) $this->fastAdminHrApprovableQuery($actor, $filters)
+                ->toBase()
+                ->distinct()
                 ->count('overtimes.id');
         }
 
-        return count($this->approvableIds($actor, $filters));
+        return (int) $this->fastActorApprovableQuery($actor, $filters)
+            ->toBase()
+            ->distinct()
+            ->count('overtimes.id');
     }
 
     /**
@@ -215,6 +198,51 @@ class OvertimeBulkApprovalQuery implements ApprovableBulkQuery
             ->where('overtimes.status', Overtime::STATUS_PENDING)
             ->where('overtimes.pending_approval', true)
             ->whereNull('overtimes.rejected_at')
+            ->whereNotExists(function ($earlier): void {
+                $earlier
+                    ->selectRaw('1')
+                    ->from('org_approval_records as earlier_approval')
+                    ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+            })
+            ->distinct();
+
+        return $query;
+    }
+
+    /**
+     * SQL-only path for non-AdminHR: current pending step assigned to this actor.
+     *
+     * @param  array<string, mixed>  $filters
+     */
+    private function fastActorApprovableQuery(User $actor, array $filters): Builder
+    {
+        $actorId = (int) $actor->id;
+        $query = $this->baseQuery($actor, array_merge($filters, ['status' => Overtime::STATUS_PENDING]));
+        $query->setEagerLoads([]);
+        $query->reorder();
+        $query
+            ->select('overtimes.id')
+            ->join('org_approval_records as current_approval', function ($join) use ($actorId): void {
+                $join->on('current_approval.request_id', '=', 'overtimes.id')
+                    ->where('current_approval.module_type', '=', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                    ->where('current_approval.approval_status', '=', OrgApprovalRecord::STATUS_PENDING)
+                    ->where('current_approval.approver_id', '=', $actorId);
+            })
+            ->where('overtimes.status', Overtime::STATUS_PENDING)
+            ->where('overtimes.pending_approval', true)
+            ->whereNull('overtimes.rejected_at')
+            ->whereNotExists(function ($earlier): void {
+                $earlier
+                    ->selectRaw('1')
+                    ->from('org_approval_records as earlier_approval')
+                    ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                    ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                    ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+            })
             ->distinct();
 
         return $query;

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Calendar, ChevronLeft, ChevronRight, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -336,6 +336,7 @@ export function EmployeeLeaveCalendarView({
   onOpenLeave,
   onDeleteLeave,
   onInvalidDate,
+  onVisibleMonthChange,
 }) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -360,6 +361,10 @@ export function EmployeeLeaveCalendarView({
     }
     return seen.size
   }, [leaves, year, month])
+
+  useEffect(() => {
+    onVisibleMonthChange?.(year, month)
+  }, [year, month, onVisibleMonthChange])
 
   const goPrevMonth = useCallback(() => {
     if (month === 0) {

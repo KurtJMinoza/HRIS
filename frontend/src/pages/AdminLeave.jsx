@@ -44,6 +44,7 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   getLeaveRequests,
+  getAdminLeaveCounts,
   getMyLeaveSummary,
   fetchLeaveRequestReview,
   createLeaveRequest,
@@ -142,6 +143,37 @@ function formatType(type) {
   return found ? found.label : type.charAt(0).toUpperCase() + type.slice(1).replace(/_/g, ' ')
 }
 
+function formatLocalDateYmd(date) {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+function normalizeLeaveCounts(counts, fallbackRows = []) {
+  if (counts && typeof counts === 'object') {
+    const pending = Number(counts.pending ?? 0)
+    const approvablePending = Number(counts.approvable_pending ?? pending)
+    const approved = Number(counts.approved ?? 0)
+    const rejected = Number(counts.rejected ?? 0)
+    const cancelled = Number(counts.cancelled ?? 0)
+    const total = Number(counts.all_filings ?? counts.total ?? pending + approved + rejected + cancelled)
+    return { total, pending, approvablePending, approved, rejected, cancelled }
+  }
+
+  const hasApprovalFlag = fallbackRows.some((l) => Object.prototype.hasOwnProperty.call(l || {}, 'actor_can_approve'))
+  const pending = fallbackRows.filter((l) => l.status === 'pending').length
+  const approvablePending = fallbackRows.filter((l) => l.status === 'pending' && l.actor_can_approve).length
+  return {
+    total: fallbackRows.length,
+    pending,
+    approvablePending: hasApprovalFlag ? approvablePending : pending,
+    approved: fallbackRows.filter((l) => l.status === 'approved').length,
+    rejected: fallbackRows.filter((l) => l.status === 'rejected').length,
+    cancelled: fallbackRows.filter((l) => l.status === 'cancelled').length,
+  }
+}
+
 const ORG_HEAD_HR_ROLES = new Set(['department_head', 'branch_head', 'company_head'])
 
 const REST_DAY_BYPASS_REASON_MIN = 10
@@ -204,10 +236,19 @@ export default function AdminLeave() {
   const isAdminHr = user?.hr_role === 'admin_hr'
   const allLeaveTabLabel = isAdminHr ? 'All Filings' : 'For My Approval'
   const [leaveRequests, setLeaveRequests] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [leaveCounts, setLeaveCounts] = useState(null)
+  const [monthlyLeaveCounts, setMonthlyLeaveCounts] = useState(null)
+  const [countsRefreshToken, setCountsRefreshToken] = useState(0)
   const [statusFilter, setStatusFilter] = useState('')
   const [activeView, setActiveView] = useState('calendar')
+  const [calendarLeaves, setCalendarLeaves] = useState([])
+  const [loadingCalendar, setLoadingCalendar] = useState(false)
+  const [calendarVisibleMonth, setCalendarVisibleMonth] = useState(() => {
+    const now = new Date()
+    return { year: now.getFullYear(), month: now.getMonth() }
+  })
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
   const [appliedFrom, setAppliedFrom] = useState('')
@@ -313,6 +354,37 @@ export default function AdminLeave() {
   const [allPagination, setAllPagination] = useState(null)
   const [minePagination, setMinePagination] = useState(null)
   const leavePerPage = 25
+  const calendarPerPage = 100
+
+  const currentMonthRange = useMemo(() => {
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), 1)
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    return {
+      from: formatLocalDateYmd(start),
+      to: formatLocalDateYmd(end),
+      label: now.toLocaleDateString('en-PH', { month: 'short', year: 'numeric' }),
+    }
+  }, [])
+
+  const calendarMonthRange = useMemo(() => {
+    const start = new Date(calendarVisibleMonth.year, calendarVisibleMonth.month, 1)
+    const end = new Date(calendarVisibleMonth.year, calendarVisibleMonth.month + 1, 0)
+    return {
+      from: formatLocalDateYmd(start),
+      to: formatLocalDateYmd(end),
+    }
+  }, [calendarVisibleMonth.month, calendarVisibleMonth.year])
+
+  const handleCalendarMonthChange = useCallback((year, month) => {
+    setCalendarVisibleMonth((prev) => (
+      prev.year === year && prev.month === month ? prev : { year, month }
+    ))
+  }, [])
+
+  const refreshLeaveCounts = useCallback(() => {
+    setCountsRefreshToken((value) => value + 1)
+  }, [])
 
   const mergeLeaveDetailIntoRows = useCallback((leave) => {
     if (!leave || typeof leave !== 'object') return
@@ -343,34 +415,8 @@ export default function AdminLeave() {
 
     setLeaveRequests((rows) => rows.map(applyPatch))
     setMyLeaveRequests((rows) => rows.map(applyPatch))
+    setCalendarLeaves((rows) => rows.map(applyPatch))
   }, [])
-
-  const hydrateLeaveRows = useCallback((rows, signal) => {
-    if (signal?.aborted) return
-    const pendingRows = (Array.isArray(rows) ? rows : [])
-      .filter((row) => {
-        if (!row || String(row.status || '').toLowerCase() !== 'pending') return false
-        const currentApprover = row.current_approver_name || row.current_approver
-        const stageText = [
-          row.current_stage,
-          row.current_step_name,
-          row.display_status,
-          row.hr_wait_message,
-        ].filter(Boolean).join(' ')
-        return !currentApprover || /department head|area manager/i.test(stageText)
-      })
-      .slice(0, 25)
-
-    pendingRows.forEach((row) => {
-      fetchLeaveRequestReview(row.id ?? row.request_id, { signal })
-        .then((data) => {
-          if (signal?.aborted) return
-          const next = extractLeaveRequestFromReviewPayload(data)
-          if (next) mergeLeaveDetailIntoRows(next)
-        })
-        .catch(() => {})
-    })
-  }, [mergeLeaveDetailIntoRows])
 
   const fetchLeaves = useCallback(async (opts = {}) => {
     setError(null)
@@ -386,7 +432,6 @@ export default function AdminLeave() {
       const rows = data.leave_requests || []
       setLeaveRequests(rows)
       setAllPagination(data.pagination || null)
-      hydrateLeaveRows(rows, opts.signal)
     } catch (e) {
       if (e?.name === 'AbortError') return
       setError(e.message)
@@ -394,7 +439,7 @@ export default function AdminLeave() {
     } finally {
       if (!opts.signal?.aborted) setLoading(false)
     }
-  }, [statusFilter, appliedFrom, appliedTo, allPage, hydrateLeaveRows])
+  }, [statusFilter, appliedFrom, appliedTo, allPage])
 
   const fetchMineLeaves = useCallback(async (opts = {}) => {
     setMineError(null)
@@ -410,7 +455,6 @@ export default function AdminLeave() {
       const rows = Array.isArray(data.leave_requests) ? data.leave_requests : []
       setMyLeaveRequests(rows)
       setMinePagination(data.pagination || null)
-      hydrateLeaveRows(rows, opts.signal)
     } catch (e) {
       if (e?.name === 'AbortError') return
       setMineError(e.message)
@@ -418,7 +462,7 @@ export default function AdminLeave() {
     } finally {
       if (!opts.signal?.aborted) setLoadingMine(false)
     }
-  }, [statusFilter, appliedFrom, appliedTo, minePage, hydrateLeaveRows])
+  }, [statusFilter, appliedFrom, appliedTo, minePage])
 
   useEffect(() => {
     setAllPage(1)
@@ -436,15 +480,15 @@ export default function AdminLeave() {
   }, [user?.id, showEmployeePicker, openAllRequestsTab])
 
   useEffect(() => {
-    if (!user?.id || tab !== 'all') {
-      setLoading(false)
+    if (!user?.id || tab !== 'all' || activeView !== 'list') {
+      if (activeView !== 'list') setLoading(false)
       return undefined
     }
     setLoading(true)
     leaveListAbortRef.current?.abort()
     const controller = new AbortController()
     leaveListAbortRef.current = controller
-    const delay = allListLoadedOnceRef.current ? 300 : 0
+    const delay = allListLoadedOnceRef.current ? 200 : 0
     const timer = setTimeout(() => {
       fetchLeaves({ signal: controller.signal }).finally(() => {
         if (!controller.signal.aborted) allListLoadedOnceRef.current = true
@@ -454,10 +498,10 @@ export default function AdminLeave() {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [fetchLeaves, tab, user?.id])
+  }, [fetchLeaves, tab, user?.id, activeView])
 
   useEffect(() => {
-    if (!user?.id || tab !== 'mine') return
+    if (!user?.id || tab !== 'mine' || activeView !== 'list') return undefined
     setLoadingMine(true)
     mineListAbortRef.current?.abort()
     const controller = new AbortController()
@@ -471,7 +515,88 @@ export default function AdminLeave() {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [tab, fetchMineLeaves, user?.id])
+  }, [tab, fetchMineLeaves, user?.id, activeView])
+
+  useEffect(() => {
+    if (!user?.id || activeView !== 'calendar') return undefined
+    const controller = new AbortController()
+    setLoadingCalendar(true)
+    const params = {
+      status: statusFilter || undefined,
+      from_date: calendarMonthRange.from,
+      to_date: calendarMonthRange.to,
+      page: 1,
+      per_page: calendarPerPage,
+      signal: controller.signal,
+    }
+    const request = tab === 'mine' ? getMyLeaveSummary(params) : getLeaveRequests(params)
+    request
+      .then((data) => {
+        if (controller.signal.aborted) return
+        setCalendarLeaves(Array.isArray(data.leave_requests) ? data.leave_requests : [])
+      })
+      .catch((e) => {
+        if (e?.name === 'AbortError' || controller.signal.aborted) return
+        setCalendarLeaves([])
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingCalendar(false)
+      })
+    return () => {
+      controller.abort()
+    }
+  }, [
+    activeView,
+    calendarMonthRange.from,
+    calendarMonthRange.to,
+    calendarPerPage,
+    countsRefreshToken,
+    statusFilter,
+    tab,
+    user?.id,
+  ])
+
+  useEffect(() => {
+    if (!user?.id || tab !== 'all') return undefined
+    const controller = new AbortController()
+    const monthFilters = {
+      date_from: currentMonthRange.from,
+      date_to: currentMonthRange.to,
+      signal: controller.signal,
+    }
+    const needsScoped = Boolean(appliedFrom || appliedTo)
+    const scopedPromise = needsScoped
+      ? getAdminLeaveCounts({
+          date_from: appliedFrom || undefined,
+          date_to: appliedTo || undefined,
+          signal: controller.signal,
+        })
+      : Promise.resolve(null)
+
+    Promise.all([scopedPromise, getAdminLeaveCounts(monthFilters)])
+      .then(([scopedCounts, nextMonthlyCounts]) => {
+        if (controller.signal.aborted) return
+        setMonthlyLeaveCounts(nextMonthlyCounts)
+        setLeaveCounts(scopedCounts || nextMonthlyCounts)
+      })
+      .catch((e) => {
+        if (e?.name === 'AbortError' || controller.signal.aborted) return
+        setLeaveCounts(null)
+        setMonthlyLeaveCounts(null)
+      })
+
+    return () => {
+      controller.abort()
+    }
+  }, [
+    appliedFrom,
+    appliedTo,
+    countsRefreshToken,
+    currentMonthRange.from,
+    currentMonthRange.to,
+    tab,
+    user?.id,
+  ])
 
   useEffect(() => {
     if (addOpen) {
@@ -720,6 +845,7 @@ export default function AdminLeave() {
       })
       if (tab === 'all') {
         await fetchLeaves()
+        refreshLeaveCounts()
       } else {
         await fetchMineLeaves()
       }
@@ -899,6 +1025,7 @@ export default function AdminLeave() {
     }
     setLeaveRequests((rows) => rows.map(applyPatch))
     setMyLeaveRequests((rows) => rows.map(applyPatch))
+    setCalendarLeaves((rows) => rows.map(applyPatch))
   }, [])
 
   const handleConfirmApprove = async (e) => {
@@ -941,6 +1068,7 @@ export default function AdminLeave() {
         status: data.status,
         approval_stage: data.approval_stage,
       })
+      refreshLeaveCounts()
       notifyPendingApprovalsChanged()
       toast({ title: data.message || 'Leave approved', variant: 'success' })
     } catch (e) {
@@ -1017,6 +1145,7 @@ export default function AdminLeave() {
       })
       if (failedItems.length > 0) setBulkSummaryOpen(true)
       if (approved > 0) notifyPendingApprovalsChanged()
+      if (approved > 0) refreshLeaveCounts()
       const approvedIds = new Set((res?.approved_ids || []).map((id) => String(id)))
       bulkSelection.clearSelection()
       if (approvedIds.size > 0) {
@@ -1078,6 +1207,7 @@ export default function AdminLeave() {
         approval_stage: 'rejected',
         rejection_note: rejectReason,
       })
+      refreshLeaveCounts()
       notifyPendingApprovalsChanged()
     } catch (e) {
       setError(e.message)
@@ -1105,6 +1235,7 @@ export default function AdminLeave() {
       }
       if (tab === 'all') {
         await fetchLeaves()
+        refreshLeaveCounts()
       } else {
         await fetchMineLeaves()
       }
@@ -1146,31 +1277,27 @@ export default function AdminLeave() {
 
   const isMineTab = tab === 'mine'
   const activeLeaveRequests = isMineTab ? myLeaveRequests : leaveRequests
-  const filteredActiveLeaveRequests = useMemo(() => {
-    if (!statusFilter) return activeLeaveRequests
-    return activeLeaveRequests.filter((l) => String(l.status ?? '').toLowerCase() === statusFilter)
-  }, [activeLeaveRequests, statusFilter])
+  const filteredCalendarLeaves = useMemo(() => {
+    if (!statusFilter) return calendarLeaves
+    return calendarLeaves.filter((l) => String(l.status ?? '').toLowerCase() === statusFilter)
+  }, [calendarLeaves, statusFilter])
   const activeLoading = isMineTab
     ? loadingMine
-    : loading || (tab === 'all' && !allListLoadedOnceRef.current)
+    : loading || (tab === 'all' && activeView === 'list' && !allListLoadedOnceRef.current)
+  const calendarLoading = loadingCalendar
   const activeError = isMineTab ? mineError : error
   const activePagination = isMineTab ? minePagination : allPagination
-  const totalCount = activeLeaveRequests.length
-  const pendingCount = activeLeaveRequests.filter((l) => l.status === 'pending').length
-  const approvedCount = activeLeaveRequests.filter((l) => l.status === 'approved').length
-  const rejectedCount = activeLeaveRequests.filter((l) => l.status === 'rejected').length
+  const activeCounts = normalizeLeaveCounts(isMineTab ? null : leaveCounts, activeLeaveRequests)
+  const totalCount = activeCounts.total
+  const pendingCount = activeCounts.approvablePending
+  const approvedCount = activeCounts.approved
+  const rejectedCount = activeCounts.rejected
 
   const statusCounts = {
-    '': isMineTab ? myLeaveRequests.length : leaveRequests.length,
-    pending: isMineTab
-      ? myLeaveRequests.filter((l) => l.status === 'pending').length
-      : leaveRequests.filter((l) => l.status === 'pending').length,
-    approved: isMineTab
-      ? myLeaveRequests.filter((l) => l.status === 'approved').length
-      : leaveRequests.filter((l) => l.status === 'approved').length,
-    rejected: isMineTab
-      ? myLeaveRequests.filter((l) => l.status === 'rejected').length
-      : leaveRequests.filter((l) => l.status === 'rejected').length,
+    '': activeCounts.total,
+    pending: activeCounts.pending,
+    approved: activeCounts.approved,
+    rejected: activeCounts.rejected,
   }
   const bulkApprovalFilters = useMemo(
     () => ({
@@ -1183,7 +1310,7 @@ export default function AdminLeave() {
   const bulkFiltersKey = useMemo(() => JSON.stringify(bulkApprovalFilters), [bulkApprovalFilters])
 
   useEffect(() => {
-    if (!canApproveLeave || tab !== 'all') {
+    if (!canApproveLeave || tab !== 'all' || activeView !== 'list') {
       setTotalMatchingApprovable(0)
       setBulkPreviewToken('')
       return undefined
@@ -1205,7 +1332,7 @@ export default function AdminLeave() {
     return () => {
       controller.abort()
     }
-  }, [bulkApprovalFilters, bulkFiltersKey, canApproveLeave, tab])
+  }, [activeView, bulkApprovalFilters, bulkFiltersKey, canApproveLeave, tab])
 
   const pageBulkRows = useMemo(
     () =>
@@ -1223,22 +1350,17 @@ export default function AdminLeave() {
     filtersKey: bulkFiltersKey,
   })
 
-  const today = new Date()
-  const currentMonth = today.getMonth()
-  const currentYear = today.getFullYear()
-  const monthlyLeaves = (isMineTab ? myLeaveRequests : leaveRequests).filter((leave) => {
+  const monthlyFallbackRows = activeLeaveRequests.filter((leave) => {
     const basis = leave.start_date || leave.created_at
     if (!basis) return false
-    const d = new Date(basis)
-    if (Number.isNaN(d.getTime())) return false
-    return d.getMonth() === currentMonth && d.getFullYear() === currentYear
+    return basis >= currentMonthRange.from && basis <= currentMonthRange.to
   })
-
-  const monthlyTotal = monthlyLeaves.length
-  const monthlyPending = monthlyLeaves.filter((l) => l.status === 'pending').length
-  const monthlyApproved = monthlyLeaves.filter((l) => l.status === 'approved').length
-  const monthlyRejected = monthlyLeaves.filter((l) => l.status === 'rejected').length
-  const monthLabel = today.toLocaleDateString('en-PH', { month: 'short', year: 'numeric' })
+  const monthlyCounts = normalizeLeaveCounts(isMineTab ? null : monthlyLeaveCounts, monthlyFallbackRows)
+  const monthlyPending = monthlyCounts.approvablePending
+  const monthlyApproved = monthlyCounts.approved
+  const monthlyRejected = monthlyCounts.rejected
+  const monthlyTotal = monthlyPending + monthlyApproved + monthlyRejected
+  const monthLabel = currentMonthRange.label
 
   function formatDuration(leave) {
     const { type, start_date, end_date, half_type } = leave
@@ -1288,6 +1410,7 @@ export default function AdminLeave() {
                 fetchMineLeaves()
               } else {
                 fetchLeaves()
+                refreshLeaveCounts()
               }
             }}
             disabled={activeLoading}
@@ -1395,7 +1518,10 @@ export default function AdminLeave() {
           <Button
             size="sm"
             className="shrink-0 bg-amber-600 text-white hover:bg-amber-500 dark:bg-amber-600 dark:hover:bg-amber-500"
-            onClick={() => setStatusFilter('pending')}
+            onClick={() => {
+              setActiveView('list')
+              setStatusFilter('pending')
+            }}
           >
             Review Now
           </Button>
@@ -1495,7 +1621,6 @@ export default function AdminLeave() {
                     : 'Leave filings in your approval scope.'}
             </CardDescription>
           </div>
-          {activeView === 'list' ? (
           <div className="flex flex-wrap items-center gap-2">
             {STATUS_OPTIONS.map((opt) => {
               const active = statusFilter === opt.value
@@ -1516,7 +1641,10 @@ export default function AdminLeave() {
                 <button
                   key={opt.value || 'all'}
                   type="button"
-                  onClick={() => setStatusFilter(opt.value)}
+                  onClick={() => {
+                    setActiveView('list')
+                    setStatusFilter(opt.value)
+                  }}
                   className={[
                     'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all',
                     active ? (activeStyles[opt.value] || activeStyles['']) : (inactiveStyles[opt.value] || inactiveStyles['']),
@@ -1530,7 +1658,6 @@ export default function AdminLeave() {
               )
             })}
           </div>
-          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {!isMineTab && activeView === 'list' ? (
@@ -1568,11 +1695,12 @@ export default function AdminLeave() {
           ) : null}
           {activeView === 'calendar' ? (
             <EmployeeLeaveCalendarView
-              leaves={filteredActiveLeaveRequests}
-              loading={activeLoading}
+              leaves={filteredCalendarLeaves}
+              loading={calendarLoading}
               allowFileLeave={canApproveLeave}
               showEmployeeDetails
               viewerProfile={isMineTab ? calendarViewerProfile : null}
+              onVisibleMonthChange={handleCalendarMonthChange}
               onFileLeave={openFileLeaveWithDates}
               onOpenLeave={openDetailDialog}
               onDeleteLeave={(leave) => setDeleteDialog({ open: true, leave })}

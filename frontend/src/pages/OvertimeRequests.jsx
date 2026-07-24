@@ -1144,7 +1144,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       const rows = res.overtimes || []
       setAllItems(rows)
       setAllPagination(res.pagination || null)
-      hydrateOvertimeRows(rows, opts.signal)
     } catch (e) {
       if (e?.name === 'AbortError') return
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
@@ -1512,34 +1511,6 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
     setAllItems((rows) => rows.map(applyPatch))
     setMineItems((rows) => rows.map(applyPatch))
-  }
-
-  function shouldHydrateOvertimeRow(row) {
-    if (!row || String(row.status || '').toLowerCase() !== 'pending') return false
-    const currentApprover = row.current_approver_name || row.current_approver
-    const stageText = [
-      row.current_stage,
-      row.current_step_name,
-      row.display_status,
-    ].filter(Boolean).join(' ')
-    return !currentApprover || /department head|area manager/i.test(stageText)
-  }
-
-  function hydrateOvertimeRows(rows, signal) {
-    if (signal?.aborted) return
-    const pendingRows = (Array.isArray(rows) ? rows : [])
-      .filter(shouldHydrateOvertimeRow)
-      .slice(0, 25)
-
-    pendingRows.forEach((row) => {
-      getAdminOvertimeDetail(row.id, { signal })
-        .then((res) => {
-          if (signal?.aborted) return
-          const ot = res?.overtime ?? res?.request ?? res?.data?.overtime ?? res?.data?.request
-          if (ot && typeof ot === 'object') mergeOvertimeDetailIntoRows(ot)
-        })
-        .catch(() => {})
-    })
   }
 
   function openView(row) {
