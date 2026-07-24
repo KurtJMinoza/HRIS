@@ -77,6 +77,21 @@ function hasActiveDescendant(item, pathname) {
   return false
 }
 
+function scrollSidebarNavItemIntoView(nav, item) {
+  if (!nav || !item || nav.scrollHeight <= nav.clientHeight) return
+
+  const navRect = nav.getBoundingClientRect()
+  const itemRect = item.getBoundingClientRect()
+  const topOverflow = itemRect.top - navRect.top
+  const bottomOverflow = itemRect.bottom - navRect.bottom
+
+  if (topOverflow < 0) {
+    nav.scrollTo({ top: nav.scrollTop + topOverflow - 8, behavior: 'smooth' })
+  } else if (bottomOverflow > 0) {
+    nav.scrollTo({ top: nav.scrollTop + bottomOverflow + 8, behavior: 'smooth' })
+  }
+}
+
 const MOCK_NOTIFICATIONS = [
   {
     id: '1',
@@ -232,7 +247,7 @@ function SidebarContent({
     const nav = navRef?.current
     if (!nav) return
     const activeEl = nav.querySelector(`[data-hr-sidebar-href="${CSS.escape(pathname)}"]`)
-    activeEl?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    scrollSidebarNavItemIntoView(nav, activeEl)
   }, [pathname, navItems, collapsed, autoExpanded, manualExpanded, navRef])
 
   const handleNavIntent = useCallback((to) => {
@@ -503,6 +518,12 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   useLayoutEffect(() => {
     dispatchDismissOverlays()
   }, [location.pathname])
+
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+    document.documentElement.scrollTop = 0
+    document.body.scrollTop = 0
+  }, [location.pathname, location.search])
 
   useEffect(() => {
     scheduleRadixModalLockReset()

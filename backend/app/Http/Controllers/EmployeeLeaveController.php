@@ -121,6 +121,18 @@ class EmployeeLeaveController extends Controller
             'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
         ]);
 
+        $approvalProgress = $this->mergeLeaveRemarksIntoProgress(
+            $l,
+            $this->leaveApprovalService->buildApprovalProgress($l)
+        );
+        $currentStep = null;
+        foreach ($approvalProgress as $step) {
+            if (($step['status'] ?? null) === 'current') {
+                $currentStep = $step;
+                break;
+            }
+        }
+
         return array_merge([
             'id' => $l->id,
             'type' => $l->type,
@@ -138,10 +150,10 @@ class EmployeeLeaveController extends Controller
             'created_at' => $l->created_at?->toIso8601String(),
             'display_status' => $this->leaveApprovalService->deriveDisplayStatusLabel($l),
             'approval_stage' => $l->approval_stage,
-            'approval_progress' => $this->mergeLeaveRemarksIntoProgress(
-                $l,
-                $this->leaveApprovalService->buildApprovalProgress($l)
-            ),
+            'approval_progress' => $approvalProgress,
+            'current_stage' => $currentStep['label'] ?? $currentStep['approver_role_label'] ?? null,
+            'current_approver_name' => $currentStep['approver_name'] ?? null,
+            'current_approver' => $currentStep['approver_name'] ?? null,
             'approval_history' => $l->approvalAudits->map(function (LeaveApprovalAudit $a) {
                 return [
                     'action' => $a->action,

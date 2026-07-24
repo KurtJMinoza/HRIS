@@ -480,11 +480,17 @@ class EmployeeOvertimeController extends Controller
      */
     private function mapOvertimeTableRowForEmployee(Overtime $o, User $actor): array
     {
-        $currentApprover = null;
-        if (($o->approval_stage ?? null) === \App\Support\HrApprovalStages::PENDING_FIRST) {
-            $currentApprover = $o->firstApprover;
-        } elseif (($o->approval_stage ?? null) === \App\Support\HrApprovalStages::PENDING_SECOND) {
-            $currentApprover = $o->secondApprover;
+        if (! $o->relationLoaded('user')) {
+            $o->setRelation('user', $actor);
+        }
+
+        $approvalProgress = $this->overtimeApprovalService->buildApprovalProgress($o);
+        $currentStep = null;
+        foreach ($approvalProgress as $step) {
+            if (($step['status'] ?? null) === 'current') {
+                $currentStep = $step;
+                break;
+            }
         }
 
         $canCancel = $this->canDeleteOvertimeRequest($actor, $o);
@@ -495,9 +501,14 @@ class EmployeeOvertimeController extends Controller
         if ($reason !== '') {
             $reasonSummary = strlen($reason) > 140 ? substr($reason, 0, 137).'...' : $reason;
         }
-        $stepName = $o->status === Overtime::STATUS_PENDING
-            ? $this->deriveTableStepName((string) ($o->approval_stage ?? ''))
+        $currentStepLabel = $currentStep['label'] ?? $currentStep['approver_role_label'] ?? null;
+        $stepName = $o->status === Overtime::STATUS_PENDING && $currentStepLabel
+            ? rtrim(str_ireplace(' approval', '', (string) $currentStepLabel))
             : null;
+        if (! $stepName && $o->status === Overtime::STATUS_PENDING) {
+            $stepName = $this->deriveTableStepName((string) ($o->approval_stage ?? ''));
+        }
+        $currentApproverName = $currentStep['approver_name'] ?? null;
         $displayStatus = $this->deriveTableDisplayStatus($o->status, $stepName);
 
         return array_merge([
@@ -509,8 +520,11 @@ class EmployeeOvertimeController extends Controller
             'approved_hours' => $o->approved_ot_hours !== null ? (float) $o->approved_ot_hours : null,
             'status' => $o->status,
             'approval_stage' => $o->approval_stage,
+            'approval_progress' => $approvalProgress,
+            'current_stage' => $currentStepLabel,
             'current_step_name' => $stepName,
-            'current_approver_name' => $currentApprover?->display_name,
+            'current_approver_name' => $currentApproverName,
+            'current_approver' => $currentApproverName,
             'display_badge_color' => $this->deriveBadgeColor($o),
             'reason_summary' => $reasonSummary,
             'created_at' => $o->created_at?->toIso8601String(),
@@ -649,7 +663,7 @@ class EmployeeOvertimeController extends Controller
         $filters = $this->employeeOvertimeFilters($request);
         $filtersHash = md5(json_encode([$filters, $paginationInput], JSON_THROW_ON_ERROR));
         $version = OvertimeModuleCache::version();
-        $cacheKey = "employee:overtime:list:{$user->id}:v{$version}:{$paginationInput['page']}:{$filtersHash}";
+        $cacheKey = "employee:overtime:list:{$user->id}:labels-v2:v{$version}:{$paginationInput['page']}:{$filtersHash}";
         $cacheHit = Cache::has($cacheKey);
 
         $payload = Cache::remember($cacheKey, now()->addSeconds(60), function () use ($user, $paginationInput, $filters) {
@@ -683,6 +697,7 @@ class EmployeeOvertimeController extends Controller
                 ])
                 ->where('user_id', $user->id)
                 ->with([
+                    'filedBy:id,name,first_name,middle_name,last_name,suffix',
                     'firstApprover:id,name,first_name,middle_name,last_name,suffix',
                     'secondApprover:id,name,first_name,middle_name,last_name,suffix',
                 ]);

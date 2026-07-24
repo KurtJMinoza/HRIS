@@ -1,5 +1,6 @@
 import { CheckCircle2, Clock, XCircle, ArrowLeftCircle, Ban } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { normalizeApprovalHeadTitle } from '@/lib/approvalText'
 
 const STATUS_STYLES = {
   green: {
@@ -35,7 +36,7 @@ function statusLabel(row) {
   if (s === 'approved') return 'Approved'
   if (s === 'rejected') return 'Rejected'
 
-  const step = row.current_step_name
+  const step = normalizeApprovalHeadTitle(row.current_stage || row.current_step_name)
   if (step) return `Waiting for ${step}`
 
   return 'Pending'
@@ -43,9 +44,10 @@ function statusLabel(row) {
 
 function captionLine(row) {
   const s = String(row.status || '').toLowerCase()
+  const currentApprover = row.current_approver_name || row.current_approver
 
-  if (s === 'approved' && row.current_approver_name) {
-    return `Approved by ${row.current_approver_name}`
+  if (s === 'approved' && currentApprover) {
+    return `Approved by ${currentApprover}`
   }
 
   if (s === 'rejected') {
@@ -53,8 +55,8 @@ function captionLine(row) {
     return 'Rejected'
   }
 
-  if (row.current_approver_name) {
-    return row.current_approver_name
+  if (currentApprover) {
+    return currentApprover
   }
 
   return null

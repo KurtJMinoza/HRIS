@@ -3,6 +3,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { profileImageUrl } from '@/api'
 import { formatDateTime, formatElapsed } from '@/components/approval/ApprovalChainDetailView'
+import { normalizeApprovalHeadTitle } from '@/lib/approvalText'
 
 const STATUS_COLORS = {
   completed: 'border-emerald-200/80 bg-emerald-50 text-emerald-800 dark:border-emerald-500/35 dark:bg-emerald-500/15 dark:text-emerald-200',
@@ -49,8 +50,6 @@ export function ApprovalTimeline({ steps }) {
 
   if (!Array.isArray(steps) || steps.length === 0) return null
 
-  const overallStatus = isRejected ? 'rejected' : isCancelled ? 'cancelled' : isFullyComplete ? 'completed' : 'current'
-
   return (
     <div className="space-y-6">
       {/* Current Approver Card */}
@@ -65,7 +64,7 @@ export function ApprovalTimeline({ steps }) {
                 Current Approval
               </p>
               <p className="mt-1 text-base font-bold text-foreground">
-                Waiting for {currentStep.label}
+                Waiting for {normalizeApprovalHeadTitle(currentStep.label) || currentStep.label}
               </p>
               <p className="mt-0.5 text-sm font-medium text-muted-foreground">
                 {currentStep.approver_name || currentStep.approver_role_label || 'Approver'}

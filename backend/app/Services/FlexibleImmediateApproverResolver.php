@@ -2831,6 +2831,11 @@ class FlexibleImmediateApproverResolver
         $role = trim($leaderRole) !== '' ? trim($leaderRole) : 'Immediate Leader';
         $lower = Str::lower($role);
 
+        if (Str::contains($lower, 'area head') && Str::contains($lower, 'area manager')) {
+            $role = 'Area Head';
+            $lower = Str::lower($role);
+        }
+
         return Str::contains($lower, ['approval', 'approver']) ? $role : $role.' approval';
     }
 

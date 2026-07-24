@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { profileImageUrl } from '@/api'
+import { normalizeApprovalHeadTitle, normalizeApprovalStatusLabel } from '@/lib/approvalText'
 import {
   issueLabel,
   reasonLabel,
@@ -195,19 +196,35 @@ export function RoleJobTitleCell({ position, roleLabel, hrRole }) {
 export function ReviewStatusTableBadge({ item }) {
   const key = reviewStatusKey(item)
   const ds = item?.display_status && String(item.display_status).trim()
-  const label = ds || reviewStatusLabel(item)
+  const currentStage = normalizeApprovalHeadTitle(
+    item?.current_stage ||
+      String(ds || '')
+        .replace(/^Pending\s+/i, '')
+        .replace(/\s+Approval$/i, ' approval')
+  )
+  const label = item?.status === 'pending' && currentStage
+    ? `Waiting for ${currentStage}`
+    : normalizeApprovalStatusLabel(ds || reviewStatusLabel(item))
+  const currentApprover = String(item?.current_approver_name || item?.current_approver || '').trim()
   const Icon =
     key === 'rejected' ? XCircle : key === 'hr_approved' ? CheckCircle2 : Clock
   return (
-    <span
-      className={cn(
-        'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-tight shadow-sm',
-        reviewStatusBadgeClass(key)
-      )}
-    >
-      <Icon className="size-3.5 shrink-0 opacity-90" aria-hidden />
-      <span className="line-clamp-2">{label}</span>
-    </span>
+    <div className="flex min-w-0 flex-col gap-1">
+      <span
+        className={cn(
+          'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-tight shadow-sm',
+          reviewStatusBadgeClass(key)
+        )}
+      >
+        <Icon className="size-3.5 shrink-0 opacity-90" aria-hidden />
+        <span className="line-clamp-2">{label}</span>
+      </span>
+      {currentApprover ? (
+        <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={currentApprover}>
+          {currentApprover}
+        </p>
+      ) : null}
+    </div>
   )
 }
 

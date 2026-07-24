@@ -205,6 +205,7 @@ class OvertimeController extends Controller
             ])
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
             ])
             ->orderByDesc('date')
             ->orderByDesc('id');
@@ -255,6 +256,7 @@ class OvertimeController extends Controller
 
         $paginator = $query->paginate($perPage)->withQueryString();
         $pageRows = $paginator->getCollection();
+        $this->syncOvertimeApprovalRecordsForListRows($pageRows);
         $currentApprovals = $this->currentOvertimeApprovalRecords($pageRows->pluck('id')->map(fn ($id) => (int) $id)->all());
 
         $items = $pageRows->map(function (Overtime $o) use ($actor, $currentApprovals) {
@@ -1598,7 +1600,26 @@ class OvertimeController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':v'.OvertimeModuleCache::version();
+        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v4:v'.OvertimeModuleCache::version();
+    }
+
+    private function syncOvertimeApprovalRecordsForListRows($pageRows): void
+    {
+        foreach ($pageRows as $overtime) {
+            if (! $overtime instanceof Overtime) {
+                continue;
+            }
+            if ($overtime->status !== Overtime::STATUS_PENDING || ! $overtime->pending_approval || ! $overtime->user) {
+                continue;
+            }
+
+            $this->approvalWorkflowService->ensureRecordsForRequest(
+                $overtime,
+                OrgApprovalWorkflowService::MODULE_OVERTIME,
+                $overtime->user,
+                $overtime->filedBy ?? $overtime->user,
+            );
+        }
     }
 
     /**

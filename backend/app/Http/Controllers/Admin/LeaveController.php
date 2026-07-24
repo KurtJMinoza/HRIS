@@ -123,6 +123,7 @@ class LeaveController extends Controller
             ])
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,profile_image,company_id,department_id,employee_level,employee_level_label',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix,company_id,department_id,employee_level,employee_level_label',
             ]);
 
         $this->applyFilingApprovalVisibility($actor, $query, $request);
@@ -138,6 +139,7 @@ class LeaveController extends Controller
 
         $paginator = $query->orderByDesc('created_at')->paginate($perPage)->withQueryString();
         $pageLeaves = $paginator->getCollection();
+        $this->syncLeaveApprovalRecordsForListRows($pageLeaves);
         $currentApprovals = $this->currentLeaveApprovalRecords($pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all());
 
         $leaves = $pageLeaves->map(function (LeaveRequest $l) use ($actor, $currentApprovals) {
@@ -174,7 +176,9 @@ class LeaveController extends Controller
                 'status' => $l->status,
                 'notes' => $l->notes,
                 'rejection_note' => $l->rejection_note,
+                'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : $l->approval_stage,
                 'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+                'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
                 'created_at' => $l->created_at->toIso8601String(),
                 'display_status' => $this->leaveListDisplayStatus($l, $currentApproval),
                 'approval_stage' => $l->approval_stage,
@@ -1509,7 +1513,26 @@ class LeaveController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':v'.LeaveModuleCache::version();
+        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v4:v'.LeaveModuleCache::version();
+    }
+
+    private function syncLeaveApprovalRecordsForListRows($pageLeaves): void
+    {
+        foreach ($pageLeaves as $leave) {
+            if (! $leave instanceof LeaveRequest) {
+                continue;
+            }
+            if ($leave->status !== LeaveRequest::STATUS_PENDING || ! $leave->pending_approval || ! $leave->user) {
+                continue;
+            }
+
+            $this->approvalWorkflowService->ensureRecordsForRequest(
+                $leave,
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+                $leave->user,
+                $leave->filedBy ?? $leave->user,
+            );
+        }
     }
 
     /**

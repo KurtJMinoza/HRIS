@@ -106,6 +106,7 @@ import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
+import { normalizeApprovalHeadTitle } from '@/lib/approvalText'
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All' },
@@ -313,6 +314,64 @@ export default function AdminLeave() {
   const [minePagination, setMinePagination] = useState(null)
   const leavePerPage = 25
 
+  const mergeLeaveDetailIntoRows = useCallback((leave) => {
+    if (!leave || typeof leave !== 'object') return
+    const id = String(leave.id ?? leave.request_id ?? '')
+    if (!id) return
+
+    const currentStep = Array.isArray(leave.approval_progress)
+      ? leave.approval_progress.find((step) => step?.status === 'current')
+      : null
+    const currentStage = leave.current_stage || currentStep?.label || leave.current_step_name
+    const normalizedStage = normalizeApprovalHeadTitle(currentStage)
+    const currentApprover = leave.current_approver || leave.current_approver_name || currentStep?.approver_name
+    const displayStatus = leave.display_status || (
+      String(leave.status || '').toLowerCase() === 'pending' && normalizedStage
+        ? `Waiting for ${normalizedStage}`
+        : undefined
+    )
+    const patch = {
+      ...leave,
+      current_stage: currentStage,
+      current_approver: currentApprover,
+      current_approver_name: currentApprover,
+      display_status: displayStatus,
+    }
+    const applyPatch = (row) => (
+      String(row?.id ?? row?.request_id ?? '') === id ? { ...row, ...patch } : row
+    )
+
+    setLeaveRequests((rows) => rows.map(applyPatch))
+    setMyLeaveRequests((rows) => rows.map(applyPatch))
+  }, [])
+
+  const hydrateLeaveRows = useCallback((rows, signal) => {
+    if (signal?.aborted) return
+    const pendingRows = (Array.isArray(rows) ? rows : [])
+      .filter((row) => {
+        if (!row || String(row.status || '').toLowerCase() !== 'pending') return false
+        const currentApprover = row.current_approver_name || row.current_approver
+        const stageText = [
+          row.current_stage,
+          row.current_step_name,
+          row.display_status,
+          row.hr_wait_message,
+        ].filter(Boolean).join(' ')
+        return !currentApprover || /department head|area manager/i.test(stageText)
+      })
+      .slice(0, 25)
+
+    pendingRows.forEach((row) => {
+      fetchLeaveRequestReview(row.id ?? row.request_id, { signal })
+        .then((data) => {
+          if (signal?.aborted) return
+          const next = extractLeaveRequestFromReviewPayload(data)
+          if (next) mergeLeaveDetailIntoRows(next)
+        })
+        .catch(() => {})
+    })
+  }, [mergeLeaveDetailIntoRows])
+
   const fetchLeaves = useCallback(async (opts = {}) => {
     setError(null)
     try {
@@ -324,8 +383,10 @@ export default function AdminLeave() {
         per_page: leavePerPage,
         signal: opts.signal,
       })
-      setLeaveRequests(data.leave_requests || [])
+      const rows = data.leave_requests || []
+      setLeaveRequests(rows)
       setAllPagination(data.pagination || null)
+      hydrateLeaveRows(rows, opts.signal)
     } catch (e) {
       if (e?.name === 'AbortError') return
       setError(e.message)
@@ -333,7 +394,7 @@ export default function AdminLeave() {
     } finally {
       if (!opts.signal?.aborted) setLoading(false)
     }
-  }, [statusFilter, appliedFrom, appliedTo, allPage])
+  }, [statusFilter, appliedFrom, appliedTo, allPage, hydrateLeaveRows])
 
   const fetchMineLeaves = useCallback(async (opts = {}) => {
     setMineError(null)
@@ -346,8 +407,10 @@ export default function AdminLeave() {
         per_page: leavePerPage,
         signal: opts.signal,
       })
-      setMyLeaveRequests(Array.isArray(data.leave_requests) ? data.leave_requests : [])
+      const rows = Array.isArray(data.leave_requests) ? data.leave_requests : []
+      setMyLeaveRequests(rows)
       setMinePagination(data.pagination || null)
+      hydrateLeaveRows(rows, opts.signal)
     } catch (e) {
       if (e?.name === 'AbortError') return
       setMineError(e.message)
@@ -355,7 +418,7 @@ export default function AdminLeave() {
     } finally {
       if (!opts.signal?.aborted) setLoadingMine(false)
     }
-  }, [statusFilter, appliedFrom, appliedTo, minePage])
+  }, [statusFilter, appliedFrom, appliedTo, minePage, hydrateLeaveRows])
 
   useEffect(() => {
     setAllPage(1)
@@ -731,6 +794,7 @@ export default function AdminLeave() {
           return
         }
         setDetailLeave(next)
+        mergeLeaveDetailIntoRows(next)
         setDetailError(null)
       } catch (e) {
         if (signal.aborted || fetchId !== detailFetchIdRef.current) return
@@ -754,7 +818,7 @@ export default function AdminLeave() {
         }
       }
     },
-    [mapReviewFetchError, searchParams, user],
+    [mapReviewFetchError, mergeLeaveDetailIntoRows, searchParams, user],
   )
 
   function openDetailDialog(leave) {
@@ -1633,7 +1697,12 @@ export default function AdminLeave() {
                           )}
                         </td>
                         <td className={requestModuleTdClass}>
-                          <LeaveStatusPill status={leave.status} displayStatus={leave.display_status} />
+                          <LeaveStatusPill
+                            status={leave.status}
+                            displayStatus={leave.display_status}
+                            currentStage={leave.current_stage}
+                            currentApproverName={leave.current_approver || leave.current_approver_name}
+                          />
                         </td>
                         <td className={cn(requestModuleTdMutedClass, 'text-right')}>
                           {leave.created_at ? formatDate(leave.created_at) : '—'}
@@ -1828,6 +1897,8 @@ export default function AdminLeave() {
                         <LeaveStatusPill
                           status={leave.status}
                           displayStatus={leave.display_status}
+                          currentStage={leave.current_stage}
+                          currentApproverName={leave.current_approver || leave.current_approver_name}
                           hrWaitMessage={
                             leave.status === 'pending' && !leave.actor_can_approve
                               ? leave.hr_wait_message ||

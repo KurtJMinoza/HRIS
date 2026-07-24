@@ -69,8 +69,6 @@ const EMPLOYEE_LEAVE_STATUS_OPTIONS = [
 ]
 const employeeLeaveCardClass =
   'rounded-[18px] border border-border/70 bg-card shadow-[0_12px_34px_-24px_rgba(15,23,42,0.55),0_2px_10px_-7px_rgba(15,23,42,0.25)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_44px_-24px_rgba(0,0,0,0.75)]'
-const employeeLeaveInputClass =
-  'h-12 rounded-lg border-border/80 bg-background px-4 text-[15px] font-medium tabular-nums text-foreground shadow-sm dark:border-white/10 dark:bg-background/40'
 const employeeLeavePrimaryButtonClass =
   'h-11 gap-2 rounded-lg bg-brand px-5 text-sm font-semibold text-brand-foreground shadow-[0_12px_22px_-14px_rgba(234,88,12,0.9)] transition hover:bg-brand-strong dark:shadow-[0_12px_24px_-16px_rgba(251,146,60,0.75)]'
 const employeeLeaveOutlineButtonClass =
@@ -1017,7 +1015,12 @@ function EmployeeLeaveSelfService() {
                       <RemarksPreviewCell text={remarksPreview} />
                     </td>
                     <td className={requestModuleTdClass}>
-                      <LeaveStatusPill status={leave.status} displayStatus={leave.display_status} />
+                      <LeaveStatusPill
+                        status={leave.status}
+                        displayStatus={leave.display_status}
+                        currentStage={leave.current_stage}
+                        currentApproverName={leave.current_approver || leave.current_approver_name}
+                      />
                     </td>
                     <td className={cn(requestModuleTdMutedClass, 'text-right')}>
                       {leave.created_at ? formatDateTime(leave.created_at) : '—'}
@@ -1369,7 +1372,12 @@ function EmployeeLeaveSelfService() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <LeaveTypeBadge type={leave.type} />
-                            <LeaveStatusPill status={leave.status} displayStatus={leave.display_status} />
+                            <LeaveStatusPill
+                              status={leave.status}
+                              displayStatus={leave.display_status}
+                              currentStage={leave.current_stage}
+                              currentApproverName={leave.current_approver || leave.current_approver_name}
+                            />
                           </div>
                           <p className="mt-3 text-sm text-muted-foreground">
                             {formatDateShort(leave.start_date)}

@@ -1,5 +1,6 @@
 import { CheckCircle2, Clock, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { normalizeApprovalHeadTitle, normalizeApprovalStatusLabel } from '@/lib/approvalText'
 
 function normalizeLeaveStatus(status) {
   const s = String(status || '').trim().toLowerCase()
@@ -7,9 +8,19 @@ function normalizeLeaveStatus(status) {
   return s || 'pending'
 }
 
-export default function LeaveStatusPill({ status, displayStatus, hrWaitMessage, className }) {
+export default function LeaveStatusPill({ status, displayStatus, hrWaitMessage, currentApproverName, currentStage, className }) {
   const s = normalizeLeaveStatus(status)
-  const label = displayStatus || status || '—'
+  const pendingStage = normalizeApprovalHeadTitle(
+    currentStage ||
+      String(displayStatus || '')
+        .replace(/^Pending\s+/i, '')
+        .replace(/\s+Approval$/i, ' approval')
+  )
+  const label = s === 'pending' && pendingStage
+    ? `Waiting for ${pendingStage}`
+    : normalizeApprovalStatusLabel(displayStatus || status) || '—'
+  const currentApprover = currentApproverName ? String(currentApproverName).trim() : ''
+  const waitMessage = normalizeApprovalStatusLabel(hrWaitMessage)
 
   let pill = null
   if (s === 'rejected') {
@@ -65,14 +76,21 @@ export default function LeaveStatusPill({ status, displayStatus, hrWaitMessage, 
     )
   }
 
-  if (!hrWaitMessage) return pill
+  if (!waitMessage && !currentApprover) return pill
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       {pill}
-      <p className="line-clamp-2 text-[11px] leading-snug text-muted-foreground" title={hrWaitMessage}>
-        {hrWaitMessage}
-      </p>
+      {currentApprover ? (
+        <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={currentApprover}>
+          {currentApprover}
+        </p>
+      ) : null}
+      {waitMessage ? (
+        <p className="line-clamp-2 text-[11px] leading-snug text-muted-foreground" title={waitMessage}>
+          {waitMessage}
+        </p>
+      ) : null}
     </div>
   )
 }

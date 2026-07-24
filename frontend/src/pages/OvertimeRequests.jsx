@@ -51,7 +51,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
-import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
+import { normalizeApprovalHeadTitle, sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
 import OvertimeStatusBadge from '@/components/overtime/OvertimeStatusBadge'
 import { formatHHmmTo12h, toHhMm, toTimeInputValue } from '@/lib/timeFormat'
@@ -395,33 +395,6 @@ function formatOtHoursDisplay(row) {
   return '—'
 }
 
-function statusBadgeClass(displayStatus) {
-  if (!displayStatus) return 'bg-muted text-muted-foreground shadow-sm'
-  if (displayStatus === 'HR Approved') {
-    return 'bg-gradient-to-br from-emerald-100 to-teal-50 text-emerald-950 shadow-emerald-500/25 ring-1 ring-emerald-200/90 dark:from-emerald-950/50 dark:to-emerald-950/30 dark:text-emerald-50 dark:ring-emerald-500/15'
-  }
-  if (displayStatus === 'Rejected') {
-    return 'bg-gradient-to-br from-red-100 to-rose-50 text-red-950 shadow-red-500/20 ring-1 ring-red-200/80 dark:from-red-950/45 dark:to-red-950/25 dark:text-red-100 dark:ring-red-500/30'
-  }
-  // After first-line approval, waiting on HR (final)
-  if (displayStatus.includes('· Pending HR') || displayStatus.includes('Pending HR (final)')) {
-    return 'bg-violet-100 text-violet-950 shadow-violet-500/15 ring-1 ring-violet-200/70 dark:bg-violet-950/45 dark:text-violet-100'
-  }
-  if (displayStatus.startsWith('Pending Department')) {
-    return 'bg-amber-100 text-amber-950 shadow-amber-500/15 ring-1 ring-amber-200/80 dark:bg-amber-950/45 dark:text-amber-100'
-  }
-  if (displayStatus.startsWith('Pending HR')) {
-    return 'bg-violet-100 text-violet-950 shadow-violet-500/15 ring-1 ring-violet-200/70 dark:bg-violet-950/45 dark:text-violet-100'
-  }
-  if (displayStatus.startsWith('Pending Branch')) {
-    return 'bg-sky-100 text-sky-950 shadow-sky-500/15 ring-1 ring-sky-200/70 dark:bg-sky-950/40 dark:text-sky-100'
-  }
-  if (displayStatus.startsWith('Pending Company')) {
-    return 'bg-indigo-100 text-indigo-950 shadow-indigo-500/15 ring-1 ring-indigo-200/70 dark:bg-indigo-950/45 dark:text-indigo-100'
-  }
-  return 'bg-muted text-muted-foreground shadow-sm'
-}
-
 function formatOvertimeTimeRange(row) {
   const start = row.start_time || row.schedule_end
   const end = row.end_time || row.expected_end_time
@@ -438,7 +411,7 @@ function formatOvertimeStatusLine(row) {
   const s = String(row.status || '').toLowerCase()
   if (s === 'approved') return 'Approved'
   if (s === 'rejected') return 'Rejected'
-  const step = row.current_step_name
+  const step = normalizeApprovalHeadTitle(row.current_stage || row.current_step_name)
   if (step) return `Waiting for ${step}`
   return row.display_status || row.status || '—'
 }
@@ -637,15 +610,6 @@ function showOvertimeActions(row, hasApprovePermission) {
   return true
 }
 
-function approvalStepsSummary(steps) {
-  if (!Array.isArray(steps) || steps.length === 0) return null
-  const total = steps.length
-  const done = steps.filter((s) => s.status === 'completed').length
-  if (steps.some((s) => s.status === 'rejected')) return 'Stopped · rejected'
-  if (done >= total) return `All ${total} steps done`
-  return `${done} of ${total} steps complete`
-}
-
 const APPROVAL_INFO =
   'Approval chain depends on your role: Employee → Department Head → Admin (HR); Department Head → Branch Head → Admin (HR); Branch Head → Company Head → Admin (HR); Company Head → Admin (HR). Admin (HR) is always the final approver; assigned Admin/HR self-approval still requires a manual approve or reject action.'
 
@@ -786,6 +750,7 @@ function OvertimeApprovalChain({ steps }) {
       {steps.map((step, idx) => {
         const name = approvalStepName(step)
         const role = approvalStepRole(step)
+        const stepLabel = normalizeApprovalHeadTitle(step.label) || step.label
         const statusLabel = humanApprovalStepStatus(step.status)
         const statusLine = step.acted_at ? `${statusLabel} - ${formatDateTime(step.acted_at)}` : statusLabel
         const remarks = sanitizeApprovalDisplayText(step?.remarks)
@@ -794,7 +759,7 @@ function OvertimeApprovalChain({ steps }) {
           <li key={step.key || `ot-step-${idx}`}>
             <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-brand">
               <span className="tabular-nums">{idx + 1}. </span>
-              {step.label}
+              {stepLabel}
             </p>
             <div
               className={cn(
@@ -1176,8 +1141,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         per_page: 25,
         signal: opts.signal,
       })
-      setAllItems(res.overtimes || [])
+      const rows = res.overtimes || []
+      setAllItems(rows)
       setAllPagination(res.pagination || null)
+      hydrateOvertimeRows(rows, opts.signal)
     } catch (e) {
       if (e?.name === 'AbortError') return
       toast({ title: 'Failed to load', description: e.message, variant: 'error' })
@@ -1256,7 +1223,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     getAdminOvertimeDetail(idNum, { signal: controller.signal })
       .then((res) => {
         if (controller.signal.aborted) return
-        const ot = res?.overtime ?? res?.data?.overtime
+        const ot = res?.overtime ?? res?.request ?? res?.data?.overtime ?? res?.data?.request
         if (ot && typeof ot === 'object') {
           setDetail(ot)
         } else {
@@ -1521,6 +1488,60 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     }
   }
 
+  function mergeOvertimeDetailIntoRows(ot) {
+    if (!ot || typeof ot !== 'object') return
+    const id = String(ot.id ?? ot.request_id ?? '')
+    if (!id) return
+
+    const currentStep = Array.isArray(ot.approval_progress)
+      ? ot.approval_progress.find((step) => step?.status === 'current')
+      : null
+    const currentStage = ot.current_stage || currentStep?.label || ot.current_step_name
+    const currentStepName = normalizeApprovalHeadTitle(currentStage) || ot.current_step_name
+    const currentApprover = ot.current_approver_name || ot.current_approver || currentStep?.approver_name
+    const patch = {
+      ...ot,
+      current_stage: currentStage,
+      current_step_name: currentStepName,
+      current_approver_name: currentApprover,
+      current_approver: currentApprover,
+    }
+    const applyPatch = (row) => (
+      String(row?.id ?? row?.request_id ?? '') === id ? { ...row, ...patch } : row
+    )
+
+    setAllItems((rows) => rows.map(applyPatch))
+    setMineItems((rows) => rows.map(applyPatch))
+  }
+
+  function shouldHydrateOvertimeRow(row) {
+    if (!row || String(row.status || '').toLowerCase() !== 'pending') return false
+    const currentApprover = row.current_approver_name || row.current_approver
+    const stageText = [
+      row.current_stage,
+      row.current_step_name,
+      row.display_status,
+    ].filter(Boolean).join(' ')
+    return !currentApprover || /department head|area manager/i.test(stageText)
+  }
+
+  function hydrateOvertimeRows(rows, signal) {
+    if (signal?.aborted) return
+    const pendingRows = (Array.isArray(rows) ? rows : [])
+      .filter(shouldHydrateOvertimeRow)
+      .slice(0, 25)
+
+    pendingRows.forEach((row) => {
+      getAdminOvertimeDetail(row.id, { signal })
+        .then((res) => {
+          if (signal?.aborted) return
+          const ot = res?.overtime ?? res?.request ?? res?.data?.overtime ?? res?.data?.request
+          if (ot && typeof ot === 'object') mergeOvertimeDetailIntoRows(ot)
+        })
+        .catch(() => {})
+    })
+  }
+
   function openView(row) {
     if (!row || row.id == null) return
     const hasSeed = row && Object.keys(row).some((key) => key !== 'id')
@@ -1535,9 +1556,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     fetcher(row.id, { signal: controller.signal })
       .then((res) => {
         if (controller.signal.aborted) return
-        const ot = res?.overtime ?? res?.data?.overtime
+        const ot = res?.overtime ?? res?.request ?? res?.data?.overtime ?? res?.data?.request
         if (ot && typeof ot === 'object') {
           setDetail(ot)
+          mergeOvertimeDetailIntoRows(ot)
         } else if (!hasSeed) {
           toast({
             title: 'Could not load full details',
@@ -3250,3 +3272,4 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     </Motion.div>
   )
 }
+

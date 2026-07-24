@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { Calendar, Loader2, Plus, Trash2, Info } from 'lucide-react'
 import {
   Dialog,
@@ -37,6 +37,10 @@ const DAY_OPTIONS = [
   { key: 'sat', label: 'S', full: 'Saturday' },
   { key: 'sun', label: 'Su', full: 'Sunday' },
 ]
+
+const SCHEDULE_EDITOR_SHIFT_TYPES = SHIFT_TYPES.filter((type) => (
+  type.value === 'fixed' || type.value === 'flexible'
+))
 
 function toggleRestDay(restDays, dayKey) {
   const current = new Set(restDays || [])
@@ -175,8 +179,7 @@ export function ScheduleEditorDialog({
             <DialogDescription className="max-w-3xl text-xs leading-relaxed text-muted-foreground @sm:text-sm">
               {description ?? (
                 <>
-                  Flexible schedule template. Supports fixed, overnight, split, flexible, rotating, and compressed shifts
-                  with multiple breaks and custom paid hours.
+                  Flexible schedule template. Supports fixed and flexible shifts with multiple breaks and custom paid hours.
                 </>
               )}
             </DialogDescription>
@@ -211,7 +214,7 @@ export function ScheduleEditorDialog({
                   className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   disabled={readOnly}
                 >
-                  {SHIFT_TYPES.map((st) => (
+                  {SCHEDULE_EDITOR_SHIFT_TYPES.map((st) => (
                     <option key={st.value} value={st.value}>{st.label}</option>
                   ))}
                 </select>

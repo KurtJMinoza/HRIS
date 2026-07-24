@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { sanitizeApprovalDisplayText } from '@/lib/approvalText'
+import { normalizeApprovalHeadTitle, normalizeApprovalStatusLabel, sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import { leaveReviewErrorMessage } from '@/lib/leaveReviewDeepLink'
 
 function formatDateTime(iso) {
@@ -238,6 +238,7 @@ function LeaveApprovalChain({ steps }) {
         {steps.map((step, idx) => {
           const name = approvalStepName(step)
           const role = approvalStepRole(step)
+          const stepLabel = normalizeApprovalHeadTitle(step.label) || step.label
           const statusLabel = humanStepStatus(step.status)
           const statusLine =
             step.acted_at != null && step.acted_at !== ''
@@ -249,7 +250,7 @@ function LeaveApprovalChain({ steps }) {
             <li key={step.key || `approval-step-${idx}`}>
               <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-brand">
                 <span className="tabular-nums">{idx + 1}. </span>
-                {step.label}
+                {stepLabel}
               </p>
               <div
                 className={cn(
@@ -408,7 +409,7 @@ export function LeaveRequestDetailModal({
   onDelete,
   actionLoading = false,
 }) {
-  const badgeLabel = leave?.display_status || leave?.status || '—'
+  const badgeLabel = normalizeApprovalStatusLabel(leave?.display_status || leave?.status) || '—'
   const docs = supportingDocUrls(leave)
   const viewState = error ? 'error' : loading ? 'loading' : leave ? 'content' : 'loading'
   const showSkeleton = viewState === 'loading'
@@ -535,12 +536,12 @@ export function LeaveRequestDetailModal({
                 </div>
               </LeaveDetailSection>
 
-              {leave.hr_wait_message ? (
+              {normalizeApprovalStatusLabel(leave.hr_wait_message) ? (
                 <div
                   role="status"
                   className="rounded-xl border border-amber-500/45 bg-amber-500/[0.12] px-4 py-3 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/25 dark:text-amber-100"
                 >
-                  {leave.hr_wait_message}
+                  {normalizeApprovalStatusLabel(leave.hr_wait_message)}
                 </div>
               ) : null}
 

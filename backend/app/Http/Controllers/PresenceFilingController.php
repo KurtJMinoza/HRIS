@@ -1169,7 +1169,7 @@ class PresenceFilingController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':v'.AttendanceCorrectionModuleCache::version();
+        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v2:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1269,7 +1269,9 @@ class PresenceFilingController extends Controller
             'time_out' => $c->time_out?->copy()->setTimezone($tz)->toIso8601String(),
             'status' => $status,
             'display_status' => $displayStatus,
+            'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : null,
             'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+            'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
             'created_at' => $c->created_at?->toIso8601String(),
             'filed_at' => $c->filed_at?->toIso8601String(),
             'remarks' => $c->remarks,
@@ -1291,7 +1293,7 @@ class PresenceFilingController extends Controller
             'per_page' => $perPage,
         ], static fn ($value): bool => $value !== null && $value !== '');
 
-        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':v'.AttendanceCorrectionModuleCache::version();
+        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v2:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1335,6 +1337,9 @@ class PresenceFilingController extends Controller
             'reason_code' => $c->reason_code,
             'status' => $status,
             'display_status' => $displayStatus,
+            'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : null,
+            'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+            'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
             'pending_approval' => (bool) $c->pending_approval,
             'approved' => (bool) $c->approved,
             'filed_at' => $c->filed_at?->toIso8601String(),
