@@ -146,6 +146,7 @@ function blankForm(branchId = null, branchName = '') {
     center_lng: DEFAULT_CENTER[1],
     radius_meters: 100,
     polygon_geojson: null,
+    polygon_draft_points: [],
     is_active: false,
     status: 'draft',
     enforcement_mode: 'enforce',
@@ -185,13 +186,10 @@ function branchStatus(branch) {
 }
 
 function geofenceCenter(geofence) {
-  if (geofence?.type === 'circle' && geofence.center_lat != null && geofence.center_lng != null) {
+  if (geofence?.center_lat != null && geofence.center_lng != null) {
     return [Number(geofence.center_lat), Number(geofence.center_lng)]
   }
-  const coords = geofence?.polygon_geojson?.geometry?.coordinates?.[0]
-  if (Array.isArray(coords) && coords.length) {
-    return [Number(coords[0][1]), Number(coords[0][0])]
-  }
+  if (geofence?.type === 'polygon') return polygonFeatureCenter(geofence.polygon_geojson)
   return null
 }
 
@@ -297,6 +295,59 @@ function polygonFeatureFromPoints(points) {
   return feature
 }
 
+function polygonFeatureCenter(geojson) {
+  const points = editablePolygonPoints(geojson)
+  if (!points.length) return null
+
+  try {
+    if (geojson?.geometry?.type === 'Polygon') {
+      const [lng, lat] = turf.centroid(geojson).geometry.coordinates
+      const center = validLatLngPair([lat, lng])
+      if (center) return [Number(center[0].toFixed(7)), Number(center[1].toFixed(7))]
+    }
+  } catch {
+    // Fall through to an average of editable points for draft polygons.
+  }
+
+  const totals = points.reduce((acc, point) => [acc[0] + Number(point[0]), acc[1] + Number(point[1])], [0, 0])
+  return [Number((totals[0] / points.length).toFixed(7)), Number((totals[1] / points.length).toFixed(7))]
+}
+
+function polygonFeatureAroundCenter(center, radiusMeters = 80) {
+  const latLng = validLatLngPair(center)
+  const lngLat = toLngLat(latLng)
+  if (!lngLat) return null
+
+  const points = [45, 135, 225, 315].map((bearing) => {
+    const [lng, lat] = turf.destination(lngLat, Math.max(10, Number(radiusMeters) || 80), bearing, { units: 'meters' }).geometry.coordinates
+    return [Number(lat.toFixed(7)), Number(lng.toFixed(7))]
+  })
+
+  return polygonFeatureFromPoints(points)
+}
+
+function polygonOpenPointCount(geojson) {
+  return editablePolygonPoints(geojson).length
+}
+
+function polygonEditPoints(form) {
+  const savedPoints = editablePolygonPoints(form?.polygon_geojson)
+  if (savedPoints.length) return savedPoints
+  return Array.isArray(form?.polygon_draft_points)
+    ? form.polygon_draft_points.map(validLatLngPair).filter(Boolean)
+    : []
+}
+
+function polygonFormCenter(form) {
+  return polygonFeatureCenter(form?.polygon_geojson)
+    || polygonFeatureCenter(polygonFeatureFromPoints(polygonEditPoints(form)))
+    || validLatLngPair([form?.center_lat, form?.center_lng])
+}
+
+function polygonFormPointCount(form) {
+  return polygonEditPoints(form).length
+}
+
 function formFromGeofence(branchId, branchName, geofence) {
   if (!geofence) return blankForm(branchId, branchName)
   return {
@@ -305,6 +356,7 @@ function formFromGeofence(branchId, branchName, geofence) {
     center_lat: geofence.center_lat ?? DEFAULT_CENTER[0],
     center_lng: geofence.center_lng ?? DEFAULT_CENTER[1],
     radius_meters: geofence.radius_meters ?? 100,
+    polygon_draft_points: [],
     status: geofence.status || (normalizeBoolean(geofence.is_active) ? 'active' : 'inactive'),
     is_active: (geofence.status || (normalizeBoolean(geofence.is_active) ? 'active' : 'inactive')) === 'active',
     accuracy_threshold_meters: geofence.accuracy_threshold_meters ?? 100,
@@ -1027,9 +1079,17 @@ function GeofenceMapOptimized({
 
       if (drawMode === 'polygon') {
         setForm((s) => {
-          const current = polygonPoints(s.polygon_geojson)
-          const next = [...current.filter((_, index) => index !== current.length - 1), [lat, lng]]
-          return { ...s, type: 'polygon', polygon_geojson: polygonFeatureFromPoints(next) }
+          const next = [...polygonEditPoints(s), [lat, lng]]
+          const polygon = polygonFeatureFromPoints(next)
+          const center = polygonFeatureCenter(polygon) || polygonFeatureCenter({ geometry: { type: 'Polygon', coordinates: [next.map(([pointLat, pointLng]) => [pointLng, pointLat])] } })
+          return {
+            ...s,
+            type: 'polygon',
+            center_lat: center?.[0] ?? s.center_lat,
+            center_lng: center?.[1] ?? s.center_lng,
+            polygon_draft_points: next,
+            polygon_geojson: polygon,
+          }
         })
       }
     }
@@ -1246,7 +1306,7 @@ function GeofenceMapOptimized({
     }
 
     if (form.type === 'polygon') {
-      const openPoints = editablePolygonPoints(form.polygon_geojson)
+      const openPoints = polygonEditPoints(form)
       if (!openPoints.length) return undefined
       const markers = openPoints.map((point) => new maplibregl.Marker({ element: markerElement('handle'), draggable: true })
         .setLngLat([point[1], point[0]])
@@ -1275,7 +1335,16 @@ function GeofenceMapOptimized({
       markers.forEach((marker) => {
         marker.on('drag', syncPolygonSource)
         marker.on('dragend', () => {
-          setForm((s) => ({ ...s, polygon_geojson: polygonFeatureFromPoints(syncPolygonSource()) }))
+          const nextPoints = syncPolygonSource()
+          const polygon = polygonFeatureFromPoints(nextPoints)
+          const center = polygonFeatureCenter(polygon)
+          setForm((s) => ({
+            ...s,
+            center_lat: center?.[0] ?? s.center_lat,
+            center_lng: center?.[1] ?? s.center_lng,
+            polygon_draft_points: nextPoints,
+            polygon_geojson: polygon,
+          }))
         })
       })
       editMarkersRef.current = markers
@@ -1599,13 +1668,19 @@ export default function AdminGeofencing() {
         && Math.abs(currentCenter[1] - nextLng) < 0.0000001
 
       if (shapeEditable && !alreadyCentered) {
-        setForm((current) => ({
-          ...current,
-          type: 'circle',
-          center_lat: nextLat,
-          center_lng: nextLng,
-        }))
-        setDrawMode('circle')
+        setForm((current) => {
+          const polygonMode = current.type === 'polygon' || drawMode === 'polygon'
+          return {
+            ...current,
+            type: polygonMode ? 'polygon' : 'circle',
+            center_lat: nextLat,
+            center_lng: nextLng,
+            polygon_draft_points: polygonMode ? [] : current.polygon_draft_points,
+            polygon_geojson: polygonMode && polygonOpenPointCount(current.polygon_geojson) < 3
+              ? polygonFeatureAroundCenter([nextLat, nextLng], Math.max(30, Number(current.radius_meters) || 80))
+              : current.polygon_geojson,
+          }
+        })
         setFocusPoint({ latitude: nextLat, longitude: nextLng })
         setFocusKey((key) => key + 1)
       }
@@ -1668,7 +1743,7 @@ export default function AdminGeofencing() {
       window.clearTimeout(timeout)
       controller.abort()
     }
-  }, [form, geofences, mapSearch, mapSearchMode, selectedBranch, shapeEditable, toast])
+  }, [drawMode, form, geofences, mapSearch, mapSearchMode, selectedBranch, shapeEditable, toast])
 
   useEffect(() => {
     if (form.type !== 'circle') return undefined
@@ -1724,16 +1799,28 @@ export default function AdminGeofencing() {
       toast({ title: 'Select a device scope', description: 'Each geofence must target a device scope before it can be saved.', variant: 'error' })
       return
     }
+    if (form.type === 'circle' && !validLatLngPair([form.center_lat, form.center_lng])) {
+      toast({ title: 'Set a valid circle location', description: 'Click the map or enter valid latitude and longitude before saving.', variant: 'error' })
+      return
+    }
+    if (form.type === 'polygon' && polygonFormPointCount(form) < 3) {
+      toast({ title: 'Draw a polygon boundary', description: 'A polygon geofence needs at least three points. Click the map or use the starter boundary.', variant: 'error' })
+      return
+    }
+    const polygonGeojson = form.type === 'polygon'
+      ? (form.polygon_geojson || polygonFeatureFromPoints(polygonEditPoints(form)))
+      : null
+    const polygonCenter = form.type === 'polygon' ? polygonFeatureCenter(polygonGeojson) || polygonFormCenter(form) : null
     setSaving(true)
     const status = form.status || (normalizeBoolean(form.is_active) ? 'active' : 'draft')
     const payload = {
       name: form.name || selectedBranch?.branch_name || (form.type === 'circle' ? 'Office radius' : 'Branch polygon'),
       type: form.type,
       device_scope: form.device_scope,
-      center_lat: form.type === 'circle' ? Number(form.center_lat) : null,
-      center_lng: form.type === 'circle' ? Number(form.center_lng) : null,
+      center_lat: form.type === 'circle' ? Number(form.center_lat) : (polygonCenter?.[0] ?? null),
+      center_lng: form.type === 'circle' ? Number(form.center_lng) : (polygonCenter?.[1] ?? null),
       radius_meters: form.type === 'circle' ? Number(form.radius_meters) : null,
-      polygon_geojson: form.type === 'polygon' ? form.polygon_geojson : null,
+      polygon_geojson: polygonGeojson,
       status,
       is_active: status === 'active',
       enforcement_mode: form.enforcement_mode || 'enforce',
@@ -1967,7 +2054,19 @@ export default function AdminGeofencing() {
     const lat = Number(result?.latitude)
     const lng = Number(result?.longitude)
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
-    setForm((s) => ({ ...s, type: s.type || 'circle', center_lat: lat, center_lng: lng }))
+    setForm((s) => {
+      const polygonMode = s.type === 'polygon' || drawMode === 'polygon'
+      return {
+        ...s,
+        type: polygonMode ? 'polygon' : (s.type || 'circle'),
+        center_lat: lat,
+        center_lng: lng,
+        polygon_draft_points: polygonMode ? [] : s.polygon_draft_points,
+        polygon_geojson: polygonMode && polygonOpenPointCount(s.polygon_geojson) < 3
+          ? polygonFeatureAroundCenter([lat, lng], Math.max(30, Number(s.radius_meters) || 80))
+          : s.polygon_geojson,
+      }
+    })
     setFocusPoint({
       latitude: lat,
       longitude: lng,
@@ -1979,7 +2078,7 @@ export default function AdminGeofencing() {
 
   function updateManualCircleCoordinate(field, value) {
     const nextForm = { ...form, type: 'circle', [field]: value }
-    setForm((s) => ({ ...s, type: 'circle', [field]: value }))
+    setForm((s) => ({ ...s, type: 'circle', [field]: value, polygon_draft_points: [] }))
 
     const center = validLatLngPair([nextForm.center_lat, nextForm.center_lng])
     if (!center) return
@@ -1987,6 +2086,46 @@ export default function AdminGeofencing() {
     setDrawMode('circle')
     setFocusPoint({ latitude: center[0], longitude: center[1] })
     setFocusKey((key) => key + 1)
+  }
+
+  function switchGeofenceType(nextType) {
+    if (!shapeEditable || !['circle', 'polygon'].includes(nextType)) return
+    setDrawMode(nextType)
+    setForm((current) => {
+      if (nextType === 'polygon') {
+        const existingPoints = polygonFormPointCount(current)
+        const currentPoints = polygonEditPoints(current)
+        const center = validLatLngPair([current.center_lat, current.center_lng])
+          || validLatLngPair(geofenceCenter(current))
+          || validLatLngPair(branchLocation(selectedBranch))
+          || DEFAULT_CENTER
+        const polygonGeojson = existingPoints >= 3
+          ? (current.polygon_geojson || polygonFeatureFromPoints(currentPoints))
+          : polygonFeatureAroundCenter(center, Math.max(30, Number(current.radius_meters) || 80))
+        const polygonCenter = polygonFeatureCenter(polygonGeojson) || center
+        return {
+          ...current,
+          type: 'polygon',
+          center_lat: polygonCenter[0],
+          center_lng: polygonCenter[1],
+          polygon_draft_points: [],
+          polygon_geojson: polygonGeojson,
+        }
+      }
+
+      const center = validLatLngPair([current.center_lat, current.center_lng])
+        || validLatLngPair(geofenceCenter(current))
+        || validLatLngPair(branchLocation(selectedBranch))
+        || DEFAULT_CENTER
+      return {
+        ...current,
+        type: 'circle',
+        polygon_draft_points: [],
+        center_lat: center[0],
+        center_lng: center[1],
+        radius_meters: Math.max(5, Number(current.radius_meters) || 100),
+      }
+    })
   }
 
   function selectGeofence(geofence) {
@@ -2001,10 +2140,19 @@ export default function AdminGeofencing() {
     }
   }
 
-  function startNewGeofence() {
+  function startNewGeofence(type = drawMode || 'circle') {
     const { form: nextForm, center } = draftFormForBranch(selectedBranchId, selectedBranch, geofences, geofenceCenter(form))
-    setForm({ ...nextForm, id: null, status: 'draft', is_active: false })
-    setDrawMode('circle')
+    const nextType = type === 'polygon' ? 'polygon' : 'circle'
+    setForm({
+      ...nextForm,
+      id: null,
+      type: nextType,
+      status: 'draft',
+      is_active: false,
+      polygon_draft_points: [],
+      polygon_geojson: nextType === 'polygon' ? polygonFeatureAroundCenter(center, 80) : null,
+    })
+    setDrawMode(nextType)
     setFocusPoint({ latitude: center[0], longitude: center[1] })
     setFocusKey((key) => key + 1)
   }
@@ -2027,7 +2175,7 @@ export default function AdminGeofencing() {
           </Button>
           <Button
             className="h-10 gap-2 rounded-md bg-[#f04414] px-5 text-sm font-semibold text-white shadow-none hover:bg-[#e33a12]"
-            onClick={startNewGeofence}
+            onClick={() => startNewGeofence(drawMode)}
           >
             <Plus className="size-4" />
             Add geofence
@@ -2064,10 +2212,10 @@ export default function AdminGeofencing() {
         <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
           <div className="border-b border-slate-200 p-3 dark:border-border">
             <div className="flex flex-wrap items-center gap-3">
-              <SegmentButton disabled={!shapeEditable} active={drawMode === 'circle'} icon={Circle} onClick={() => { setDrawMode('circle'); setForm((s) => ({ ...s, type: 'circle' })) }}>
+              <SegmentButton disabled={!shapeEditable} active={drawMode === 'circle'} icon={Circle} onClick={() => switchGeofenceType('circle')}>
                 Circle
               </SegmentButton>
-              <SegmentButton disabled={!shapeEditable} active={drawMode === 'polygon'} icon={Pentagon} onClick={() => { setDrawMode('polygon'); setForm((s) => ({ ...s, type: 'polygon' })) }}>
+              <SegmentButton disabled={!shapeEditable} active={drawMode === 'polygon'} icon={Pentagon} onClick={() => switchGeofenceType('polygon')}>
                 Polygon
               </SegmentButton>
             </div>
@@ -2151,7 +2299,7 @@ export default function AdminGeofencing() {
               <div className="grid grid-cols-[1fr_95px] gap-3">
                 <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
                   Type
-                  <SelectBox className="mt-1" value={form.type} disabled={!shapeEditable} onChange={(e) => setForm((s) => ({ ...s, type: e.target.value }))}>
+                  <SelectBox className="mt-1" value={form.type} disabled={!shapeEditable} onChange={(e) => switchGeofenceType(e.target.value)}>
                     <option value="circle">Circle radius</option>
                     <option value="polygon">Polygon</option>
                   </SelectBox>
@@ -2185,7 +2333,7 @@ export default function AdminGeofencing() {
                     </Label>
                   </div>
                   <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
-                    Saved pin: Lat <span className="font-mono font-semibold">{form.center_lat || 'not set'}</span> · Lng <span className="font-mono font-semibold">{form.center_lng || 'not set'}</span> · Radius <span className="font-mono font-semibold">{form.radius_meters || 0}m</span>
+                    Saved pin: Lat <span className="font-mono font-semibold">{form.center_lat || 'not set'}</span> - Lng <span className="font-mono font-semibold">{form.center_lng || 'not set'}</span> - Radius <span className="font-mono font-semibold">{form.radius_meters || 0}m</span>
                   </div>
                   <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
                     Radius: <span className="font-bold text-slate-950 dark:text-foreground">{form.radius_meters}m</span>
@@ -2204,12 +2352,40 @@ export default function AdminGeofencing() {
               ) : (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 dark:border-border dark:bg-muted/30 dark:text-muted-foreground">
                   <div className="flex items-center justify-between gap-2">
-                    <span>{polygonPoints(form.polygon_geojson).filter((_, index, arr) => index !== arr.length - 1).length} polygon points</span>
-                    <Button type="button" variant="outline" size="sm" className="h-8 gap-2 rounded-md" disabled={!shapeEditable} onClick={() => setForm((s) => ({ ...s, polygon_geojson: null }))}>
-                      <Trash2 className="size-3.5" />
-                      Clear
-                    </Button>
+                    <span>{polygonFormPointCount(form)} polygon points</span>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-md px-2"
+                        disabled={!shapeEditable}
+                        onClick={() => {
+                          const center = validLatLngPair([form.center_lat, form.center_lng])
+                            || validLatLngPair(geofenceCenter(form))
+                            || validLatLngPair(branchLocation(selectedBranch))
+                            || DEFAULT_CENTER
+                          setForm((s) => ({
+                            ...s,
+                            type: 'polygon',
+                            center_lat: center[0],
+                            center_lng: center[1],
+                            polygon_draft_points: [],
+                            polygon_geojson: polygonFeatureAroundCenter(center, Math.max(30, Number(s.radius_meters) || 80)),
+                          }))
+                        }}
+                      >
+                        Starter
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" className="h-8 gap-2 rounded-md" disabled={!shapeEditable} onClick={() => setForm((s) => ({ ...s, polygon_draft_points: [], polygon_geojson: null }))}>
+                        <Trash2 className="size-3.5" />
+                        Clear
+                      </Button>
+                    </div>
                   </div>
+                  <p className="mt-2 leading-relaxed">
+                    Click the map to add points. Drag handles to reshape the boundary. Use Starter to create an editable polygon around the current branch or pin.
+                  </p>
                 </div>
               )}
 

@@ -199,6 +199,8 @@ class GeofenceController extends Controller
             return $geofence;
         });
 
+        GeofenceValidationService::forgetBranchCache((int) $branch->id);
+
         return response()->json([
             'message' => 'Geofence created.',
             'geofence' => $this->geofencePayload($geofence),
@@ -233,6 +235,8 @@ class GeofenceController extends Controller
             $this->audit($request, 'geofence_updated', $branch, $geofence);
         });
 
+        GeofenceValidationService::forgetBranchCache((int) $branch->id);
+
         return response()->json([
             'message' => 'Geofence updated.',
             'geofence' => $this->geofencePayload($geofence->refresh()),
@@ -265,6 +269,8 @@ class GeofenceController extends Controller
             $this->audit($request, 'geofence_deleted', $branch, $geofence);
             $geofence->delete();
         });
+
+        GeofenceValidationService::forgetBranchCache((int) $branch->id);
 
         return response()->json(['message' => 'Geofence deleted.']);
     }
@@ -606,8 +612,17 @@ class GeofenceController extends Controller
         if ($type === 'polygon' && ! $partial && empty($validated['polygon_geojson'])) {
             throw ValidationException::withMessages(['polygon_geojson' => ['Draw polygon boundaries before saving.']]);
         }
+        if ($type === 'polygon' && array_key_exists('polygon_geojson', $validated) && empty($validated['polygon_geojson'])) {
+            throw ValidationException::withMessages(['polygon_geojson' => ['Draw polygon boundaries before saving.']]);
+        }
         if ($type === 'polygon' && array_key_exists('polygon_geojson', $validated) && ! empty($validated['polygon_geojson'])) {
             $this->validatePolygonCoordinates($validated['polygon_geojson']);
+            [$centerLat, $centerLng] = $this->polygonCenterCoordinates($validated['polygon_geojson']);
+            $validated['center_lat'] = $centerLat;
+            $validated['center_lng'] = $centerLng;
+            $validated['radius_meters'] = null;
+        } elseif ($type === 'polygon' && (array_key_exists('center_lat', $validated) || array_key_exists('center_lng', $validated))) {
+            $this->validatePhilippinesCoordinatePair($validated['center_lat'] ?? null, $validated['center_lng'] ?? null);
         }
 
         if (isset($validated['name'])) {
@@ -670,6 +685,14 @@ class GeofenceController extends Controller
             ]);
         }
 
+        $outerRing = $coordinates[0] ?? null;
+        if (! is_array($outerRing) || count($outerRing) < 4) {
+            throw ValidationException::withMessages([
+                'polygon_geojson' => ['Polygon geofence must have at least three boundary points.'],
+            ]);
+        }
+
+        $validPointCount = 0;
         foreach ($coordinates as $ring) {
             if (! is_array($ring)) {
                 continue;
@@ -681,8 +704,107 @@ class GeofenceController extends Controller
                     ]);
                 }
                 $this->validatePhilippinesCoordinatePair($point[1], $point[0]);
+                $validPointCount++;
             }
         }
+
+        if ($validPointCount < 4) {
+            throw ValidationException::withMessages([
+                'polygon_geojson' => ['Polygon geofence must have at least three boundary points.'],
+            ]);
+        }
+
+        if (! $this->polygonRingIsClosed($outerRing)) {
+            throw ValidationException::withMessages([
+                'polygon_geojson' => ['Polygon boundary must be closed before saving.'],
+            ]);
+        }
+
+        if ($this->polygonAreaSquareDegrees($outerRing) <= 0.0) {
+            throw ValidationException::withMessages([
+                'polygon_geojson' => ['Polygon boundary must cover an area.'],
+            ]);
+        }
+    }
+
+    private function polygonRingIsClosed(array $ring): bool
+    {
+        $first = $ring[0] ?? null;
+        $last = $ring[count($ring) - 1] ?? null;
+        if (! is_array($first) || ! is_array($last) || count($first) < 2 || count($last) < 2) {
+            return false;
+        }
+
+        return abs((float) $first[0] - (float) $last[0]) < 0.0000001
+            && abs((float) $first[1] - (float) $last[1]) < 0.0000001;
+    }
+
+    private function polygonAreaSquareDegrees(array $ring): float
+    {
+        $area = 0.0;
+        $count = count($ring);
+        for ($i = 0, $j = $count - 1; $i < $count; $j = $i++) {
+            $current = $ring[$i] ?? null;
+            $previous = $ring[$j] ?? null;
+            if (! is_array($current) || ! is_array($previous) || count($current) < 2 || count($previous) < 2) {
+                continue;
+            }
+            $area += ((float) $previous[0] * (float) $current[1]) - ((float) $current[0] * (float) $previous[1]);
+        }
+
+        return abs($area / 2.0);
+    }
+
+    /**
+     * @return array{0: float, 1: float}
+     */
+    private function polygonCenterCoordinates(array $geojson): array
+    {
+        $geometry = ($geojson['type'] ?? null) === 'Feature' ? ($geojson['geometry'] ?? null) : $geojson;
+        $ring = is_array($geometry) ? ($geometry['coordinates'][0] ?? []) : [];
+        $points = array_values(array_filter($ring, fn ($point) => is_array($point) && count($point) >= 2));
+        if (count($points) >= 2 && $this->polygonRingIsClosed($points)) {
+            array_pop($points);
+        }
+
+        $area = 0.0;
+        $centroidLng = 0.0;
+        $centroidLat = 0.0;
+        $count = count($points);
+
+        for ($i = 0, $j = $count - 1; $i < $count; $j = $i++) {
+            $current = $points[$i];
+            $previous = $points[$j];
+            $lng = (float) $current[0];
+            $lat = (float) $current[1];
+            $prevLng = (float) $previous[0];
+            $prevLat = (float) $previous[1];
+            $cross = ($prevLng * $lat) - ($lng * $prevLat);
+            $area += $cross;
+            $centroidLng += ($prevLng + $lng) * $cross;
+            $centroidLat += ($prevLat + $lat) * $cross;
+        }
+
+        if (abs($area) > 0.000000000001) {
+            $factor = 1 / (3 * $area);
+
+            return [
+                round($centroidLat * $factor, 7),
+                round($centroidLng * $factor, 7),
+            ];
+        }
+
+        $latTotal = 0.0;
+        $lngTotal = 0.0;
+        foreach ($points as $point) {
+            $lngTotal += (float) $point[0];
+            $latTotal += (float) $point[1];
+        }
+
+        return [
+            round($latTotal / max(1, $count), 7),
+            round($lngTotal / max(1, $count), 7),
+        ];
     }
 
     private function withinPhilippinesBounds(float $lat, float $lng): bool

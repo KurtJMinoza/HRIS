@@ -790,6 +790,29 @@ class AttendanceController extends Controller
             abort(403, 'Geofence validation does not match this attendance method.');
         }
 
+        if ($isStrictInside) {
+            $currentResult = $this->geofenceValidation->validateForEmployee(
+                $user,
+                $validation->latitude !== null ? (float) $validation->latitude : null,
+                $validation->longitude !== null ? (float) $validation->longitude : null,
+                $validation->accuracy_meters !== null ? (float) $validation->accuracy_meters : null,
+                [
+                    'branch_id' => $branch?->id,
+                    'clock_type' => $type,
+                    'device_type' => $validation->device_type,
+                    'method' => $attendanceMethod ?? $validation->method,
+                    'sampled_readings_count' => $validation->sampled_readings_count,
+                    'selected_best_accuracy' => $validation->selected_best_accuracy,
+                    'log' => false,
+                ],
+            );
+
+            $currentStatus = $currentResult['validation_status'] ?? null;
+            if (! ($currentResult['allowed'] ?? false) || ! in_array($currentStatus, ['inside', 'passed'], true)) {
+                abort(403, $currentResult['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
+            }
+        }
+
         $requestLat = $request->input('latitude');
         $requestLng = $request->input('longitude');
         if ($requestLat !== null && $requestLng !== null && $validation->latitude !== null && $validation->longitude !== null) {

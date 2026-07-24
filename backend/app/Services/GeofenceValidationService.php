@@ -1138,7 +1138,7 @@ class GeofenceValidationService
             }
 
             $inside = $this->pointInPolygon($latitude, $longitude, $rings);
-            $distance = $this->distanceToPolygonVertices($latitude, $longitude, $rings);
+            $distance = $inside ? 0.0 : $this->distanceToPolygonEdges($latitude, $longitude, $rings);
 
             return [
                 'inside' => $inside,
@@ -1344,7 +1344,10 @@ class GeofenceValidationService
             'type' => $geofence['type'],
             'device_scope' => $geofence['device_scope'] ?? 'all_devices',
             'priority' => (int) ($geofence['priority'] ?? 1),
+            'center_lat' => isset($geofence['center_lat']) ? (float) $geofence['center_lat'] : null,
+            'center_lng' => isset($geofence['center_lng']) ? (float) $geofence['center_lng'] : null,
             'radius_meters' => isset($geofence['radius_meters']) ? (int) $geofence['radius_meters'] : null,
+            'polygon_geojson' => $geofence['polygon_geojson'] ?? null,
         ];
     }
 
@@ -1432,11 +1435,19 @@ class GeofenceValidationService
     {
         $inside = false;
         $count = count($ring);
+        if ($count < 3) {
+            return false;
+        }
+
         for ($i = 0, $j = $count - 1; $i < $count; $j = $i++) {
             $xi = $ring[$i]['lng'];
             $yi = $ring[$i]['lat'];
             $xj = $ring[$j]['lng'];
             $yj = $ring[$j]['lat'];
+
+            if ($this->pointOnSegment($latitude, $longitude, $yi, $xi, $yj, $xj)) {
+                return true;
+            }
 
             $intersects = (($yi > $latitude) !== ($yj > $latitude))
                 && ($longitude < ($xj - $xi) * ($latitude - $yi) / (($yj - $yi) ?: 0.0000001) + $xi);
@@ -1451,17 +1462,62 @@ class GeofenceValidationService
     /**
      * @param  list<list<array{lat: float, lng: float}>>  $rings
      */
-    private function distanceToPolygonVertices(float $latitude, float $longitude, array $rings): ?float
+    private function distanceToPolygonEdges(float $latitude, float $longitude, array $rings): ?float
     {
         $best = null;
         foreach ($rings as $ring) {
-            foreach ($ring as $point) {
-                $distance = $this->haversineMeters($latitude, $longitude, $point['lat'], $point['lng']);
+            $count = count($ring);
+            if ($count < 2) {
+                continue;
+            }
+
+            for ($i = 0; $i < $count; $i++) {
+                $start = $ring[$i];
+                $end = $ring[($i + 1) % $count];
+                $distance = $this->distanceToSegmentMeters($latitude, $longitude, $start['lat'], $start['lng'], $end['lat'], $end['lng']);
                 $best = $best === null ? $distance : min($best, $distance);
             }
         }
 
         return $best;
+    }
+
+    private function pointOnSegment(float $lat, float $lng, float $lat1, float $lng1, float $lat2, float $lng2): bool
+    {
+        $cross = ($lng - $lng1) * ($lat2 - $lat1) - ($lat - $lat1) * ($lng2 - $lng1);
+        if (abs($cross) > 0.00000001) {
+            return false;
+        }
+
+        $minLat = min($lat1, $lat2) - 0.00000001;
+        $maxLat = max($lat1, $lat2) + 0.00000001;
+        $minLng = min($lng1, $lng2) - 0.00000001;
+        $maxLng = max($lng1, $lng2) + 0.00000001;
+
+        return $lat >= $minLat && $lat <= $maxLat && $lng >= $minLng && $lng <= $maxLng;
+    }
+
+    private function distanceToSegmentMeters(float $lat, float $lng, float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $meanLat = deg2rad(($lat + $lat1 + $lat2) / 3);
+        $metersPerDegreeLat = 111132.92;
+        $metersPerDegreeLng = 111412.84 * cos($meanLat);
+
+        $px = ($lng - $lng1) * $metersPerDegreeLng;
+        $py = ($lat - $lat1) * $metersPerDegreeLat;
+        $sx = ($lng2 - $lng1) * $metersPerDegreeLng;
+        $sy = ($lat2 - $lat1) * $metersPerDegreeLat;
+        $segmentLengthSquared = ($sx * $sx) + ($sy * $sy);
+
+        if ($segmentLengthSquared <= 0.000001) {
+            return $this->haversineMeters($lat, $lng, $lat1, $lng1);
+        }
+
+        $t = max(0.0, min(1.0, (($px * $sx) + ($py * $sy)) / $segmentLengthSquared));
+        $closestX = $t * $sx;
+        $closestY = $t * $sy;
+
+        return sqrt((($px - $closestX) ** 2) + (($py - $closestY) ** 2));
     }
 
     private function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): float
