@@ -31,7 +31,8 @@ class AttendanceCorrectionDetailService
         $dayEndUtc = $date->copy()->endOfDay()->setTimezone('UTC');
 
         $employee->loadMissing('workingSchedule');
-        $schedule = EmployeeScheduleResolver::resolve($employee);
+        // Date-specific: schedule adjustments must apply to the filing date, not "today".
+        $schedule = EmployeeScheduleResolver::resolveForDate($employee, $dateKey);
         $dayKey = EmployeeScheduleResolver::dayKeyForDate($date);
         $daySchedule = is_array($schedule) ? ($schedule[$dayKey] ?? null) : null;
         $hasSchedule = is_array($daySchedule) && ! empty($daySchedule['in']);

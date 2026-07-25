@@ -59,6 +59,7 @@ import { isAdminHrUser, hrPanelPath } from '@/lib/hrRoutes'
 import { orgModulePath } from '@/lib/orgRoutes'
 import { useToast } from '@/components/ui/use-toast'
 import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { openAfterMenuClose } from '@/lib/radixModalLock'
 import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { Skeleton } from '@/components/ui/skeleton'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
@@ -1617,7 +1618,8 @@ export default function AdminCompanies() {
   const openHeadDialog = (company) => {
     setHeadCompany(company)
     setHeadId(company.company_head_id ? String(company.company_head_id) : '')
-    setHeadOpen(true)
+    // Defer past Radix menu dismiss so the dialog is not immediately closed.
+    openAfterMenuClose(() => setHeadOpen(true))
   }
 
   const handleAssignHead = async (e) => {
@@ -1939,7 +1941,7 @@ export default function AdminCompanies() {
                               <MoreVertical className="size-4" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuContent align="end" className="w-48 border-0">
                             <DropdownMenuItem onClick={() => openDetail(company)}><Building className="size-4" /><span>View details</span></DropdownMenuItem>
                             <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEditDetails(company) }}><FileText className="size-4" /><span>Edit details</span></DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openEditName(company)}><Pencil className="size-4" /><span>Rename</span></DropdownMenuItem>
@@ -2465,7 +2467,7 @@ export default function AdminCompanies() {
                         <MoreVertical className="size-4" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuContent align="end" className="w-48 border-0">
                       <DropdownMenuItem onClick={() => openEditDetails(detailCompany)}>
                         <FileText className="size-4" /><span>Edit details</span>
                       </DropdownMenuItem>
@@ -2916,7 +2918,7 @@ export default function AdminCompanies() {
                                 <MoreVertical className="size-4" />
                               </Button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuContent align="end" className="w-48 border-0">
                               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); navigate(`/admin/employees/${emp.id}`) }}>
                                 <Eye className="mr-2 size-4" />View profile
                               </DropdownMenuItem>

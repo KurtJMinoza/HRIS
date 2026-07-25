@@ -3,6 +3,7 @@ import { searchEmployeesForHeadAssignment } from '@/api'
 import { employeeDisplayName, normalizeLeaderUserId } from '@/lib/employeeSearch'
 
 const DEBOUNCE_MS = 300
+const EMPTY_FILTERS = Object.freeze({})
 
 function mergeSelectedEmployee(results, selected) {
   if (!selected) return results
@@ -14,9 +15,17 @@ function mergeSelectedEmployee(results, selected) {
   return [selected, ...results]
 }
 
+function filtersKey(filters) {
+  try {
+    return JSON.stringify(filters ?? {})
+  } catch {
+    return ''
+  }
+}
+
 export function useHeadAssignmentEmployeeSearch({
   enabled = true,
-  searchFilters = {},
+  searchFilters = EMPTY_FILTERS,
   selectedEmployee = null,
   debounceMs = DEBOUNCE_MS,
 }) {
@@ -26,6 +35,14 @@ export function useHeadAssignmentEmployeeSearch({
   const [error, setError] = useState(null)
   const seqRef = useRef(0)
   const abortRef = useRef(null)
+  // ponytail: callers often pass inline {} / fresh selected objects; refs avoid abort-loop on every render
+  const filtersRef = useRef(searchFilters)
+  const selectedRef = useRef(selectedEmployee)
+  filtersRef.current = searchFilters
+  selectedRef.current = selectedEmployee
+
+  const selectedId = normalizeLeaderUserId(selectedEmployee?.id ?? selectedEmployee?.employee_id) || ''
+  const filterSig = filtersKey(searchFilters)
 
   const runSearch = useCallback(
     async (searchText, { fresh = false } = {}) => {
@@ -39,22 +56,23 @@ export function useHeadAssignmentEmployeeSearch({
       setLoading(true)
       setError(null)
 
+      const selected = selectedRef.current
       try {
         const data = await searchEmployeesForHeadAssignment(
           {
             q: searchText,
-            ...searchFilters,
+            ...filtersRef.current,
           },
           { signal: controller.signal, fresh },
         )
         if (seq !== seqRef.current || controller.signal.aborted) return
 
-        const employees = mergeSelectedEmployee(data.employees || [], selectedEmployee)
+        const employees = mergeSelectedEmployee(data.employees || [], selected)
         setResults(employees)
       } catch (err) {
         if (controller.signal.aborted || err?.name === 'AbortError') return
         if (seq !== seqRef.current) return
-        setResults(selectedEmployee ? mergeSelectedEmployee([], selectedEmployee) : [])
+        setResults(selected ? mergeSelectedEmployee([], selected) : [])
         setError(err?.message || 'Could not search employees.')
       } finally {
         if (seq === seqRef.current) {
@@ -62,7 +80,7 @@ export function useHeadAssignmentEmployeeSearch({
         }
       }
     },
-    [enabled, searchFilters, selectedEmployee],
+    [enabled],
   )
 
   useEffect(() => {
@@ -80,7 +98,7 @@ export function useHeadAssignmentEmployeeSearch({
     return () => {
       window.clearTimeout(timer)
     }
-  }, [enabled, query, runSearch, debounceMs])
+  }, [enabled, query, runSearch, debounceMs, filterSig, selectedId])
 
   useEffect(() => {
     return () => {

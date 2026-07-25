@@ -29,6 +29,7 @@ import { getDivisions, createDivision, updateDivision, deleteDivision, assignEmp
 import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
 import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { openAfterMenuClose } from '@/lib/radixModalLock'
 import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
@@ -584,7 +585,8 @@ export default function AdminDivisions() {
     if (division?.id == null) return
     setHeadDivision(division)
     setHeadId(division.division_head_id ? String(division.division_head_id) : '')
-    setHeadOpen(true)
+    // Defer past Radix menu dismiss so the dialog is not immediately closed.
+    openAfterMenuClose(() => setHeadOpen(true))
   }
 
   const divisionHeadRoleNotes = useMemo(() => {
@@ -1288,7 +1290,7 @@ export default function AdminDivisions() {
                                   <MoreVertical className="size-4" />
                                 </Button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuContent align="end" className="w-52 border-0">
                                 <DropdownMenuItem onClick={() => openViewEmployees(division)}>
                                   <Eye className="size-4" /><span>View employees</span>
                                 </DropdownMenuItem>

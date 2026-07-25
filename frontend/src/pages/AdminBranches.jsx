@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { Plus, MapPin, Loader2, MoreVertical, Pencil, Trash2, Building2, Layers, Users, ExternalLink, ChevronRight, ChevronLeft, Search, ChevronDown, Network } from 'lucide-react'
+import { Plus, MapPin, Loader2, MoreVertical, Pencil, Trash2, Building2, Layers, Users, ExternalLink, ChevronRight, ChevronLeft, Search, ChevronDown, Network, UserPlus } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -30,11 +30,14 @@ import {
   headAssignmentPrimaryLine,
   headAssignmentSecondaryLine,
   normalizeLeaderUserId,
+  buildOrgCurrentHead,
 } from '@/lib/employeeSearch'
 import { useToast } from '@/components/ui/use-toast'
 import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { openAfterMenuClose } from '@/lib/radixModalLock'
 import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { cn } from '@/lib/utils'
+import AssignOrgHeadModal from '@/components/admin/AssignOrgHeadModal'
 import {
   ADMIN_FORM_DIALOG_DESC_CLASS,
   ADMIN_FORM_DIALOG_FOOTER_CLASS,
@@ -277,11 +280,18 @@ export default function AdminBranches() {
   const [branchEmployeesLoading, setBranchEmployeesLoading] = useState(false)
   const [branchEmployeesSearch, setBranchEmployeesSearch] = useState('')
 
+  const [headOpen, setHeadOpen] = useState(false)
+  const [headBranch, setHeadBranch] = useState(null)
+  const [headId, setHeadId] = useState('')
+  const [headSubmitting, setHeadSubmitting] = useState(false)
+
   const dismissOverlays = useCallback(() => {
     setCreateOpen(false)
     setEditOpen(false)
     setDeleteConfirm(null)
     setEmployeesBranch(null)
+    setHeadOpen(false)
+    setHeadBranch(null)
   }, [])
 
   useDismissOnRouteChange(dismissOverlays)
@@ -405,6 +415,55 @@ export default function AdminBranches() {
     setEditAddress(branch.address || '')
     setEditManagerId(branch.branch_manager_id ? String(branch.branch_manager_id) : '')
     setEditOpen(true)
+  }
+
+  const openHeadDialog = (branch) => {
+    if (branch?.id == null) return
+    setHeadBranch(branch)
+    setHeadId(branch.branch_manager_id ? String(branch.branch_manager_id) : '')
+    // Defer past Radix menu dismiss so the dialog is not immediately closed.
+    openAfterMenuClose(() => setHeadOpen(true))
+  }
+
+  const branchHeadRoleNotes = useMemo(() => {
+    if (!headBranch) return new Map()
+    const map = new Map()
+    for (const b of branches) {
+      if (b.branch_manager_id && String(b.id) !== String(headBranch.id)) {
+        map.set(String(b.branch_manager_id), `Branch Head — ${b.name || 'Branch'}`)
+      }
+    }
+    for (const c of companies) {
+      if (c.company_head_id) {
+        map.set(String(c.company_head_id), `Company Head — ${c.name || 'Company'}`)
+      }
+    }
+    return map
+  }, [headBranch, branches, companies])
+
+  const handleAssignHead = async (e) => {
+    e.preventDefault()
+    if (!headBranch) return
+    setHeadSubmitting(true)
+    try {
+      const data = await updateBranch(headBranch.id, {
+        branch_manager_id: headId ? parseInt(headId, 10) : null,
+      })
+      if (data?.branch?.id != null) {
+        setBranches((prev) =>
+          prev.map((b) => (String(b.id) === String(data.branch.id) ? { ...b, ...data.branch } : b)),
+        )
+      }
+      setHeadOpen(false)
+      setHeadBranch(null)
+      setHeadId('')
+      await fetchBranches()
+      toast({ title: 'Branch head updated', variant: 'success' })
+    } catch (err) {
+      toast({ title: 'Cannot assign branch head', description: err.message, variant: 'error' })
+    } finally {
+      setHeadSubmitting(false)
+    }
   }
 
   const handleEdit = async (e) => {
@@ -657,7 +716,7 @@ export default function AdminBranches() {
                                   <MoreVertical className="size-4" />
                                 </Button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuContent align="end" className="w-48 border-0">
                                 <DropdownMenuItem onClick={() => navigate(`/admin/departments?branch_id=${branch.id}`)}>
                                   <ExternalLink className="size-4" /><span>View Departments</span>
                                 </DropdownMenuItem>
@@ -666,6 +725,9 @@ export default function AdminBranches() {
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openEdit(branch)}>
                                   <Pencil className="size-4" /><span>Edit</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openHeadDialog(branch)}>
+                                  <UserPlus className="size-4" /><span>Assign branch head</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem variant="destructive" onClick={() => setDeleteConfirm(branch)}>
@@ -1041,6 +1103,32 @@ export default function AdminBranches() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AssignOrgHeadModal
+        open={headOpen}
+        onOpenChange={(open) => {
+          setHeadOpen(open)
+          if (!open) {
+            setHeadBranch(null)
+            setHeadId('')
+          }
+        }}
+        title="Assign Branch Head"
+        unitName={headBranch?.name}
+        fieldLabel="Branch Head"
+        currentHeadId={headBranch?.branch_manager_id}
+        currentHead={buildOrgCurrentHead({
+          id: headBranch?.branch_manager_id,
+          name: headBranch?.branch_manager_name,
+          profile_image_url: headBranch?.branch_manager_profile_image,
+        })}
+        headId={headId}
+        onHeadIdChange={setHeadId}
+        headRoleNotes={branchHeadRoleNotes}
+        submitting={headSubmitting}
+        onSubmit={handleAssignHead}
+        initialsFn={initials}
+      />
     </div>
   )
 }

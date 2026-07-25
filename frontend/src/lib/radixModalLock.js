@@ -1,3 +1,12 @@
+/** Open a dialog after a dropdown/menu finishes tearing down (avoids focus/pointer-events races). */
+export function openAfterMenuClose(openFn) {
+  if (typeof window === 'undefined') {
+    openFn?.()
+    return
+  }
+  window.setTimeout(() => openFn?.(), 0)
+}
+
 /** Clear Radix Dialog/Sheet scroll lock when route changes or nav is clicked mid-modal. */
 export function resetRadixModalLock() {
   if (typeof document === 'undefined') return

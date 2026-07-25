@@ -29,6 +29,7 @@ import { getDepartments, createDepartment, updateDepartment, deleteDepartment, a
 import { RoleBadge } from '@/components/RoleBadge'
 import { useToast } from '@/components/ui/use-toast'
 import { useDismissOnRouteChange } from '@/hooks/useDismissOnRouteChange'
+import { openAfterMenuClose } from '@/lib/radixModalLock'
 import { useOrgModuleLoad } from '@/hooks/useOrgModuleLoad'
 import { hasEmoji, hasFancyUnicode } from '@/validation'
 import { cn } from '@/lib/utils'
@@ -556,7 +557,8 @@ export default function AdminDepartments() {
     if (dept?.id == null) return
     setHeadDepartment(dept)
     setHeadId(dept.department_head_id ? String(dept.department_head_id) : '')
-    setHeadOpen(true)
+    // Defer past Radix menu dismiss so the dialog is not immediately closed.
+    openAfterMenuClose(() => setHeadOpen(true))
   }
 
   const departmentHeadRoleNotes = useMemo(() => {
@@ -1234,7 +1236,7 @@ export default function AdminDepartments() {
                                   <MoreVertical className="size-4" />
                                 </Button>
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuContent align="end" className="w-52 border-0">
                                 <DropdownMenuItem onClick={() => openViewEmployees(dept)}>
                                   <Eye className="size-4" /><span>View employees</span>
                                 </DropdownMenuItem>

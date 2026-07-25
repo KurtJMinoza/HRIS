@@ -19,13 +19,15 @@ import {
 const MULTI_HEAD_INFO =
   'This employee is already assigned to another head role, but multiple leadership assignments are allowed.'
 
+const EMPTY_SEARCH_FILTERS = Object.freeze({})
+
 export default function AssignOrgHeadModal({
   open,
   onOpenChange,
   title,
   unitName,
   fieldLabel,
-  searchFilters = {},
+  searchFilters = EMPTY_SEARCH_FILTERS,
   currentHeadId,
   currentHead = null,
   headId,
@@ -58,7 +60,27 @@ export default function AssignOrgHeadModal({
       department_name: toDisplayText(currentHead.department_name || currentHead.department),
       is_active: true,
     }
-  }, [currentHead])
+  }, [
+    currentHead?.id,
+    currentHead?.name,
+    currentHead?.full_name,
+    currentHead?.profile_image_url,
+    currentHead?.profile_image,
+    currentHead?.employee_code,
+    currentHead?.position,
+    currentHead?.company_name,
+    currentHead?.department_name,
+    currentHead?.department,
+  ])
+
+  const resolvedSearchFilters = useMemo(
+    () => ({
+      include_cross_company: searchFilters.include_cross_company !== false,
+      active_only: searchFilters.active_only !== false,
+      ...searchFilters,
+    }),
+    [searchFilters],
+  )
 
   const {
     query: searchQuery,
@@ -70,11 +92,7 @@ export default function AssignOrgHeadModal({
     reset,
   } = useHeadAssignmentEmployeeSearch({
     enabled: open,
-    searchFilters: {
-      include_cross_company: searchFilters.include_cross_company !== false,
-      active_only: searchFilters.active_only !== false,
-      ...searchFilters,
-    },
+    searchFilters: resolvedSearchFilters,
     selectedEmployee: normalizedCurrentHead,
   })
 
