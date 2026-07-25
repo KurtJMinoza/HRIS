@@ -30,11 +30,9 @@ class EfficiencyPeriodResolver
         if ($end->lessThan($start)) {
             $end = $start->copy();
         }
-        // Future calendar days have no attendance yet — including them as empty
-        // zeros This Week / This Month efficiency. Cap at today.
-        if ($end->greaterThan($today)) {
-            $end = $today->copy();
-        }
+        // Keep requested end (including future days). CompanyEfficiencyService treats
+        // no-punch future days as upcoming and excludes them from scheduled/pay hours,
+        // while still showing rest-day-worked / early punches in the daily breakdown.
         if ($start->diffInDays($end) > 366) {
             $end = $start->copy()->addDays(366);
         }

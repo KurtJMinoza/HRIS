@@ -81,9 +81,12 @@ class AttendanceRollupService
                     $dayExpectedHours = $worked + $lateH + $underH;
                 }
             }
+            $dayPayrollImpact = (float) ($day['payroll_impact_hours'] ?? 0);
             if ($dayExpectedHours > 0) {
                 $expectedScheduledHours += $dayExpectedHours;
-                $payrollImpactHours += (float) ($day['payroll_impact_hours'] ?? 0);
+            }
+            if ($dayPayrollImpact > 0) {
+                $payrollImpactHours += $dayPayrollImpact;
             }
 
             $label = $this->employeeDisplayLabel($day);

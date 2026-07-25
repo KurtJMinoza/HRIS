@@ -90,6 +90,18 @@ class CompanyEfficiencyService
         $agg = $companyRow['agg'] ?? $this->emptyAgg();
 
         $slots = $this->buildEmployeeSlots($ctx, $companyId, $search, $departmentId, $sort, $direction);
+        // Daily breakdown mirrors employee efficiency: scheduled workdays + rest day worked only.
+        $slots = array_values(array_filter($slots, function (array $slot) use ($ctx): bool {
+            $dailySummary = $this->resolveDailySummary(
+                $ctx,
+                $slot['employee'],
+                $slot['date_key'],
+                $slot['day_key'],
+                $slot['date_key'] === $ctx['today_date'],
+            );
+
+            return $this->isEfficiencyDetailDay($dailySummary);
+        }));
         if ($status !== null && trim($status) !== '') {
             $wantedStatus = strtolower(trim($status));
             $slots = array_values(array_filter($slots, function (array $slot) use ($ctx, $wantedStatus): bool {
@@ -144,6 +156,7 @@ class CompanyEfficiencyService
             'late_count' => (int) ($agg['late'] ?? 0),
             'undertime' => (int) ($agg['undertime'] ?? 0),
             'undertime_count' => (int) ($agg['undertime'] ?? 0),
+            'rest_days_worked' => (int) ($agg['rest_days_worked'] ?? 0),
             'scheduled_minutes' => (int) ($companyRow['scheduled_minutes'] ?? 0),
             'expected_scheduled_minutes' => (int) ($companyRow['expected_scheduled_minutes'] ?? 0),
             'payroll_impact_minutes' => (int) ($companyRow['payroll_impact_minutes'] ?? 0),
@@ -179,6 +192,7 @@ class CompanyEfficiencyService
                 'absent' => (int) ($agg['absent'] ?? 0),
                 'late' => (int) ($agg['late'] ?? 0),
                 'undertime' => (int) ($agg['undertime'] ?? 0),
+                'rest_days_worked' => (int) ($agg['rest_days_worked'] ?? 0),
                 'scheduled_minutes' => (int) ($companyRow['scheduled_minutes'] ?? 0),
                 'expected_scheduled_minutes' => (int) ($companyRow['expected_scheduled_minutes'] ?? 0),
                 'payroll_impact_minutes' => (int) ($companyRow['payroll_impact_minutes'] ?? 0),
@@ -217,9 +231,6 @@ class CompanyEfficiencyService
     {
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $today = Carbon::now($tz)->startOfDay();
-        if ($toDate->greaterThan($today)) {
-            $toDate = $today->copy();
-        }
         if ($fromDate->greaterThan($toDate)) {
             $fromDate = $toDate->copy();
         }
@@ -445,6 +456,7 @@ class CompanyEfficiencyService
                 'absent_count' => (int) $agg['absent'],
                 'undertime' => (int) $agg['undertime'],
                 'undertime_count' => (int) $agg['undertime'],
+                'rest_days_worked' => (int) ($agg['rest_days_worked'] ?? 0),
                 'on_leave' => (int) $agg['on_leave'],
                 'scheduled_employees' => (int) $agg['scheduled_employees'],
                 'headcount' => $headcount,
@@ -532,6 +544,38 @@ class CompanyEfficiencyService
         return $slots;
     }
 
+    /**
+     * Same inclusion rule as employee Attendance Efficiency Details:
+     * scheduled workdays, plus rest days only when actually worked.
+     *
+     * @param  array<string, mixed>  $dailySummary
+     */
+    private function isEfficiencyDetailDay(array $dailySummary): bool
+    {
+        if (! empty($dailySummary['is_rest_day_worked'])) {
+            return true;
+        }
+
+        $status = strtolower((string) ($dailySummary['status'] ?? ''));
+        if (
+            ! empty($dailySummary['is_rest_day'])
+            || in_array($status, ['rest', 'rest_day', 'no_schedule_rest', 'upcoming'], true)
+        ) {
+            return false;
+        }
+
+        if (
+            ! empty($dailySummary['is_leave'])
+            || ! empty($dailySummary['is_holiday'])
+            || in_array($status, ['leave', 'holiday'], true)
+        ) {
+            return false;
+        }
+
+        return ($dailySummary['schedule_in'] ?? null) !== null
+            && ($dailySummary['schedule_out'] ?? null) !== null;
+    }
+
     /** @param array<string, mixed> $ctx */
     private function resolveDailySummary(
         array $ctx,
@@ -587,28 +631,6 @@ class CompanyEfficiencyService
         $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
         $hasSchedule = is_array($daySched) && ! empty($daySched['in']) && ! empty($daySched['out']);
 
-        if (! $hasSchedule) {
-            return [
-                'status' => 'rest',
-                'status_label' => 'Rest Day',
-                'schedule_in' => null,
-                'schedule_out' => null,
-                'formatted_time_in' => null,
-                'formatted_time_out' => null,
-                'time_in' => null,
-                'time_out' => null,
-                'late_minutes' => 0,
-                'undertime_minutes' => 0,
-                'payroll_impact_hours' => 0.0,
-                'is_rest_day' => true,
-                'is_rest_day_worked' => false,
-                'is_leave' => false,
-                'is_holiday' => false,
-                'presence_label' => null,
-                'presence_issue' => 'none',
-            ];
-        }
-
         $storeKey = $employee->id.'|'.$dateKey;
         $correction = $ctx['approved_corrections']->get($storeKey);
         $logs = $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? [];
@@ -648,11 +670,70 @@ class CompanyEfficiencyService
             }
         }
 
+        if (! $hasSchedule) {
+            if ($timeIn !== null && $timeOut !== null) {
+                return $this->normalizeIncompletePunches(
+                    $this->attendanceDailySummaryService->computeForDate(
+                        user: $employee,
+                        dateKey: $dateKey,
+                        todayDate: $ctx['today_date'],
+                        nowTz: $ctx['now_tz'],
+                        effectiveSchedule: $schedule,
+                        preloadedLogs: $logs,
+                        correction: $correction,
+                    )
+                );
+            }
+
+            return [
+                'status' => 'rest',
+                'status_label' => 'Rest Day',
+                'schedule_in' => null,
+                'schedule_out' => null,
+                'formatted_time_in' => null,
+                'formatted_time_out' => null,
+                'time_in' => null,
+                'time_out' => null,
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 0.0,
+                'is_rest_day' => true,
+                'is_rest_day_worked' => false,
+                'is_leave' => false,
+                'is_holiday' => false,
+                'presence_label' => null,
+                'presence_issue' => 'none',
+            ];
+        }
+
         $scheduleIn = (string) $daySched['in'];
         $scheduleOut = (string) $daySched['out'];
         $scheduledHours = $this->computeScheduleHours($daySched, $dateKey);
 
         if ($timeIn === null && $timeOut === null) {
+            if ($dateKey > $ctx['today_date']) {
+                return [
+                    'status' => 'upcoming',
+                    'status_label' => 'Upcoming',
+                    'schedule_in' => $scheduleIn,
+                    'schedule_out' => $scheduleOut,
+                    'formatted_time_in' => null,
+                    'formatted_time_out' => null,
+                    'time_in' => null,
+                    'time_out' => null,
+                    'late_minutes' => 0,
+                    'undertime_minutes' => 0,
+                    'payroll_impact_hours' => 0.0,
+                    'is_rest_day' => false,
+                    'is_rest_day_worked' => false,
+                    'is_leave' => false,
+                    'is_holiday' => false,
+                    'presence_label' => null,
+                    'presence_issue' => 'none',
+                    'scheduled_regular_hours' => $scheduledHours,
+                ];
+            }
+
             return [
                 'status' => 'absent',
                 'status_label' => 'Absent',
@@ -776,14 +857,17 @@ class CompanyEfficiencyService
         // Complete present rows; missing-out / live clocked-in get provisional payroll for efficiency.
         $isPresentComplete = in_array($status, ['present', 'present_with_ot', 'late', 'halfday', 'undertime'], true);
         $isMissingOut = $status === 'incomplete' && ($dailySummary['presence_issue'] ?? '') === 'missing_out';
+        $isRestDayWorked = (bool) ($dailySummary['is_rest_day_worked'] ?? false);
         $payForEff = $isPresentComplete ? $payrollImpactHours : 0.0;
         if ($payForEff <= 0 && $scheduledHours > 0 && ($status === 'clocked_in' || $isMissingOut)) {
             $payForEff = $payrollImpactHours > 0
                 ? $payrollImpactHours
                 : max(0.0, $scheduledHours - ($lateMinutes / 60));
         }
-        $attendanceEfficiencyPct = $scheduledHours > 0
-            ? round(($payForEff / $scheduledHours) * 100, 2)
+        // Rest day worked: expected = payroll impact (same as employee calendar efficiency).
+        $scheduledHoursForEff = ($isRestDayWorked && $payForEff > 0) ? $payForEff : $scheduledHours;
+        $attendanceEfficiencyPct = $scheduledHoursForEff > 0
+            ? round(($payForEff / $scheduledHoursForEff) * 100, 2)
             : null;
         $companyId = (int) ($employee->getEffectiveCompanyId() ?? 0);
         $company = $companyId > 0 ? $ctx['companies']->get($companyId) : null;
@@ -823,7 +907,9 @@ class CompanyEfficiencyService
                 $scheduleOut,
                 $storedSummary?->schedule_label,
                 (bool) ($dailySummary['is_rest_day'] ?? false),
+                (bool) ($dailySummary['is_rest_day_worked'] ?? false),
             ),
+            'is_rest_day_worked' => (bool) ($dailySummary['is_rest_day_worked'] ?? false),
             'time_in' => $dailySummary['formatted_time_in'] ?? ($dailySummary['time_in'] ? date('g:i A', strtotime((string) $dailySummary['time_in'])) : '—'),
             'time_out' => $dailySummary['formatted_time_out'] ?? ($dailySummary['time_out'] ? date('g:i A', strtotime((string) $dailySummary['time_out'])) : '—'),
             'status' => $dailySummary['status_label'] ?? $status,
@@ -1034,6 +1120,7 @@ class CompanyEfficiencyService
             'late' => 0,
             'undertime' => 0,
             'on_leave' => 0,
+            'rest_days_worked' => 0,
             'total_scheduled_hours' => 0.0,
             'total_payroll_impact_hours' => 0.0,
         ];
@@ -1087,7 +1174,12 @@ class CompanyEfficiencyService
             $agg['undertime']++;
         }
 
-        if (($dailySummary['is_rest_day'] ?? false) && ! ($dailySummary['is_rest_day_worked'] ?? false)) {
+        $isRestDayWorked = (bool) ($dailySummary['is_rest_day_worked'] ?? false);
+        if ($isRestDayWorked && ($isPresentComplete || $isClockedIn || $isMissingOut)) {
+            $agg['rest_days_worked']++;
+        }
+
+        if (($dailySummary['is_rest_day'] ?? false) && ! $isRestDayWorked) {
             return;
         }
 
@@ -1095,7 +1187,7 @@ class CompanyEfficiencyService
             return;
         }
 
-        if ($status === 'upcoming' || $status === 'rest' || ! $isScheduled) {
+        if ($status === 'upcoming' || ($status === 'rest' && ! $isRestDayWorked) || (! $isScheduled && ! $isRestDayWorked)) {
             return;
         }
 
@@ -1106,7 +1198,7 @@ class CompanyEfficiencyService
             $scheduleCache,
             $storedSummary,
         );
-        if ($scheduledHours > 0) {
+        if ($scheduledHours > 0 || ($isRestDayWorked && $payrollImpactHours > 0)) {
             $payHours = 0.0;
             if ($isPresentComplete) {
                 $payHours = $payrollImpactHours;
@@ -1117,10 +1209,17 @@ class CompanyEfficiencyService
                     ? $payrollImpactHours
                     : max(0.0, $scheduledHours - ($lateMinutes / 60));
             }
+            // Rest day worked: match employee dashboard — expected baseline = payroll impact
+            // so OT/premium minutes don't push company attendance % above 100.
+            if ($isRestDayWorked && $payHours > 0) {
+                $scheduledHours = $payHours;
+            }
             // Missing-in (and other incomplete): keep scheduled hours in the denominator, zero payroll impact.
             // Status "—" (before absent cutoff, no punch yet): scheduled only, zero pay.
-            $agg['total_scheduled_hours'] += $scheduledHours;
-            $agg['total_payroll_impact_hours'] += ($isIncomplete && ! $isMissingOut) ? 0.0 : $payHours;
+            if ($scheduledHours > 0) {
+                $agg['total_scheduled_hours'] += $scheduledHours;
+                $agg['total_payroll_impact_hours'] += ($isIncomplete && ! $isMissingOut) ? 0.0 : $payHours;
+            }
         }
     }
 
@@ -1264,6 +1363,9 @@ class CompanyEfficiencyService
 
         $schedule = $scheduleCache[$employee->id] ?? null;
         $daySched = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
+        if (($dailySummary['is_rest_day_worked'] ?? false) && (! is_array($daySched) || empty($daySched['in']) || empty($daySched['out']))) {
+            $daySched = AttendanceStatusService::firstWorkdaySchedule(is_array($schedule) ? $schedule : []);
+        }
         if (! $daySched || empty($daySched['in']) || empty($daySched['out'])) {
             return 0.0;
         }
@@ -1276,11 +1378,12 @@ class CompanyEfficiencyService
         $scheduleIn = $dailySummary['schedule_in'] ?? null;
         $scheduleOut = $dailySummary['schedule_out'] ?? null;
         $isScheduled = $scheduleIn !== null && $scheduleOut !== null;
-        if ($status === 'upcoming' || $status === 'rest' || ! $isScheduled) {
+        $isRestDayWorked = (bool) ($dailySummary['is_rest_day_worked'] ?? false);
+        if ($status === 'upcoming' || ($status === 'rest' && ! $isRestDayWorked) || (! $isScheduled && ! $isRestDayWorked)) {
             return 0.0;
         }
 
-        return $this->computeScheduleHours($daySched);
+        return $this->computeScheduleHours($daySched, is_string($dailySummary['date'] ?? null) ? $dailySummary['date'] : null);
     }
 
     /**
@@ -1318,7 +1421,12 @@ class CompanyEfficiencyService
         ?string $scheduleOut,
         ?string $scheduleLabel = null,
         bool $isRestDay = false,
+        bool $isRestDayWorked = false,
     ): string {
+        if ($isRestDayWorked) {
+            return 'Rest Day Worked';
+        }
+
         if ($isRestDay) {
             return 'Rest Day';
         }

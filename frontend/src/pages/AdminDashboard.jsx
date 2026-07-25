@@ -988,6 +988,7 @@ export default function AdminDashboard() {
       absent: Number(summary.absent_count ?? summary.absent ?? 0),
       late: Number(summary.late_count ?? summary.late ?? 0),
       undertime: Number(summary.undertime_count ?? summary.undertime ?? 0),
+      rest_days_worked: Number(summary.rest_days_worked ?? 0),
       scheduled_hours: Number(summary.scheduled_hours ?? summary.total_scheduled_hours ?? 0),
       payroll_impact_hours: Number(summary.payroll_impact_hours ?? summary.total_payroll_impact_hours ?? 0),
       efficiency: Number(summary.efficiency_percentage ?? summary.efficiency ?? 0),
@@ -1015,6 +1016,7 @@ export default function AdminDashboard() {
         absent: normalizedSummary.absent,
         late: normalizedSummary.late,
         undertime: normalizedSummary.undertime,
+        rest_days_worked: normalizedSummary.rest_days_worked,
         total_scheduled_hours: normalizedSummary.scheduled_hours,
         total_payroll_impact_hours: normalizedSummary.payroll_impact_hours,
         evaluation_avg: normalizedSummary.evaluation_avg,
@@ -1087,6 +1089,7 @@ export default function AdminDashboard() {
         summary: {
           ...nextSummary,
           efficiency: Number(nextSummary.efficiency_percentage ?? nextSummary.efficiency ?? 0),
+          rest_days_worked: Number(nextSummary.rest_days_worked ?? res.breakdown?.rest_days_worked ?? prev?.summary?.rest_days_worked ?? 0),
           performance_avg: nextSummary.performance_avg ?? res.breakdown?.performance_avg ?? null,
         },
         breakdown: {
@@ -1097,6 +1100,7 @@ export default function AdminDashboard() {
           absent: nextSummary.absent_count ?? nextSummary.absent ?? 0,
           late: nextSummary.late_count ?? nextSummary.late ?? 0,
           undertime: nextSummary.undertime_count ?? nextSummary.undertime ?? 0,
+          rest_days_worked: nextSummary.rest_days_worked ?? res.breakdown?.rest_days_worked ?? prev?.breakdown?.rest_days_worked ?? 0,
           total_scheduled_hours: nextSummary.scheduled_hours ?? 0,
           total_payroll_impact_hours: nextSummary.payroll_impact_hours ?? 0,
           evaluation_avg: nextSummary.evaluation_avg ?? res.breakdown?.evaluation_avg ?? prev?.breakdown?.evaluation_avg ?? null,
@@ -4202,6 +4206,9 @@ export default function AdminDashboard() {
                   { label: 'Absent', value: companyEfficiencyModalData.summary?.absent ?? 0, cls: 'from-rose-50/80 to-background border-rose-200/70 dark:from-rose-500/10 dark:border-rose-500/20' },
                   { label: 'Late', value: companyEfficiencyModalData.summary?.late ?? 0, cls: 'from-amber-50/80 to-background border-amber-200/70 dark:from-amber-500/10 dark:border-amber-500/20' },
                   { label: 'Undertime', value: companyEfficiencyModalData.summary?.undertime ?? 0, cls: 'from-yellow-50/80 to-background border-yellow-200/70 dark:from-yellow-500/10 dark:border-yellow-500/20' },
+                  ...(Number(companyEfficiencyModalData.summary?.rest_days_worked ?? companyEfficiencyModalData.breakdown?.rest_days_worked ?? 0) > 0
+                    ? [{ label: 'Rest Days Worked', value: Number(companyEfficiencyModalData.summary?.rest_days_worked ?? companyEfficiencyModalData.breakdown?.rest_days_worked ?? 0), cls: 'from-indigo-50/80 to-background border-indigo-200/70 dark:from-indigo-500/10 dark:border-indigo-500/20' }]
+                    : []),
                 ].map((metric) => (
                   <div key={metric.label} className={cn('flex flex-col items-center justify-center rounded-xl border bg-gradient-to-br p-4 shadow-sm text-center', metric.cls)}>
                     <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-muted-foreground">{metric.label}</p>
@@ -4221,6 +4228,9 @@ export default function AdminDashboard() {
                       { label: 'Absent employees', value: companyEfficiencyModalData.summary?.absent ?? 0, color: '#ef4444' },
                       { label: 'Late employees', value: companyEfficiencyModalData.summary?.late ?? 0, color: '#f97316' },
                       { label: 'Undertime employees', value: companyEfficiencyModalData.summary?.undertime ?? 0, color: '#eab308' },
+                      ...(Number(companyEfficiencyModalData.summary?.rest_days_worked ?? companyEfficiencyModalData.breakdown?.rest_days_worked ?? 0) > 0
+                        ? [{ label: 'Rest days worked', value: Number(companyEfficiencyModalData.summary?.rest_days_worked ?? companyEfficiencyModalData.breakdown?.rest_days_worked ?? 0), color: '#6366f1' }]
+                        : []),
                       { label: 'Total employees', value: companyEfficiencyModalData.summary?.employees ?? 0, color: '#3b82f6' },
                     ].map((item) => (
                       <div key={item.label} className="flex items-center justify-between border-b border-border/60 pb-1.5 last:border-0">
@@ -4245,6 +4255,9 @@ export default function AdminDashboard() {
                       { label: 'Absent', value: companyEfficiencyModalData.breakdown?.absent ?? 0 },
                       { label: 'Late', value: companyEfficiencyModalData.breakdown?.late ?? 0 },
                       { label: 'Undertime', value: companyEfficiencyModalData.breakdown?.undertime ?? 0 },
+                      ...(Number(companyEfficiencyModalData.breakdown?.rest_days_worked ?? companyEfficiencyModalData.summary?.rest_days_worked ?? 0) > 0
+                        ? [{ label: 'Rest Days Worked', value: Number(companyEfficiencyModalData.breakdown?.rest_days_worked ?? companyEfficiencyModalData.summary?.rest_days_worked ?? 0) }]
+                        : []),
                       { label: 'Total Scheduled Hours', value: `${(companyEfficiencyModalData.breakdown?.total_scheduled_hours ?? 0).toFixed(2)} hrs` },
                       { label: 'Total Payroll Impact Hours', value: `${(companyEfficiencyModalData.breakdown?.total_payroll_impact_hours ?? 0).toFixed(2)} hrs` },
                       {
@@ -4399,7 +4412,9 @@ export default function AdminDashboard() {
                                     'inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold leading-tight sm:text-[11px]',
                                     emp.status_code === 'present' || emp.status_code === 'present_with_ot'
                                       ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
-                                      : emp.status_code === 'late'
+                                      : emp.is_rest_day_worked
+                                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200'
+                                        : emp.status_code === 'late'
                                         ? 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200'
                                         : emp.status_code === 'absent'
                                           ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200'

@@ -171,8 +171,12 @@ class AttendanceDailySummaryService
 
         // Payroll impact via the SAME service as Attendance Monitoring
         $payrollImpactHours = null;
-        // Payroll impact: include eligible unworked holidays even without clock logs.
-        if (! $isFuture && ($hasTimeIn || $hasTimeOut || $leave !== null || $holiday !== null)) {
+        // Future days: only skip until a complete in/out pair exists (HR corrections, rest-day worked).
+        $hasCompletePunchPair = $hasTimeIn && $hasTimeOut;
+        if (
+            ($hasCompletePunchPair || ! $isFuture)
+            && ($hasTimeIn || $hasTimeOut || $leave !== null || $holiday !== null)
+        ) {
             $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
                 $user,
                 $dateKey,

@@ -333,7 +333,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 17) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 19) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -494,8 +494,13 @@ class EmployeeDashboardController extends Controller
             $dayLateMinutes = (int) ($summary['late_minutes'] ?? 0);
             $dayUndertimeMinutes = (int) ($summary['undertime_minutes'] ?? 0);
             $effectiveWorkedMinutes = $summary['worked_minutes'];
-            if ($expectedDayMinutes > 0) {
-                $totalPayrollImpactMinutes += max(0, (int) round(((float) ($summary['payroll_impact_hours'] ?? 0)) * 60));
+            $dayPayrollImpactMinutes = max(0, (int) round(((float) ($summary['payroll_impact_hours'] ?? 0)) * 60));
+            if (($summary['is_rest_day_worked'] ?? false) && $dayPayrollImpactMinutes > 0) {
+                // Rest day duty: baseline is reference-shift paid minutes (not in scheduled workdays).
+                $totalExpectedMinutes += $dayPayrollImpactMinutes;
+            }
+            if ($expectedDayMinutes > 0 || ($summary['is_rest_day_worked'] ?? false)) {
+                $totalPayrollImpactMinutes += $dayPayrollImpactMinutes;
             }
             $holidayPayPolicy = null;
             if ($holidayOnDate !== null) {
@@ -657,7 +662,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 17,
+                'schema_version' => 19,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,

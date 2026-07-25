@@ -183,6 +183,13 @@ function isScheduledWorkDay(day) {
   return !isAttendanceSummarySkipDay(day)
 }
 
+/** Daily breakdown / efficiency table: regular scheduled days plus rest days actually worked. */
+function isAttendanceEfficiencyDetailDay(day) {
+  if (!day?.date) return false
+  if (day.is_rest_day_worked) return true
+  return isScheduledWorkDay(day)
+}
+
 function formatAttendanceMetricPercent(count, base) {
   if (!base || base <= 0) return count > 0 ? '100.00' : '0.00'
   return ((count / base) * 100).toFixed(2)
@@ -232,6 +239,7 @@ function attendanceSummaryStatusKey(day) {
 }
 
 function attendanceSummaryStatusLabel(day) {
+  if (day?.is_rest_day_worked) return 'Rest Day Worked'
   const key = attendanceSummaryStatusKey(day)
   return ATTENDANCE_SUMMARY_SLICE_META[key]?.label || 'Present'
 }
@@ -1141,7 +1149,9 @@ export default function EmployeeDashboard() {
   const employeeClassification = summary?.classification || user?.classification || (employeeIsExecom ? 'EXECom' : null)
 
   const monthAttendanceMetrics = useMemo(() => {
-    const scheduledDays = Array.isArray(days) ? days.filter(isScheduledWorkDay).length : 0
+    const dayList = Array.isArray(days) ? days : []
+    const scheduledDays = dayList.filter(isScheduledWorkDay).length
+    const restDaysWorked = dayList.filter((d) => d?.is_rest_day_worked).length
     const rawExpectedHours = Number(summary?.expected_scheduled_hours ?? 0)
     const rawPayrollImpactHours = Number(summary?.payroll_impact_hours ?? 0)
     return {
@@ -1150,6 +1160,7 @@ export default function EmployeeDashboard() {
       late: summary?.late_count ?? 0,
       undertime: summary?.undertime_count ?? 0,
       scheduledDays,
+      restDaysWorked,
       efficiency: employeeIsExecom ? 100 : (summary?.attendance_efficiency_percentage ?? 0),
       expectedScheduledHours: rawExpectedHours,
       actualWorkedHours: summary?.actual_worked_hours ?? 0,
@@ -1229,7 +1240,7 @@ export default function EmployeeDashboard() {
 
   const attendanceSummaryModalDays = useMemo(
     () => (Array.isArray(days) ? days : [])
-      .filter(isScheduledWorkDay)
+      .filter(isAttendanceEfficiencyDetailDay)
       .sort((a, b) => String(a.date).localeCompare(String(b.date))),
     [days],
   )
@@ -3025,6 +3036,7 @@ export default function EmployeeDashboard() {
                       { label: 'Late days', value: monthAttendanceMetrics.lateDays, color: '#f97316' },
                       { label: 'Undertime days', value: monthAttendanceMetrics.undertimeDays, color: '#eab308' },
                       { label: 'Rest days', value: monthAttendanceMetrics.restDays, color: '#94a3b8' },
+                      { label: 'Rest days worked', value: monthAttendanceMetrics.restDaysWorked, color: '#6366f1' },
                       { label: 'Leave days', value: monthAttendanceMetrics.leaveDays, color: '#3b82f6' },
                       { label: 'Holidays', value: monthAttendanceMetrics.holidayDays, color: '#06b6d4' },
                     ].map((item) => (
@@ -3061,6 +3073,7 @@ export default function EmployeeDashboard() {
                         <>
                           {[
                             { label: 'Scheduled Work Days', value: expDays },
+                            { label: 'Rest Days Worked', value: monthAttendanceMetrics.restDaysWorked },
                             { label: 'Present Days', value: pdDays },
                             { label: 'Absent Days', value: absDays },
                             { label: 'Late Days', value: lateDays },

@@ -99,9 +99,18 @@ function getLocalDateStr() {
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
 }
 
+/** Future calendar day with HR-recorded in/out (e.g. rest day worked) — show full row, not "upcoming". */
+function dayHasRecordedAttendance(d) {
+  return Boolean(d?.is_rest_day_worked || (d?.time_in && d?.time_out))
+}
+
+function shouldMaskFutureAttendanceFields(d, todayKey) {
+  return d.date > todayKey && !dayHasRecordedAttendance(d)
+}
+
 /** Map `/attendance/summary` day rows to Employee Attendance table rows. */
 function mapSummaryDaysToRows(days, fromDate, toDate) {
-  const todayKey = new Date().toISOString().slice(0, 10)
+  const todayKey = getLocalDateStr()
   return (Array.isArray(days) ? days : [])
     .filter((d) => {
       if (fromDate && d.date < fromDate) return false
@@ -109,43 +118,43 @@ function mapSummaryDaysToRows(days, fromDate, toDate) {
       return true
     })
     .map((d) => {
-      const isFuture = d.date > todayKey
+      const maskFuture = shouldMaskFutureAttendanceFields(d, todayKey)
       const rawStatus = d.status || '—'
-      const status = isFuture ? 'upcoming' : rawStatus
+      const status = maskFuture ? 'upcoming' : rawStatus
       const lateLabel = d.late_label || (rawStatus === 'late' ? 'Late' : null)
       return {
         date: d.date,
         day_name: d.day_name || formatDayName(d.date),
-        time_in: isFuture ? null : d.time_in,
-        time_out: isFuture ? null : d.time_out,
-        formatted_time_in: isFuture ? null : d.formatted_time_in,
-        formatted_time_out: isFuture ? null : d.formatted_time_out,
-        virtual_time_out_from_ot: isFuture ? null : d.virtual_time_out_from_ot,
-        scheduled_regular_hours: isFuture ? null : d.scheduled_regular_hours,
-        schedule_in: isFuture ? null : d.schedule_in,
-        schedule_out: isFuture ? null : d.schedule_out,
-        schedule_label: isFuture ? null : d.schedule_label ?? null,
+        time_in: maskFuture ? null : d.time_in,
+        time_out: maskFuture ? null : d.time_out,
+        formatted_time_in: maskFuture ? null : d.formatted_time_in,
+        formatted_time_out: maskFuture ? null : d.formatted_time_out,
+        virtual_time_out_from_ot: maskFuture ? null : d.virtual_time_out_from_ot,
+        scheduled_regular_hours: maskFuture ? null : d.scheduled_regular_hours,
+        schedule_in: maskFuture ? null : d.schedule_in,
+        schedule_out: maskFuture ? null : d.schedule_out,
+        schedule_label: maskFuture ? null : d.schedule_label ?? null,
         is_rest_day: d.is_rest_day ?? false,
         is_rest_day_worked: d.is_rest_day_worked ?? false,
         employee_status_label: d.employee_status_label ?? null,
-        total_rendered_hours: isFuture ? null : d.total_rendered_hours,
-        total_hours: isFuture ? null : d.total_hours,
-        night_hours: isFuture ? null : d.night_hours,
+        total_rendered_hours: maskFuture ? null : d.total_rendered_hours,
+        total_hours: maskFuture ? null : d.total_hours,
+        night_hours: maskFuture ? null : d.night_hours,
         status,
         late_label: lateLabel,
-        late_minutes: isFuture ? null : d.late_minutes,
-        undertime_minutes: isFuture ? null : d.undertime_minutes,
-        overtime_minutes: isFuture ? null : d.overtime_minutes,
-        rendered_overtime_hours: isFuture ? null : d.rendered_overtime_hours,
-        actual_rendered_overtime_hours: isFuture ? null : d.actual_rendered_overtime_hours,
-        approved_overtime_hours: isFuture ? null : d.approved_overtime_hours,
-        payable_overtime_hours: isFuture ? null : d.payable_overtime_hours,
-        ot_payable_basis: isFuture ? null : d.ot_payable_basis,
-        overtime_reduction_reason: isFuture ? null : d.overtime_reduction_reason,
-        unapproved_overtime_hours: isFuture ? null : d.unapproved_overtime_hours,
-        overtime_status: isFuture ? null : d.overtime_status,
-        payroll_impact_hours: isFuture ? null : d.payroll_impact_hours,
-        overtime_hours: isFuture ? null : d.overtime_hours,
+        late_minutes: maskFuture ? null : d.late_minutes,
+        undertime_minutes: maskFuture ? null : d.undertime_minutes,
+        overtime_minutes: maskFuture ? null : d.overtime_minutes,
+        rendered_overtime_hours: maskFuture ? null : d.rendered_overtime_hours,
+        actual_rendered_overtime_hours: maskFuture ? null : d.actual_rendered_overtime_hours,
+        approved_overtime_hours: maskFuture ? null : d.approved_overtime_hours,
+        payable_overtime_hours: maskFuture ? null : d.payable_overtime_hours,
+        ot_payable_basis: maskFuture ? null : d.ot_payable_basis,
+        overtime_reduction_reason: maskFuture ? null : d.overtime_reduction_reason,
+        unapproved_overtime_hours: maskFuture ? null : d.unapproved_overtime_hours,
+        overtime_status: maskFuture ? null : d.overtime_status,
+        payroll_impact_hours: maskFuture ? null : d.payroll_impact_hours,
+        overtime_hours: maskFuture ? null : d.overtime_hours,
         presence_filing: d.presence_filing ?? null,
         presence_label: d.presence_label ?? null,
         presence_issue: d.presence_issue ?? null,

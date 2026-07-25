@@ -3181,7 +3181,7 @@ class AttendanceController extends Controller
     private function hydrateEmployeeSummaryPayrollImpact(User $user, array &$daysSlice, string $tz): void
     {
         foreach ($daysSlice as &$day) {
-            if (($day['status'] ?? '') === 'rest') {
+            if (($day['status'] ?? '') === 'rest' && empty($day['is_rest_day_worked'])) {
                 $day['payroll_impact_minutes'] = 0;
                 $day['payroll_impact_hours'] = 0.0;
 

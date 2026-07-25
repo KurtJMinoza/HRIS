@@ -305,4 +305,125 @@ class CompanyEfficiencyScheduleHoursTest extends TestCase
         $this->assertSame(8.0, $agg['total_scheduled_hours']);
         $this->assertSame(0.0, $agg['total_payroll_impact_hours']);
     }
+
+    public function test_rest_day_worked_counts_in_agg_and_efficiency_hours(): void
+    {
+        $ref = new ReflectionClass(CompanyEfficiencyService::class);
+        $accumulate = $ref->getMethod('accumulateDayStats');
+        $accumulate->setAccessible(true);
+        $service = app(CompanyEfficiencyService::class);
+
+        $employee = new \App\Models\User;
+        $employee->id = 1;
+        $agg = [
+            'scheduled_employees' => 0,
+            'present' => 0,
+            'absent' => 0,
+            'late' => 0,
+            'undertime' => 0,
+            'on_leave' => 0,
+            'rest_days_worked' => 0,
+            'total_scheduled_hours' => 0.0,
+            'total_payroll_impact_hours' => 0.0,
+        ];
+
+        $accumulate->invokeArgs($service, [
+            &$agg,
+            $employee,
+            'sat',
+            [
+                'status' => 'present_with_ot',
+                'status_label' => 'Rest Day Worked',
+                'schedule_in' => null,
+                'schedule_out' => null,
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 8.0,
+                'is_leave' => false,
+                'is_rest_day' => true,
+                'is_rest_day_worked' => true,
+                'is_holiday' => false,
+            ],
+            [
+                1 => [
+                    'mon' => [
+                        'in' => '08:00:00',
+                        'out' => '17:00:00',
+                        'break_start' => '12:00:00',
+                        'break_end' => '13:00:00',
+                        'breaks' => [
+                            ['start' => '12:00:00', 'end' => '13:00:00', 'is_paid' => false],
+                        ],
+                        'shift_type' => 'fixed',
+                    ],
+                ],
+            ],
+            null,
+        ]);
+
+        $this->assertSame(1, $agg['present']);
+        $this->assertSame(1, $agg['rest_days_worked']);
+        $this->assertSame(8.0, $agg['total_scheduled_hours']);
+        $this->assertSame(8.0, $agg['total_payroll_impact_hours']);
+    }
+
+    public function test_rest_day_worked_ot_does_not_inflate_efficiency_hours(): void
+    {
+        $ref = new ReflectionClass(CompanyEfficiencyService::class);
+        $accumulate = $ref->getMethod('accumulateDayStats');
+        $accumulate->setAccessible(true);
+        $service = app(CompanyEfficiencyService::class);
+
+        $employee = new \App\Models\User;
+        $employee->id = 1;
+        $agg = [
+            'scheduled_employees' => 0,
+            'present' => 0,
+            'absent' => 0,
+            'late' => 0,
+            'undertime' => 0,
+            'on_leave' => 0,
+            'rest_days_worked' => 0,
+            'total_scheduled_hours' => 0.0,
+            'total_payroll_impact_hours' => 0.0,
+        ];
+
+        $accumulate->invokeArgs($service, [
+            &$agg,
+            $employee,
+            'sat',
+            [
+                'status' => 'present_with_ot',
+                'status_label' => 'Rest Day Worked',
+                'schedule_in' => null,
+                'schedule_out' => null,
+                'late_minutes' => 0,
+                'undertime_minutes' => 0,
+                'payroll_impact_hours' => 11.0,
+                'is_leave' => false,
+                'is_rest_day' => true,
+                'is_rest_day_worked' => true,
+                'is_holiday' => false,
+            ],
+            [
+                1 => [
+                    'mon' => [
+                        'in' => '08:00:00',
+                        'out' => '17:00:00',
+                        'break_start' => '12:00:00',
+                        'break_end' => '13:00:00',
+                        'breaks' => [
+                            ['start' => '12:00:00', 'end' => '13:00:00', 'is_paid' => false],
+                        ],
+                        'shift_type' => 'fixed',
+                    ],
+                ],
+            ],
+            null,
+        ]);
+
+        // Expected baseline matches payroll impact so 11/11 = 100%, not 11/8 = 137.5%.
+        $this->assertSame(11.0, $agg['total_scheduled_hours']);
+        $this->assertSame(11.0, $agg['total_payroll_impact_hours']);
+    }
 }
