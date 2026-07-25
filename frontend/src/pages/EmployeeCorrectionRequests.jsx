@@ -34,6 +34,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
+import { useAuth } from '@/contexts/AuthContext'
+import AttendanceCorrections from '@/pages/AttendanceCorrections'
 import {
   deleteMyPresenceFiling,
   getMyPresenceFilingAttendanceDetail,
@@ -560,6 +562,21 @@ function CorrectionHistoryTimeline({ history }) {
 }
 
 export default function EmployeeCorrectionRequests() {
+  const { user } = useAuth()
+  const perms = new Set(user?.permissions ?? [])
+  // Heads/approvers: same shell as Leave — show For My Approval + My Filings tabs.
+  const shouldUseApprovalAwareCorrections =
+    perms.has('attendance.corrections.approve')
+    || Boolean(user?.can_view_assigned_approvals)
+
+  if (shouldUseApprovalAwareCorrections) {
+    return <AttendanceCorrections />
+  }
+
+  return <EmployeeCorrectionRequestsSelfService />
+}
+
+function EmployeeCorrectionRequestsSelfService() {
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()

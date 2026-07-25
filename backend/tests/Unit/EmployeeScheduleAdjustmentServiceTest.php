@@ -70,19 +70,106 @@ class EmployeeScheduleAdjustmentServiceTest extends TestCase
                 ->first();
             $this->assertSame('2026-06-15', $oldAssignment?->effective_end_date?->toDateString());
         } finally {
-            $assignmentIds = EmployeeScheduleAssignment::query()
-                ->where('employee_id', $employee->id)
-                ->pluck('id');
-            ScheduleAssignmentSnapshot::query()
-                ->whereIn('employee_schedule_assignment_id', $assignmentIds)
-                ->delete();
-            EmployeeScheduleAssignment::query()
-                ->whereIn('id', $assignmentIds)
-                ->delete();
+            $this->cleanupEmployee($employee);
             $oldSchedule->delete();
             $newSchedule->delete();
-            $employee->forceDelete();
         }
+    }
+
+    public function test_replace_overlaps_supersedes_same_start_open_ended_assignment(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Schedule assignment tables not available.');
+        }
+
+        $employee = User::factory()->create([
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => true,
+            'is_system_user' => false,
+            'is_hidden' => false,
+        ]);
+        $first = WorkingSchedule::create($this->schedulePayload('First 7-4', '07:00', '16:00', ['sun']));
+        $second = WorkingSchedule::create($this->schedulePayload('Second 8-5', '08:00', '17:00', ['sun']));
+
+        try {
+            $service = app(EmployeeScheduleAdjustmentService::class);
+            $service->apply([
+                'employee_ids' => [(int) $employee->id],
+                'schedule_template_id' => (int) $first->id,
+                'effective_start_date' => '2026-07-28',
+                'adjustment_reason' => 'Initial until further notice',
+                'replace_overlaps' => true,
+            ]);
+
+            $result = $service->apply([
+                'employee_ids' => [(int) $employee->id],
+                'schedule_template_id' => (int) $second->id,
+                'effective_start_date' => '2026-07-28',
+                'adjustment_reason' => 'Replace with 8-5 until further notice',
+                'replace_overlaps' => true,
+            ]);
+
+            $this->assertSame(1, $result['assigned_count']);
+            $this->assertSame([], $result['failed']);
+
+            $active = EmployeeScheduleAssignment::query()
+                ->active()
+                ->where('employee_id', $employee->id)
+                ->whereDate('effective_start_date', '2026-07-28')
+                ->get();
+            $this->assertCount(1, $active);
+            $this->assertSame((int) $second->id, (int) $active->first()->schedule_template_id);
+            $this->assertNull($active->first()->effective_end_date);
+
+            $superseded = EmployeeScheduleAssignment::query()
+                ->where('employee_id', $employee->id)
+                ->where('assignment_status', EmployeeScheduleAssignment::STATUS_SUPERSEDED)
+                ->whereDate('effective_start_date', '2026-07-28')
+                ->count();
+            $this->assertSame(1, $superseded);
+
+            $resolved = EmployeeScheduleResolver::resolveForDate($employee, '2026-07-28');
+            $this->assertSame('08:00:00', $resolved['tue']['in'] ?? null);
+            $this->assertSame('17:00:00', $resolved['tue']['out'] ?? null);
+
+            $third = WorkingSchedule::create($this->schedulePayload('Third 9-6', '09:00', '18:00', ['sun']));
+            $again = $service->apply([
+                'employee_ids' => [(int) $employee->id],
+                'schedule_template_id' => (int) $third->id,
+                'effective_start_date' => '2026-07-28',
+                'adjustment_reason' => 'Replace again with 9-6',
+                'replace_overlaps' => true,
+            ]);
+            $this->assertSame(1, $again['assigned_count']);
+            $this->assertSame([], $again['failed']);
+            $this->assertSame(
+                1,
+                EmployeeScheduleAssignment::query()
+                    ->where('employee_id', $employee->id)
+                    ->where('assignment_status', EmployeeScheduleAssignment::STATUS_SUPERSEDED)
+                    ->whereDate('effective_start_date', '2026-07-28')
+                    ->count()
+            );
+            $third->delete();
+        } finally {
+            $this->cleanupEmployee($employee);
+            $first->delete();
+            $second->delete();
+        }
+    }
+
+    private function cleanupEmployee(User $employee): void
+    {
+        $assignmentIds = EmployeeScheduleAssignment::query()
+            ->where('employee_id', $employee->id)
+            ->pluck('id');
+        ScheduleAssignmentSnapshot::query()
+            ->whereIn('employee_schedule_assignment_id', $assignmentIds)
+            ->delete();
+        EmployeeScheduleAssignment::query()
+            ->whereIn('id', $assignmentIds)
+            ->delete();
+        $employee->forceDelete();
     }
 
     private function schedulePayload(string $name, string $in, string $out, array $restDays): array

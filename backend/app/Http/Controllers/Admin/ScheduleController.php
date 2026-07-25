@@ -486,12 +486,18 @@ class ScheduleController extends Controller
                 : \App\Models\EmployeeScheduleAssignment::STATUS_ACTIVE,
         ]);
 
+        if (! empty($validated['save_as_draft'])) {
+            $message = 'Schedule adjustment saved as draft.';
+        } elseif ((int) ($result['assigned_count'] ?? 0) === 0 && ! empty($result['failed'][0]['reason'])) {
+            $message = 'No schedule adjustments applied. '.$result['failed'][0]['reason'];
+        } else {
+            $message = "{$result['assigned_count']} schedule adjustment(s) applied. Historical schedules remain unchanged.";
+        }
+
         return response()->json([
-            'message' => ! empty($validated['save_as_draft'])
-                ? 'Schedule adjustment saved as draft.'
-                : "{$result['assigned_count']} schedule adjustment(s) applied. Historical schedules remain unchanged.",
+            'message' => $message,
             ...$result,
-        ], ! empty($validated['save_as_draft']) ? 200 : 201);
+        ], ! empty($validated['save_as_draft']) || (int) ($result['assigned_count'] ?? 0) === 0 ? 200 : 201);
     }
 
     private function forgetEmployeeScheduleCaches(int $employeeId): void

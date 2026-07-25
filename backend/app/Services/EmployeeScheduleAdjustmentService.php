@@ -118,7 +118,7 @@ class EmployeeScheduleAdjustmentService
                     ->orderBy('effective_start_date')
                     ->get();
 
-                $blocking = $isActiveAssignment ? $this->blockingOverlaps($overlaps, $start, $end, $replaceOverlaps) : [];
+                $blocking = $isActiveAssignment ? $this->blockingOverlaps($overlaps, $replaceOverlaps) : [];
                 if ($blocking !== []) {
                     $failed[] = [
                         'employee_id' => (int) $employee->id,
@@ -129,6 +129,7 @@ class EmployeeScheduleAdjustmentService
 
                 if ($isActiveAssignment && $replaceOverlaps) {
                     $this->shortenOpenAssignments($overlaps, $start);
+                    $this->supersedeForwardAssignments($overlaps, $start, $end);
                 }
 
                 if ($isActiveAssignment) {
@@ -289,19 +290,14 @@ class EmployeeScheduleAdjustmentService
      * @param  Collection<int, EmployeeScheduleAssignment>  $overlaps
      * @return list<int>
      */
-    private function blockingOverlaps(Collection $overlaps, Carbon $start, ?Carbon $end, bool $replaceOverlaps): array
+    private function blockingOverlaps(Collection $overlaps, bool $replaceOverlaps): array
     {
-        if (! $replaceOverlaps) {
-            return $overlaps->pluck('id')->map(fn ($id) => (int) $id)->all();
+        // replace_overlaps: past rows are shortened, same-start/future overlaps are superseded.
+        if ($replaceOverlaps) {
+            return [];
         }
 
-        return $overlaps
-            ->filter(function (EmployeeScheduleAssignment $assignment) use ($start): bool {
-                return $assignment->effective_start_date->gte($start);
-            })
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
+        return $overlaps->pluck('id')->map(fn ($id) => (int) $id)->all();
     }
 
     /** @param Collection<int, EmployeeScheduleAssignment> $overlaps */
@@ -313,6 +309,58 @@ class EmployeeScheduleAdjustmentService
                 $assignment->forceFill(['effective_end_date' => $closeOn])->save();
             }
         }
+    }
+
+    /**
+     * When replacing, retire active assignments that start on/after the new window
+     * (e.g. an earlier "until further notice" row starting the same day).
+     *
+     * Unique key (employee_id, effective_start_date, assignment_status) allows only one
+     * superseded row per start date — purge older superseded twins before updating.
+     *
+     * @param  Collection<int, EmployeeScheduleAssignment>  $overlaps
+     */
+    private function supersedeForwardAssignments(Collection $overlaps, Carbon $start, ?Carbon $end): void
+    {
+        foreach ($overlaps as $assignment) {
+            if ($assignment->effective_start_date->lt($start)) {
+                continue;
+            }
+            if ($end !== null && $assignment->effective_start_date->gt($end)) {
+                continue;
+            }
+
+            $this->purgeSupersededForStart(
+                (int) $assignment->employee_id,
+                $assignment->effective_start_date->toDateString(),
+                (int) $assignment->id,
+            );
+
+            $assignment->forceFill([
+                'assignment_status' => EmployeeScheduleAssignment::STATUS_SUPERSEDED,
+            ])->save();
+        }
+    }
+
+    private function purgeSupersededForStart(int $employeeId, string $startDate, int $exceptId): void
+    {
+        $oldIds = EmployeeScheduleAssignment::query()
+            ->where('employee_id', $employeeId)
+            ->whereDate('effective_start_date', $startDate)
+            ->where('assignment_status', EmployeeScheduleAssignment::STATUS_SUPERSEDED)
+            ->where('id', '!=', $exceptId)
+            ->pluck('id');
+
+        if ($oldIds->isEmpty()) {
+            return;
+        }
+
+        ScheduleAssignmentSnapshot::query()
+            ->whereIn('employee_schedule_assignment_id', $oldIds)
+            ->delete();
+        EmployeeScheduleAssignment::query()
+            ->whereIn('id', $oldIds)
+            ->delete();
     }
 
     private function ensureHistoricalBaseline(User $employee, Carbon $newStart, array $payload): void

@@ -11,6 +11,7 @@ class EmployeeScheduleAssignment extends Model
 {
     public const STATUS_ACTIVE = 'active';
     public const STATUS_DRAFT = 'draft';
+    public const STATUS_SUPERSEDED = 'superseded';
 
     protected $fillable = [
         'employee_id',
