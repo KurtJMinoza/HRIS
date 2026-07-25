@@ -47,6 +47,15 @@ class BranchGeofence extends Model
     {
         $flush = static function (self $geofence): void {
             \App\Services\GeofenceValidationService::forgetBranchCache((int) $geofence->branch_id);
+            $ownerIds = array_values(array_unique(array_filter([
+                $geofence->owner_employee_id !== null ? (int) $geofence->owner_employee_id : null,
+                $geofence->wasChanged('owner_employee_id') && $geofence->getOriginal('owner_employee_id')
+                    ? (int) $geofence->getOriginal('owner_employee_id')
+                    : null,
+            ])));
+            foreach ($ownerIds as $ownerId) {
+                \App\Services\EmployeeGeofenceResolver::forgetEmployeeCache($ownerId);
+            }
         };
 
         static::saved($flush);

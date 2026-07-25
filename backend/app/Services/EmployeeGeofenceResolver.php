@@ -21,7 +21,19 @@ class EmployeeGeofenceResolver
 
     public static function forgetEmployeeCache(int $employeeId): void
     {
-        Cache::forget(self::employeeCacheKey($employeeId));
+        $base = self::employeeCacheKey($employeeId);
+        // Bump generation so dated action keys (…:YYYY-MM-DD:clock_in) stop hitting stale payloads.
+        $genKey = $base.':gen';
+        Cache::forever($genKey, ((int) Cache::get($genKey, 0)) + 1);
+        Cache::forget($base);
+
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $today = now($tz);
+        foreach (['clock_in', 'clock_out'] as $action) {
+            foreach ([-1, 0, 1] as $dayOffset) {
+                Cache::forget($base.':'.$today->copy()->addDays($dayOffset)->toDateString().':'.$action);
+            }
+        }
     }
 
     /**
@@ -34,9 +46,17 @@ class EmployeeGeofenceResolver
         }
 
         $at = $attendanceDateTime ?? now();
-        $cacheKey = self::employeeCacheKey($employeeId).':'.$at->toDateString().':'.$attendanceAction;
+        $cacheKey = $this->resolveCacheKey($employeeId, $at, $attendanceAction);
 
         return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, fn (): array => $this->resolveUncached($employeeId, $at, $attendanceAction));
+    }
+
+    private function resolveCacheKey(int $employeeId, CarbonInterface $at, string $attendanceAction): string
+    {
+        $base = self::employeeCacheKey($employeeId);
+        $gen = (int) Cache::get($base.':gen', 0);
+
+        return $base.':g'.$gen.':'.$at->toDateString().':'.$attendanceAction;
     }
 
     /**

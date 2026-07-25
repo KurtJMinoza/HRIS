@@ -152,6 +152,44 @@ class EmployeeGeofenceAssignmentTest extends TestCase
         $this->assertSame('blocked', $result['validation_status']);
     }
 
+    public function test_owned_employee_geofence_is_used_after_shared_branch_geofence_disabled(): void
+    {
+        $shared = $this->createCircle('Branch Shared Office', 150);
+        // Warm empty-ish path then create personal map (cache must not stick on old empty allow-list).
+        app(\App\Services\EmployeeGeofenceResolver::class)->resolveForAttendance((int) $this->employee->id, now(), 'clock_in');
+
+        $personal = BranchGeofence::query()->create([
+            'company_id' => $this->branch->company_id,
+            'branch_id' => $this->branch->id,
+            'name' => 'Employee Personal Map',
+            'type' => 'circle',
+            'device_scope' => 'all_devices',
+            'center_lat' => 7.0,
+            'center_lng' => 125.0,
+            'radius_meters' => 150,
+            'is_active' => true,
+            'status' => 'active',
+            'enforcement_mode' => 'enforce',
+            'priority' => 1,
+            'accuracy_threshold_meters' => 150,
+            'ownership_type' => 'employee_specific',
+            'owner_employee_id' => (int) $this->employee->id,
+        ]);
+        $this->assign($this->employee, $personal, ['is_primary' => true]);
+
+        $shared->forceFill(['status' => 'inactive', 'is_active' => false])->save();
+        GeofenceValidationService::forgetBranchCache((int) $this->branch->id);
+
+        $result = $this->service->validateForEmployee($this->employee, 7.0, 125.0, 20, [
+            'device_type' => 'mobile',
+            'log' => false,
+        ]);
+
+        $this->assertTrue($result['allowed']);
+        $this->assertSame('inside', $result['validation_status']);
+        $this->assertSame((int) $personal->id, (int) ($result['matched_geofence_id'] ?? 0));
+    }
+
     private function assign(User $employee, BranchGeofence $geofence, array $overrides = []): EmployeeGeofenceAssignment
     {
         return EmployeeGeofenceAssignment::query()->create([
