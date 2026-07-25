@@ -870,6 +870,7 @@ class EmployeeDashboardController extends Controller
             if ($schedule !== null) {
                 return [
                     'effective_from' => $futureAssignment->effective_start_date?->toDateString(),
+                    'effective_to' => $futureAssignment->effective_end_date?->toDateString(),
                     'schedule' => $schedule,
                 ];
             }
@@ -888,8 +889,17 @@ class EmployeeDashboardController extends Controller
             return null;
         }
 
+        // Match assignment window when pending legacy fields mirror a future assignment.
+        $pendingEnd = EmployeeScheduleAssignment::query()
+            ->active()
+            ->where('employee_id', (int) $user->id)
+            ->whereDate('effective_start_date', $user->pending_schedule_effective_from->toDateString())
+            ->orderByDesc('id')
+            ->value('effective_end_date');
+
         return [
             'effective_from' => $user->pending_schedule_effective_from->toDateString(),
+            'effective_to' => $pendingEnd ? Carbon::parse($pendingEnd)->toDateString() : null,
             'schedule' => $this->workingScheduleSummary($user->pendingWorkingSchedule),
         ];
     }

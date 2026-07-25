@@ -1622,8 +1622,9 @@ export default function EmployeeDashboard() {
     if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') return 'Rest Day'
     if (status === 'absent' || status === '—') {
       if (isRestDay(dateKey)) return 'Rest Day'
-      if (dateKey === todayKey && status === 'absent' && !isPastAbsentCutoff()) return 'Not started'
-      if (status === 'absent') return 'Missed clock-in'
+      // Scheduled workday with no punches yet (today before cutoff).
+      if (dateKey === todayKey && !isPastAbsentCutoff()) return 'Not started'
+      if (status === 'absent' || status === '—') return 'Missed clock-in'
     }
     if (status === 'clocked_in') {
       const lm = typeof lateMinutes === 'number' ? lateMinutes : 0
@@ -1810,7 +1811,13 @@ export default function EmployeeDashboard() {
               <div className="min-w-0">
                 <p className="font-semibold text-foreground">Upcoming schedule change</p>
                 <p className="mt-0.5 leading-relaxed text-muted-foreground">
-                  Starting <span className="font-semibold tabular-nums text-foreground">{formatScheduleChangeDate(pendingScheduleChange.effective_from)}</span>, your schedule will update to{' '}
+                  Starting <span className="font-semibold tabular-nums text-foreground">{formatScheduleChangeDate(pendingScheduleChange.effective_from)}</span>
+                  {pendingScheduleChange.effective_to ? (
+                    <>
+                      {' '}until <span className="font-semibold tabular-nums text-foreground">{formatScheduleChangeDate(pendingScheduleChange.effective_to)}</span>
+                    </>
+                  ) : null}
+                  , your schedule will update to{' '}
                   <span className="font-semibold text-foreground">{pendingScheduleChange.schedule.name}</span>
                   {pendingScheduleRange ? (
                     <span className="text-muted-foreground"> ({pendingScheduleRange})</span>
@@ -2767,6 +2774,30 @@ export default function EmployeeDashboard() {
                   <>
                     <div className="grid gap-2 text-sm">
                       {(() => {
+                        const scheduleIn = selectedDayDetails.schedule_in
+                        const scheduleOut = selectedDayDetails.schedule_out
+                        const scheduleLabel = selectedDayDetails.schedule_label
+                        if (scheduleLabel === 'Rest Day' || selectedDayDetails.is_rest_day) {
+                          return (
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+                              <span className="font-medium text-muted-foreground">Schedule</span>
+                              <span className="font-semibold text-foreground">Rest Day</span>
+                            </div>
+                          )
+                        }
+                        if (scheduleIn && scheduleOut) {
+                          return (
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+                              <span className="font-medium text-muted-foreground">Schedule</span>
+                              <span className="font-semibold tabular-nums text-foreground">
+                                {formatTime(scheduleIn)} - {formatTime(scheduleOut)}
+                              </span>
+                            </div>
+                          )
+                        }
+                        return null
+                      })()}
+                      {(() => {
                         const timeIn = selectedDayDetails.formatted_time_in || selectedDayDetails.time_in
                         const timeOut = selectedDayDetails.formatted_time_out || selectedDayDetails.time_out
                         return (
@@ -2860,7 +2891,9 @@ export default function EmployeeDashboard() {
                         !(selectedDayDetails.formatted_time_out || selectedDayDetails.time_out) &&
                         getAttendanceTotalHours(selectedDayDetails) == null && (
                         <p className="rounded-xl border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-                          No clock in/out details captured for this day.
+                          {selectedDayDetails.schedule_in && selectedDayDetails.schedule_out
+                            ? 'No clock in/out yet for this scheduled day.'
+                            : 'No clock in/out details captured for this day.'}
                         </p>
                       )}
                     </div>

@@ -403,7 +403,6 @@ export default function AdminFinalizePayrollPage() {
     } else {
       const hasExistingPreview = hasPreviewRef.current
       setLoading(!hasExistingPreview)
-      setRefreshingCalculation(hasExistingPreview)
       setPreviewError('')
       ;(async () => {
         try {
@@ -427,7 +426,6 @@ export default function AdminFinalizePayrollPage() {
         } finally {
           if (!cancelled) {
             setLoading(false)
-            setRefreshingCalculation(false)
           }
         }
       })()
@@ -558,6 +556,50 @@ export default function AdminFinalizePayrollPage() {
   useEffect(() => {
     setPage(1)
   }, [debouncedSearch])
+
+  const handleRefreshCalculation = useCallback(async () => {
+    // Finalized (and non-draft) payroll is read-only — refresh is draft-only.
+    if (!canFinalizePayroll || refreshingCalculation || periodFinalized || loading) return
+    if (String(preview?.batch_run?.status || '').toLowerCase() !== 'draft') return
+    if (isAdmin && !hasScope(effectivePayload)) return
+
+    setRefreshingCalculation(true)
+    setPreviewError('')
+    try {
+      // Dedicated call (not via preview effect) so dependency churn cannot abort/retry and double-run.
+      const data = await adminPreviewFinalizePayroll({
+        ...effectivePayload,
+        force_refresh: true,
+        page,
+        per_page: pageSize,
+        search: debouncedSearch || undefined,
+      })
+      setPreview(data)
+      hasPreviewRef.current = true
+      toastRef.current({
+        title: 'Calculation refreshed',
+        description: 'Draft amounts on this page were recalculated from current attendance and pay settings.',
+      })
+    } catch (e) {
+      const fallback = 'Server request timed out. Check if the backend API is running and reachable.'
+      const message = String(e?.message || '').trim() || fallback
+      setPreviewError(message)
+      toastRef.current({ title: 'Refresh failed', description: message, variant: 'destructive' })
+    } finally {
+      setRefreshingCalculation(false)
+    }
+  }, [
+    canFinalizePayroll,
+    refreshingCalculation,
+    periodFinalized,
+    loading,
+    preview?.batch_run?.status,
+    isAdmin,
+    effectivePayload,
+    page,
+    pageSize,
+    debouncedSearch,
+  ])
 
   const handleFinalize = async () => {
     if (!canFinalizePayroll || !reviewConfirmed || periodFinalized) return
@@ -1100,18 +1142,22 @@ export default function AdminFinalizePayrollPage() {
                 Delete Payroll
               </Button>
             ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
-              onClick={() => setRefreshToken(String(Date.now()))}
-              disabled={loading || refreshingCalculation || periodFinalized}
-              title={periodFinalized ? 'Preview refresh is disabled while this payroll is locked.' : undefined}
-            >
-              <RefreshCw className={cn('h-4 w-4', (loading || refreshingCalculation) ? 'animate-spin' : '')} />
-              {refreshingCalculation ? 'Refreshing calculation...' : 'Refresh calculation'}
-            </Button>
+            {draftReady && !periodFinalized ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
+                onClick={() => {
+                  void handleRefreshCalculation()
+                }}
+                disabled={loading || refreshingCalculation}
+                title="Recalculate draft payslips on this page from current attendance and pay settings."
+              >
+                <RefreshCw className={cn('h-4 w-4', refreshingCalculation ? 'animate-spin' : '')} />
+                {refreshingCalculation ? 'Refreshing calculation...' : 'Refresh calculation'}
+              </Button>
+            ) : null}
           </div>
         </div>
 

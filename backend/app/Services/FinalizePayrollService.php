@@ -10,6 +10,7 @@ use App\Models\Payslip;
 use App\Models\UserAdminActivityLog;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -224,7 +225,8 @@ class FinalizePayrollService
                     : [];
 
                 if ($stored instanceof Payslip) {
-                    if (! in_array((string) $stored->status, Payslip::lockingStatuses(), true)) {
+                    if ((bool) ($periodInput['force_refresh'] ?? false)
+                        && ! in_array((string) $stored->status, Payslip::lockingStatuses(), true)) {
                         try {
                             $stored = $this->payslipService->refreshDraftPayslipFromLiveComputation($stored, $employee);
                         } catch (Throwable $e) {
@@ -615,8 +617,21 @@ class FinalizePayrollService
         }
 
         if ((string) $run->status === PayrollBatchRun::STATUS_DRAFT) {
-            $this->syncMissingEligibleEmployeesToDraftBatch($run);
-            $this->refreshDraftPayslipsForPreview($run);
+            $forceRefresh = (bool) ($periodInput['force_refresh'] ?? false);
+            if ($forceRefresh) {
+                // Manual "Refresh calculation" only. Skip syncMissing (can re-generate
+                // payslips and feels like a loop) and guard against concurrent refreshes.
+                $lock = Cache::lock('payroll-draft-force-refresh:'.(int) $run->id, 180);
+                if ($lock->get()) {
+                    try {
+                        $this->refreshDraftPayslipsForPreview($run, $currentPage, $limit, $search);
+                    } finally {
+                        $lock->release();
+                    }
+                }
+            } else {
+                $this->syncMissingEligibleEmployeesToDraftBatch($run);
+            }
         } else {
             $this->attachMatchingPayslipsToBatchRun($run);
         }
@@ -667,6 +682,7 @@ class FinalizePayrollService
                 continue;
             }
             if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED
+                && (string) $run->status === PayrollBatchRun::STATUS_DRAFT
                 && $this->shouldRepairStoredDraftForPreview($stored)) {
                 try {
                     $employee->loadMissing([
@@ -2783,51 +2799,60 @@ class FinalizePayrollService
         return $updated;
     }
 
-    private function refreshDraftPayslipsForPreview(PayrollBatchRun $run): void
+    private function refreshDraftPayslipsForPreview(PayrollBatchRun $run, int $page = 1, int $perPage = 12, ?string $search = null): void
     {
         if ((string) $run->status !== PayrollBatchRun::STATUS_DRAFT) {
             return;
         }
 
-        $baseQuery = $this->payslipQueryForBatchRun($run)
-            ->whereNull('voided_at');
-        $uniqueIds = $this->payslipService->latestUniquePayslipIdsForQuery($baseQuery);
-        if ($uniqueIds === []) {
-            return;
+        $limit = max(1, min(100, $perPage));
+        $offset = (max(1, $page) - 1) * $limit;
+
+        // Refresh only the visible page. Full-batch live recompute was ~30s+ and looked like a loop.
+        $query = $this->payslipQueryForBatchRun($run)->whereNull('voided_at');
+        if ($search !== null && trim($search) !== '') {
+            $like = '%'.trim($search).'%';
+            $query->whereHas('employee', function ($employeeQuery) use ($like) {
+                $this->applyEmployeeNameSearch($employeeQuery, $like);
+            });
         }
 
-        Payslip::query()
-            ->whereIn('id', $uniqueIds)
+        $payslips = $this->orderPayslipQueryByEmployeeName($query)
             ->with([
                 'employee:id,name,first_name,middle_name,last_name,suffix,email,employee_code,department,position,profile_image,role,company_id,branch_id,department_id,pay_cycle_id,monthly_salary,monthly_rate,daily_rate,working_schedule_id,schedule,employment_type,employment_status,is_active',
                 'employee.departmentRelation:id,name',
             ])
-            ->chunkById(50, function ($payslips) use ($run): void {
-                foreach ($payslips as $payslip) {
-                    $employee = $payslip->employee;
-                    if (! $employee instanceof User) {
-                        continue;
-                    }
+            ->offset($offset)
+            ->limit($limit)
+            ->get();
 
-                    try {
-                        $employee->loadMissing([
-                            'company',
-                            'branch',
-                            'payCycle',
-                            'governmentIds',
-                            'workingSchedule',
-                        ]);
-                        $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
-                    } catch (Throwable $e) {
-                        Log::warning('Payroll draft live refresh failed before preview totals', [
-                            'payroll_run_id' => (int) $run->id,
-                            'payslip_id' => (int) $payslip->id,
-                            'employee_id' => (int) $employee->id,
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                }
-            });
+        foreach ($payslips as $payslip) {
+            $employee = $payslip->employee;
+            if (! $employee instanceof User) {
+                continue;
+            }
+            if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+                continue;
+            }
+
+            try {
+                $employee->loadMissing([
+                    'company',
+                    'branch',
+                    'payCycle',
+                    'governmentIds',
+                    'workingSchedule',
+                ]);
+                $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+            } catch (Throwable $e) {
+                Log::warning('Payroll draft live refresh failed before preview totals', [
+                    'payroll_run_id' => (int) $run->id,
+                    'payslip_id' => (int) $payslip->id,
+                    'employee_id' => (int) $employee->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**

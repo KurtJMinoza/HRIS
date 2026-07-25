@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\EmployeeScheduleAssignment;
 use App\Models\ScheduleRequest;
 use App\Models\ScheduleRequestApprovalAudit;
 use App\Models\User;
@@ -234,12 +235,42 @@ class MyScheduleController extends Controller
      */
     protected function pendingScheduleChangeSummary(User $user): ?array
     {
+        $today = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfDay();
+
+        $futureAssignment = EmployeeScheduleAssignment::query()
+            ->active()
+            ->where('employee_id', (int) $user->id)
+            ->whereDate('effective_start_date', '>', $today->toDateString())
+            ->with(['template', 'snapshot'])
+            ->orderBy('effective_start_date')
+            ->orderBy('id')
+            ->first();
+
+        if ($futureAssignment instanceof EmployeeScheduleAssignment) {
+            $schedule = null;
+            if ($futureAssignment->template) {
+                $schedule = $this->workingScheduleSummary($futureAssignment->template);
+            } elseif (is_array($futureAssignment->snapshot?->schedule_payload) && $futureAssignment->snapshot->schedule_payload !== []) {
+                $schedule = $this->scheduleSummaryFromResolvedDays($futureAssignment->snapshot->schedule_payload);
+                if ($schedule !== null && $futureAssignment->snapshot?->schedule_name) {
+                    $schedule['name'] = $futureAssignment->snapshot->schedule_name;
+                }
+            }
+
+            if ($schedule !== null) {
+                return [
+                    'effective_from' => $futureAssignment->effective_start_date?->toDateString(),
+                    'effective_to' => $futureAssignment->effective_end_date?->toDateString(),
+                    'schedule' => $schedule,
+                ];
+            }
+        }
+
         $user->loadMissing('pendingWorkingSchedule');
         if (! $user->pending_working_schedule_id || ! $user->pending_schedule_effective_from) {
             return null;
         }
 
-        $today = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfDay();
         if ($user->pending_schedule_effective_from->copy()->startOfDay()->lessThanOrEqualTo($today)) {
             return null;
         }
@@ -249,8 +280,16 @@ class MyScheduleController extends Controller
             return null;
         }
 
+        $pendingEnd = EmployeeScheduleAssignment::query()
+            ->active()
+            ->where('employee_id', (int) $user->id)
+            ->whereDate('effective_start_date', $user->pending_schedule_effective_from->toDateString())
+            ->orderByDesc('id')
+            ->value('effective_end_date');
+
         return [
             'effective_from' => $user->pending_schedule_effective_from->toDateString(),
+            'effective_to' => $pendingEnd ? Carbon::parse($pendingEnd)->toDateString() : null,
             'schedule' => $this->workingScheduleSummary($pending),
         ];
     }

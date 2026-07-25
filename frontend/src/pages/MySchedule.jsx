@@ -422,7 +422,13 @@ export default function MySchedule() {
         <div className="rounded-xl border border-border bg-muted/25 px-4 py-3 text-sm text-card-foreground shadow-sm">
           <p className="font-semibold text-foreground">Upcoming schedule change</p>
           <p className="mt-1 leading-relaxed text-muted-foreground">
-            Starting <span className="font-semibold tabular-nums text-foreground">{formatShortDate(pendingChange.effective_from)}</span>, your schedule will update to{' '}
+            Starting <span className="font-semibold tabular-nums text-foreground">{formatShortDate(pendingChange.effective_from)}</span>
+            {pendingChange.effective_to ? (
+              <>
+                {' '}until <span className="font-semibold tabular-nums text-foreground">{formatShortDate(pendingChange.effective_to)}</span>
+              </>
+            ) : null}
+            , your schedule will update to{' '}
             <span className="font-semibold text-foreground">{pendingChange.schedule.name}</span>
             {pendingChange.schedule.time_in && pendingChange.schedule.time_out ? (
               <span className="text-muted-foreground">

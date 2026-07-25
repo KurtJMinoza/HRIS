@@ -47,6 +47,7 @@ class PayrollFinalizeController extends Controller
             'is_final_pay' => ['nullable', 'boolean'],
             'password_protect' => ['nullable', 'boolean'],
             'refresh_token' => ['nullable', 'string', 'max:120'],
+            'force_refresh' => ['nullable', 'boolean'],
             'payroll_batch_run_id' => ['nullable', 'integer', 'exists:payroll_batch_runs,id'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -74,10 +75,27 @@ class PayrollFinalizeController extends Controller
             'is_final_pay' => $v['is_final_pay'] ?? false,
             'password_protect' => (bool) ($v['password_protect'] ?? false),
             'refresh_token' => $v['refresh_token'] ?? null,
+            'force_refresh' => (bool) ($v['force_refresh'] ?? false),
             'payroll_batch_run_id' => isset($v['payroll_batch_run_id']) ? (int) $v['payroll_batch_run_id'] : null,
         ];
 
         // Reference date normalization is handled inside FinalizePayrollService (scope-safe).
+
+        if (! empty($periodInput['force_refresh']) && ! empty($periodInput['payroll_batch_run_id'])) {
+            $refreshRun = PayrollBatchRun::query()->find((int) $periodInput['payroll_batch_run_id']);
+            if ($refreshRun instanceof PayrollBatchRun
+                && (string) $refreshRun->status === PayrollBatchRun::STATUS_FINALIZED) {
+                return response()->json([
+                    'message' => 'Finalized payroll cannot be refreshed. Only draft payroll can be recalculated.',
+                ], 422);
+            }
+            if ($refreshRun instanceof PayrollBatchRun
+                && (string) $refreshRun->status !== PayrollBatchRun::STATUS_DRAFT) {
+                return response()->json([
+                    'message' => 'Refresh calculation is only available for draft payroll.',
+                ], 422);
+            }
+        }
 
         try {
             Log::info('Payroll finalize preview: request accepted', [
