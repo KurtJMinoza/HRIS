@@ -116,6 +116,42 @@ class EmployeeGeofenceAssignmentTest extends TestCase
         $this->assertSame('blocked', $result['validation_status']);
     }
 
+    public function test_unassigned_employee_is_validated_against_shared_branch_geofence(): void
+    {
+        $this->createCircle('Branch Shared Office', 150);
+
+        $result = $this->service->validateForEmployee($this->employee, 7.0, 125.0, 20, [
+            'device_type' => 'mobile',
+            'log' => false,
+        ]);
+
+        $this->assertTrue($result['allowed']);
+        $this->assertSame('inside', $result['validation_status']);
+    }
+
+    public function test_unassigned_employee_does_not_use_other_employee_specific_geofence(): void
+    {
+        $owner = User::factory()->create([
+            'company_id' => $this->branch->company_id,
+            'branch_id' => $this->branch->id,
+            'is_active' => true,
+        ]);
+        $personal = $this->createCircle('Other Employee Map', 150);
+        $personal->forceFill([
+            'ownership_type' => 'employee_specific',
+            'owner_employee_id' => (int) $owner->id,
+        ])->save();
+        GeofenceValidationService::forgetBranchCache((int) $this->branch->id);
+
+        $result = $this->service->validateForEmployee($this->employee, 7.0, 125.0, 20, [
+            'device_type' => 'mobile',
+            'log' => false,
+        ]);
+
+        $this->assertFalse($result['allowed']);
+        $this->assertSame('blocked', $result['validation_status']);
+    }
+
     private function assign(User $employee, BranchGeofence $geofence, array $overrides = []): EmployeeGeofenceAssignment
     {
         return EmployeeGeofenceAssignment::query()->create([

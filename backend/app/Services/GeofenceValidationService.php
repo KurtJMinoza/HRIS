@@ -194,7 +194,22 @@ class GeofenceValidationService
                 ]);
             }
 
-            if (($resolved['no_assignment_policy'] ?? 'block') === 'use_branch_default') {
+            // No personal assignment: still honor shared branch geofences (employee-specific maps stay assignment-only).
+            $sharedBranchGeofences = $branch
+                ? $this->matchingSharedActiveGeofencesForBranch((int) $branch->id, $context['device_type'] ?? null)
+                : [];
+            if ($sharedBranchGeofences !== []) {
+                return $this->validateAssignedGeofences(
+                    $branch,
+                    $sharedBranchGeofences,
+                    $latitude,
+                    $longitude,
+                    $accuracyMeters,
+                    $context,
+                );
+            }
+
+            if (($resolved['no_assignment_policy'] ?? 'use_branch_default') === 'use_branch_default') {
                 return $this->validateBranchLocation($branch, $latitude, $longitude, $accuracyMeters, $context);
             }
 
@@ -449,7 +464,7 @@ class GeofenceValidationService
             ]);
         }
 
-        $geofences = $this->matchingActiveGeofencesForBranch(
+        $geofences = $this->matchingSharedActiveGeofencesForBranch(
             (int) $branch->id,
             $context['device_type'],
         );
@@ -1002,6 +1017,31 @@ class GeofenceValidationService
                 $device,
             ),
         ));
+    }
+
+    /**
+     * Shared branch geofences only (excludes employee-specific maps).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function matchingSharedActiveGeofencesForBranch(int $branchId, ?string $deviceType): array
+    {
+        return array_values(array_filter(
+            $this->matchingActiveGeofencesForBranch($branchId, $deviceType),
+            fn (array $geofence): bool => ! $this->isEmployeeSpecificGeofenceRow($geofence),
+        ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $geofence
+     */
+    private function isEmployeeSpecificGeofenceRow(array $geofence): bool
+    {
+        if (($geofence['ownership_type'] ?? 'shared') === 'employee_specific') {
+            return true;
+        }
+
+        return isset($geofence['owner_employee_id']) && (int) $geofence['owner_employee_id'] > 0;
     }
 
     public function deviceScopeMatches(string $scope, string $deviceType): bool

@@ -170,7 +170,7 @@ class EmployeeGeofenceResolver
             return 'block';
         }
 
-        return (string) (GeofenceGlobalSetting::query()->find(1)?->no_assignment_policy ?? 'block');
+        return (string) (GeofenceGlobalSetting::query()->find(1)?->no_assignment_policy ?? 'use_branch_default');
     }
 
     public function noAssignmentRequiresGeofence(): bool
