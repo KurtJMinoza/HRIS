@@ -75,9 +75,9 @@ class EmployeeStatusService
             $payload['regularization_date'] = $regularizationDate->toDateString();
         }
 
-        if ($resolved === EmploymentStatus::Regular) {
-            $payload['employment_status_effective_date'] = $regularizationDate->toDateString();
-        } elseif (! $employee->employment_status_effective_date) {
+        // Status effective date is admin/HR managed — never auto-fill hire+6 months.
+        // Only seed a blank field from hire date so leave-credit anchors have a starting value.
+        if (! $employee->employment_status_effective_date) {
             $payload['employment_status_effective_date'] = Carbon::parse($employee->hire_date)->toDateString();
         }
 

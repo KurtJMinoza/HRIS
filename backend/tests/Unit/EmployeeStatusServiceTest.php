@@ -212,7 +212,8 @@ class EmployeeStatusServiceTest extends TestCase
 
         $this->assertSame(EmploymentStatus::Regular->value, $resolved->employment_status);
         $this->assertSame('2024-01-03', $resolved->regularization_date?->toDateString());
-        $this->assertSame('2024-01-03', $resolved->employment_status_effective_date?->toDateString());
+        // Status effective date is not auto-filled from hire+6; blank seeds from hire date only.
+        $this->assertSame('2023-07-03', $resolved->employment_status_effective_date?->toDateString());
 
         Carbon::setTestNow();
     }

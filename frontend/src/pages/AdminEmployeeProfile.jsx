@@ -2053,21 +2053,16 @@ export default function AdminEmployeeProfile() {
     const today = new Date()
     const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate())
     const hireDate = parseIsoDateOnly(form.hire_date)
-    const statusEffectiveDate = parseIsoDateOnly(form.employment_status_effective_date)
 
     const hireMessages = []
-    const statusMessages = []
+    // Status effective date is unrestricted — admins may set any past or future date.
 
     if (hireDate && hireDate.getTime() > todayDateOnly.getTime()) {
       hireMessages.push({ tone: 'error', text: 'Hire Date cannot be in the future.' })
     }
 
-    if (statusEffectiveDate && statusEffectiveDate.getTime() > todayDateOnly.getTime()) {
-      statusMessages.push({ tone: 'error', text: 'Status Effective Date cannot be in the future.' })
-    }
-
-    return { hireMessages, statusMessages }
-  }, [form.hire_date, form.employment_status_effective_date])
+    return { hireMessages, statusMessages: [] }
+  }, [form.hire_date])
 
   const liveLeaveCreditsBlock = useMemo(() => {
     if (!leaveCreditsBlock || typeof leaveCreditsBlock !== 'object') return leaveCreditsBlock
@@ -5128,13 +5123,7 @@ export default function AdminEmployeeProfile() {
                     value={form.employment_status_effective_date || ''}
                     onChange={(e) => setForm((f) => ({ ...f, employment_status_effective_date: e.target.value }))}
                   />
-                  <div className="space-y-2">
-                    {employmentDateValidation.statusMessages.map((message, idx) => (
-                      <InlineValidationMessage key={`status-effective-msg-${idx}`} tone={message.tone}>
-                        {message.text}
-                      </InlineValidationMessage>
-                    ))}
-                  </div>
+                  <p className="text-sm text-muted-foreground">Any date is allowed (past or future).</p>
                 </div>
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2 text-base text-muted-foreground">
