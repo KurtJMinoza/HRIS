@@ -1,5 +1,5 @@
 export const PROFILE_PHOTO_ACCEPT = 'image/jpeg,image/jpg,image/png,image/gif,image/webp'
-export const PROFILE_PHOTO_MAX_MB = 2
+export const PROFILE_PHOTO_MAX_MB = 20
 
 const ALLOWED_PROFILE_PHOTO_TYPES = new Set([
   'image/jpeg',
@@ -27,4 +27,4 @@ export function validateProfilePhotoFile(file, maxMb = PROFILE_PHOTO_MAX_MB) {
 }
 
 export const PROFILE_PHOTO_HINT =
-  'JPEG, PNG, GIF, or WebP up to 2 MB. Animated GIFs upload as-is (no crop).'
+  'JPEG, PNG, GIF, or WebP up to 20 MB. Animated GIFs upload as-is (no crop).'
