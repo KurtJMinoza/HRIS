@@ -30,6 +30,11 @@ export function isRegularEmploymentStatus(raw) {
   return s === 'regular' || s === 'active'
 }
 
+/** Leave types that draw from the paid leave-credit pool. */
+export function formConsumesLeaveCredits(type) {
+  return ['vacation', 'sick', 'emergency', 'other', 'half_day'].includes(String(type || '').toLowerCase())
+}
+
 /**
  * @param {Record<string, unknown>} emp — admin employee list / preview row (API employeeResponse)
  * @returns {{ remaining: number, annual: number, showEligibleBadge: boolean, fractionLabel: string, title: string }}

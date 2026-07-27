@@ -353,10 +353,11 @@ class EmployeeLeaveController extends Controller
             'to_date' => ['nullable', 'date'],
             'status' => ['nullable', 'string', 'in:pending,approved,rejected'],
             'dashboard_lite' => ['nullable', 'boolean'],
-            'per_page' => ['nullable', 'integer', 'in:10,25,50'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
         $dashboardLite = $request->boolean('dashboard_lite');
         $perPage = (int) ($validated['per_page'] ?? ($dashboardLite ? 10 : 25));
+        $perPage = max(1, min(100, $perPage));
 
         $query = LeaveRequest::query()
             ->where('user_id', $user->id);

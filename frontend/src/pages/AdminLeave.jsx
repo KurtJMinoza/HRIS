@@ -93,6 +93,9 @@ import {
 } from '@/lib/adminFormDialogStyles'
 import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailModal'
 import { EmployeeLeaveCalendarView } from '@/components/leave/EmployeeLeaveCalendarView'
+import { LeaveCreditsSummaryPanel } from '@/components/leave/LeaveCreditsSummaryPanel'
+import { LeaveModalCreditsCard } from '@/components/leave/LeaveModalCreditsCard'
+import { formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
 import {
   clearRequestReviewSearchParams,
   extractLeaveRequestFromReviewPayload,
@@ -192,6 +195,17 @@ const adminLeaveModalSelectClass =
   'h-14 w-full rounded-xl border border-brand bg-background px-5 text-lg font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-background/40 dark:focus:ring-brand/20'
 const adminLeaveModalLabelClass = 'text-base font-semibold tracking-tight text-foreground'
 const adminLeaveModalHintClass = 'text-[13px] leading-relaxed text-muted-foreground'
+
+function billableCreditDaysForForm(form) {
+  const t = String(form?.type || '').toLowerCase()
+  if (t === 'undertime') return 0
+  if (t === 'half_day') return 1
+  if (!form?.start_date || !form?.end_date) return 0
+  const s = new Date(`${form.start_date}T12:00:00`)
+  const e = new Date(`${form.end_date}T12:00:00`)
+  const diff = Math.round((e - s) / 86400000) + 1
+  return Math.max(0, diff)
+}
 
 function supportingDocUrls(leave) {
   if (!leave) return []
@@ -347,6 +361,7 @@ export default function AdminLeave() {
   const tabInitialized = useRef(false)
   const [tab, setTab] = useState('all')
   const [myLeaveRequests, setMyLeaveRequests] = useState([])
+  const [leaveCreditInfo, setLeaveCreditInfo] = useState(null)
   const [loadingMine, setLoadingMine] = useState(false)
   const [mineError, setMineError] = useState(null)
   const [allPage, setAllPage] = useState(1)
@@ -455,6 +470,9 @@ export default function AdminLeave() {
       const rows = Array.isArray(data.leave_requests) ? data.leave_requests : []
       setMyLeaveRequests(rows)
       setMinePagination(data.pagination || null)
+      if (data.leave_credits != null && typeof data.leave_credits === 'object') {
+        setLeaveCreditInfo(data.leave_credits)
+      }
     } catch (e) {
       if (e?.name === 'AbortError') return
       setMineError(e.message)
@@ -463,6 +481,41 @@ export default function AdminLeave() {
       if (!opts.signal?.aborted) setLoadingMine(false)
     }
   }, [statusFilter, appliedFrom, appliedTo, minePage])
+
+  const fetchMyLeaveCredits = useCallback(async (opts = {}) => {
+    try {
+      const data = await getMyLeaveSummary({
+        page: 1,
+        per_page: 10,
+        signal: opts.signal,
+      })
+      if (opts.signal?.aborted) return
+      if (data.leave_credits != null && typeof data.leave_credits === 'object') {
+        setLeaveCreditInfo(data.leave_credits)
+      }
+    } catch (e) {
+      if (e?.name === 'AbortError') return
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!user?.id) return undefined
+    const controller = new AbortController()
+    fetchMyLeaveCredits({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [user?.id, fetchMyLeaveCredits])
+
+  // Keep credits loaded on every tab/view (not only My Filings → List).
+  useEffect(() => {
+    if (!user?.id || leaveCreditInfo) return undefined
+    const controller = new AbortController()
+    fetchMyLeaveCredits({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [user?.id, tab, activeView, leaveCreditInfo, fetchMyLeaveCredits])
 
   useEffect(() => {
     setAllPage(1)
@@ -534,6 +587,9 @@ export default function AdminLeave() {
       .then((data) => {
         if (controller.signal.aborted) return
         setCalendarLeaves(Array.isArray(data.leave_requests) ? data.leave_requests : [])
+        if (tab === 'mine' && data.leave_credits != null && typeof data.leave_credits === 'object') {
+          setLeaveCreditInfo(data.leave_credits)
+        }
       })
       .catch((e) => {
         if (e?.name === 'AbortError' || controller.signal.aborted) return
@@ -706,8 +762,9 @@ export default function AdminLeave() {
       getEmployees({ per_page: 200 }).then((d) => setEmployees(d.employees || [])).catch(() => setEmployees([]))
     } else if (user?.id) {
       setAddForm((f) => ({ ...f, user_id: String(user.id) }))
+      fetchMyLeaveCredits()
     }
-  }, [addOpen, showEmployeePicker, user?.id, user?.can_file_leave_for_others, user?.hr_role, refreshUser])
+  }, [addOpen, showEmployeePicker, user?.id, user?.can_file_leave_for_others, user?.hr_role, refreshUser, fetchMyLeaveCredits])
 
   function addSupportingFilesFromInput(e) {
     const picked = Array.from(e.target.files || [])
@@ -851,6 +908,7 @@ export default function AdminLeave() {
       }
       if (!showEmployeePicker || String(uid) === String(user?.id)) {
         setTab('mine')
+        await fetchMyLeaveCredits()
       }
       toast({
         title: `Leave request submitted${showEmployeePicker ? ` for ${empName}` : ''}`,
@@ -1276,6 +1334,34 @@ export default function AdminLeave() {
   }
 
   const isMineTab = tab === 'mine'
+  const filingOwnLeave =
+    !showEmployeePicker || String(addForm.user_id || '') === String(user?.id ?? '')
+  const addBillableCreditDays = useMemo(() => billableCreditDaysForForm(addForm), [addForm])
+  const addEffAvail = Number(leaveCreditInfo?.effective_available ?? 0)
+  const addEligible = Boolean(leaveCreditInfo?.eligible_for_paid_leave_pool)
+  const addLeaveWillBeUnpaidNoPool =
+    addOpen &&
+    filingOwnLeave &&
+    leaveCreditInfo &&
+    formConsumesLeaveCredits(addForm.type) &&
+    addBillableCreditDays > 0 &&
+    !addEligible
+  const addLeaveWillBeUnpaidPartial =
+    addOpen &&
+    filingOwnLeave &&
+    leaveCreditInfo &&
+    formConsumesLeaveCredits(addForm.type) &&
+    addBillableCreditDays > 0 &&
+    addEligible &&
+    addBillableCreditDays > addEffAvail
+  const addLeaveWillBeFullyPaid =
+    addOpen &&
+    filingOwnLeave &&
+    leaveCreditInfo &&
+    formConsumesLeaveCredits(addForm.type) &&
+    addBillableCreditDays > 0 &&
+    addEligible &&
+    addBillableCreditDays <= addEffAvail
   const activeLeaveRequests = isMineTab ? myLeaveRequests : leaveRequests
   const filteredCalendarLeaves = useMemo(() => {
     if (!statusFilter) return calendarLeaves
@@ -1412,6 +1498,7 @@ export default function AdminLeave() {
                 fetchLeaves()
                 refreshLeaveCounts()
               }
+              fetchMyLeaveCredits()
             }}
             disabled={activeLoading}
           >
@@ -1429,6 +1516,8 @@ export default function AdminLeave() {
           )}
         </div>
       </div>
+
+      <LeaveCreditsSummaryPanel leaveCreditInfo={leaveCreditInfo} />
 
       {totalCount > 0 && (
         <div className="grid w-full gap-3 @sm:grid-cols-2 @lg:grid-cols-4">
@@ -2504,6 +2593,18 @@ export default function AdminLeave() {
                   </div>
                   <p className={adminLeaveModalHintClass}>This will be saved as the admin note on the request.</p>
                 </div>
+
+                {filingOwnLeave ? (
+                  <LeaveModalCreditsCard
+                    leaveCreditInfo={leaveCreditInfo}
+                    leaveType={addForm.type}
+                    billableCreditDays={addBillableCreditDays}
+                    leaveWillBeFullyPaid={addLeaveWillBeFullyPaid}
+                    leaveWillBeUnpaidNoPool={addLeaveWillBeUnpaidNoPool}
+                    leaveWillBeUnpaidPartial={addLeaveWillBeUnpaidPartial}
+                    effAvail={addEffAvail}
+                  />
+                ) : null}
 
                 {user?.is_super_admin ? (
                   <div className="flex items-start gap-3 rounded-xl border border-amber-200/80 bg-amber-50/50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/20">
