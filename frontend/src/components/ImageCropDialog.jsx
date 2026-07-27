@@ -57,7 +57,7 @@ export function ImageCropDialog({
   file,
   title = 'Crop image',
   description = 'Adjust position and zoom, then save.',
-  maxBytes = 2 * 1024 * 1024,
+  maxBytes = 20 * 1024 * 1024,
   onConfirm,
 }) {
   const [crop, setCrop] = useState({ x: 0, y: 0 })
