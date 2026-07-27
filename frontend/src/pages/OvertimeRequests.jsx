@@ -85,6 +85,7 @@ import {
   updateMyOvertimeRequest,
   getAdminOvertime,
   getAdminOvertimeDetail,
+  getAdminOvertimeCounts,
   updateAdminOvertimeStatus,
   bulkApproveAdminOvertime,
   bulkApproveAdminOvertimePreview,
@@ -108,7 +109,8 @@ import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummar
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
-import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
+import { notifyPendingApprovalsChanged, HR_PENDING_APPROVALS_CHANGED } from '@/lib/hrPendingApprovalsEvents'
+import { ApprovalQueueTabBadge } from '@/components/admin/ApprovalQueueTabBadge'
 import { clearRequestReviewSearchParams, parseReviewRequestId } from '@/lib/leaveReviewDeepLink'
 
 const OT_TYPE_LABEL = {
@@ -879,6 +881,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
+  const [approvalQueueBadgeCount, setApprovalQueueBadgeCount] = useState(0)
   const [loadingMine, setLoadingMine] = useState(true)
   const [loadingAll, setLoadingAll] = useState(() => Boolean(isHr && canSeeAllTab))
   const mineListAbortRef = useRef(null)
@@ -1152,6 +1155,45 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       if (!opts.signal?.aborted) setLoadingAll(false)
     }
   }, [toast, allStatus, allFrom, allTo, allPage])
+
+  const loadApprovalQueueBadge = useCallback(async (opts = {}) => {
+    if (!canApproveOvertime && !user?.can_view_assigned_approvals) {
+      setApprovalQueueBadgeCount(0)
+      return
+    }
+    try {
+      const counts = await getAdminOvertimeCounts({ signal: opts.signal })
+      if (opts.signal?.aborted) return
+      const pending = Number(counts?.pending) || 0
+      if (pending > 0) {
+        setApprovalQueueBadgeCount(pending)
+        return
+      }
+      const res = await bulkApproveAdminOvertimePreview({}, { signal: opts.signal })
+      if (opts.signal?.aborted) return
+      setApprovalQueueBadgeCount(Number(res?.eligible_count ?? res?.approvable_count) || 0)
+    } catch (e) {
+      if (e?.name === 'AbortError' || opts.signal?.aborted) return
+    }
+  }, [canApproveOvertime, user?.can_view_assigned_approvals])
+
+  useEffect(() => {
+    if (!user?.id || (!canApproveOvertime && !user?.can_view_assigned_approvals)) return undefined
+    const controller = new AbortController()
+    loadApprovalQueueBadge({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [user?.id, user?.can_view_assigned_approvals, canApproveOvertime, loadApprovalQueueBadge])
+
+  useEffect(() => {
+    if (!canApproveOvertime && !user?.can_view_assigned_approvals) return undefined
+    const onPendingApprovalsChanged = () => {
+      void loadApprovalQueueBadge()
+    }
+    window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+    return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+  }, [canApproveOvertime, user?.can_view_assigned_approvals, loadApprovalQueueBadge])
 
   useEffect(() => {
     if (isHr && tab !== 'mine') {
@@ -2122,7 +2164,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     : 'text-muted-foreground hover:bg-background hover:text-foreground'
                 )}
               >
-                {allOvertimeTabLabel}
+                <span className="inline-flex items-center">
+                  {allOvertimeTabLabel}
+                  <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                </span>
               </button>
               <button
                 type="button"

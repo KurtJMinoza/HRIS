@@ -99,9 +99,49 @@ class PresenceFilingBulkApprovalQuery
             });
         }
 
-        $this->dataScopeService->restrictAttendanceCorrectionsQuery($actor, $query);
+        $this->applyApprovalAssignmentVisibility($actor, $query);
 
         return $query;
+    }
+
+    private function applyApprovalAssignmentVisibility(User $actor, Builder $query): void
+    {
+        if ($actor->isAdmin() || (string) ($actor->hr_role ?? '') === HrRole::AdminHr->value) {
+            return;
+        }
+
+        $actorId = (int) $actor->id;
+        $query->where(function ($scope) use ($actorId): void {
+            $scope->whereExists(function ($approval) use ($actorId): void {
+                $approval
+                    ->selectRaw('1')
+                    ->from('org_approval_records as current_approval')
+                    ->whereColumn('current_approval.request_id', 'attendance_corrections.id')
+                    ->where('current_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                    ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                    ->where('current_approval.approver_id', $actorId)
+                    ->whereNotExists(function ($earlier): void {
+                        $earlier
+                            ->selectRaw('1')
+                            ->from('org_approval_records as earlier_approval')
+                            ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                            ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                            ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                            ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                    });
+            })->orWhereExists(function ($approval) use ($actorId): void {
+                $approval
+                    ->selectRaw('1')
+                    ->from('org_approval_records as handled_approval')
+                    ->whereColumn('handled_approval.request_id', 'attendance_corrections.id')
+                    ->where('handled_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                    ->where('handled_approval.approver_id', $actorId)
+                    ->whereIn('handled_approval.approval_status', [
+                        OrgApprovalRecord::STATUS_APPROVED,
+                        OrgApprovalRecord::STATUS_REJECTED,
+                    ]);
+            });
+        });
     }
 
     /**

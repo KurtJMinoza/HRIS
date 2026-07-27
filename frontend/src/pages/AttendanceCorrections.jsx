@@ -117,6 +117,7 @@ import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { HR_PENDING_APPROVALS_CHANGED, notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
+import { ApprovalQueueTabBadge } from '@/components/admin/ApprovalQueueTabBadge'
 import { clearRequestReviewSearchParams, parseReviewRequestId } from '@/lib/leaveReviewDeepLink'
 
 const APPROVAL_INFO_SHORT =
@@ -588,6 +589,7 @@ export default function AttendanceCorrections() {
   const [sortKey, setSortKey] = useState('filed_at')
   const [sortDir, setSortDir] = useState('desc')
   const [allCountsSummary, setAllCountsSummary] = useState(null)
+  const [approvalQueueBadgeCount, setApprovalQueueBadgeCount] = useState(0)
 
   const [viewOpen, setViewOpen] = useState(false)
   const [approveOpen, setApproveOpen] = useState(false)
@@ -733,6 +735,36 @@ export default function AttendanceCorrections() {
     }
   }, [canSeeAll, allStatus, allFrom, allTo, allIssue, debouncedAllQ])
 
+  const loadApprovalQueueBadge = useCallback(async (opts = {}) => {
+    if (!canSeeAll && !user?.can_view_assigned_approvals) {
+      setApprovalQueueBadgeCount(0)
+      return
+    }
+    try {
+      const res = await getAdminPresenceFilingCounts({ signal: opts.signal })
+      if (opts.signal?.aborted) return
+      const pending = Number(res?.pending) || 0
+      if (pending > 0) {
+        setApprovalQueueBadgeCount(pending)
+        return
+      }
+      const preview = await bulkApprovePresenceFilingsPreview({}, { signal: opts.signal })
+      if (opts.signal?.aborted) return
+      setApprovalQueueBadgeCount(Number(preview?.eligible_count ?? preview?.approvable_count) || 0)
+    } catch (e) {
+      if (e?.name === 'AbortError' || opts.signal?.aborted) return
+    }
+  }, [canSeeAll, user?.can_view_assigned_approvals])
+
+  useEffect(() => {
+    if (!user?.id || (!canSeeAll && !user?.can_view_assigned_approvals)) return undefined
+    const controller = new AbortController()
+    loadApprovalQueueBadge({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [user?.id, user?.can_view_assigned_approvals, canSeeAll, loadApprovalQueueBadge])
+
   useEffect(() => {
     if (tab !== 'mine') return undefined
     mineListAbortRef.current?.abort()
@@ -778,10 +810,11 @@ export default function AttendanceCorrections() {
     if (!canSeeAll) return undefined
     const onPendingApprovalsChanged = () => {
       void loadAllCounts()
+      void loadApprovalQueueBadge()
     }
     window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
     return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
-  }, [canSeeAll, loadAllCounts])
+  }, [canSeeAll, loadAllCounts, loadApprovalQueueBadge])
 
   useEffect(() => {
     if (!canSeeAll) return
@@ -1588,7 +1621,10 @@ export default function AttendanceCorrections() {
                               : 'text-muted-foreground hover:text-foreground'
                           )}
                         >
-                          {allFilingsLabel}
+                          <span className="inline-flex items-center">
+                            {allFilingsLabel}
+                            <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                          </span>
                         </button>
                         <button
                           type="button"

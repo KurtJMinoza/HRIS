@@ -109,7 +109,8 @@ import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummar
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
 import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
-import { notifyPendingApprovalsChanged } from '@/lib/hrPendingApprovalsEvents'
+import { notifyPendingApprovalsChanged, HR_PENDING_APPROVALS_CHANGED } from '@/lib/hrPendingApprovalsEvents'
+import { ApprovalQueueTabBadge } from '@/components/admin/ApprovalQueueTabBadge'
 import { normalizeApprovalHeadTitle } from '@/lib/approvalText'
 
 const STATUS_OPTIONS = [
@@ -362,6 +363,7 @@ export default function AdminLeave() {
   const [tab, setTab] = useState('all')
   const [myLeaveRequests, setMyLeaveRequests] = useState([])
   const [leaveCreditInfo, setLeaveCreditInfo] = useState(null)
+  const [approvalQueueBadgeCount, setApprovalQueueBadgeCount] = useState(0)
   const [loadingMine, setLoadingMine] = useState(false)
   const [mineError, setMineError] = useState(null)
   const [allPage, setAllPage] = useState(1)
@@ -400,6 +402,48 @@ export default function AdminLeave() {
   const refreshLeaveCounts = useCallback(() => {
     setCountsRefreshToken((value) => value + 1)
   }, [])
+
+  const loadApprovalQueueBadge = useCallback(async (opts = {}) => {
+    if (!canApproveLeave && !user?.can_view_assigned_approvals) {
+      setApprovalQueueBadgeCount(0)
+      return
+    }
+    try {
+      // Counts use approval-assignment visibility (same as For My Approval list).
+      const counts = await getAdminLeaveCounts({ signal: opts.signal })
+      if (opts.signal?.aborted) return
+      const pending = Number(counts?.pending) || 0
+      const approvable = Number(counts?.approvable_pending) || 0
+      const fromCounts = Math.max(pending, approvable)
+      if (fromCounts > 0) {
+        setApprovalQueueBadgeCount(fromCounts)
+        return
+      }
+      const res = await bulkApproveLeavePreview({}, { signal: opts.signal })
+      if (opts.signal?.aborted) return
+      setApprovalQueueBadgeCount(Number(res?.eligible_count ?? res?.approvable_count) || 0)
+    } catch (e) {
+      if (e?.name === 'AbortError' || opts.signal?.aborted) return
+    }
+  }, [canApproveLeave, user?.can_view_assigned_approvals])
+
+  useEffect(() => {
+    if (!user?.id || (!canApproveLeave && !user?.can_view_assigned_approvals)) return undefined
+    const controller = new AbortController()
+    loadApprovalQueueBadge({ signal: controller.signal })
+    return () => {
+      controller.abort()
+    }
+  }, [user?.id, user?.can_view_assigned_approvals, canApproveLeave, loadApprovalQueueBadge, countsRefreshToken])
+
+  useEffect(() => {
+    if (!canApproveLeave && !user?.can_view_assigned_approvals) return undefined
+    const onPendingApprovalsChanged = () => {
+      void loadApprovalQueueBadge()
+    }
+    window.addEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+    return () => window.removeEventListener(HR_PENDING_APPROVALS_CHANGED, onPendingApprovalsChanged)
+  }, [canApproveLeave, user?.can_view_assigned_approvals, loadApprovalQueueBadge])
 
   const mergeLeaveDetailIntoRows = useCallback((leave) => {
     if (!leave || typeof leave !== 'object') return
@@ -1641,7 +1685,10 @@ export default function AdminLeave() {
                 : 'text-muted-foreground hover:bg-background hover:text-foreground',
             )}
           >
-            {allLeaveTabLabel}
+            <span className="inline-flex items-center">
+              {allLeaveTabLabel}
+              <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+            </span>
           </button>
           <button
             type="button"

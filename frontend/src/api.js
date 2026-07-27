@@ -7463,6 +7463,20 @@ export async function getAdminOvertime(params = {}) {
   return data
 }
 
+export async function getAdminOvertimeCounts(params = {}) {
+  const query = new URLSearchParams()
+  if (params.company_id) query.set('company_id', String(params.company_id))
+  if (params.from_date) query.set('from_date', params.from_date)
+  if (params.to_date) query.set('to_date', params.to_date)
+  if (params.date_from) query.set('date_from', params.date_from)
+  if (params.date_to) query.set('date_to', params.date_to)
+  const path = `/admin/overtime/counts${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load overtime counts')
+  return data
+}
+
 /**
  * Get a single overtime record with adjustment history.
  * @param {number} id
