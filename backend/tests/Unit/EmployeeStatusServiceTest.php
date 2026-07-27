@@ -197,7 +197,7 @@ class EmployeeStatusServiceTest extends TestCase
         $this->assertFalse($this->service->isEligibleForThreeMonthRegularization($employee));
     }
 
-    public function test_auto_status_resolver_marks_july_2023_hire_as_regular(): void
+    public function test_auto_status_resolver_does_not_change_employment_status(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-05-27'));
 
@@ -206,19 +206,19 @@ class EmployeeStatusServiceTest extends TestCase
             'hire_date' => '2023-07-03',
             'is_active' => true,
             'status_override' => false,
+            'employment_status_effective_date' => null,
         ]);
 
         $resolved = $this->service->syncAutomaticEmploymentStatus($employee);
 
-        $this->assertSame(EmploymentStatus::Regular->value, $resolved->employment_status);
+        $this->assertSame(EmploymentStatus::Probationary->value, $resolved->employment_status);
         $this->assertSame('2024-01-03', $resolved->regularization_date?->toDateString());
-        // Status effective date is not auto-filled from hire+6; blank seeds from hire date only.
         $this->assertSame('2023-07-03', $resolved->employment_status_effective_date?->toDateString());
 
         Carbon::setTestNow();
     }
 
-    public function test_auto_status_resolver_keeps_recent_hire_probationary(): void
+    public function test_auto_status_resolver_keeps_recent_hire_status_unchanged(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-05-27'));
 
@@ -231,13 +231,13 @@ class EmployeeStatusServiceTest extends TestCase
 
         $resolved = $this->service->syncAutomaticEmploymentStatus($employee);
 
-        $this->assertSame(EmploymentStatus::Probationary->value, $resolved->employment_status);
+        $this->assertSame(EmploymentStatus::Regular->value, $resolved->employment_status);
         $this->assertSame('2026-08-01', $resolved->regularization_date?->toDateString());
 
         Carbon::setTestNow();
     }
 
-    public function test_auto_status_resolver_respects_status_override(): void
+    public function test_auto_status_resolver_still_fills_regularization_date_with_override(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-05-27'));
 
@@ -246,28 +246,30 @@ class EmployeeStatusServiceTest extends TestCase
             'hire_date' => '2023-07-03',
             'is_active' => true,
             'status_override' => true,
+            'regularization_date' => null,
         ]);
 
         $resolved = $this->service->syncAutomaticEmploymentStatus($employee);
 
         $this->assertSame(EmploymentStatus::Probationary->value, $resolved->employment_status);
-        $this->assertNull($resolved->regularization_date);
+        $this->assertSame('2024-01-03', $resolved->regularization_date?->toDateString());
 
         Carbon::setTestNow();
     }
 
-    public function test_imported_one_year_employee_gets_regular_status_and_leave_credits_once(): void
+    public function test_imported_regular_employee_gets_leave_credits_once(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-05-27'));
 
         $employee = User::factory()->create([
-            'employment_status' => EmploymentStatus::Probationary->value,
+            'employment_status' => EmploymentStatus::Regular->value,
             'hire_date' => '2025-05-01',
+            'employment_status_effective_date' => '2025-05-01',
             'is_active' => true,
             'leave_credits' => 0,
             'leave_credits_reset_date' => null,
             'leave_credits_initialized_at' => null,
-            'status_override' => false,
+            'status_override' => true,
         ]);
 
         $resolved = $this->service->syncAutomaticEmploymentStatus($employee, initializeLeaveCredits: true);
@@ -278,7 +280,6 @@ class EmployeeStatusServiceTest extends TestCase
         $this->assertNotNull($resolvedAgain->leave_credits_initialized_at);
         $this->assertSame(1, LeaveCreditTransaction::query()
             ->where('user_id', $employee->id)
-            ->where('leave_type_context', 'auto_regularization_import')
             ->count());
 
         Carbon::setTestNow();

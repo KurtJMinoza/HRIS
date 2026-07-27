@@ -45,61 +45,51 @@ class EmployeeStatusService
             : EmploymentStatus::Probationary;
     }
 
+    /**
+     * Keep derived regularization metadata in sync with hire date.
+     * Does NOT auto-change employment_status — that is an explicit HR/admin decision.
+     */
     public function syncAutomaticEmploymentStatus(
         User $employee,
         ?User $actor = null,
         bool $initializeLeaveCredits = false,
         ?Carbon $asOfDate = null
     ): User {
-        $currentStatus = EmploymentStatus::tryFromStored((string) $employee->employment_status);
-        if (! $employee->hire_date
-            || (bool) ($employee->status_override ?? false)
-            || $this->storedStatusIsManualOnly($currentStatus, (string) $employee->employment_status)
-        ) {
-            return $employee;
+        unset($asOfDate);
+
+        if ($employee->hire_date) {
+            $regularizationDate = $this->regularizationDateFromHireDate($employee->hire_date);
+            $payload = [];
+
+            if ($regularizationDate !== null && Schema::hasColumn('users', 'regularization_date')) {
+                $currentRegularization = $employee->regularization_date
+                    ? Carbon::parse($employee->regularization_date)->toDateString()
+                    : null;
+                if ($currentRegularization !== $regularizationDate->toDateString()) {
+                    $payload['regularization_date'] = $regularizationDate->toDateString();
+                }
+            }
+
+            // Seed blank status effective date from hire date only (never hire+6).
+            if (! $employee->employment_status_effective_date) {
+                $payload['employment_status_effective_date'] = Carbon::parse($employee->hire_date)->toDateString();
+            }
+
+            if ($payload !== []) {
+                $employee->forceFill($payload);
+                if ($employee->isDirty(array_keys($payload))) {
+                    $employee->save();
+                }
+            }
         }
 
-        $resolved = $this->resolveAutomaticStatusFromHireDate($employee->hire_date, $asOfDate);
-        $regularizationDate = $this->regularizationDateFromHireDate($employee->hire_date);
-        if ($resolved === null || $regularizationDate === null) {
-            return $employee;
-        }
-
-        $previousStatus = $employee->employment_status;
-        $changedStatus = $currentStatus !== $resolved;
-        $payload = [
-            'employment_status' => $resolved->value,
-        ];
-
-        if (Schema::hasColumn('users', 'regularization_date')) {
-            $payload['regularization_date'] = $regularizationDate->toDateString();
-        }
-
-        // Status effective date is admin/HR managed — never auto-fill hire+6 months.
-        // Only seed a blank field from hire date so leave-credit anchors have a starting value.
-        if (! $employee->employment_status_effective_date) {
-            $payload['employment_status_effective_date'] = Carbon::parse($employee->hire_date)->toDateString();
-        }
-
-        $employee->forceFill($payload);
-        if ($employee->isDirty(array_keys($payload))) {
-            $employee->save();
-        }
-
-        if ($changedStatus && Schema::hasTable('employee_status_histories')) {
-            EmployeeStatusHistory::query()->create([
-                'user_id' => $employee->id,
-                'previous_status' => $previousStatus,
-                'new_status' => $resolved->value,
-                'effective_date' => $payload['employment_status_effective_date'] ?? null,
-                'trigger_type' => 'system_auto_regularization',
-                'actor_id' => $actor?->id,
-                'remarks' => 'Automatic status resolver based on hire date plus six months.',
-            ]);
-        }
-
-        if ($initializeLeaveCredits && $resolved === EmploymentStatus::Regular) {
-            $this->leaveCreditService->initializeLeaveCreditsForRegularEmployeeIfEligible($employee->fresh() ?? $employee, $actor, 'import');
+        $isRegular = EmploymentStatus::tryFromStored((string) $employee->employment_status) === EmploymentStatus::Regular;
+        if ($initializeLeaveCredits && $isRegular) {
+            $this->leaveCreditService->initializeLeaveCreditsForRegularEmployeeIfEligible(
+                $employee->fresh() ?? $employee,
+                $actor,
+                'import'
+            );
         } else {
             $this->leaveCreditService->forgetSummaryCacheForUser((int) $employee->id);
         }
