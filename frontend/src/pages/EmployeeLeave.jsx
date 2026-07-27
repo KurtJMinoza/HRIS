@@ -307,7 +307,7 @@ function EmployeeLeaveSelfService() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [statusFilter, setStatusFilter] = useState('')
-  const [activeView, setActiveView] = useState('calendar')
+  const [activeView, setActiveView] = useState('list')
   const [leaveCreditInfo, setLeaveCreditInfo] = useState(null)
 
   const [undertimePreview, setUndertimePreview] = useState(null)
@@ -1096,19 +1096,6 @@ function EmployeeLeaveSelfService() {
                 <div className="inline-flex w-full min-w-0 justify-start rounded-full border border-border/60 bg-muted/30 p-1 @sm:w-auto dark:border-border/50 dark:bg-muted/30">
                   <button
                     type="button"
-                    onClick={() => setActiveView('calendar')}
-                    className={cn(
-                      'flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition-colors @sm:flex-initial @sm:gap-2 @sm:px-4',
-                      activeView === 'calendar'
-                        ? 'border border-brand/25 bg-brand text-brand-foreground shadow-sm'
-                        : 'border border-transparent text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    <CalendarDays className="size-4 shrink-0" />
-                    Calendar
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setActiveView('list')}
                     className={cn(
                       'flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition-colors @sm:flex-initial @sm:gap-2 @sm:px-4',
@@ -1119,6 +1106,19 @@ function EmployeeLeaveSelfService() {
                   >
                     <List className="size-4 shrink-0" />
                     List
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveView('calendar')}
+                    className={cn(
+                      'flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold transition-colors @sm:flex-initial @sm:gap-2 @sm:px-4',
+                      activeView === 'calendar'
+                        ? 'border border-brand/25 bg-brand text-brand-foreground shadow-sm'
+                        : 'border border-transparent text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <CalendarDays className="size-4 shrink-0" />
+                    Calendar
                   </button>
                 </div>
               </div>
