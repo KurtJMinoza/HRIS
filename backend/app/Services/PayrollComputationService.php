@@ -4617,7 +4617,7 @@ class PayrollComputationService
         );
         $normalizedType = $this->holidayEligibility->normalizeHolidayType($holidayRow['type'] ?? null);
         $kind = in_array($normalizedType, ['regular', 'double'], true) ? 'regular' : 'special';
-        if (! $this->holidayEligibility->shouldIgnoreHolidayCoverage($resolvedPolicy, $kind, $worked)) {
+        if (! $this->holidayEligibility->mayPayOutsideHolidayCoverage($resolvedPolicy, $kind, $worked, $holidayRow)) {
             return ['holiday' => null, 'calendar_scope_match' => false];
         }
 

@@ -145,8 +145,9 @@ class HolidayPaySpecialHolidayTest extends TestCase
 
         $this->assertSame('SH', $result['conditions']['rule_code'] ?? null);
         $this->assertSame(1.3, (float) ($result['conditions']['first_8'] ?? 0));
-        $this->assertGreaterThan(600.0, (float) ($result['regular_pay'] ?? 0));
-        $this->assertGreaterThan(200.0, (float) ($result['holiday_premium_pay'] ?? 0));
+        // SH worked: full 1.30× sits on the holiday line; regular_pay stays 0 for that day.
+        $this->assertSame(0.0, (float) ($result['regular_pay'] ?? 0));
+        $this->assertGreaterThan(900.0, (float) ($result['holiday_premium_pay'] ?? 0));
         $this->assertGreaterThan(900.0, (float) ($result['total_pay'] ?? 0));
 
         $holidayLine = collect($result['breakdown'] ?? [])

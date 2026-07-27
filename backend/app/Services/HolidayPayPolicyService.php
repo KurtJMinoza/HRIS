@@ -591,19 +591,39 @@ class HolidayPayPolicyService
     public const COVERAGE_IGNORE = 'ignore_coverage';
 
     /**
-     * Whether payroll may pay outside Holiday module organizational coverage.
+     * Whether the matching unworked/worked panel is set to ignore coverage.
      * Calendar/attendance always respect coverage regardless of this setting.
-     *
-     * ponytail: ignore on either unworked or worked panel applies payroll-wide for that
-     * holiday kind — present and absent employees outside scope both qualify when either
-     * panel is set to ignore_coverage.
      */
     public function shouldIgnoreHolidayCoverage(array $resolvedPolicy, string $holidayKind, bool $worked): bool
     {
-        unset($worked);
+        return $this->coverageBehaviour($resolvedPolicy, $holidayKind, $worked) === self::COVERAGE_IGNORE;
+    }
 
-        return $this->coverageBehaviour($resolvedPolicy, $holidayKind, true) === self::COVERAGE_IGNORE
-            || $this->coverageBehaviour($resolvedPolicy, $holidayKind, false) === self::COVERAGE_IGNORE;
+    /**
+     * Outside-scope payroll gate for a specific holiday.
+     *
+     * - Unworked: Step 1 Ignore Coverage.
+     * - Worked: Step 3 worked Ignore Coverage, OR Step 1 Ignore Coverage when this
+     *   holiday is included in the selected/all unworked holiday list (so checking TEST
+     *   pays outside-scope employees who worked that day, without reopening every holiday).
+     *
+     * @param  array<string, mixed>  $resolvedPolicy
+     * @param  array<string, mixed>  $holiday
+     */
+    public function mayPayOutsideHolidayCoverage(
+        array $resolvedPolicy,
+        string $holidayKind,
+        bool $worked,
+        array $holiday
+    ): bool {
+        if ($this->shouldIgnoreHolidayCoverage($resolvedPolicy, $holidayKind, $worked)) {
+            return true;
+        }
+
+        // Step 1 Ignore + included holiday also opens worked premium outside scope.
+        return $worked
+            && $this->shouldIgnoreHolidayCoverage($resolvedPolicy, $holidayKind, false)
+            && $this->holidaySelectedForUnworkedPay($resolvedPolicy, $holidayKind, $holiday);
     }
 
     /**
@@ -620,7 +640,8 @@ class HolidayPayPolicyService
     ): array {
         $scopeMatch = $this->holidayService->holidayCoversEmployee($holiday, $employee);
         $coverageBehaviour = $this->coverageBehaviour($resolvedPolicy, $kind, $worked);
-        $eligible = $scopeMatch || $this->shouldIgnoreHolidayCoverage($resolvedPolicy, $kind, $worked);
+        $eligible = $scopeMatch
+            || $this->mayPayOutsideHolidayCoverage($resolvedPolicy, $kind, $worked, $holiday);
 
         return [
             'scope_match' => $scopeMatch,
@@ -917,7 +938,7 @@ class HolidayPayPolicyService
     }
 
     /** @param array<string, mixed> $holiday */
-    private function holidaySelectedForUnworkedPay(array $policy, string $kind, array $holiday): bool
+    public function holidaySelectedForUnworkedPay(array $policy, string $kind, array $holiday): bool
     {
         $key = $kind === 'special' ? 'special_unworked' : 'regular_unworked';
         $block = (array) ($policy[$key] ?? []);

@@ -393,8 +393,9 @@ export function HolidayPayPolicyCard({
           <p className="leading-relaxed text-muted-foreground">
             <span className="font-medium text-foreground">Holiday Coverage</span> grants unworked pay to employees
             inside a Regular or Special Non-Working holiday&apos;s organizational scope, even when this policy is off.
-            Ignore Coverage can also pay employees outside that scope; a selected-holiday list narrows that payroll
-            override. Calendar and attendance always respect Holiday Coverage.
+            Step 1 Ignore Coverage pays included holidays outside that scope (unworked, and worked premium when
+            the employee works that day). Use Selected Holidays to limit which holidays apply. Calendar and
+            attendance always respect Holiday Coverage.
           </p>
         </div>
 
@@ -422,7 +423,7 @@ export function HolidayPayPolicyCard({
                   idPrefix="holiday-coverage-mode"
                   value="ignore_coverage"
                   title="Ignore Coverage (Pay outside scope)"
-                  description="Allow unworked pay even if employee is outside scope."
+                  description="Pay included holidays outside Holiday Coverage (unworked and worked)."
                 />
               </RadioGroup>
             </div>

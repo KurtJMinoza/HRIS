@@ -37,6 +37,21 @@ class HolidayEligibilityService
         return $this->holidayPayPolicy->shouldIgnoreHolidayCoverage($resolvedPolicy, $holidayKind, $worked);
     }
 
+    /** @param  array<string, mixed>  $resolvedPolicy @param  array<string, mixed>  $holiday */
+    public function mayPayOutsideHolidayCoverage(
+        array $resolvedPolicy,
+        string $holidayKind,
+        bool $worked,
+        array $holiday
+    ): bool {
+        return $this->holidayPayPolicy->mayPayOutsideHolidayCoverage(
+            $resolvedPolicy,
+            $holidayKind,
+            $worked,
+            $holiday
+        );
+    }
+
     public function coverageBehaviour(array $resolvedPolicy, string $holidayKind, bool $worked): string
     {
         return $this->holidayPayPolicy->coverageBehaviour($resolvedPolicy, $holidayKind, $worked);
