@@ -238,16 +238,18 @@ export function RemarksPreviewCell({ text }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="group max-w-full text-left text-sm text-foreground outline-none transition hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          className="group min-w-0 w-full max-w-full text-left text-sm text-foreground outline-none transition hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
-          <span className="line-clamp-2 font-normal leading-snug text-foreground/90">{clean}</span>
+          <span className="line-clamp-3 break-words whitespace-normal font-normal leading-snug text-foreground/90">
+            {clean}
+          </span>
           <span className="mt-1 block text-xs font-semibold text-primary underline-offset-2 group-hover:underline">
             View full
           </span>
         </button>
       </PopoverTrigger>
       <PopoverContent className="max-h-[min(70vh,24rem)] w-[min(100vw-2rem,28rem)] overflow-y-auto text-sm" align="start">
-        <p className="whitespace-pre-wrap leading-relaxed text-foreground">{clean}</p>
+        <p className="break-words whitespace-pre-wrap leading-relaxed text-foreground">{clean}</p>
       </PopoverContent>
     </Popover>
   )

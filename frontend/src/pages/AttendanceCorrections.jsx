@@ -1926,34 +1926,34 @@ export default function AttendanceCorrections() {
                               />
                             </TableHead>
                           ) : null}
-                          <TableHead className="w-[13%] px-1.5 py-2.5">
+                          <TableHead className="w-[12%] px-1.5 py-2.5">
                             <SortHead col="employee_name" label="Employee" />
                           </TableHead>
                           <TableHead className="w-[7%] px-1.5 py-2.5">
                             <SortHead col="date" label="Date" />
                           </TableHead>
-                          <TableHead className="w-[5%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                          <TableHead className="w-[4%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                             Day
                           </TableHead>
-                          <TableHead className="w-[12%] px-1.5 py-2.5">
+                          <TableHead className="w-[11%] px-1.5 py-2.5">
                             <SortHead col="issue_type" label="Issue type" />
                           </TableHead>
-                          <TableHead className="w-[7%] px-1.5 py-2.5">
+                          <TableHead className="w-[6%] px-1.5 py-2.5">
                             <SortHead col="time_in" label="Time in" />
                           </TableHead>
-                          <TableHead className="w-[7%] px-1.5 py-2.5">
+                          <TableHead className="w-[6%] px-1.5 py-2.5">
                             <SortHead col="time_out" label="Time out" />
                           </TableHead>
-                          <TableHead className="w-[13%] px-1.5 py-2.5">
+                          <TableHead className="w-[12%] px-1.5 py-2.5">
                             <SortHead col="review_status" label="Status" />
                           </TableHead>
-                          <TableHead className="hidden w-[10%] px-1.5 py-2.5 xl:table-cell">
+                          <TableHead className="hidden w-[20%] min-w-[12rem] px-1.5 py-2.5 xl:table-cell">
                             <SortHead col="remarks" label="Remarks" />
                           </TableHead>
-                          <TableHead className="hidden w-[10%] px-1.5 py-2.5 xl:table-cell">
+                          <TableHead className="hidden w-[8rem] max-w-[8rem] px-1.5 py-2.5 xl:table-cell">
                             <SortHead col="filed_at" label="Date filed" />
                           </TableHead>
-                          <TableHead className="w-[14%] px-1.5 py-2.5 text-right">
+                          <TableHead className="w-[12%] px-1.5 py-2.5 text-right">
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                               Actions
                             </span>
@@ -2016,18 +2016,18 @@ export default function AttendanceCorrections() {
                               <TableCell className={cn('align-middle', cellPad)}>
                                 <TimeCell iso={tOut} />
                               </TableCell>
-                              <TableCell className={cn('max-w-[14rem] align-middle', cellPad)}>
+                              <TableCell className={cn('max-w-[12rem] align-middle', cellPad)}>
                                 <ReviewStatusTableBadge item={item} />
                               </TableCell>
                               <TableCell
-                                className={cn('hidden max-w-[14rem] align-middle xl:table-cell', cellPad)}
+                                className={cn('hidden min-w-0 align-top xl:table-cell', cellPad)}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <RemarksPreviewCell text={item.remarks} />
                               </TableCell>
                               <TableCell
                                 className={cn(
-                                  'hidden align-middle whitespace-nowrap text-[11px] tabular-nums text-foreground xl:table-cell',
+                                  'hidden w-[8rem] max-w-[8rem] align-middle whitespace-nowrap text-[11px] tabular-nums text-foreground xl:table-cell',
                                   cellPad
                                 )}
                               >
