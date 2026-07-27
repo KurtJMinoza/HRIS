@@ -35,14 +35,34 @@ export function ScheduleWeeklyGrid({
   restDays = [],
   breakStart,
   breakEnd,
+  daySchedules = null,
   onShiftChange,
   className,
 }) {
   const restSet = useMemo(() => new Set(restDays), [restDays])
   const [drag, setDrag] = useState(null)
 
-  const timeInHhMm = toHhMm(timeIn) || '09:00'
-  const timeOutHhMm = toHhMm(timeOut) || '17:00'
+  const resolveDayTimes = useCallback((dayKey) => {
+    const custom = daySchedules?.[dayKey]
+    if (custom) {
+      return {
+        timeInHhMm: toHhMm(custom.time_in) || '09:00',
+        timeOutHhMm: toHhMm(custom.time_out) || '17:00',
+        breakStart: custom.break_start,
+        breakEnd: custom.break_end,
+      }
+    }
+    return {
+      timeInHhMm: toHhMm(timeIn) || '09:00',
+      timeOutHhMm: toHhMm(timeOut) || '17:00',
+      breakStart,
+      breakEnd,
+    }
+  }, [daySchedules, timeIn, timeOut, breakStart, breakEnd])
+
+  const defaultTimes = resolveDayTimes('mon')
+  const timeInHhMm = defaultTimes.timeInHhMm
+  const timeOutHhMm = defaultTimes.timeOutHhMm
   const a = minutesFromMidnight(timeInHhMm)
   const b = minutesFromMidnight(timeOutHhMm)
   const crosses = b <= a
@@ -125,6 +145,13 @@ export function ScheduleWeeklyGrid({
         <div className="grid min-w-[640px] flex-1 grid-cols-7 gap-px">
           {DAY_COLS.map(({ key, label }) => {
             const isRest = restSet.has(key)
+            const dayTimes = resolveDayTimes(key)
+            const dayIn = dayTimes.timeInHhMm
+            const dayOut = dayTimes.timeOutHhMm
+            const a = minutesFromMidnight(dayIn)
+            const b = minutesFromMidnight(dayOut)
+            const crosses = b <= a
+            const endMm = crosses ? b + 24 * 60 : b
             return (
               <div key={key} className="flex min-w-[72px] flex-col">
                 <div className="mb-1 text-center text-[11px] font-semibold text-foreground">{label}</div>
@@ -155,11 +182,11 @@ export function ScheduleWeeklyGrid({
                           style={blockStyle(0, b)}
                         />
                       )}
-                      {breakStart && breakEnd && (
+                      {dayTimes.breakStart && dayTimes.breakEnd && (
                         <div
                           className="pointer-events-none absolute inset-x-1 rounded-sm bg-amber-400/20 ring-1 ring-amber-500/30"
                           style={{
-                            ...blockStyle(minutesFromMidnight(toHhMm(breakStart)), minutesFromMidnight(toHhMm(breakEnd))),
+                            ...blockStyle(minutesFromMidnight(toHhMm(dayTimes.breakStart)), minutesFromMidnight(toHhMm(dayTimes.breakEnd))),
                           }}
                         />
                       )}
@@ -190,15 +217,19 @@ export function ScheduleWeeklyGrid({
         </div>
       </div>
       <p className="mt-2 text-[11px] text-muted-foreground">
-        Net shift (excl. break):{' '}
-        <span className="font-medium text-foreground">
-          {(netShiftMinutes(timeInHhMm, timeOutHhMm, breakStart, breakEnd) / 60).toFixed(2)} h
-        </span>
-        {ndMinutes > 0 && (
-          <span className="text-purple-700 dark:text-purple-300">
-            {' '}
-            · ND overlap ≈ {(ndMinutes / 60).toFixed(2)} h/day
-          </span>
+        {daySchedules ? 'Per-day flexible preview shown above.' : (
+          <>
+            Net shift (excl. break):{' '}
+            <span className="font-medium text-foreground">
+              {(netShiftMinutes(timeInHhMm, timeOutHhMm, breakStart, breakEnd) / 60).toFixed(2)} h
+            </span>
+            {ndMinutes > 0 && (
+              <span className="text-purple-700 dark:text-purple-300">
+                {' '}
+                · ND overlap ≈ {(ndMinutes / 60).toFixed(2)} h/day
+              </span>
+            )}
+          </>
         )}
       </p>
     </div>

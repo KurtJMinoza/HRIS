@@ -247,6 +247,9 @@ class EmployeeScheduleAdjustmentService
         ?array $customSchedule
     ): ScheduleAssignmentSnapshot {
         $source = $template ?? new WorkingSchedule($customSchedule ?? []);
+        if ($template) {
+            $template->loadMissing('days');
+        }
         $schedulePayload = $template
             ? EmployeeScheduleResolver::buildFromWorkingSchedule($template)
             : EmployeeScheduleResolver::buildFromWorkingSchedule($source);

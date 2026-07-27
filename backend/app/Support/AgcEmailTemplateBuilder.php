@@ -4,6 +4,8 @@ namespace App\Support;
 
 class AgcEmailTemplateBuilder
 {
+    public const SIGNATURE_NAME = 'HRIS Admin';
+
     private const FONT = 'Arial,Helvetica,sans-serif';
 
     private const BRAND = '#ea580c';

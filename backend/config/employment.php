@@ -11,10 +11,8 @@ return [
     'statuses' => [
         'probationary',
         'regular',
-        'contractual',
         'project_based',
         'consultant',
-        'separated',
     ],
 
     'regularization' => [

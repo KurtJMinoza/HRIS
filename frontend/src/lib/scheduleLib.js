@@ -83,7 +83,12 @@ function computePaidMinutes(schedule) {
     return total
   }
 
-  if (schedule.shift_type === 'flexible' && schedule.flexible_required_minutes) {
+  // Legacy flexible hours-window mode only. Per-day flexible uses fixed-style times.
+  if (
+    schedule.shift_type === 'flexible'
+    && schedule.flexible_required_minutes
+    && !schedule.time_in
+  ) {
     return Number(schedule.flexible_required_minutes)
   }
 

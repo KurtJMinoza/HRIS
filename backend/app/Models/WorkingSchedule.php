@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class WorkingSchedule extends Model
 {
@@ -49,6 +50,20 @@ class WorkingSchedule extends Model
         'is_active',
         'description',
     ];
+
+    public function days(): HasMany
+    {
+        return $this->hasMany(WorkingScheduleDay::class)->orderByRaw(
+            "FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')"
+        );
+    }
+
+    public function isFlexiblePerDay(): bool
+    {
+        return ($this->shift_type ?? self::SHIFT_FIXED) === self::SHIFT_FLEXIBLE
+            && $this->relationLoaded('days')
+            && $this->days->isNotEmpty();
+    }
 
     protected function casts(): array
     {

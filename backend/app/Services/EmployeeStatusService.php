@@ -54,8 +54,7 @@ class EmployeeStatusService
         $currentStatus = EmploymentStatus::tryFromStored((string) $employee->employment_status);
         if (! $employee->hire_date
             || (bool) ($employee->status_override ?? false)
-            || $this->storedStatusIsConsultant($currentStatus, (string) $employee->employment_status)
-            || $currentStatus === EmploymentStatus::Separated
+            || $this->storedStatusIsManualOnly($currentStatus, (string) $employee->employment_status)
         ) {
             return $employee;
         }
@@ -260,6 +259,10 @@ class EmployeeStatusService
             $employee->employment_status = $newStatus->value;
             if ($effectiveDate !== null) {
                 $employee->employment_status_effective_date = $effectiveDate;
+            }
+            // Manual admin/HR changes must not be overwritten by hire-date auto Probationary→Regular.
+            if ($triggerType === 'manual_admin' && Schema::hasColumn($employee->getTable(), 'status_override')) {
+                $employee->status_override = true;
             }
             $employee->save();
 
@@ -569,10 +572,8 @@ class EmployeeStatusService
         $default = config('employment.statuses', [
             EmploymentStatus::Probationary->value,
             EmploymentStatus::Regular->value,
-            EmploymentStatus::Contractual->value,
             EmploymentStatus::ProjectBased->value,
-            'consultant',
-            EmploymentStatus::Separated->value,
+            EmploymentStatus::Consultant->value,
         ]);
         $db = EmploymentStatusSetting::getValue('status_options');
         if (! is_string($db) || trim($db) === '') {
@@ -590,14 +591,35 @@ class EmployeeStatusService
         return array_values(array_unique($parsed));
     }
 
-    private function storedStatusIsConsultant(?EmploymentStatus $currentStatus, ?string $rawEmploymentStatus = null): bool
+    /**
+     * Statuses that are never driven by hire-date auto Probationary→Regular.
+     * Project-based behaves like probationary for roster purposes but must stay
+     * manually assigned (and never receive paid leave credits via Regular rules).
+     */
+    private function storedStatusIsManualOnly(?EmploymentStatus $currentStatus, ?string $rawEmploymentStatus = null): bool
     {
-        if ($currentStatus !== null && $currentStatus->value === 'consultant') {
+        if ($currentStatus === EmploymentStatus::Consultant
+            || $currentStatus === EmploymentStatus::ProjectBased
+            || $currentStatus === EmploymentStatus::Contractual
+            || $currentStatus === EmploymentStatus::Separated
+        ) {
             return true;
         }
 
         $raw = strtolower(str_replace(['-', ' '], '_', trim((string) ($rawEmploymentStatus ?? ''))));
 
-        return in_array($raw, ['consultant', 'consultancy'], true);
+        return in_array($raw, [
+            'consultant',
+            'consultancy',
+            'project',
+            'project_based',
+            'projectbased',
+            'contract',
+            'contractual',
+            'separated',
+            'inactive',
+            'resigned',
+            'terminated',
+        ], true);
     }
 }

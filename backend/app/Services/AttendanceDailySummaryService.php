@@ -407,50 +407,11 @@ class AttendanceDailySummaryService
 
     private function buildScheduleFromWorkingSchedule(?\App\Models\WorkingSchedule $schedule): ?array
     {
-        if (! $schedule || ! $schedule->time_in || ! $schedule->time_out) {
+        if (! $schedule) {
             return null;
         }
 
-        $restDays = is_array($schedule->rest_days) ? $schedule->rest_days : [];
-
-        $breaks = [];
-        foreach ($schedule->getAllBreaks() as $b) {
-            $breaks[] = [
-                'start' => $b['start'],
-                'end' => $b['end'],
-                'is_paid' => $b['is_paid'] ?? false,
-            ];
-        }
-
-        $dayConfig = [];
-        foreach (self::DAY_KEYS as $dayKey) {
-            if (in_array($dayKey, $restDays, true)) {
-                $dayConfig[$dayKey] = null;
-                continue;
-            }
-
-            $dayConfig[$dayKey] = [
-                'in' => $schedule->time_in,
-                'out' => $schedule->time_out,
-                'break_start' => $schedule->break_start,
-                'break_end' => $schedule->break_end,
-                'breaks' => $breaks,
-                'work_blocks' => $schedule->getWorkBlocks(),
-                'shift_type' => $schedule->shift_type ?? 'fixed',
-                'crosses_midnight' => (bool) ($schedule->crosses_midnight ?? false),
-                'expected_paid_minutes' => $schedule->expected_paid_minutes,
-                'half_day_threshold_minutes' => $schedule->effective_half_day_threshold,
-                'grace_period_minutes' => $schedule->grace_period_minutes,
-                'early_timein_minutes' => $schedule->early_timein_minutes ?? 60,
-                'late_allowance_minutes' => $schedule->late_allowance_minutes,
-                'early_timeout_minutes' => $schedule->early_timeout_minutes,
-                'overtime_buffer_minutes' => $schedule->overtime_buffer_minutes ?? 15,
-                'rest_days' => $restDays,
-                'flexible_required_minutes' => $schedule->flexible_required_minutes,
-            ];
-        }
-
-        return $dayConfig;
+        return \App\Support\EmployeeScheduleResolver::buildFromWorkingSchedule($schedule);
     }
 
     private function firstScheduleWithBreaks(?array $effectiveSchedule): ?array

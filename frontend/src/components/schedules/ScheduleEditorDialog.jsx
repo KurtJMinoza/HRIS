@@ -14,6 +14,12 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { ScheduleWeeklyGrid } from '@/components/schedules/ScheduleWeeklyGrid'
 import { ScheduleComplianceBar } from '@/components/schedules/ScheduleComplianceBar'
 import {
+  FlexibleScheduleTable,
+  flexibleDaysToRestDays,
+  flexiblePreviewSchedule,
+} from '@/components/schedules/FlexibleScheduleTable'
+import { createDefaultFlexibleDays } from '@/lib/workScheduleForm'
+import {
   SHIFT_TYPES,
   hasWeeklyRestDay,
   otRiskLevel,
@@ -81,19 +87,37 @@ export function ScheduleEditorDialog({
   const isSplit = shiftType === 'split'
   const isOvernight = shiftType === 'overnight'
 
+  const flexibleRestDays = isFlexible ? flexibleDaysToRestDays(editForm.days) : (editForm.rest_days || [])
+  const previewSource = isFlexible
+    ? flexiblePreviewSchedule(editForm.days, editForm)
+    : editForm
+
   const preview = {
-    time_in: toHhMm(editForm.time_in) || editForm.time_in,
-    time_out: toHhMm(editForm.time_out) || editForm.time_out,
-    break_start: editForm.break_start ? toHhMm(editForm.break_start) : null,
-    break_end: editForm.break_end ? toHhMm(editForm.break_end) : null,
-    breaks: editForm.breaks || [],
-    work_blocks: editForm.work_blocks || [],
-    rest_days: editForm.rest_days || [],
+    time_in: toHhMm(previewSource.time_in) || previewSource.time_in,
+    time_out: toHhMm(previewSource.time_out) || previewSource.time_out,
+    break_start: previewSource.break_start ? toHhMm(previewSource.break_start) : null,
+    break_end: previewSource.break_end ? toHhMm(previewSource.break_end) : null,
+    breaks: previewSource.breaks || [],
+    work_blocks: previewSource.work_blocks || [],
+    rest_days: flexibleRestDays,
     shift_type: shiftType,
-    expected_paid_minutes: editForm.expected_paid_minutes,
-    half_day_threshold_minutes: editForm.half_day_threshold_minutes,
-    flexible_required_minutes: editForm.flexible_required_minutes,
+    expected_paid_minutes: previewSource.expected_paid_minutes,
+    half_day_threshold_minutes: previewSource.half_day_threshold_minutes,
+    flexible_required_minutes: previewSource.flexible_required_minutes,
   }
+
+  const flexibleDaySchedules = isFlexible
+    ? Object.fromEntries(
+      (editForm.days || [])
+        .filter((day) => day.is_working_day)
+        .map((day) => [day.day_of_week, {
+          time_in: day.time_in,
+          time_out: day.time_out,
+          break_start: day.break_start,
+          break_end: day.break_end,
+        }]),
+    )
+    : null
 
   const paidMinutes = computePaidMinutes(preview)
   const halfDayThresh = halfDayThresholdMinutes(preview)
@@ -147,18 +171,28 @@ export function ScheduleEditorDialog({
     }))
   }
 
-  const showTimeInOut = !isSplit
+  const showTimeInOut = !isSplit && !isFlexible
   const showBreakStartEnd = !isSplit && !isFlexible
   const showWorkBlocks = isSplit
-  const showFlexibleFields = isFlexible
+
+  function handleShiftTypeChange(nextType) {
+    setEditForm((f) => {
+      const next = { ...f, shift_type: nextType }
+      if (nextType === 'flexible' && (!Array.isArray(f.days) || f.days.length === 0)) {
+        next.days = createDefaultFlexibleDays(Number(f.grace_period_minutes) || 5)
+      }
+      return next
+    })
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className={cn(
-          'flex max-h-[min(92dvh,900px)] min-h-0 w-full max-w-full flex-col gap-0 overflow-hidden border-border/60 bg-card p-0 shadow-xl dark:border-border/50',
-          'sm:mx-auto sm:max-w-5xl'
+          'flex max-h-[min(96dvh,980px)] min-h-0 w-full max-w-full flex-col gap-0 overflow-hidden border-border/60 bg-card p-0 shadow-xl dark:border-border/50',
+          isFlexible ? 'sm:max-w-[min(96vw,1400px)]' : 'sm:max-w-5xl'
         )}
+        innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0!"
       >
         <form
           className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
@@ -187,6 +221,145 @@ export function ScheduleEditorDialog({
           </DialogHeader>
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6">
+          {isFlexible ? (
+            <div className="space-y-5">
+              <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/25 p-4 dark:bg-muted/15 md:grid-cols-3">
+                <div className="space-y-1.5 md:col-span-1">
+                  <Label htmlFor="schedule-name">Schedule name</Label>
+                  <Input
+                    id="schedule-name"
+                    value={editForm.name}
+                    onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                    placeholder="e.g. Flexible Office Schedule"
+                    className="h-11 min-h-11"
+                    required
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="shift-type">Shift type</Label>
+                  <select
+                    id="shift-type"
+                    value={shiftType}
+                    onChange={(e) => handleShiftTypeChange(e.target.value)}
+                    className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    disabled={readOnly}
+                  >
+                    {SCHEDULE_EDITOR_SHIFT_TYPES.map((st) => (
+                      <option key={st.value} value={st.value}>{st.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="schedule-code">Schedule code <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                  <Input
+                    id="schedule-code"
+                    value={editForm.schedule_code || ''}
+                    onChange={(e) => setEditForm((f) => ({ ...f, schedule_code: e.target.value }))}
+                    placeholder="e.g. FX-01"
+                    className="h-11 min-h-11"
+                    maxLength={32}
+                    readOnly={readOnly}
+                    disabled={readOnly}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border/60 bg-muted/15 p-4 dark:bg-muted/10">
+                <FlexibleScheduleTable
+                  days={editForm.days || []}
+                  setDays={(updater) => setEditForm((f) => ({
+                    ...f,
+                    days: typeof updater === 'function' ? updater(f.days || []) : updater,
+                  }))}
+                  readOnly={readOnly}
+                />
+              </div>
+
+              <div className="grid gap-4 @xl:grid-cols-2">
+                <ScheduleWeeklyGrid
+                  timeIn={preview.time_in}
+                  timeOut={preview.time_out}
+                  restDays={flexibleRestDays}
+                  breakStart={preview.break_start}
+                  breakEnd={preview.break_end}
+                  daySchedules={flexibleDaySchedules}
+                />
+                <div className="space-y-4">
+                  <ScheduleComplianceBar
+                    weeklyHours={wh}
+                    ndHoursPerWeek={ndh}
+                    otRisk={risk}
+                    restOk={restOk}
+                    onValidate={() => {
+                      toast.message('Preview OK', {
+                        description: restOk
+                          ? 'Weekly rest rule and hours look reasonable.'
+                          : 'Add at least one rest day per week (DOLE practice).',
+                      })
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="text-xs text-primary underline decoration-primary/30 hover:decoration-primary"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                  >
+                    {showAdvanced ? 'Hide advanced settings' : 'Show advanced settings'}
+                  </button>
+                  {showAdvanced && (
+                    <div className="space-y-3 rounded-lg border border-dashed border-border/60 bg-muted/10 p-3">
+                      <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="late-allowance-flex">Late allowance (min)</Label>
+                          <Input
+                            id="late-allowance-flex"
+                            type="number"
+                            min={0}
+                            max={240}
+                            placeholder="Optional"
+                            value={editForm.late_allowance_minutes}
+                            onChange={(e) => setEditForm((f) => ({ ...f, late_allowance_minutes: e.target.value }))}
+                            className="h-11 min-h-11"
+                            readOnly={readOnly}
+                            disabled={readOnly}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="early-timeout-flex">Early time-out (min)</Label>
+                          <Input
+                            id="early-timeout-flex"
+                            type="number"
+                            min={0}
+                            max={240}
+                            placeholder="Optional"
+                            value={editForm.early_timeout_minutes}
+                            onChange={(e) => setEditForm((f) => ({ ...f, early_timeout_minutes: e.target.value }))}
+                            className="h-11 min-h-11"
+                            readOnly={readOnly}
+                            disabled={readOnly}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="description-flex">Description</Label>
+                        <textarea
+                          id="description-flex"
+                          value={editForm.description || ''}
+                          onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                          placeholder="Optional notes about this schedule template"
+                          className="flex min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                          maxLength={1000}
+                          readOnly={readOnly}
+                          disabled={readOnly}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
           <div className="grid gap-6 @xl:grid-cols-[minmax(280px,400px)_1fr]">
             <div className="space-y-5 rounded-xl border border-border/60 bg-muted/25 p-4 dark:bg-muted/15">
               {/* Schedule name */}
@@ -210,7 +383,7 @@ export function ScheduleEditorDialog({
                 <select
                   id="shift-type"
                   value={shiftType}
-                  onChange={(e) => setEditForm((f) => ({ ...f, shift_type: e.target.value }))}
+                  onChange={(e) => handleShiftTypeChange(e.target.value)}
                   className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   disabled={readOnly}
                 >
@@ -272,54 +445,6 @@ export function ScheduleEditorDialog({
                 <div className="flex items-center gap-2 rounded-md border border-amber-300/50 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300">
                   <Info className="size-4 shrink-0" />
                   <span>Overnight shift detected — shift crosses midnight</span>
-                </div>
-              )}
-
-              {/* Flexible shift fields */}
-              {showFlexibleFields && (
-                <div className="space-y-3 rounded-lg border border-border/50 bg-background/60 p-3 dark:bg-background/30">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Flexible shift settings</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="flex-required">Required hours/day</Label>
-                      <Input
-                        id="flex-required"
-                        type="number"
-                        min={0}
-                        max={24}
-                        step={0.5}
-                        value={editForm.flexible_required_minutes ? (Number(editForm.flexible_required_minutes) / 60) : ''}
-                        onChange={(e) => setEditForm((f) => ({ ...f, flexible_required_minutes: e.target.value ? Math.round(Number(e.target.value) * 60) : '' }))}
-                        placeholder="8"
-                        className="h-11 min-h-11"
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Core hours <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                      <div className="flex gap-1.5">
-                        <Input
-                          type="time"
-                          value={editForm.core_hours_start || ''}
-                          onChange={(e) => setEditForm((f) => ({ ...f, core_hours_start: e.target.value }))}
-                          className="h-11 min-h-11 flex-1"
-                          placeholder="10:00"
-                          readOnly={readOnly}
-                          disabled={readOnly}
-                        />
-                        <Input
-                          type="time"
-                          value={editForm.core_hours_end || ''}
-                          onChange={(e) => setEditForm((f) => ({ ...f, core_hours_end: e.target.value }))}
-                          className="h-11 min-h-11 flex-1"
-                          placeholder="15:00"
-                          readOnly={readOnly}
-                          disabled={readOnly}
-                        />
-                      </div>
-                    </div>
-                  </div>
                 </div>
               )}
 
@@ -401,7 +526,8 @@ export function ScheduleEditorDialog({
                 </div>
               )}
 
-              {/* Multiple breaks section */}
+              {/* Multiple breaks section (fixed only) */}
+              {!isFlexible && (
               <div className="space-y-3 rounded-lg border border-border/50 bg-background/60 p-3 dark:bg-background/30">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Additional breaks</p>
@@ -455,8 +581,9 @@ export function ScheduleEditorDialog({
                   </div>
                 ))}
               </div>
+              )}
 
-              {/* Paid hours summary */}
+              {/* Paid hours summary (same for fixed + flexible) */}
               <div className="flex items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 dark:bg-primary/10">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">Paid hours: <span className="text-primary">{formatPaidHours(paidMinutes)}</span></p>
@@ -464,7 +591,7 @@ export function ScheduleEditorDialog({
                 </div>
               </div>
 
-              {/* Expected paid minutes override */}
+              {/* Expected paid minutes / half-day (same for fixed + flexible) */}
               <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="expected-paid">Expected paid hours <span className="text-muted-foreground text-xs">(override)</span></Label>
@@ -500,7 +627,7 @@ export function ScheduleEditorDialog({
                 </div>
               </div>
 
-              {/* Grace / early time-in */}
+              {/* Grace / early time-in (same for fixed + flexible) */}
               <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="grace">Grace period (min)</Label>
@@ -532,7 +659,7 @@ export function ScheduleEditorDialog({
                 </div>
               </div>
 
-              {/* Overtime buffer */}
+              {/* Overtime buffer (same for fixed + flexible) */}
               <div className="space-y-1.5">
                 <Label htmlFor="overtime-buffer">Overtime buffer (min)</Label>
                 <Input
@@ -622,7 +749,8 @@ export function ScheduleEditorDialog({
                 />
               </div>
 
-              {/* Days off */}
+              {/* Days off (fixed only) */}
+              {!isFlexible && (
               <div className="space-y-2">
                 <div>
                   <Label className="text-sm font-medium">Days off (weekly)</Label>
@@ -657,15 +785,16 @@ export function ScheduleEditorDialog({
                   })}
                 </div>
               </div>
+              )}
             </div>
 
             <div className="space-y-4 min-w-0">
               <ScheduleWeeklyGrid
-                timeIn={editForm.time_in}
-                timeOut={editForm.time_out}
+                timeIn={preview.time_in}
+                timeOut={preview.time_out}
                 restDays={editForm.rest_days}
-                breakStart={editForm.break_start}
-                breakEnd={editForm.break_end}
+                breakStart={preview.break_start}
+                breakEnd={preview.break_end}
                 onShiftChange={
                   readOnly
                     ? undefined
@@ -689,6 +818,7 @@ export function ScheduleEditorDialog({
               />
             </div>
           </div>
+          )}
 
           {error && (
             <div className="mt-4 rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive">

@@ -25,9 +25,9 @@ use Illuminate\Validation\ValidationException;
  * Until both apply: **available_credits = 0**; employees may still file leave, but credit-consuming
  * types are **unpaid** (no deduction from pool; payroll excludes pay for those days).
  *
- * **Probationary** employees: **0** credits (not eligible). **Regular** employees with **less than
- * one full year of service**: **0** credits (not eligible yet). Only **Regular + ≥1 year** receive
- * the annual pool.
+ * **Probationary** employees: **0** credits (not eligible). **Project-based** employees: **0**
+ * credits even after one year of service. **Regular** employees with **less than one full year of
+ * service**: **0** credits (not eligible yet). Only **Regular + ≥1 year** receive the annual pool.
  *
  * **Annual pool:** configurable via leave.annual_allocation (default 7). **January 1** full reset
  * for eligible employees; unused credits do not carry over (not cumulative).
@@ -151,6 +151,11 @@ class LeaveCreditService
     public function isProbationaryEmployment(User $user): bool
     {
         return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::Probationary;
+    }
+
+    public function isProjectBasedEmployment(User $user): bool
+    {
+        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::ProjectBased;
     }
 
     public function billableCreditDays(LeaveRequest $leave): int
@@ -1077,6 +1082,7 @@ class LeaveCreditService
                 $annual = self::annualAllocation();
                 $eligible = $this->eligibleForPaidLeavePool($user);
                 $probationary = $this->isProbationaryEmployment($user);
+                $projectBased = $this->isProjectBasedEmployment($user);
                 $regular = $this->isRegularEmployment($user);
                 $oneYear = $this->hasCompletedOneYearOfService($user);
                 $remaining = $eligible ? (int) ($user->leave_credits ?? 0) : 0;
@@ -1095,9 +1101,12 @@ class LeaveCreditService
                     $display = "{$remaining}/{$annual} credits (Eligible)";
                     $statusSummary = 'Eligible for paid leave credits (Regular + 1 year service)';
                 } else {
-                    // Single line for any ineligible employee (probationary, Regular <1 year, or non-Regular).
+                    // Single line for any ineligible employee (probationary, project-based, Regular <1 year, or non-Regular).
                     $display = "0/{$annual} - Not yet eligible (under 1 year regular service)";
-                    if ($probationary) {
+                    if ($projectBased) {
+                        $display = "0/{$annual} - Not eligible (project-based)";
+                        $statusSummary = 'Not eligible: project-based employees do not receive paid leave credits.';
+                    } elseif ($probationary) {
                         $statusSummary = 'Not yet eligible: probationary employees do not receive paid leave credits';
                     } elseif ($regular && ! $oneYear) {
                         $statusSummary = 'Complete 1 full year of regular service to unlock paid leave credits.';

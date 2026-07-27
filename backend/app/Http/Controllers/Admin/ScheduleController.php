@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\EmployeeScheduleAssignment;
 use App\Models\User;
 use App\Models\WorkingSchedule;
+use App\Models\WorkingScheduleDay;
 use App\Services\EmployeeScheduleAdjustmentService;
 use App\Services\ScheduleComputationService;
 use Carbon\Carbon;
@@ -18,6 +19,16 @@ use Illuminate\Support\Facades\Log;
 class ScheduleController extends Controller
 {
     private const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+    private const DAY_LABELS = [
+        'mon' => 'Monday',
+        'tue' => 'Tuesday',
+        'wed' => 'Wednesday',
+        'thu' => 'Thursday',
+        'fri' => 'Friday',
+        'sat' => 'Saturday',
+        'sun' => 'Sunday',
+    ];
 
     public function __construct(
         private readonly ScheduleComputationService $scheduleComputation,
@@ -48,7 +59,7 @@ class ScheduleController extends Controller
 
     public function index(): JsonResponse
     {
-        $schedules = WorkingSchedule::orderBy('name')->get();
+        $schedules = WorkingSchedule::with('days')->orderBy('name')->get();
 
         return response()->json([
             'schedules' => $schedules->map(fn (WorkingSchedule $s) => $this->scheduleResponse($s)),
@@ -200,13 +211,32 @@ class ScheduleController extends Controller
                 }
             }
         }
+        $days = $request->input('days');
+        if (is_array($days)) {
+            foreach ($days as $i => $day) {
+                if (! is_array($day)) {
+                    continue;
+                }
+                foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
+                    if (! empty($day[$timeKey])) {
+                        $days[$i][$timeKey] = $this->normalizeTimeToHi((string) $day[$timeKey]);
+                    }
+                }
+            }
+            $toMerge['days'] = $days;
+        }
         if ($toMerge !== []) {
             $request->merge($toMerge);
         }
 
         $validated = $request->validate($this->validationRules());
+        $this->validateFlexibleDays($validated);
 
         $schedule = WorkingSchedule::create($this->buildScheduleData($validated));
+        if (($validated['shift_type'] ?? 'fixed') === WorkingSchedule::SHIFT_FLEXIBLE) {
+            $this->syncFlexibleDays($schedule, $validated['days'] ?? []);
+            $schedule->load('days');
+        }
 
         return response()->json([
             'message' => 'Schedule created.',
@@ -228,14 +258,35 @@ class ScheduleController extends Controller
                 }
             }
         }
+        $days = $request->input('days');
+        if (is_array($days)) {
+            foreach ($days as $i => $day) {
+                if (! is_array($day)) {
+                    continue;
+                }
+                foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
+                    if (! empty($day[$timeKey])) {
+                        $days[$i][$timeKey] = $this->normalizeTimeToHi((string) $day[$timeKey]);
+                    }
+                }
+            }
+            $toMerge['days'] = $days;
+        }
         if ($toMerge !== []) {
             $request->merge($toMerge);
         }
 
         $validated = $request->validate($this->validationRules(true));
+        $this->validateFlexibleDays($validated, true);
 
         $schedule->fill($this->buildScheduleData($validated, true));
         $schedule->save();
+
+        if (($validated['shift_type'] ?? $schedule->shift_type) === WorkingSchedule::SHIFT_FLEXIBLE
+            && array_key_exists('days', $validated)) {
+            $this->syncFlexibleDays($schedule, $validated['days'] ?? []);
+            $schedule->load('days');
+        }
 
         $affectedIds = User::query()
             ->where('working_schedule_id', $schedule->id)
@@ -347,7 +398,7 @@ class ScheduleController extends Controller
      */
     public function preview(Request $request, int $id): JsonResponse
     {
-        $schedule = WorkingSchedule::findOrFail($id);
+        $schedule = WorkingSchedule::with('days')->findOrFail($id);
 
         $validated = $request->validate([
             'date' => ['required', 'date'],
@@ -356,7 +407,7 @@ class ScheduleController extends Controller
         ]);
 
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $daySchedule = $this->scheduleComputation->buildDayScheduleFromModel($schedule);
+        $daySchedule = $this->scheduleComputation->buildDayScheduleFromModel($schedule, $validated['date']);
         $timeIn = ! empty($validated['time_in']) ? Carbon::parse($validated['time_in'], $tz) : null;
         $timeOut = ! empty($validated['time_out']) ? Carbon::parse($validated['time_out'], $tz) : null;
 
@@ -523,8 +574,6 @@ class ScheduleController extends Controller
 
     private function validationRules(bool $isUpdate = false): array
     {
-        $sometimes = $isUpdate ? 'sometimes|' : '';
-
         return [
             'name' => [
                 ...($isUpdate ? ['sometimes'] : []),
@@ -535,10 +584,10 @@ class ScheduleController extends Controller
             ],
             'schedule_code' => ['nullable', 'string', 'max:32'],
             'shift_type' => ['nullable', 'string', 'in:fixed,flexible,split,overnight,rotating,compressed'],
-            'time_in' => [...($isUpdate ? ['sometimes'] : []), 'required', 'date_format:H:i'],
+            'time_in' => [...($isUpdate ? ['sometimes'] : []), 'nullable', 'date_format:H:i'],
             'break_start' => ['nullable', 'date_format:H:i'],
             'break_end' => ['nullable', 'date_format:H:i'],
-            'time_out' => [...($isUpdate ? ['sometimes'] : []), 'required', 'date_format:H:i'],
+            'time_out' => [...($isUpdate ? ['sometimes'] : []), 'nullable', 'date_format:H:i'],
             'crosses_midnight' => ['nullable', 'boolean'],
             'expected_paid_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
             'half_day_threshold_minutes' => ['nullable', 'integer', 'min:0', 'max:720'],
@@ -562,7 +611,195 @@ class ScheduleController extends Controller
             'core_hours_start' => ['nullable', 'date_format:H:i'],
             'core_hours_end' => ['nullable', 'date_format:H:i'],
             'description' => ['nullable', 'string', 'max:1000'],
+            'days' => ['nullable', 'array'],
+            'days.*.day_of_week' => ['required_with:days', 'string', 'in:mon,tue,wed,thu,fri,sat,sun'],
+            'days.*.is_working_day' => ['nullable', 'boolean'],
+            'days.*.time_in' => ['nullable', 'date_format:H:i'],
+            'days.*.time_out' => ['nullable', 'date_format:H:i'],
+            'days.*.break_start' => ['nullable', 'date_format:H:i'],
+            'days.*.break_end' => ['nullable', 'date_format:H:i'],
+            'days.*.break_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'days.*.expected_paid_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
+            'days.*.grace_period_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
+            'days.*.early_timein_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'days.*.overtime_buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'days.*.half_day_threshold_minutes' => ['nullable', 'integer', 'min:0', 'max:720'],
+            'days.*.crosses_midnight' => ['nullable', 'boolean'],
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     */
+    private function validateFlexibleDays(array $validated, bool $isUpdate = false): void
+    {
+        $shiftType = $validated['shift_type'] ?? 'fixed';
+        if ($shiftType !== WorkingSchedule::SHIFT_FLEXIBLE) {
+            if (! $isUpdate && empty($validated['time_in'])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'time_in' => ['Time in is required.'],
+                ]);
+            }
+            if (! $isUpdate && empty($validated['time_out'])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'time_out' => ['Time out is required.'],
+                ]);
+            }
+
+            return;
+        }
+
+        $days = $validated['days'] ?? null;
+        if (! is_array($days) || count($days) < 7) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'days' => ['Flexible schedules require one configuration row for each weekday.'],
+            ]);
+        }
+
+        $errors = [];
+        foreach ($days as $index => $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+            $dayKey = (string) ($day['day_of_week'] ?? '');
+            $label = self::DAY_LABELS[$dayKey] ?? ucfirst($dayKey);
+            $isWorking = (bool) ($day['is_working_day'] ?? false);
+
+            if (! $isWorking) {
+                continue;
+            }
+
+            $timeIn = WorkingScheduleDay::normalizeTime($day['time_in'] ?? null);
+            $timeOut = WorkingScheduleDay::normalizeTime($day['time_out'] ?? null);
+            $breakStart = WorkingScheduleDay::normalizeTime($day['break_start'] ?? null);
+            $breakEnd = WorkingScheduleDay::normalizeTime($day['break_end'] ?? null);
+
+            if (! $timeIn) {
+                $errors["days.{$index}.time_in"] = ["{$label} Time In is required."];
+            }
+            if (! $timeOut) {
+                $errors["days.{$index}.time_out"] = ["{$label} Time Out is required."];
+            }
+            if ($timeIn && $timeOut) {
+                $crossesMidnight = (bool) ($day['crosses_midnight'] ?? false) || $timeOut <= $timeIn;
+                if (! $crossesMidnight && $timeOut <= $timeIn) {
+                    $errors["days.{$index}.time_out"] = ["{$label} Time Out must be later than Time In."];
+                }
+            }
+
+            if (($breakStart && ! $breakEnd) || (! $breakStart && $breakEnd)) {
+                $errors["days.{$index}.break_end"] = ["{$label} break must include both start and end."];
+            }
+
+            if ($timeIn && $timeOut && $breakStart && $breakEnd) {
+                if (! $this->breakWithinShift($timeIn, $timeOut, $breakStart, $breakEnd, (bool) ($day['crosses_midnight'] ?? false))) {
+                    $errors["days.{$index}.break_start"] = ["{$label} break period is outside the scheduled shift."];
+                }
+            }
+        }
+
+        if ($errors !== []) {
+            throw \Illuminate\Validation\ValidationException::withMessages($errors);
+        }
+    }
+
+    private function breakWithinShift(
+        string $timeIn,
+        string $timeOut,
+        string $breakStart,
+        string $breakEnd,
+        bool $crossesMidnight
+    ): bool {
+        $inMin = WorkingSchedule::timeToMinutes($timeIn);
+        $outMin = WorkingSchedule::timeToMinutes($timeOut);
+        $bsMin = WorkingSchedule::timeToMinutes($breakStart);
+        $beMin = WorkingSchedule::timeToMinutes($breakEnd);
+
+        $spanEnd = $crossesMidnight || $outMin <= $inMin ? $outMin + 1440 : $outMin;
+        $breakEndAdj = $beMin <= $bsMin ? $beMin + 1440 : $beMin;
+
+        return $bsMin >= $inMin && $breakEndAdj <= $spanEnd;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function syncFlexibleDays(WorkingSchedule $schedule, array $days): void
+    {
+        $schedule->days()->delete();
+
+        $restDays = [];
+        $firstWorking = null;
+
+        foreach ($days as $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+            $dayKey = (string) ($day['day_of_week'] ?? '');
+            if (! in_array($dayKey, self::DAY_KEYS, true)) {
+                continue;
+            }
+
+            $isWorking = (bool) ($day['is_working_day'] ?? false);
+            if (! $isWorking) {
+                $restDays[] = $dayKey;
+
+                continue;
+            }
+
+            $timeIn = WorkingScheduleDay::normalizeTime($day['time_in'] ?? null);
+            $timeOut = WorkingScheduleDay::normalizeTime($day['time_out'] ?? null);
+            $breakStart = WorkingScheduleDay::normalizeTime($day['break_start'] ?? null);
+            $breakEnd = WorkingScheduleDay::normalizeTime($day['break_end'] ?? null);
+            $crossesMidnight = (bool) ($day['crosses_midnight'] ?? false) || ($timeIn && $timeOut && $timeOut <= $timeIn);
+
+            $row = WorkingScheduleDay::create([
+                'working_schedule_id' => $schedule->id,
+                'day_of_week' => $dayKey,
+                'is_working_day' => true,
+                'time_in' => $timeIn,
+                'time_out' => $timeOut,
+                'break_start' => $breakStart,
+                'break_end' => $breakEnd,
+                'break_minutes' => isset($day['break_minutes']) ? (int) $day['break_minutes'] : null,
+                'expected_paid_minutes' => isset($day['expected_paid_minutes'])
+                    ? (int) $day['expected_paid_minutes']
+                    : null,
+                'grace_period_minutes' => isset($day['grace_period_minutes'])
+                    ? (int) $day['grace_period_minutes']
+                    : 5,
+                'early_timein_minutes' => isset($day['early_timein_minutes'])
+                    ? (int) $day['early_timein_minutes']
+                    : 60,
+                'overtime_buffer_minutes' => isset($day['overtime_buffer_minutes'])
+                    ? (int) $day['overtime_buffer_minutes']
+                    : 15,
+                'half_day_threshold_minutes' => isset($day['half_day_threshold_minutes'])
+                    ? (int) $day['half_day_threshold_minutes']
+                    : null,
+                'crosses_midnight' => $crossesMidnight,
+            ]);
+
+            if ($firstWorking === null) {
+                $firstWorking = $row;
+            }
+        }
+
+        $updates = ['rest_days' => $restDays];
+        if ($firstWorking instanceof WorkingScheduleDay) {
+            $updates['time_in'] = $firstWorking->time_in;
+            $updates['time_out'] = $firstWorking->time_out;
+            $updates['break_start'] = $firstWorking->break_start;
+            $updates['break_end'] = $firstWorking->break_end;
+            $updates['crosses_midnight'] = $firstWorking->crosses_midnight;
+            $updates['grace_period_minutes'] = $firstWorking->grace_period_minutes ?? 5;
+            $updates['early_timein_minutes'] = $firstWorking->early_timein_minutes ?? 60;
+            $updates['overtime_buffer_minutes'] = $firstWorking->overtime_buffer_minutes ?? 15;
+            $updates['expected_paid_minutes'] = $firstWorking->expected_paid_minutes;
+            $updates['half_day_threshold_minutes'] = $firstWorking->half_day_threshold_minutes;
+        }
+
+        $schedule->forceFill($updates)->save();
     }
 
     private function buildScheduleData(array $validated, bool $isUpdate = false): array
@@ -623,6 +860,7 @@ class ScheduleController extends Controller
 
     private function scheduleResponse(WorkingSchedule $schedule): array
     {
+        $schedule->loadMissing('days');
         $daySchedule = $this->scheduleComputation->buildDayScheduleFromModel($schedule);
         $summary = $this->scheduleComputation->summarize(now()->toDateString(), $daySchedule);
 
@@ -653,6 +891,21 @@ class ScheduleController extends Controller
             'core_hours_start' => $schedule->core_hours_start,
             'core_hours_end' => $schedule->core_hours_end,
             'description' => $schedule->description,
+            'days' => $schedule->days->map(fn (WorkingScheduleDay $day) => [
+                'day_of_week' => $day->day_of_week,
+                'is_working_day' => (bool) $day->is_working_day,
+                'time_in' => $day->time_in ? substr((string) $day->time_in, 0, 5) : null,
+                'time_out' => $day->time_out ? substr((string) $day->time_out, 0, 5) : null,
+                'break_start' => $day->break_start ? substr((string) $day->break_start, 0, 5) : null,
+                'break_end' => $day->break_end ? substr((string) $day->break_end, 0, 5) : null,
+                'break_minutes' => $day->break_minutes,
+                'expected_paid_minutes' => $day->expected_paid_minutes,
+                'grace_period_minutes' => $day->grace_period_minutes,
+                'early_timein_minutes' => $day->early_timein_minutes,
+                'overtime_buffer_minutes' => $day->overtime_buffer_minutes,
+                'half_day_threshold_minutes' => $day->half_day_threshold_minutes,
+                'crosses_midnight' => (bool) $day->crosses_midnight,
+            ])->values()->all(),
             'is_active' => (bool) ($schedule->is_active ?? true),
             'created_at' => $schedule->created_at?->toIso8601String(),
             'updated_at' => $schedule->updated_at?->toIso8601String(),

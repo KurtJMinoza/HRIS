@@ -6,6 +6,7 @@ use App\Models\EmployeeScheduleAssignment;
 use App\Models\ScheduleAssignmentSnapshot;
 use App\Models\User;
 use App\Models\WorkingSchedule;
+use App\Models\WorkingScheduleDay;
 use Carbon\Carbon;
 
 /**
@@ -22,6 +23,12 @@ final class EmployeeScheduleResolver
     {
         if (! $workingSchedule) {
             return null;
+        }
+
+        $workingSchedule->loadMissing('days');
+
+        if ($workingSchedule->isFlexiblePerDay()) {
+            return self::buildFlexibleFromDays($workingSchedule);
         }
 
         $restDays = is_array($workingSchedule->rest_days) ? $workingSchedule->rest_days : [];
@@ -63,6 +70,44 @@ final class EmployeeScheduleResolver
                 'rest_days' => $restDays,
                 'flexible_required_minutes' => $workingSchedule->flexible_required_minutes,
             ];
+        }
+
+        return $dayConfig;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>|null>|null
+     */
+    private static function buildFlexibleFromDays(WorkingSchedule $workingSchedule): array
+    {
+        $byDay = $workingSchedule->days->keyBy('day_of_week');
+        $restDays = [];
+
+        foreach (self::DAY_KEYS as $key) {
+            if (! $byDay->has($key)) {
+                continue;
+            }
+            /** @var WorkingScheduleDay $dayRow */
+            $dayRow = $byDay->get($key);
+            if (! $dayRow->is_working_day) {
+                $restDays[] = $key;
+            }
+        }
+
+        if ($restDays === [] && is_array($workingSchedule->rest_days)) {
+            $restDays = $workingSchedule->rest_days;
+        }
+
+        $dayConfig = [];
+        foreach (self::DAY_KEYS as $key) {
+            $dayRow = $byDay->get($key);
+            if (! $dayRow instanceof WorkingScheduleDay || ! $dayRow->is_working_day) {
+                $dayConfig[$key] = null;
+
+                continue;
+            }
+
+            $dayConfig[$key] = $dayRow->toDayConfig($workingSchedule, $restDays);
         }
 
         return $dayConfig;

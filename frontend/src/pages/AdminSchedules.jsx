@@ -72,6 +72,12 @@ import {
   ADMIN_FORM_DIALOG_MAX_W_MD,
 } from '@/lib/adminFormDialogStyles'
 import { formatShiftRange12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
+import {
+  createDefaultScheduleForm,
+  scheduleRecordToForm,
+  buildWorkingSchedulePayload,
+  validateFlexibleDays,
+} from '@/lib/workScheduleForm'
 
 function validateSimpleLabel(value, fieldLabel) {
   const trimmed = value.trim()
@@ -237,31 +243,7 @@ export default function AdminSchedules() {
   const [adjustmentOpen, setAdjustmentOpen] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
-  const [editForm, setEditForm] = useState({
-    name: '',
-    schedule_code: '',
-    shift_type: 'fixed',
-    time_in: '08:00',
-    break_start: '',
-    break_end: '',
-    time_out: '17:00',
-    breaks: [],
-    work_blocks: [],
-    expected_paid_minutes: '',
-    half_day_threshold_minutes: '',
-    grace_period_minutes: 5,
-    early_timein_minutes: 60,
-    late_allowance_minutes: '',
-    early_timeout_minutes: '',
-    overtime_buffer_minutes: 15,
-    rest_days: [...DEFAULT_REST_DAYS],
-    flexible_required_minutes: '',
-    flexible_earliest_in: '',
-    flexible_latest_out: '',
-    core_hours_start: '',
-    core_hours_end: '',
-    description: '',
-  })
+  const [editForm, setEditForm] = useState(createDefaultScheduleForm())
 
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignSchedule, setAssignSchedule] = useState(null)
@@ -352,71 +334,13 @@ export default function AdminSchedules() {
 
   function openCreate() {
     setEditingSchedule(null)
-    setEditForm({
-      name: '',
-      schedule_code: '',
-      shift_type: 'fixed',
-      time_in: '08:00',
-      break_start: '',
-      break_end: '',
-      time_out: '17:00',
-      breaks: [],
-      work_blocks: [],
-      expected_paid_minutes: '',
-      half_day_threshold_minutes: '',
-      grace_period_minutes: 5,
-      early_timein_minutes: 60,
-      late_allowance_minutes: '',
-      early_timeout_minutes: '',
-      overtime_buffer_minutes: 15,
-      rest_days: [...DEFAULT_REST_DAYS],
-      flexible_required_minutes: '',
-      flexible_earliest_in: '',
-      flexible_latest_out: '',
-      core_hours_start: '',
-      core_hours_end: '',
-      description: '',
-    })
+    setEditForm(createDefaultScheduleForm())
     setEditOpen(true)
   }
 
   function openEdit(schedule) {
     setEditingSchedule(schedule)
-    setEditForm({
-      name: schedule.name || '',
-      schedule_code: schedule.schedule_code || '',
-      shift_type: schedule.shift_type || 'fixed',
-      time_in: toHhMm(schedule.time_in) || '08:00',
-      break_start: toHhMm(schedule.break_start) || '',
-      break_end: toHhMm(schedule.break_end) || '',
-      time_out: toHhMm(schedule.time_out) || '17:00',
-      breaks: Array.isArray(schedule.breaks) ? schedule.breaks.map(b => ({
-        start: toHhMm(b.start || b.break_start) || '',
-        end: toHhMm(b.end || b.break_end) || '',
-        is_paid: !!b.is_paid,
-      })) : [],
-      work_blocks: Array.isArray(schedule.work_blocks) ? schedule.work_blocks.map(b => ({
-        start: toHhMm(b.start) || '',
-        end: toHhMm(b.end) || '',
-      })) : [],
-      expected_paid_minutes: schedule.expected_paid_minutes ?? '',
-      half_day_threshold_minutes: schedule.half_day_threshold_minutes ?? '',
-      grace_period_minutes: schedule.grace_period_minutes ?? 5,
-      early_timein_minutes: schedule.early_timein_minutes ?? 60,
-      late_allowance_minutes: schedule.late_allowance_minutes ?? '',
-      early_timeout_minutes: schedule.early_timeout_minutes ?? '',
-      overtime_buffer_minutes: schedule.overtime_buffer_minutes ?? 15,
-      rest_days:
-        Array.isArray(schedule.rest_days) && schedule.rest_days.length > 0
-          ? [...schedule.rest_days]
-          : [...DEFAULT_REST_DAYS],
-      flexible_required_minutes: schedule.flexible_required_minutes ?? '',
-      flexible_earliest_in: toHhMm(schedule.flexible_earliest_in) || '',
-      flexible_latest_out: toHhMm(schedule.flexible_latest_out) || '',
-      core_hours_start: toHhMm(schedule.core_hours_start) || '',
-      core_hours_end: toHhMm(schedule.core_hours_end) || '',
-      description: schedule.description || '',
-    })
+    setEditForm(scheduleRecordToForm(schedule))
     setEditOpen(true)
   }
 
@@ -427,43 +351,17 @@ export default function AdminSchedules() {
       setError(nameError)
       return
     }
+    if ((editForm.shift_type || 'fixed') === 'flexible') {
+      const dayErrors = validateFlexibleDays(editForm.days)
+      if (dayErrors.length > 0) {
+        setError(dayErrors[0])
+        return
+      }
+    }
     setEditSubmitting(true)
     setError(null)
     try {
-      const intOrNull = (v, def) => (v === '' || v == null ? def : Number(v))
-
-      const payload = {
-        name: editForm.name.trim(),
-        schedule_code: editForm.schedule_code?.trim() || null,
-        shift_type: editForm.shift_type || 'fixed',
-        time_in: toHhMm(editForm.time_in) || editForm.time_in,
-        break_start: editForm.break_start ? toHhMm(editForm.break_start) : null,
-        break_end: editForm.break_end ? toHhMm(editForm.break_end) : null,
-        time_out: toHhMm(editForm.time_out) || editForm.time_out,
-        breaks: (editForm.breaks || []).filter(b => b.start && b.end).map(b => ({
-          start: toHhMm(b.start) || b.start,
-          end: toHhMm(b.end) || b.end,
-          is_paid: !!b.is_paid,
-        })),
-        work_blocks: (editForm.work_blocks || []).filter(b => b.start && b.end).map(b => ({
-          start: toHhMm(b.start) || b.start,
-          end: toHhMm(b.end) || b.end,
-        })),
-        expected_paid_minutes: intOrNull(editForm.expected_paid_minutes, null),
-        half_day_threshold_minutes: intOrNull(editForm.half_day_threshold_minutes, null),
-        grace_period_minutes: intOrNull(editForm.grace_period_minutes, 5),
-        early_timein_minutes: intOrNull(editForm.early_timein_minutes, 60),
-        late_allowance_minutes: intOrNull(editForm.late_allowance_minutes, null),
-        early_timeout_minutes: intOrNull(editForm.early_timeout_minutes, null),
-        overtime_buffer_minutes: intOrNull(editForm.overtime_buffer_minutes, 15),
-        rest_days: editForm.rest_days,
-        flexible_required_minutes: intOrNull(editForm.flexible_required_minutes, null),
-        flexible_earliest_in: editForm.flexible_earliest_in ? toHhMm(editForm.flexible_earliest_in) : null,
-        flexible_latest_out: editForm.flexible_latest_out ? toHhMm(editForm.flexible_latest_out) : null,
-        core_hours_start: editForm.core_hours_start ? toHhMm(editForm.core_hours_start) : null,
-        core_hours_end: editForm.core_hours_end ? toHhMm(editForm.core_hours_end) : null,
-        description: editForm.description?.trim() || null,
-      }
+      const payload = buildWorkingSchedulePayload(editForm)
       if (editingSchedule) {
         await updateWorkingSchedule(editingSchedule.id, payload)
       } else {

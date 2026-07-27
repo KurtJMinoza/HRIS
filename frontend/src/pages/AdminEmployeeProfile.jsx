@@ -5090,19 +5090,30 @@ export default function AdminEmployeeProfile() {
                     <SelectTrigger className="h-11 w-full text-base">
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent position="popper">
                       <SelectItem value="probationary">Probationary</SelectItem>
                       <SelectItem value="regular">Regular</SelectItem>
-                      <SelectItem value="contractual">Contractual</SelectItem>
                       <SelectItem value="project_based">Project-based</SelectItem>
                       <SelectItem value="consultant">Consultant</SelectItem>
-                      <SelectItem value="separated">Separated</SelectItem>
+                      {/* Legacy values still on record — keep selectable until changed */}
+                      {form.employment_status === 'contractual' ? (
+                        <SelectItem value="contractual">Contractual (legacy)</SelectItem>
+                      ) : null}
+                      {form.employment_status === 'separated' ? (
+                        <SelectItem value="separated">Separated (legacy)</SelectItem>
+                      ) : null}
                     </SelectContent>
                   </Select>
                   {form.employment_status === 'consultant' ? (
                     <div className="flex flex-wrap gap-2 pt-1">
                       <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">Consultant</Badge>
                       <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">Fixed Salary Payroll</Badge>
+                    </div>
+                  ) : null}
+                  {form.employment_status === 'project_based' ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Badge variant="outline" className="border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/10 dark:text-violet-200">Project-based</Badge>
+                      <Badge variant="outline" className="border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">No leave credits</Badge>
                     </div>
                   ) : null}
                 </div>

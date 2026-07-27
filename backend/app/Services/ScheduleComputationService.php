@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\WorkingSchedule;
+use App\Models\WorkingScheduleDay;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 
 /**
@@ -78,6 +80,11 @@ class ScheduleComputationService
         $timeOut = $actualTimeOut ? $actualTimeOut->copy()->timezone($tz) : null;
 
         if ($shiftType === 'flexible') {
+            // Per-weekday flexible schedules reuse fixed-style times after resolution.
+            if (! empty($daySchedule['in']) && ! empty($daySchedule['out'])) {
+                return $this->computeFixed($result, $daySchedule, $dateKey, $timeIn, $timeOut, $tz);
+            }
+
             return $this->computeFlexible($result, $daySchedule, $dateKey, $timeIn, $timeOut, $tz);
         }
 
@@ -350,8 +357,28 @@ class ScheduleComputationService
      * Build per-day schedule array from a WorkingSchedule model.
      * Used by controllers that need to pass a day config to compute().
      */
-    public function buildDayScheduleFromModel(WorkingSchedule $model): array
+    public function buildDayScheduleFromModel(WorkingSchedule $model, ?string $dateKey = null): array
     {
+        $model->loadMissing('days');
+
+        if ($model->isFlexiblePerDay()) {
+            $dayKey = $dateKey
+                ? EmployeeScheduleResolver::dayKeyForDate(Carbon::parse($dateKey))
+                : $this->firstFlexibleWorkingDayKey($model);
+
+            if ($dayKey !== null) {
+                $dayRow = $model->days->firstWhere('day_of_week', $dayKey);
+                if ($dayRow instanceof WorkingScheduleDay && $dayRow->is_working_day) {
+                    $restDays = $model->days
+                        ->filter(fn (WorkingScheduleDay $d) => ! $d->is_working_day)
+                        ->pluck('day_of_week')
+                        ->all();
+
+                    return $dayRow->toDayConfig($model, $restDays);
+                }
+            }
+        }
+
         $breaks = [];
         foreach ($model->getAllBreaks() as $b) {
             $breaks[] = [
@@ -384,6 +411,18 @@ class ScheduleComputationService
             'core_hours_start' => $model->core_hours_start,
             'core_hours_end' => $model->core_hours_end,
         ];
+    }
+
+    private function firstFlexibleWorkingDayKey(WorkingSchedule $model): ?string
+    {
+        foreach (WorkingScheduleDay::DAY_KEYS as $key) {
+            $dayRow = $model->days->firstWhere('day_of_week', $key);
+            if ($dayRow instanceof WorkingScheduleDay && $dayRow->is_working_day) {
+                return $key;
+            }
+        }
+
+        return null;
     }
 
     // ─────────────────────────────────────────

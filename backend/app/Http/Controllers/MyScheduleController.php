@@ -7,6 +7,7 @@ use App\Models\ScheduleRequest;
 use App\Models\ScheduleRequestApprovalAudit;
 use App\Models\User;
 use App\Models\WorkingSchedule;
+use App\Models\WorkingScheduleDay;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
@@ -42,7 +43,7 @@ class MyScheduleController extends Controller
             ->values();
 
         return response()->json([
-            'current_schedule' => $this->currentScheduleSummary($user->fresh('workingSchedule')),
+            'current_schedule' => $this->currentScheduleSummary($user->fresh(['workingSchedule.days'])),
             'pending_schedule_change' => $this->pendingScheduleChangeSummary($user),
             'requests' => $requests,
         ]);
@@ -54,7 +55,7 @@ class MyScheduleController extends Controller
         $user->loadMissing('pendingWorkingSchedule');
 
         return response()->json([
-            'current_schedule' => $this->currentScheduleSummary($user->fresh('workingSchedule')),
+            'current_schedule' => $this->currentScheduleSummary($user->fresh(['workingSchedule.days'])),
             'pending_schedule_change' => $this->pendingScheduleChangeSummary($user),
             'available_schedules' => WorkingSchedule::query()
                 ->orderBy('name')
@@ -330,24 +331,106 @@ class MyScheduleController extends Controller
 
     protected function workingScheduleSummary(WorkingSchedule $schedule): array
     {
+        $schedule->loadMissing('days');
+
         $restDays = collect($schedule->rest_days ?? [])
             ->map(fn ($day) => strtoupper((string) $day))
             ->values()
             ->all();
 
-        return [
+        $summary = [
             'id' => $schedule->id,
             'name' => $schedule->name,
             'status' => 'Active',
+            'shift_type' => $schedule->shift_type ?? WorkingSchedule::SHIFT_FIXED,
             'time_in' => $schedule->time_in,
             'time_out' => $schedule->time_out,
             'break_start' => $schedule->break_start,
             'break_end' => $schedule->break_end,
             'grace_period_minutes' => $schedule->grace_period_minutes,
+            'early_timein_minutes' => $schedule->early_timein_minutes ?? 60,
+            'overtime_buffer_minutes' => $schedule->overtime_buffer_minutes ?? 15,
+            'expected_paid_minutes' => $schedule->expected_paid_minutes,
+            'half_day_threshold_minutes' => $schedule->half_day_threshold_minutes,
             'rest_days' => $schedule->rest_days ?? [],
             'rest_days_label' => $restDays !== [] ? implode(', ', $restDays) : 'None',
             'work_days_label' => $this->workDaysLabel($schedule->rest_days ?? []),
+            'days' => [],
         ];
+
+        if ($schedule->isFlexiblePerDay() || ($schedule->shift_type ?? '') === WorkingSchedule::SHIFT_FLEXIBLE) {
+            $summary['days'] = $this->flexibleDaysSummary($schedule);
+            $summary['rest_days'] = collect($summary['days'])
+                ->filter(fn (array $day) => ! ($day['is_working_day'] ?? false))
+                ->pluck('day_of_week')
+                ->values()
+                ->all();
+            $summary['rest_days_label'] = $summary['rest_days'] !== []
+                ? implode(', ', array_map(fn ($d) => strtoupper((string) $d), $summary['rest_days']))
+                : 'None';
+            $summary['work_days_label'] = $this->workDaysLabel($summary['rest_days']);
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function flexibleDaysSummary(WorkingSchedule $schedule): array
+    {
+        $byDay = $schedule->days->keyBy('day_of_week');
+        $rows = [];
+
+        foreach (WorkingScheduleDay::DAY_KEYS as $dayKey) {
+            $day = $byDay->get($dayKey);
+            if ($day instanceof WorkingScheduleDay && $day->is_working_day) {
+                $paid = ($day->expected_paid_minutes !== null && (int) $day->expected_paid_minutes > 0)
+                    ? (int) $day->expected_paid_minutes
+                    : $day->expectedPaidMinutes();
+                $halfDay = $day->half_day_threshold_minutes !== null && (int) $day->half_day_threshold_minutes > 0
+                    ? (int) $day->half_day_threshold_minutes
+                    : (int) floor($paid / 2);
+
+                $rows[] = [
+                    'day_of_week' => $dayKey,
+                    'is_working_day' => true,
+                    'time_in' => $day->time_in ? substr((string) $day->time_in, 0, 5) : null,
+                    'time_out' => $day->time_out ? substr((string) $day->time_out, 0, 5) : null,
+                    'break_start' => $day->break_start ? substr((string) $day->break_start, 0, 5) : null,
+                    'break_end' => $day->break_end ? substr((string) $day->break_end, 0, 5) : null,
+                    'expected_paid_minutes' => $day->expected_paid_minutes,
+                    'paid_minutes' => $paid,
+                    'half_day_threshold_minutes' => $day->half_day_threshold_minutes,
+                    'half_day_minutes' => $halfDay,
+                    'grace_period_minutes' => $day->grace_period_minutes ?? $schedule->grace_period_minutes ?? 5,
+                    'early_timein_minutes' => $day->early_timein_minutes ?? $schedule->early_timein_minutes ?? 60,
+                    'overtime_buffer_minutes' => $day->overtime_buffer_minutes ?? $schedule->overtime_buffer_minutes ?? 15,
+                    'crosses_midnight' => (bool) $day->crosses_midnight,
+                ];
+
+                continue;
+            }
+
+            $rows[] = [
+                'day_of_week' => $dayKey,
+                'is_working_day' => false,
+                'time_in' => null,
+                'time_out' => null,
+                'break_start' => null,
+                'break_end' => null,
+                'expected_paid_minutes' => null,
+                'paid_minutes' => null,
+                'half_day_threshold_minutes' => null,
+                'half_day_minutes' => null,
+                'grace_period_minutes' => null,
+                'early_timein_minutes' => null,
+                'overtime_buffer_minutes' => null,
+                'crosses_midnight' => false,
+            ];
+        }
+
+        return $rows;
     }
 
     /**
@@ -436,25 +519,79 @@ class MyScheduleController extends Controller
         $breakStart = null;
         $breakEnd = null;
         $graceMinutes = 0;
+        $dayRows = [];
+        $shiftType = 'fixed';
+        $uniqueShifts = [];
 
         foreach ($orderedDays as $day) {
             $dayConfig = $resolved[$day] ?? null;
             if (! is_array($dayConfig) || trim((string) ($dayConfig['in'] ?? '')) === '') {
                 $restDays[] = $day;
+                $dayRows[] = [
+                    'day_of_week' => $day,
+                    'is_working_day' => false,
+                    'time_in' => null,
+                    'time_out' => null,
+                    'break_start' => null,
+                    'break_end' => null,
+                    'expected_paid_minutes' => null,
+                    'paid_minutes' => null,
+                    'half_day_threshold_minutes' => null,
+                    'half_day_minutes' => null,
+                    'grace_period_minutes' => null,
+                    'early_timein_minutes' => null,
+                    'overtime_buffer_minutes' => null,
+                    'crosses_midnight' => false,
+                ];
 
                 continue;
             }
 
             $workDays[] = $day;
-            $timeIn ??= (string) ($dayConfig['in'] ?? '');
-            $timeOut ??= (string) ($dayConfig['out'] ?? '');
-            $breakStart ??= ($dayConfig['break_start'] ?? null);
-            $breakEnd ??= ($dayConfig['break_end'] ?? null);
+            $in = substr((string) ($dayConfig['in'] ?? ''), 0, 5);
+            $out = substr((string) ($dayConfig['out'] ?? ''), 0, 5);
+            $bs = ! empty($dayConfig['break_start']) ? substr((string) $dayConfig['break_start'], 0, 5) : null;
+            $be = ! empty($dayConfig['break_end']) ? substr((string) $dayConfig['break_end'], 0, 5) : null;
+            $timeIn ??= $in;
+            $timeOut ??= $out;
+            $breakStart ??= $bs;
+            $breakEnd ??= $be;
             $graceMinutes = (int) ($dayConfig['grace_period_minutes'] ?? $dayConfig['grace_minutes'] ?? $graceMinutes);
+            if (($dayConfig['shift_type'] ?? '') === WorkingSchedule::SHIFT_FLEXIBLE) {
+                $shiftType = WorkingSchedule::SHIFT_FLEXIBLE;
+            }
+            $uniqueShifts[$in.'|'.$out] = true;
+
+            $paid = isset($dayConfig['expected_paid_minutes']) && (int) $dayConfig['expected_paid_minutes'] > 0
+                ? (int) $dayConfig['expected_paid_minutes']
+                : null;
+
+            $dayRows[] = [
+                'day_of_week' => $day,
+                'is_working_day' => true,
+                'time_in' => $in,
+                'time_out' => $out,
+                'break_start' => $bs,
+                'break_end' => $be,
+                'expected_paid_minutes' => $dayConfig['expected_paid_minutes'] ?? null,
+                'paid_minutes' => $paid,
+                'half_day_threshold_minutes' => $dayConfig['half_day_threshold_minutes'] ?? null,
+                'half_day_minutes' => isset($dayConfig['half_day_threshold_minutes']) && (int) $dayConfig['half_day_threshold_minutes'] > 0
+                    ? (int) $dayConfig['half_day_threshold_minutes']
+                    : ($paid !== null ? (int) floor($paid / 2) : null),
+                'grace_period_minutes' => (int) ($dayConfig['grace_period_minutes'] ?? $dayConfig['grace_minutes'] ?? 5),
+                'early_timein_minutes' => (int) ($dayConfig['early_timein_minutes'] ?? 60),
+                'overtime_buffer_minutes' => (int) ($dayConfig['overtime_buffer_minutes'] ?? 15),
+                'crosses_midnight' => (bool) ($dayConfig['crosses_midnight'] ?? false),
+            ];
         }
 
         if ($workDays === [] || $timeIn === null || $timeOut === null) {
             return null;
+        }
+
+        if (count($uniqueShifts) > 1) {
+            $shiftType = WorkingSchedule::SHIFT_FLEXIBLE;
         }
 
         $restLabels = array_map(fn ($day) => strtoupper($day), $restDays);
@@ -464,6 +601,7 @@ class MyScheduleController extends Controller
             'id' => null,
             'name' => 'Assigned Schedule',
             'status' => 'Active',
+            'shift_type' => $shiftType,
             'time_in' => $timeIn,
             'time_out' => $timeOut,
             'break_start' => $breakStart,
@@ -472,6 +610,7 @@ class MyScheduleController extends Controller
             'rest_days' => $restDays,
             'rest_days_label' => $restLabels !== [] ? implode(', ', $restLabels) : 'None',
             'work_days_label' => implode(', ', $workLabels),
+            'days' => $shiftType === WorkingSchedule::SHIFT_FLEXIBLE ? $dayRows : [],
         ];
     }
 

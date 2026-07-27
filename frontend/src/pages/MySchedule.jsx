@@ -302,6 +302,8 @@ export default function MySchedule() {
   }, [requests, requestsQuery])
 
   const cellPad = '!p-3.5'
+  const isFlexibleCurrent = current?.shift_type === 'flexible'
+    || (Array.isArray(current?.days) && current.days.some((d) => d?.is_working_day))
   const restDayBadges = Array.isArray(current?.rest_days) ? current.rest_days : []
   const workDayBadges = current?.work_days_label ? String(current.work_days_label).split(',').map((value) => value.trim()).filter(Boolean) : []
   const breakDuration = useMemo(() => {
@@ -465,6 +467,11 @@ export default function MySchedule() {
                         <Badge className="max-w-full rounded-full border-transparent bg-brand/15 px-3 py-1 text-[11px] font-bold text-brand hover:bg-brand/15">
                           {current.name}
                         </Badge>
+                        {(current.shift_type === 'flexible' || (Array.isArray(current.days) && current.days.length > 0)) && (
+                          <Badge className="rounded-full border-transparent bg-violet-500/15 px-3 py-1 text-[11px] font-bold text-violet-700 hover:bg-violet-500/15 dark:text-violet-300">
+                            Flexible Shift
+                          </Badge>
+                        )}
                         <Badge className="rounded-full bg-chart-2/10 px-3 py-1 text-[11px] font-bold text-chart-2 hover:bg-chart-2/10">
                           {current.status || 'Active'}
                         </Badge>
@@ -477,31 +484,47 @@ export default function MySchedule() {
                           {current.name}
                         </h2>
                       </div>
-                      <div className="max-w-md rounded-xl border border-border bg-card px-4 py-4 shadow-sm dark:border-border">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Shift Hours</p>
-                        <p className="mt-2 text-2xl font-extrabold tracking-tight text-brand">
-                          <span>{formatClockTimeDisplay(current.time_in)}</span>
-                          <span className="mx-2 text-muted-foreground">–</span>
-                          <span>{formatClockTimeDisplay(current.time_out)}</span>
+                      {isFlexibleCurrent ? (
+                        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                          Each weekday uses its own fixed-style shift pattern. Attendance, late, undertime, overtime, leave, and payroll use the schedule for that day.
                         </p>
-                      </div>
+                      ) : (
+                        <div className="max-w-md rounded-xl border border-border bg-card px-4 py-4 shadow-sm dark:border-border">
+                          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Shift Hours</p>
+                          <p className="mt-2 text-2xl font-extrabold tracking-tight text-brand">
+                            <span>{formatClockTimeDisplay(current.time_in)}</span>
+                            <span className="mx-2 text-muted-foreground">–</span>
+                            <span>{formatClockTimeDisplay(current.time_out)}</span>
+                          </p>
+                        </div>
+                      )}
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 lg:min-w-96">
                       <ScheduleMetricCard icon={Calendar} label="Work Days / Week" value={workDaysPerWeek} />
-                      <ScheduleMetricCard icon={Timer} label="Break Duration" value={breakDuration || 'No break'} />
+                      <ScheduleMetricCard
+                        icon={Timer}
+                        label={isFlexibleCurrent ? 'Shift pattern' : 'Break Duration'}
+                        value={isFlexibleCurrent ? 'Per weekday' : (breakDuration || 'No break')}
+                      />
                     </div>
                   </div>
 
-                  <div className="grid overflow-hidden rounded-xl border border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,1.75fr)] lg:divide-x lg:divide-border">
-                    <DayStrip title="Rest Days" items={restDayBadges} emptyLabel="No configured rest days" tone="rest" />
-                    <DayStrip title="Work Week" items={workDayBadges} emptyLabel="No configured work days" tone="work" />
-                  </div>
+                  {isFlexibleCurrent ? (
+                    <FlexibleScheduleDetailTable days={current.days} />
+                  ) : (
+                    <>
+                      <div className="grid overflow-hidden rounded-xl border border-border lg:grid-cols-[minmax(0,1fr)_minmax(0,1.75fr)] lg:divide-x lg:divide-border">
+                        <DayStrip title="Rest Days" items={restDayBadges} emptyLabel="No configured rest days" tone="rest" />
+                        <DayStrip title="Work Week" items={workDayBadges} emptyLabel="No configured work days" tone="work" />
+                      </div>
 
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <ScheduleMetaCard icon={Clock3} label="Start Time" value={formatClockTimeDisplay(current.time_in)} />
-                    <ScheduleMetaCard icon={Clock3} label="End Time" value={formatClockTimeDisplay(current.time_out)} />
-                    <ScheduleMetaCard icon={Timer} label="Break Window" value={current.break_start && current.break_end ? formatShiftRange12h(current.break_start, current.break_end, ' - ') : 'No break set'} />
-                  </div>
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <ScheduleMetaCard icon={Clock3} label="Start Time" value={formatClockTimeDisplay(current.time_in)} />
+                        <ScheduleMetaCard icon={Clock3} label="End Time" value={formatClockTimeDisplay(current.time_out)} />
+                        <ScheduleMetaCard icon={Timer} label="Break Window" value={current.break_start && current.break_end ? formatShiftRange12h(current.break_start, current.break_end, ' - ') : 'No break set'} />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             ) : (
@@ -1267,6 +1290,92 @@ function ScheduleMetaCard({ icon, label, value }) {
         <span className="text-xs font-bold uppercase tracking-[0.12em]">{label}</span>
       </div>
       <p className="mt-3 text-base font-bold leading-relaxed text-foreground">{value}</p>
+    </div>
+  )
+}
+
+function formatPaidMinutesLabel(minutes) {
+  if (minutes == null || Number(minutes) <= 0) return '—'
+  const total = Number(minutes)
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}m`
+}
+
+const FLEX_DAY_LABELS = {
+  mon: 'Monday',
+  tue: 'Tuesday',
+  wed: 'Wednesday',
+  thu: 'Thursday',
+  fri: 'Friday',
+  sat: 'Saturday',
+  sun: 'Sunday',
+}
+
+function FlexibleScheduleDetailTable({ days }) {
+  const rows = Array.isArray(days) && days.length > 0
+    ? days
+    : ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((day) => ({ day_of_week: day, is_working_day: false }))
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-semibold text-foreground">Weekly schedule detail</p>
+        <p className="text-xs text-muted-foreground">
+          Time in/out, break, paid hours, grace, early time-in, and OT buffer for each weekday.
+        </p>
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-border">
+        <table className="min-w-[960px] w-full text-sm">
+          <thead className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2.5">Day</th>
+              <th className="px-3 py-2.5">Workday</th>
+              <th className="px-3 py-2.5">Time In</th>
+              <th className="px-3 py-2.5">Time Out</th>
+              <th className="px-3 py-2.5">Break</th>
+              <th className="px-3 py-2.5">Paid</th>
+              <th className="px-3 py-2.5">Half-day</th>
+              <th className="px-3 py-2.5">Grace</th>
+              <th className="px-3 py-2.5">Early in</th>
+              <th className="px-3 py-2.5">OT buffer</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const working = !!row.is_working_day
+              return (
+                <tr key={row.day_of_week} className="border-t border-border/60">
+                  <td className="px-3 py-2.5 font-medium whitespace-nowrap">
+                    {FLEX_DAY_LABELS[row.day_of_week] || row.day_of_week}
+                    {row.crosses_midnight ? (
+                      <span className="ml-1.5 text-[10px] font-normal text-amber-700 dark:text-amber-300">Overnight</span>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2.5">{working ? 'Yes' : 'Rest'}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">{working ? formatClockTimeDisplay(row.time_in) : '—'}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">{working ? formatClockTimeDisplay(row.time_out) : '—'}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    {working && row.break_start && row.break_end
+                      ? formatShiftRange12h(row.break_start, row.break_end, ' – ')
+                      : '—'}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap text-brand font-semibold">
+                    {working ? formatPaidMinutesLabel(row.paid_minutes ?? row.expected_paid_minutes) : '—'}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    {working ? formatPaidMinutesLabel(row.half_day_minutes ?? row.half_day_threshold_minutes) : '—'}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">{working ? `${row.grace_period_minutes ?? 5} mins` : '—'}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">{working ? `${row.early_timein_minutes ?? 60} mins` : '—'}</td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">{working ? `${row.overtime_buffer_minutes ?? 15} mins` : '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
