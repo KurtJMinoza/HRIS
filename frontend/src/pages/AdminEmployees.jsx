@@ -14,6 +14,9 @@ import {
   RefreshCw,
   Trash2,
   KeyRound,
+  EyeOff,
+  Copy,
+  Check,
   Download,
   MoreVertical,
   Search,
@@ -60,6 +63,7 @@ import {
   regenerateEmployeeQr,
   clearEmployeeQr,
   resetEmployeePassword,
+  getEmployeePassword,
   getEmployeeFace,
   profileImageUrl,
   getDepartments,
@@ -259,6 +263,13 @@ export default function AdminEmployees() {
   const [resetEmployee, setResetEmployee] = useState(null)
   const [resetPasswordValue, setResetPasswordValue] = useState('')
   const [resetSubmitting, setResetSubmitting] = useState(false)
+  const [viewPasswordOpen, setViewPasswordOpen] = useState(false)
+  const [viewPasswordEmployee, setViewPasswordEmployee] = useState(null)
+  const [viewPasswordValue, setViewPasswordValue] = useState('')
+  const [viewPasswordSource, setViewPasswordSource] = useState(null)
+  const [viewPasswordLoading, setViewPasswordLoading] = useState(false)
+  const [viewPasswordError, setViewPasswordError] = useState(null)
+  const [viewPasswordCopied, setViewPasswordCopied] = useState(false)
   const [clearQrConfirmEmployee, setClearQrConfirmEmployee] = useState(null)
   const [clearQrSubmitting, setClearQrSubmitting] = useState(false)
 
@@ -2145,6 +2156,34 @@ export default function AdminEmployees() {
                                   )}
                                   {canPasswordReset && (
                                     <DropdownMenuItem
+                                      onClick={async () => {
+                                        setViewPasswordEmployee(emp)
+                                        setViewPasswordValue('')
+                                        setViewPasswordSource(null)
+                                        setViewPasswordError(null)
+                                        setViewPasswordCopied(false)
+                                        setViewPasswordOpen(true)
+                                        setViewPasswordLoading(true)
+                                        try {
+                                          const data = await getEmployeePassword(emp.id)
+                                          setViewPasswordValue(data.password || '')
+                                          setViewPasswordSource(data.source || null)
+                                          if (data.source === 'stale' || !data.password) {
+                                            setViewPasswordError(data.message || null)
+                                          }
+                                        } catch (e) {
+                                          setViewPasswordError(e.message || 'Failed to load password')
+                                        } finally {
+                                          setViewPasswordLoading(false)
+                                        }
+                                      }}
+                                    >
+                                      <EyeOff className="size-4 mr-2" />
+                                      View password
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canPasswordReset && (
+                                    <DropdownMenuItem
                                       onClick={() => {
                                         setResetEmployee(emp)
                                         setResetPasswordValue('')
@@ -2890,6 +2929,135 @@ export default function AdminEmployees() {
               )}
               Deactivate
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View password */}
+      <Dialog
+        open={viewPasswordOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setViewPasswordOpen(false)
+            setViewPasswordEmployee(null)
+            setViewPasswordValue('')
+            setViewPasswordSource(null)
+            setViewPasswordError(null)
+            setViewPasswordCopied(false)
+            setViewPasswordLoading(false)
+          }
+        }}
+      >
+        <DialogContent className="max-w-md gap-3">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <EyeOff className="size-5 text-primary" />
+              View password
+            </DialogTitle>
+            <DialogDescription>
+              <span className="font-medium text-foreground">{viewPasswordEmployee?.name}</span>
+              {' — '}Current recoverable password (updated when the employee or admin changes it).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            {viewPasswordLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Loading password…
+              </div>
+            ) : viewPasswordSource === 'stale' ? (
+              <div className="space-y-2">
+                <p className="text-sm text-amber-800 dark:text-amber-300">
+                  {viewPasswordError
+                    || 'This employee changed their password, so the old recoverable copy no longer matches.'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Use Reset password to set a new viewable password.
+                </p>
+              </div>
+            ) : viewPasswordError ? (
+              <p className="text-sm text-destructive">{viewPasswordError}</p>
+            ) : (
+              <>
+                <div className="grid gap-2">
+                  <Label htmlFor="view-password">Password</Label>
+                  <div className="flex gap-2">
+                    <div className="min-w-0 flex-1">
+                      <PasswordInput
+                        id="view-password"
+                        value={viewPasswordValue}
+                        readOnly
+                        className="h-9 w-full"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 shrink-0"
+                      disabled={!viewPasswordValue || viewPasswordSource === 'unset'}
+                      aria-label="Copy password"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(viewPasswordValue)
+                          setViewPasswordCopied(true)
+                          toast({ title: 'Password copied', variant: 'success' })
+                          window.setTimeout(() => setViewPasswordCopied(false), 1500)
+                        } catch {
+                          toast({ title: 'Could not copy password', variant: 'destructive' })
+                        }
+                      }}
+                    >
+                      {viewPasswordCopied ? <Check className="size-4" /> : <Copy className="size-4" />}
+                    </Button>
+                  </div>
+                </div>
+                {viewPasswordSource === 'unset' && (
+                  <p className="text-xs text-muted-foreground">
+                    No recoverable password is stored. Use Reset password to set one.
+                  </p>
+                )}
+                {viewPasswordSource === 'import_default' && (
+                  <p className="text-xs text-muted-foreground">
+                    Showing the default import password for this employee.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setViewPasswordOpen(false)
+                setViewPasswordEmployee(null)
+                setViewPasswordValue('')
+                setViewPasswordSource(null)
+                setViewPasswordError(null)
+                setViewPasswordCopied(false)
+              }}
+            >
+              Close
+            </Button>
+            {canPasswordReset && viewPasswordEmployee && (
+              <Button
+                type="button"
+                onClick={() => {
+                  const emp = viewPasswordEmployee
+                  setViewPasswordOpen(false)
+                  setViewPasswordEmployee(null)
+                  setViewPasswordValue('')
+                  setViewPasswordSource(null)
+                  setViewPasswordError(null)
+                  setResetEmployee(emp)
+                  setResetPasswordValue('')
+                  setResetOpen(true)
+                }}
+              >
+                Reset password
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

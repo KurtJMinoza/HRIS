@@ -6578,6 +6578,18 @@ export async function resetEmployeePassword(id, password) {
 }
 
 /**
+ * View recoverable admin-set password for an employee.
+ * @param {number} id
+ * @returns {Promise<{ password: string, source: 'stored'|'import_default'|'unset' }>}
+ */
+export async function getEmployeePassword(id) {
+  const res = await authenticatedFetch(`/admin/employees/${id}/password`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load password')
+  return data
+}
+
+/**
  * Get employee's registered face image (Admin). Returns { has_face, face_image }.
  * @param {number} id - Employee ID
  */

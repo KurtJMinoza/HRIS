@@ -1351,6 +1351,13 @@ class DataScopeService
             throw new HttpResponseException(response()->json(['message' => 'Forbidden.'], Response::HTTP_FORBIDDEN));
         }
 
+        // Org heads may approve subordinates via approval scope even when general employee-list
+        // visibility is self-only (missing can_view_subordinate_* flags).
+        $approvalScoped = $this->getApprovalScopedEmployeeIdsForUser($actor);
+        if (is_array($approvalScoped) && in_array((int) $subject->id, $approvalScoped, true)) {
+            return;
+        }
+
         $this->ensureEmployeeAccessible($actor, $subject);
     }
 

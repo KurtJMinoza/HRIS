@@ -103,6 +103,16 @@ class User extends Authenticatable
         return ! $this->isOperationallyActive();
     }
 
+    /**
+     * Set login password and keep the recoverable copy used by admin "View password" / CSV export.
+     * Assigns plaintext to `password` so the model `hashed` cast hashes exactly once.
+     */
+    public function setAuthPassword(string $plainPassword): void
+    {
+        $this->password = $plainPassword;
+        $this->account_export_password = $plainPassword;
+    }
+
     public function getEmploymentActiveStatusAttribute(): string
     {
         return $this->isOperationallyActive() ? 'active' : 'deactivated';

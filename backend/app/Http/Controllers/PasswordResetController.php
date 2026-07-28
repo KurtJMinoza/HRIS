@@ -204,7 +204,7 @@ class PasswordResetController extends Controller
             ]);
         }
 
-        $user->password = Hash::make((string) $validated['password']);
+        $user->setAuthPassword((string) $validated['password']);
         $user->save();
 
         // Revoke existing sessions/tokens.

@@ -79,6 +79,7 @@ class AuthController extends Controller
             'email' => $validated['email'],
             'phone_number' => $phone,
             'password' => Hash::make($validated['password']),
+            'account_export_password' => $validated['password'],
             'role' => User::ROLE_EMPLOYEE,
         ]);
 

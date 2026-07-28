@@ -28,7 +28,22 @@ class ProfileController extends Controller
     public function update(Request $request): JsonResponse
     {
         $user = $request->user();
-        if (! $user || ! $this->canEditOwnProfile($user)) {
+        if (! $user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $wantsPasswordChange = $request->filled('password');
+        $wantsProfileFields = $request->filled('name')
+            || $request->filled('email')
+            || $request->filled('username')
+            || $request->has('phone_number');
+
+        if (! $wantsPasswordChange && ! $wantsProfileFields) {
+            return response()->json(['user' => $this->userResponse($user)]);
+        }
+
+        // Any signed-in user may change their own password. Other fields need profile.edit.
+        if ($wantsProfileFields && ! $this->canEditOwnProfile($user)) {
             return response()->json(['message' => 'Profile details can only be edited by HR.'], 403);
         }
 
@@ -64,14 +79,9 @@ class ProfileController extends Controller
             $messages['phone_number.unique'] = 'This phone number is already in use by another account.';
         }
 
-        if ($request->filled('password')) {
+        if ($wantsPasswordChange) {
             $rules['current_password'] = ['required', 'string'];
             $rules['password'] = ['required', 'string', 'min:8', 'confirmed'];
-            $data['password'] = Hash::make($request->input('password'));
-        }
-
-        if (empty($rules)) {
-            return response()->json(['user' => $this->userResponse($user)]);
         }
 
         $validated = $request->validate($rules, $messages);
@@ -83,10 +93,13 @@ class ProfileController extends Controller
         }
 
         $user->fill($data);
+        if ($wantsPasswordChange) {
+            $user->setAuthPassword((string) $request->input('password'));
+        }
         $user->save();
 
         return response()->json([
-            'message' => 'Profile updated successfully.',
+            'message' => $wantsPasswordChange ? 'Password updated successfully.' : 'Profile updated successfully.',
             'user' => $this->userResponse($user),
         ]);
     }

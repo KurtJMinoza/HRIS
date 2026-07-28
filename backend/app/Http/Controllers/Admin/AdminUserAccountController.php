@@ -114,6 +114,7 @@ class AdminUserAccountController extends Controller
             'name' => trim($validated['name']),
             'email' => trim($validated['email']),
             'password' => Hash::make($validated['password']),
+            'account_export_password' => $validated['password'],
             'role' => User::ROLE_EMPLOYEE,
             'is_active' => $validated['is_active'] ?? true,
         ]);
@@ -291,7 +292,7 @@ class AdminUserAccountController extends Controller
             'password' => ['required', 'string', 'min:8'],
         ]);
 
-        $user->password = Hash::make($validated['password']);
+        $user->setAuthPassword($validated['password']);
         $user->save();
 
         $this->logActivity($actor, $user, 'user.password_reset', []);

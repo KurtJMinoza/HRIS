@@ -489,6 +489,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:employees.delete')->delete('/admin/employees/{id}', [EmployeeController::class, 'destroy']);
         Route::middleware('permission:employees.delete')->post('/admin/employees/import/rollback', [ImportEmployeeController::class, 'rollback']);
         Route::middleware('permission:employees.transfer')->post('/admin/employees/{id}/transfer', [EmployeeController::class, 'transfer']);
+        Route::middleware('permission:employees.password_reset')->get('/admin/employees/{id}/password', [EmployeeController::class, 'showPassword']);
         Route::middleware('permission:employees.password_reset')->post('/admin/employees/{id}/reset-password', [EmployeeController::class, 'resetPassword']);
 
         Route::middleware('permission:org.department.view')->get('/admin/departments', [DepartmentController::class, 'index']);

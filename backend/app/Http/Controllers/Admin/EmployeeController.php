@@ -2308,14 +2308,43 @@ class EmployeeController extends Controller
             'password' => ['required', 'string', 'min:8'],
         ]);
 
-        $employee->update([
-            'password' => Hash::make($validated['password']),
-            'account_export_password' => $validated['password'],
-        ]);
+        $employee->setAuthPassword($validated['password']);
+        $employee->save();
 
         return response()->json([
             'message' => 'Password reset successfully.',
         ], 200);
+    }
+
+    /**
+     * Show the recoverable current password (account_export_password / import default).
+     */
+    public function showPassword(Request $request, int $id): JsonResponse
+    {
+        $employee = $this->loadScopedEmployee($request, $id, true);
+        $stored = trim((string) ($employee->account_export_password ?? ''));
+
+        // Old self-changes only updated the hash — don't show a recoverable copy that no longer logs in.
+        if ($stored !== '' && ! Hash::check($stored, (string) $employee->password)) {
+            return response()->json([
+                'password' => null,
+                'source' => 'stale',
+                'message' => 'This employee changed their password, so the old recoverable copy no longer matches. Reset the password to create a new viewable password.',
+            ]);
+        }
+
+        $source = 'unset';
+        if ($stored !== '') {
+            $source = 'stored';
+        } elseif ($employee->employee_import_batch_id !== null) {
+            $source = 'import_default';
+        }
+
+        return response()->json([
+            'password' => $this->employeeExportPassword($employee),
+            'source' => $source,
+            'message' => null,
+        ]);
     }
 
     /**
@@ -2808,11 +2837,20 @@ class EmployeeController extends Controller
     {
         $stored = trim((string) ($user->account_export_password ?? ''));
         if ($stored !== '') {
-            return $stored;
+            if (Hash::check($stored, (string) $user->password)) {
+                return $stored;
+            }
+
+            return 'Not set (password changed — use Reset Password)';
         }
 
         if ($user->employee_import_batch_id !== null) {
-            return EmployeeImport::defaultImportPassword();
+            $importDefault = EmployeeImport::defaultImportPassword();
+            if (Hash::check($importDefault, (string) $user->password)) {
+                return $importDefault;
+            }
+
+            return 'Not set (password changed — use Reset Password)';
         }
 
         return 'Not set (use Reset Password)';

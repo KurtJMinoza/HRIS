@@ -1857,10 +1857,12 @@ export default function AdminEmployeeProfile() {
   }
 
   async function handleAccountPasswordSave() {
+    if (!employee?.id) return
     const current = String(accountCurrentPassword || '')
     const next = String(accountNewPassword || '')
     const confirm = String(accountConfirmPassword || '')
-    const currentErr = !current ? 'Current password is required.' : ''
+    const viewingSelf = String(user?.id || '') === String(employee.id)
+    const currentErr = viewingSelf && !current ? 'Current password is required.' : ''
     const newErr = validateTempPassword(next)
     const confirmErr = next ? validateAccountPasswordConfirm(next, confirm) : ''
     setAccountPasswordFieldErrors({ current: currentErr, new: newErr, confirm: confirmErr })
@@ -1868,11 +1870,17 @@ export default function AdminEmployeeProfile() {
     if (currentErr || newErr || confirmErr) return
     setAccountBusy((prev) => ({ ...prev, password: true }))
     try {
-      await updateProfile({
-        current_password: current,
-        password: next,
-        password_confirmation: confirm,
-      })
+      // Viewing another employee: admin reset for that employee (keeps viewable password in sync).
+      // Viewing self: profile self-change with current password check.
+      if (viewingSelf) {
+        await updateProfile({
+          current_password: current,
+          password: next,
+          password_confirmation: confirm,
+        })
+      } else {
+        await resetEmployeePassword(employee.id, next)
+      }
       setAccountCurrentPassword('')
       setAccountNewPassword('')
       setAccountConfirmPassword('')
@@ -6680,21 +6688,27 @@ export default function AdminEmployeeProfile() {
 
                   <div className="space-y-3">
                     <p className="text-sm font-semibold">Change Password</p>
-                    <div className="space-y-2">
-                      <Label htmlFor="admin_acc_current">Current Password</Label>
-                      <PasswordInput
-                        id="admin_acc_current"
-                        value={accountCurrentPassword}
-                        onChange={(e) => {
-                          const next = e.target.value
-                          setAccountCurrentPassword(next)
-                          setAccountPasswordFieldErrors((prev) => ({ ...prev, current: next ? '' : prev.current }))
-                          setAccountErrors((p) => ({ ...p, password: '' }))
-                        }}
-                        className={cn(accountPasswordFieldErrors.current && 'border-destructive')}
-                      />
-                      {accountPasswordFieldErrors.current ? <p className="text-sm text-destructive">{accountPasswordFieldErrors.current}</p> : null}
-                    </div>
+                    {String(user?.id || '') === String(employee?.id || '') ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="admin_acc_current">Current Password</Label>
+                        <PasswordInput
+                          id="admin_acc_current"
+                          value={accountCurrentPassword}
+                          onChange={(e) => {
+                            const next = e.target.value
+                            setAccountCurrentPassword(next)
+                            setAccountPasswordFieldErrors((prev) => ({ ...prev, current: next ? '' : prev.current }))
+                            setAccountErrors((p) => ({ ...p, password: '' }))
+                          }}
+                          className={cn(accountPasswordFieldErrors.current && 'border-destructive')}
+                        />
+                        {accountPasswordFieldErrors.current ? <p className="text-sm text-destructive">{accountPasswordFieldErrors.current}</p> : null}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Sets a new password for this employee (also updates View password).
+                      </p>
+                    )}
                     <div className="space-y-2">
                       <Label htmlFor="admin_acc_new">New Password</Label>
                       <PasswordInput
