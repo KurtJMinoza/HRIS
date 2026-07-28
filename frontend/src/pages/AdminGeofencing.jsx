@@ -32,6 +32,7 @@ import {
   testAttendanceGeofence,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
+  updateGeofenceModuleSettings,
 } from '@/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -1429,6 +1430,8 @@ export default function AdminGeofencing() {
   const canViewLiveMonitoring = ['admin', 'super_admin'].includes(String(user?.role || '').toLowerCase())
   const [activeTab, setActiveTab] = useState('setup')
   const [branches, setBranches] = useState([])
+  const [geofenceModuleEnabled, setGeofenceModuleEnabled] = useState(true)
+  const [geofenceModuleSaving, setGeofenceModuleSaving] = useState(false)
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(null)
   const [geofenceExemptEmployeeIds, setGeofenceExemptEmployeeIds] = useState([])
   const [selectedBranchId, setSelectedBranchId] = useState(null)
@@ -1518,6 +1521,7 @@ export default function AdminGeofencing() {
       const data = await getAdminGeofencing()
       const nextBranches = data.branches || []
       setBranches(nextBranches)
+      setGeofenceModuleEnabled(data.geofence_module?.enabled !== false)
       setGeofenceExemptEmployeeIds(data.employee_exemptions?.employee_ids || [])
       setSelectedBranchId((current) => current || nextBranches[0]?.id || null)
     } catch (error) {
@@ -1909,6 +1913,28 @@ export default function AdminGeofencing() {
     }
   }
 
+  async function saveGeofenceModuleEnabled(enabled) {
+    const previous = geofenceModuleEnabled
+    setGeofenceModuleEnabled(enabled)
+    setGeofenceModuleSaving(true)
+    try {
+      const data = await updateGeofenceModuleSettings({ enabled })
+      setGeofenceModuleEnabled(data.geofence_module?.enabled !== false)
+      toast({
+        title: data.geofence_module?.enabled === false ? 'Geofencing module turned off' : 'Geofencing module turned on',
+        description: data.geofence_module?.enabled === false
+          ? 'Clock in/out will skip location prompts and geofence validation.'
+          : 'Attendance will enforce configured branch geofences again.',
+        variant: 'success',
+      })
+    } catch (error) {
+      setGeofenceModuleEnabled(previous)
+      toast({ title: 'Geofence module setting failed', description: error.message, variant: 'error' })
+    } finally {
+      setGeofenceModuleSaving(false)
+    }
+  }
+
   async function toggleCurrentGeofence() {
     if (!selectedBranchId || !form.id) return
     try {
@@ -2217,6 +2243,32 @@ export default function AdminGeofencing() {
         <AdminGeofenceLiveMonitor />
       ) : (
         <>
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">
+        <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Geofencing Module</h2>
+            <p className="max-w-3xl text-xs leading-relaxed text-slate-500 dark:text-muted-foreground">
+              One master switch for attendance geofencing. When turned off, clock in/out will not ask for location and the backend will skip all geofence validation.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold dark:border-border dark:bg-muted/40">
+            <span className={geofenceModuleEnabled ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'}>
+              {geofenceModuleEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <Switch
+              checked={geofenceModuleEnabled}
+              disabled={geofenceModuleSaving}
+              onCheckedChange={saveGeofenceModuleEnabled}
+            />
+          </div>
+        </div>
+        {!geofenceModuleEnabled ? (
+          <div className="border-t border-orange-200 bg-orange-50 px-4 py-3 text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
+            Geofencing is currently off. Employees can clock in/out without location permission prompts.
+          </div>
+        ) : null}
+      </section>
+
       {selectedEmployee ? (
         <div className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-100">
           Adding geofences for <span className="font-bold">{selectedEmployee.name}</span>. Draw on the map and save like a branch geofence. Click the employee again to return to branch geofences.
