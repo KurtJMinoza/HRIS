@@ -110,6 +110,7 @@ import {
   TimeCell,
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
+import CorrectionRequestMobileCard from '@/components/presenceFiling/CorrectionRequestMobileCard'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
@@ -557,12 +558,13 @@ export default function AttendanceCorrections() {
   const detailAbortRef = useRef(null)
   const detailFetchIdRef = useRef(0)
 
-  const [tab, setTab] = useState(() => (canSeeAll ? 'all' : 'mine'))
+  // Heads: My Filings default. Admin HR stays on All Filings (deep links still open approval tab).
+  const [tab, setTab] = useState(() => (canSeeAll && isAdminHr ? 'all' : 'mine'))
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
-  const [loadingMine, setLoadingMine] = useState(() => !canSeeAll)
-  const [loadingAll, setLoadingAll] = useState(() => canSeeAll)
+  const [loadingMine, setLoadingMine] = useState(() => !(canSeeAll && isAdminHr))
+  const [loadingAll, setLoadingAll] = useState(() => Boolean(canSeeAll && isAdminHr))
   const [minePagination, setMinePagination] = useState(null)
   const [allPagination, setAllPagination] = useState(null)
 
@@ -1609,37 +1611,75 @@ export default function AttendanceCorrections() {
                         role="tablist"
                         aria-label="List scope"
                       >
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={tab === 'all'}
-                          onClick={() => setTab('all')}
-                          className={cn(
-                            'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
-                            tab === 'all'
-                              ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
-                              : 'text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          <span className="inline-flex items-center">
-                            {allFilingsLabel}
-                            <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={tab === 'mine'}
-                          onClick={() => setTab('mine')}
-                          className={cn(
-                            'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
-                            tab === 'mine'
-                              ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
-                              : 'text-muted-foreground hover:text-foreground'
-                          )}
-                        >
-                          My Filings
-                        </button>
+                        {!isAdminHr ? (
+                          <>
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={tab === 'mine'}
+                              onClick={() => setTab('mine')}
+                              className={cn(
+                                'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
+                                tab === 'mine'
+                                  ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              )}
+                            >
+                              My Filings
+                            </button>
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={tab === 'all'}
+                              onClick={() => setTab('all')}
+                              className={cn(
+                                'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
+                                tab === 'all'
+                                  ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              )}
+                            >
+                              <span className="inline-flex items-center">
+                                {allFilingsLabel}
+                                <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                              </span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={tab === 'all'}
+                              onClick={() => setTab('all')}
+                              className={cn(
+                                'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
+                                tab === 'all'
+                                  ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              )}
+                            >
+                              <span className="inline-flex items-center">
+                                {allFilingsLabel}
+                                <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              role="tab"
+                              aria-selected={tab === 'mine'}
+                              onClick={() => setTab('mine')}
+                              className={cn(
+                                'rounded-lg px-4 py-2.5 text-sm font-semibold transition-all @sm:px-5',
+                                tab === 'mine'
+                                  ? 'bg-card text-foreground shadow-sm ring-1 ring-border/60'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              )}
+                            >
+                              My Filings
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1856,95 +1896,31 @@ export default function AttendanceCorrections() {
                 </div>
               ) : (
                 <>
-                  <div className="w-full min-w-0 space-y-3 bg-card px-4 pb-6 pt-2 sm:px-6 md:px-8 lg:hidden">
-                    {paginatedItems.map((item) => {
-                      const employeeProfileTo =
-                        canViewEmployeeProfile && item.user_id
-                          ? hrPanelPath(hrBase, `employees/${item.user_id}`)
-                          : null
-                      const empName = item.employee_name || item.requested_by_name || '—'
-                      const empImg = item.employee_profile_image_url || item.requested_by_profile_image_url
-                      const empRoleLabel = item.employee_role_label ?? item.requested_by_role_label
-                      const empHrRole = item.employee_hr_role ?? item.requested_by_hr_role
-                      const tIn = item.requested_time_in ?? item.time_in
-                      const tOut = item.requested_time_out ?? item.time_out
-                      return (
-                        <div
-                          key={item.id}
-                          className="rounded-2xl border border-border/80 bg-card p-4 shadow-sm"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            {tab === 'all' && canSeeAll ? (
-                              <Checkbox
-                                checked={bulkSelection.isRowSelected(item)}
-                                disabled={item.status !== 'pending' || !item.actor_can_approve || bulkApproving}
-                                onCheckedChange={() => bulkSelection.toggleRow(item)}
-                                aria-label={`Select attendance correction #${item.id}`}
-                                className="mt-1"
-                              />
-                            ) : null}
-                            <div className="min-w-0">
-                              <p className="font-mono text-xs font-semibold text-muted-foreground">#{item.id}</p>
-                              <p className="mt-1 text-base font-semibold text-foreground">
-                                {item.date ? formatTableDate(`${item.date}T12:00:00`) : '—'}
-                              </p>
-                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                                Filed {item.filed_at ? formatDateTime(item.filed_at) : '—'}
-                              </p>
-                            </div>
-                            <div className="flex shrink-0 flex-col items-end gap-2">
-                              <ReviewStatusTableBadge item={item} />
-                              <ChevronRight className="size-5 text-muted-foreground" aria-hidden />
-                            </div>
-                          </div>
-                          <div className="mt-3">
-                            <EmployeeAvatarNameRoleCell
-                              name={empName}
-                              imageUrl={empImg}
-                              profileTo={employeeProfileTo}
-                              compact
-                              roleLabel={empRoleLabel}
-                              hrRole={empHrRole}
-                            />
-                          </div>
-                          <div className="mt-3">
-                            <IssueTypeCell issueType={item.issue_type} reasonCode={item.reason_code} />
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                            <div className="min-w-0">
-                              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Time in</p>
-                              <div className="mt-0.5 break-words">
-                                <TimeCell iso={tIn} />
-                              </div>
-                            </div>
-                            <div className="min-w-0">
-                              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Time out</p>
-                              <div className="mt-0.5 break-words">
-                                <TimeCell iso={tOut} />
-                              </div>
-                            </div>
-                          </div>
-                          <div className="mt-3 border-t border-border/60 pt-3">
-                            <RemarksPreviewCell text={item.remarks} />
-                          </div>
-                          <div className="mt-4">
-                            <AdminDataTableActions
-                              className="w-full flex-wrap justify-stretch gap-2 sm:flex-nowrap sm:justify-end sm:gap-1.5"
-                              onView={() => openView(item)}
-                              showApprove={tab === 'all' && item.actor_can_approve}
-                              onApprove={() => openApprove(item)}
-                              showReject={tab === 'all' && item.actor_can_reject}
-                              onReject={() => openReject(item)}
-                              showDelete={Boolean(item.actor_can_delete)}
-                              onDelete={() => setDeleteDialog({ open: true, item })}
-                            />
-                          </div>
-                        </div>
-                      )
-                    })}
+                  <div className="space-y-3 p-3 md:hidden @sm:p-4">
+                    {paginatedItems.map((item) => (
+                      <CorrectionRequestMobileCard
+                        key={item.id}
+                        item={item}
+                        employeeProfileTo={
+                          canViewEmployeeProfile && item.user_id
+                            ? hrPanelPath(hrBase, `employees/${item.user_id}`)
+                            : null
+                        }
+                        showBulkCheckbox={tab === 'all' && canSeeAll}
+                        bulkSelection={bulkSelection}
+                        bulkApproving={bulkApproving}
+                        showApprove={tab === 'all' && item.actor_can_approve}
+                        showReject={tab === 'all' && item.actor_can_reject}
+                        showDelete={Boolean(item.actor_can_delete)}
+                        onView={openView}
+                        onApprove={openApprove}
+                        onReject={openReject}
+                        onDelete={(row) => setDeleteDialog({ open: true, item: row })}
+                      />
+                    ))}
                   </div>
 
-                  <div className="hidden w-full min-w-0 overflow-hidden bg-card px-4 pb-8 pt-2 sm:px-6 md:px-8 lg:block">
+                  <div className="hidden w-full min-w-0 overflow-hidden bg-card px-4 pb-8 pt-2 sm:px-6 md:block md:px-8">
                     <Table className="w-full min-w-0 table-fixed text-[12px]">
                       <TableHeader>
                         <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">

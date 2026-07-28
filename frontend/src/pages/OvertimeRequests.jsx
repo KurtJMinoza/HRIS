@@ -37,6 +37,7 @@ import { cn } from '@/lib/utils'
 import {
   requestModuleActionsTdClass,
   requestModuleActionsWrapRowClass,
+  requestModuleCompactButtonClass,
   requestModuleHeadRowClass,
   requestModuleRowClass,
   overtimeAdminTableClass,
@@ -418,8 +419,8 @@ function formatOvertimeStatusLine(row) {
   return row.display_status || row.status || '—'
 }
 
-function OvertimeStatusCell({ row }) {
-  return <OvertimeStatusBadge row={row} />
+function OvertimeStatusCell({ row, showApprover = true, showApproverLabel = false }) {
+  return <OvertimeStatusBadge row={row} showApprover={showApprover} showApproverLabel={showApproverLabel} />
 }
 
 function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelete, onApprove, onReject, mobile = false }) {
@@ -514,6 +515,11 @@ function OvertimeRequestMobileCard({
     canViewEmployeeProfile && (row.requested_by_id || row.employee_id)
       ? profileTo
       : null
+  const pending = String(row?.status || '').toLowerCase() === 'pending'
+  const currentApprover = String(row?.current_approver_name || row?.current_approver || '').trim()
+  const requesterName = row.requested_by_name || row.employee_name || '—'
+  const imgSrc = row.requested_by_profile_image_url || row.employee_profile_image || undefined
+  const initials = getInitials(requesterName)
 
   return (
     <div className="space-y-2 rounded-xl border border-border/70 bg-card p-4 shadow-sm dark:border-white/10">
@@ -533,27 +539,56 @@ function OvertimeRequestMobileCard({
           className="min-w-0 flex-1 text-left transition active:scale-[0.99]"
         >
           <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-mono text-sm font-bold tabular-nums text-foreground">#{row.id}</p>
-              <p className="mt-1 text-sm font-medium text-foreground">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200/90 bg-gradient-to-br from-sky-50 to-blue-50 px-2.5 py-1 text-xs font-semibold text-sky-950 shadow-sm ring-1 ring-black/5 dark:border-sky-900/40 dark:from-sky-950/40 dark:to-blue-950/30 dark:text-sky-50 dark:ring-white/10">
+              {otTypeLabel(row.ot_type)}
+            </span>
+            <OvertimeStatusCell row={row} showApprover={false} />
+          </div>
+
+          {showRequesterColumn ? (
+            <div className="mt-3 flex min-w-0 items-center gap-3">
+              {profileLink ? (
+                <Link
+                  to={profileLink}
+                  onClick={(e) => e.stopPropagation()}
+                  className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                  aria-label={`View profile: ${requesterName}`}
+                >
+                  <Avatar className="size-9 rounded-full">
+                    {imgSrc ? <AvatarImage src={imgSrc} alt="" className="object-cover" /> : null}
+                    <AvatarFallback className="rounded-full bg-teal-500/20 text-xs font-bold text-teal-700 dark:text-teal-300">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                </Link>
+              ) : (
+                <Avatar className="size-9 shrink-0 rounded-full">
+                  {imgSrc ? <AvatarImage src={imgSrc} alt="" className="object-cover" /> : null}
+                  <AvatarFallback className="rounded-full bg-teal-500/20 text-xs font-bold text-teal-700 dark:text-teal-300">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+              )}
+              <span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground" title={requesterName}>
+                {requesterName}
+              </span>
+            </div>
+          ) : null}
+
+          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+            <div className="col-span-2">
+              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Date</p>
+              <p className="mt-0.5 text-sm leading-snug text-foreground">
                 {row.date ? formatTableDate(`${row.date}T12:00:00`) : '—'}
               </p>
             </div>
-            <OvertimeStatusCell row={row} />
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
             <div>
               <p className="font-semibold uppercase tracking-wide text-muted-foreground">Time range</p>
               <p className="mt-0.5 font-mono text-sm leading-snug text-foreground">{formatOvertimeTimeRange(row)}</p>
             </div>
             <div>
               <p className="font-semibold uppercase tracking-wide text-muted-foreground">OT hours</p>
-              <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-foreground">{formatOtHoursDisplay(row)}</p>
-            </div>
-            <div className="col-span-2">
-              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Category</p>
-              <p className="mt-0.5 text-foreground">{otTypeLabel(row.ot_type)}</p>
+              <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">{formatOtHoursDisplay(row)}</p>
             </div>
             <div className="col-span-2">
               <p className="font-semibold uppercase tracking-wide text-muted-foreground">PH pay rule</p>
@@ -561,44 +596,92 @@ function OvertimeRequestMobileCard({
             </div>
             {row.reason ? (
               <div className="col-span-2">
-                <p className="font-semibold uppercase tracking-wide text-muted-foreground">Reason</p>
-                <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-foreground">{row.reason}</p>
+                <p className="font-semibold uppercase tracking-wide text-muted-foreground">Reason / remarks</p>
+                <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-foreground/90">{row.reason}</p>
+              </div>
+            ) : null}
+            {pending && currentApprover ? (
+              <div className="col-span-2">
+                <p className="text-xs leading-snug">
+                  <span className="font-semibold text-muted-foreground">Current approver: </span>
+                  <span className="text-foreground">{currentApprover}</span>
+                </p>
               </div>
             ) : null}
           </div>
 
           <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
             <span className="text-xs text-muted-foreground">
-              Filed {filed ? formatTableDate(filed) : '—'}
+              Filed {filed ? formatDateTime(filed) : '—'}
             </span>
             <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden />
           </div>
         </button>
       </div>
 
-      {showRequesterColumn ? (
-        <div className="border-t border-border/60 pt-3">
-          <RequesterCell
-            item={row}
-            profileTo={profileLink}
-            avatarLinkable={Boolean(profileLink)}
-            compact
-          />
-        </div>
-      ) : null}
-
-      <OvertimeRowActions
-        row={row}
-        tab={tab}
-        canEdit={canEdit}
-        canAct={canAct}
-        onView={onView}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onApprove={onApprove}
-        onReject={onReject}
-        mobile
-      />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn(requestModuleCompactButtonClass, 'flex-1 border-border/80 bg-card hover:bg-brand/10 hover:text-brand')}
+          onClick={onView}
+        >
+          <Eye className="size-3.5" aria-hidden />
+          View details
+        </Button>
+        {tab === 'mine' && canEdit ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(requestModuleCompactButtonClass, 'flex-1 border-border/80 bg-muted/40')}
+            onClick={onEdit}
+          >
+            <Pencil className="size-3.5" aria-hidden />
+            Edit
+          </Button>
+        ) : null}
+        {row.actor_can_delete ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(requestModuleCompactButtonClass, 'flex-1 border-destructive/40 text-destructive hover:bg-destructive/10')}
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+            Delete
+          </Button>
+        ) : null}
+        {canAct ? (
+          <>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              className={cn(requestModuleCompactButtonClass, 'flex-1 bg-emerald-600 text-white hover:bg-emerald-700')}
+              onClick={onApprove}
+            >
+              <CheckCircle2 className="size-3.5" />
+              Approve
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(
+                requestModuleCompactButtonClass,
+                'flex-1 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300',
+              )}
+              onClick={onReject}
+            >
+              <XCircle className="size-3.5" />
+              Reject
+            </Button>
+          </>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -877,13 +960,14 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const initialReviewIdRaw = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
   const initialReviewId = parseReviewRequestId(initialReviewIdRaw)
   const hasDeepLinkReview = Boolean(isHr && canSeeAllTab && initialReviewId)
-  const [tab, setTab] = useState(() => (hasDeepLinkReview || canSeeAllTab ? 'all' : 'mine'))
+  // Heads: My Filings default. Admin HR (and deep-link review) stay on All Filings.
+  const [tab, setTab] = useState(() => (hasDeepLinkReview || isAdminHr ? 'all' : 'mine'))
 
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
   const [approvalQueueBadgeCount, setApprovalQueueBadgeCount] = useState(0)
   const [loadingMine, setLoadingMine] = useState(true)
-  const [loadingAll, setLoadingAll] = useState(() => Boolean(isHr && canSeeAllTab))
+  const [loadingAll, setLoadingAll] = useState(() => Boolean(hasDeepLinkReview || (isHr && isAdminHr && canSeeAllTab)))
   const mineListAbortRef = useRef(null)
   const allListAbortRef = useRef(null)
   const allListLoadedOnceRef = useRef(false)
@@ -2149,40 +2233,81 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               role="tablist"
               aria-label="Overtime views"
             >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'all'}
-                onClick={() => {
-                  setTab('all')
-                  setAllPage(1)
-                }}
-                className={cn(
-                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
-                  tab === 'all'
-                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
-                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
-                )}
-              >
-                <span className="inline-flex items-center">
-                  {allOvertimeTabLabel}
-                  <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
-                </span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === 'mine'}
-                onClick={() => setTab('mine')}
-                className={cn(
-                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
-                  tab === 'mine'
-                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
-                    : 'text-muted-foreground hover:bg-background hover:text-foreground'
-                )}
-              >
-                My Filings
-              </button>
+              {!isAdminHr ? (
+                <>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === 'mine'}
+                    onClick={() => setTab('mine')}
+                    className={cn(
+                      'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                      tab === 'mine'
+                        ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                        : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                    )}
+                  >
+                    My Filings
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === 'all'}
+                    onClick={() => {
+                      setTab('all')
+                      setAllPage(1)
+                    }}
+                    className={cn(
+                      'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                      tab === 'all'
+                        ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                        : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                    )}
+                  >
+                    <span className="inline-flex items-center">
+                      {allOvertimeTabLabel}
+                      <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                    </span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === 'all'}
+                    onClick={() => {
+                      setTab('all')
+                      setAllPage(1)
+                    }}
+                    className={cn(
+                      'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                      tab === 'all'
+                        ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                        : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                    )}
+                  >
+                    <span className="inline-flex items-center">
+                      {allOvertimeTabLabel}
+                      <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === 'mine'}
+                    onClick={() => setTab('mine')}
+                    className={cn(
+                      'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                      tab === 'mine'
+                        ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                        : 'text-muted-foreground hover:bg-background hover:text-foreground'
+                    )}
+                  >
+                    My Filings
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -2513,7 +2638,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   </Table>
                   </div>
 
-                  <div className="space-y-4 md:hidden">
+                  <div className="space-y-3 p-3 md:hidden @sm:p-4">
                     {activeItems.map((row) => {
                       const profileTo =
                         canViewEmployeeProfile && (row.requested_by_id || row.employee_id)

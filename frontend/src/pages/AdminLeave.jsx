@@ -104,6 +104,7 @@ import {
   parseLeaveReviewRequestId,
 } from '@/lib/leaveReviewDeepLink'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
+import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
@@ -573,8 +574,9 @@ export default function AdminLeave() {
       setTab('all')
       return
     }
-    if (!showEmployeePicker) setTab('mine')
-  }, [user?.id, showEmployeePicker, openAllRequestsTab])
+    // Heads: My Filings first. Admin HR stays on All Filings.
+    if (!isAdminHr) setTab('mine')
+  }, [user?.id, isAdminHr, openAllRequestsTab])
 
   useEffect(() => {
     if (!user?.id || tab !== 'all' || activeView !== 'list') {
@@ -1673,37 +1675,75 @@ export default function AdminLeave() {
           role="tablist"
           aria-label="Leave views"
         >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'all'}
-            onClick={() => setTab('all')}
-            className={cn(
-              'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
-              tab === 'all'
-                ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
-                : 'text-muted-foreground hover:bg-background hover:text-foreground',
-            )}
-          >
-            <span className="inline-flex items-center">
-              {allLeaveTabLabel}
-              <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
-            </span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'mine'}
-            onClick={() => setTab('mine')}
-            className={cn(
-              'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
-              tab === 'mine'
-                ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
-                : 'text-muted-foreground hover:bg-background hover:text-foreground',
-            )}
-          >
-            My Filings
-          </button>
+          {!isAdminHr ? (
+            <>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'mine'}
+                onClick={() => setTab('mine')}
+                className={cn(
+                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                  tab === 'mine'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground',
+                )}
+              >
+                My Filings
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'all'}
+                onClick={() => setTab('all')}
+                className={cn(
+                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                  tab === 'all'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground',
+                )}
+              >
+                <span className="inline-flex items-center">
+                  {allLeaveTabLabel}
+                  <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                </span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'all'}
+                onClick={() => setTab('all')}
+                className={cn(
+                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                  tab === 'all'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground',
+                )}
+              >
+                <span className="inline-flex items-center">
+                  {allLeaveTabLabel}
+                  <ApprovalQueueTabBadge count={approvalQueueBadgeCount} />
+                </span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'mine'}
+                onClick={() => setTab('mine')}
+                className={cn(
+                  'rounded-xl px-5 py-2.5 text-sm font-semibold transition-all',
+                  tab === 'mine'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+                    : 'text-muted-foreground hover:bg-background hover:text-foreground',
+                )}
+              >
+                My Filings
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1842,13 +1882,18 @@ export default function AdminLeave() {
               onDeleteLeave={(leave) => setDeleteDialog({ open: true, leave })}
             />
           ) : activeLoading ? (
-            <div className="min-h-[min(42vh,400px)] overflow-x-auto px-2 @sm:px-0">
-              <table className="w-full min-w-[min(100%,720px)] text-sm">
-                <tbody>
-                  <TableBodySkeleton rows={6} cols={10} />
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="hidden min-h-[min(42vh,400px)] overflow-x-auto px-2 @sm:px-0 md:block">
+                <table className="w-full min-w-[min(100%,720px)] text-sm">
+                  <tbody>
+                    <TableBodySkeleton rows={6} cols={10} />
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-center py-16 md:hidden">
+                <Loader2 className="size-10 animate-spin text-brand" />
+              </div>
+            </>
           ) : activeLeaveRequests.length === 0 ? (
             <div className="flex min-h-[min(58vh,620px)] flex-col items-center justify-center px-6 py-16 text-center @md:py-24">
               <div className="relative mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
@@ -1884,7 +1929,8 @@ export default function AdminLeave() {
               ) : null}
             </div>
           ) : isMineTab ? (
-            <div className="min-w-0 flex-1 overflow-hidden">
+            <>
+            <div className="hidden min-w-0 flex-1 overflow-hidden md:block">
               <table className={leaveEmployeeTableClass}>
                 <colgroup>
                   <col className="w-[11%]" />
@@ -2003,8 +2049,20 @@ export default function AdminLeave() {
                 </tbody>
               </table>
             </div>
+            <div className="space-y-3 p-3 md:hidden @sm:p-4">
+              {activeLeaveRequests.map((leave) => (
+                <LeaveRequestMobileCard
+                  key={leave.id}
+                  leave={leave}
+                  onView={openDetailDialog}
+                  onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
+                />
+              ))}
+            </div>
+            </>
           ) : (
-            <div className="min-w-0 flex-1 overflow-hidden">
+            <>
+            <div className="hidden min-w-0 flex-1 overflow-hidden md:block">
               <table className={leaveAdminTableClass}>
                 <colgroup>
                   {canApproveLeave ? <col className="w-[3%]" /> : null}
@@ -2245,6 +2303,27 @@ export default function AdminLeave() {
                 </tbody>
               </table>
             </div>
+            <div className="space-y-3 p-3 md:hidden @sm:p-4">
+              {leaveRequests.map((leave) => (
+                <LeaveRequestMobileCard
+                  key={leave.id}
+                  leave={leave}
+                  showEmployee
+                  showBulkCheckbox={canApproveLeave}
+                  bulkSelection={bulkSelection}
+                  bulkApproving={bulkApproving}
+                  canApprove={canApproveLeave}
+                  canLeaveNotes={canLeaveNotes}
+                  actionLoadingId={actionLoadingId}
+                  onView={openDetailDialog}
+                  onApprove={openApproveDialog}
+                  onReject={openRejectDialog}
+                  onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
+                  onNotes={openNotesDialog}
+                />
+              ))}
+            </div>
+            </>
           )}
           {activeView === 'list' && activePagination && activePagination.last_page > 1 ? (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/50 px-4 py-3 text-sm text-muted-foreground @sm:px-6">

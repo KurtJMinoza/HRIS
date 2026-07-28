@@ -8,7 +8,15 @@ function normalizeLeaveStatus(status) {
   return s || 'pending'
 }
 
-export default function LeaveStatusPill({ status, displayStatus, hrWaitMessage, currentApproverName, currentStage, className }) {
+export default function LeaveStatusPill({
+  status,
+  displayStatus,
+  hrWaitMessage,
+  currentApproverName,
+  currentStage,
+  showApproverLabel = false,
+  className,
+}) {
   const s = normalizeLeaveStatus(status)
   const pendingStage = normalizeApprovalHeadTitle(
     currentStage ||
@@ -21,6 +29,11 @@ export default function LeaveStatusPill({ status, displayStatus, hrWaitMessage, 
     : normalizeApprovalStatusLabel(displayStatus || status) || '—'
   const currentApprover = currentApproverName ? String(currentApproverName).trim() : ''
   const waitMessage = normalizeApprovalStatusLabel(hrWaitMessage)
+  const approverText = currentApprover
+    ? showApproverLabel
+      ? `Current approver: ${currentApprover}`
+      : currentApprover
+    : ''
 
   let pill = null
   if (s === 'rejected') {
@@ -76,14 +89,14 @@ export default function LeaveStatusPill({ status, displayStatus, hrWaitMessage, 
     )
   }
 
-  if (!waitMessage && !currentApprover) return pill
+  if (!waitMessage && !approverText) return pill
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
       {pill}
-      {currentApprover ? (
-        <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={currentApprover}>
-          {currentApprover}
+      {approverText ? (
+        <p className="line-clamp-2 text-[11px] leading-snug text-muted-foreground" title={approverText}>
+          {approverText}
         </p>
       ) : null}
       {waitMessage ? (

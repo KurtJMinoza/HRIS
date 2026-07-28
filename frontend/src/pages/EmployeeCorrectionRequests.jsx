@@ -16,7 +16,6 @@ import {
   LogIn,
   LogOut,
   Printer,
-  ChevronRight,
   Inbox,
   Sparkles,
   Search,
@@ -82,6 +81,7 @@ import {
   TimeCell,
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
+import CorrectionRequestMobileCard from '@/components/presenceFiling/CorrectionRequestMobileCard'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 import { resetRadixModalLock } from '@/lib/radixModalLock'
 
@@ -1117,7 +1117,7 @@ function EmployeeCorrectionRequestsSelfService() {
                         <SelectItem value="rejected">Rejected</SelectItem>
                       </SelectContent>
                     </Select>
-                    <div className="@sm:col-span-2 @lg:hidden">
+                    <div className="@sm:col-span-2 md:hidden">
                       <Select
                         value={sortKey}
                         onValueChange={(value) => {
@@ -1139,8 +1139,8 @@ function EmployeeCorrectionRequestsSelfService() {
                   </div>
                 </div>
 
-                {/* Desktop: scrollable table on large screens */}
-                <div className="hidden w-full min-w-0 overflow-x-auto border-t border-border bg-card lg:block">
+                {/* Desktop: scrollable table from md up */}
+                <div className="hidden w-full min-w-0 overflow-x-auto border-t border-border bg-card md:block">
                   <Table className="w-full min-w-[920px] text-[12px]">
                     <TableHeader className="[&_tr]:border-b-0">
                       <TableRow className="border-0 bg-muted/30">
@@ -1254,78 +1254,17 @@ function EmployeeCorrectionRequestsSelfService() {
                   </Table>
                 </div>
 
-                {/* Mobile + tablet: card layout (table from lg) */}
-                <div className="space-y-3 p-3 @sm:space-y-4 @sm:p-4 @sm:px-6 lg:hidden">
-                  {filteredSorted.map((row) => {
-                    const tIn = row.requested_time_in ?? row.time_in
-                    const tOut = row.requested_time_out ?? row.time_out
-                    return (
-                      <div key={row.id} className="space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => openDetail(row)}
-                        className="w-full rounded-xl border border-border bg-card p-3 text-left text-card-foreground shadow-sm transition active:scale-[0.99] @sm:rounded-2xl @sm:p-4 hover:border-primary/25 hover:bg-muted/20 hover:shadow-md"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-mono text-xs font-semibold text-muted-foreground">#{row.id}</p>
-                            <p className="mt-1 text-base font-semibold text-foreground">
-                              {formatAttendanceDate(row.date)}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Filed {row.filed_at ? formatDateTime(row.filed_at) : '—'}
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 items-start gap-2">
-                            <ReviewStatusTableBadge item={row} />
-                            <ChevronRight className="size-5 text-muted-foreground" aria-hidden />
-                          </div>
-                        </div>
-                        <div className="mt-3">
-                          <EmployeeAvatarNameRoleCell
-                            name={row.employee_name || 'You'}
-                            imageUrl={row.employee_profile_image_url}
-                            profileTo={null}
-                            compact
-                            roleLabel={row.employee_role_label ?? row.requested_by_role_label}
-                            hrRole={row.employee_hr_role ?? row.requested_by_hr_role}
-                          />
-                        </div>
-                        <div className="mt-3">
-                          <IssueTypeCell issueType={row.issue_type} reasonCode={row.reason_code} />
-                        </div>
-                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                          <div>
-                            <p className="font-semibold uppercase tracking-wide text-muted-foreground">Time in</p>
-                            <div className="mt-0.5">
-                              <TimeCell iso={tIn} />
-                            </div>
-                          </div>
-                          <div>
-                            <p className="font-semibold uppercase tracking-wide text-muted-foreground">Time out</p>
-                            <div className="mt-0.5">
-                              <TimeCell iso={tOut} />
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-3 border-t border-border/60 pt-3">
-                          <RemarksPreviewCell text={row.remarks} />
-                        </div>
-                      </button>
-                      {row.actor_can_delete ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full gap-2 rounded-xl border-destructive/40 text-destructive hover:bg-destructive/10"
-                          onClick={() => setDeleteDialog({ open: true, item: row })}
-                        >
-                          <Trash2 className="size-4" />
-                          Delete
-                        </Button>
-                      ) : null}
-                      </div>
-                    )
-                  })}
+                {/* Mobile: card layout (table from md) */}
+                <div className="space-y-3 p-3 md:hidden @sm:p-4">
+                  {filteredSorted.map((row) => (
+                    <CorrectionRequestMobileCard
+                      key={row.id}
+                      item={{ ...row, employee_name: row.employee_name || 'You' }}
+                      showDelete={Boolean(row.actor_can_delete)}
+                      onView={openDetail}
+                      onDelete={(item) => setDeleteDialog({ open: true, item })}
+                    />
+                  ))}
                 </div>
               </AnimatedSection>
           )}

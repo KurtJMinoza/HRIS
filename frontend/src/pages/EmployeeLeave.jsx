@@ -10,7 +10,6 @@ import {
   Eye,
   Clock,
   Inbox,
-  ChevronRight,
   Palmtree,
   HeartPulse,
   AlertTriangle,
@@ -113,6 +112,7 @@ import { LeaveCreditsSummaryPanel } from '@/components/leave/LeaveCreditsSummary
 import { LeaveModalCreditsCard } from '@/components/leave/LeaveModalCreditsCard'
 import { formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
+import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
 import { useAuth } from '@/contexts/AuthContext'
 import AdminLeave from '@/pages/AdminLeave'
 
@@ -1205,84 +1205,14 @@ function EmployeeLeaveSelfService() {
                   )
                 ) : (
                   <AnimatedSection staggerChildren={0.03} duration={0.4}>
-                    {filteredRows.map((leave) => {
-                      const dur = computeLeaveDurationDays(leave)
-                      const durLabel =
-                        dur === null
-                          ? '—'
-                          : dur === 0.5
-                            ? '0.5 day'
-                            : `${dur} day${dur === 1 ? '' : 's'}`
-                      return (
-                        <div key={leave.id} className="space-y-2">
-                        <button
-                          type="button"
-                          onClick={() => openLeaveDetail(leave)}
-                          className="w-full rounded-xl border border-border/70 bg-card p-4 text-left shadow-sm transition hover:border-brand/35 hover:bg-brand/5 hover:shadow-md active:scale-[0.99] dark:border-white/10 dark:hover:bg-brand/10"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <LeaveTypeBadge type={leave.type} />
-                            <LeaveStatusPill
-                              status={leave.status}
-                              displayStatus={leave.display_status}
-                              currentStage={leave.current_stage}
-                              currentApproverName={leave.current_approver || leave.current_approver_name}
-                            />
-                          </div>
-                          <p className="mt-3 text-sm text-muted-foreground">
-                            {formatDateShort(leave.start_date)}
-                            {leave.start_date !== leave.end_date && (
-                              <>
-                                {' '}
-                                → {formatDateShort(leave.end_date)}
-                              </>
-                            )}
-                          </p>
-                          <p className="mt-1 text-xs font-medium text-muted-foreground">Duration: {durLabel}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Supporting documents:{' '}
-                            {(() => {
-                              const urls = supportingDocUrls(leave)
-                              if (!urls.length) return 'No'
-                              return (
-                                <span className="inline-flex flex-wrap gap-x-2 gap-y-0.5">
-                                  {urls.map((url, i) => (
-                                    <a
-                                      key={`${url}-${i}`}
-                                      href={profileImageUrl(url)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="font-medium text-brand underline-offset-2 hover:underline"
-                                    >
-                                      View{urls.length > 1 ? ` ${i + 1}` : ''}
-                                    </a>
-                                  ))}
-                                </span>
-                              )
-                            })()}
-                          </p>
-                          <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
-                            <span className="text-xs text-muted-foreground">
-                              Filed {leave.created_at ? formatDateTime(leave.created_at) : '—'}
-                            </span>
-                            <ChevronRight className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-                          </div>
-                        </button>
-                        {leave.actor_can_delete ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="w-full gap-2 rounded-xl border-destructive/40 text-destructive hover:bg-destructive/10"
-                            onClick={() => setDeleteDialog({ open: true, leave })}
-                          >
-                            <Trash2 className="size-4" />
-                            Delete
-                          </Button>
-                        ) : null}
-                        </div>
-                      )
-                    })}
+                    {filteredRows.map((leave) => (
+                      <LeaveRequestMobileCard
+                        key={leave.id}
+                        leave={leave}
+                        onView={openLeaveDetail}
+                        onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
+                      />
+                    ))}
                   </AnimatedSection>
                 )}
               </div>

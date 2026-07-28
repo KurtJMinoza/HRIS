@@ -42,9 +42,9 @@ function statusLabel(row) {
   return 'Pending'
 }
 
-function captionLine(row) {
+function captionLine(row, { showApproverLabel = false } = {}) {
   const s = String(row.status || '').toLowerCase()
-  const currentApprover = row.current_approver_name || row.current_approver
+  const currentApprover = String(row.current_approver_name || row.current_approver || '').trim()
 
   if (s === 'approved' && currentApprover) {
     return `Approved by ${currentApprover}`
@@ -56,7 +56,7 @@ function captionLine(row) {
   }
 
   if (currentApprover) {
-    return currentApprover
+    return showApproverLabel ? `Current approver: ${currentApprover}` : currentApprover
   }
 
   return null
@@ -73,12 +73,12 @@ function badgeColor(row) {
   return 'orange'
 }
 
-export default function OvertimeStatusBadge({ row, className }) {
+export default function OvertimeStatusBadge({ row, className, showApprover = true, showApproverLabel = false }) {
   const color = badgeColor(row)
   const style = STATUS_STYLES[color] || STATUS_STYLES.gray
   const Icon = style.icon
   const label = statusLabel(row)
-  const caption = captionLine(row)
+  const caption = showApprover ? captionLine(row, { showApproverLabel }) : null
 
   return (
     <div className={cn('flex min-w-0 flex-col gap-1', className)}>
@@ -94,7 +94,7 @@ export default function OvertimeStatusBadge({ row, className }) {
       </span>
       {caption ? (
         <p
-          className="line-clamp-1 text-[11px] leading-snug text-muted-foreground"
+          className="line-clamp-2 text-[11px] leading-snug text-muted-foreground"
           title={caption}
         >
           {caption}

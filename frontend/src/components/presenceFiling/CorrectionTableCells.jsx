@@ -193,7 +193,7 @@ export function RoleJobTitleCell({ position, roleLabel, hrRole }) {
   )
 }
 
-export function ReviewStatusTableBadge({ item }) {
+export function ReviewStatusTableBadge({ item, showApprover = true, showApproverLabel = false }) {
   const key = reviewStatusKey(item)
   const ds = item?.display_status && String(item.display_status).trim()
   const currentStage = normalizeApprovalHeadTitle(
@@ -205,7 +205,14 @@ export function ReviewStatusTableBadge({ item }) {
   const label = item?.status === 'pending' && currentStage
     ? `Waiting for ${currentStage}`
     : normalizeApprovalStatusLabel(ds || reviewStatusLabel(item))
-  const currentApprover = String(item?.current_approver_name || item?.current_approver || '').trim()
+  const currentApprover = showApprover
+    ? String(item?.current_approver_name || item?.current_approver || '').trim()
+    : ''
+  const approverText = currentApprover
+    ? showApproverLabel
+      ? `Current approver: ${currentApprover}`
+      : currentApprover
+    : ''
   const Icon =
     key === 'rejected' ? XCircle : key === 'hr_approved' ? CheckCircle2 : Clock
   return (
@@ -219,9 +226,9 @@ export function ReviewStatusTableBadge({ item }) {
         <Icon className="size-3.5 shrink-0 opacity-90" aria-hidden />
         <span className="line-clamp-2">{label}</span>
       </span>
-      {currentApprover ? (
-        <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={currentApprover}>
-          {currentApprover}
+      {approverText ? (
+        <p className="line-clamp-2 text-[11px] leading-snug text-muted-foreground" title={approverText}>
+          {approverText}
         </p>
       ) : null}
     </div>
