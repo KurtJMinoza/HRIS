@@ -160,10 +160,16 @@ class AreaController extends Controller
             }
 
             DB::transaction(function () use ($area): void {
-                DB::table('organization_units')
+                // Deactivate leadership first so the area manager hat clears before the mirror row is removed.
+                app(\App\Services\LegacyOrganizationMirrorService::class)->deactivate($area);
+
+                $unitIds = DB::table('organization_units')
                     ->where('legacy_source_type', 'area')
                     ->where('legacy_source_id', (int) $area->id)
-                    ->delete();
+                    ->pluck('id');
+                if ($unitIds->isNotEmpty()) {
+                    DB::table('organization_units')->whereIn('id', $unitIds->all())->delete();
+                }
 
                 $area->delete();
             });

@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Models\WorkingScheduleDay;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Resolves an employee's per-day schedule from legacy JSON or WorkingSchedule (admin module).
@@ -25,10 +26,12 @@ final class EmployeeScheduleResolver
             return null;
         }
 
-        $workingSchedule->loadMissing('days');
-
-        if ($workingSchedule->isFlexiblePerDay()) {
-            return self::buildFlexibleFromDays($workingSchedule);
+        // ponytail: login/auth payloads resolve schedule; missing days table must not 500 the session.
+        if (Schema::hasTable('working_schedule_days')) {
+            $workingSchedule->loadMissing('days');
+            if ($workingSchedule->isFlexiblePerDay()) {
+                return self::buildFlexibleFromDays($workingSchedule);
+            }
         }
 
         $restDays = is_array($workingSchedule->rest_days) ? $workingSchedule->rest_days : [];

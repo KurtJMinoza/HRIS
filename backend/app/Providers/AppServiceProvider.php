@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Events\ScheduleUpdated;
 use App\Listeners\RecalculatePayrollDailyRecords;
+use App\Models\Area;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\Branch;
@@ -350,6 +351,7 @@ class AppServiceProvider extends ServiceProvider
 
         $mirror = fn () => app(LegacyOrganizationMirrorService::class);
         Company::saved(fn (Company $model) => $mirror()->sync($model));
+        Area::saved(fn (Area $model) => $mirror()->sync($model));
         Branch::saved(fn (Branch $model) => $mirror()->sync($model));
         Division::saved(fn (Division $model) => $mirror()->sync($model));
         Department::saved(fn (Department $model) => $mirror()->sync($model));
@@ -365,6 +367,7 @@ class AppServiceProvider extends ServiceProvider
             }
         });
         Company::deleted(fn (Company $model) => $mirror()->deactivate($model));
+        Area::deleted(fn (Area $model) => $mirror()->deactivate($model));
         Branch::deleted(fn (Branch $model) => $mirror()->deactivate($model));
         Division::deleted(fn (Division $model) => $mirror()->deactivate($model));
         Department::deleted(fn (Department $model) => $mirror()->deactivate($model));

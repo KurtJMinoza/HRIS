@@ -155,12 +155,42 @@ class OrganizationLeadershipAssignmentService
      */
     private function mergeLegacySourceIds(Collection $legacyColumnIds, User $user, string $legacyType): Collection
     {
-        return $legacyColumnIds
+        $ids = $legacyColumnIds
             ->merge($this->legacySourceIdsFromFlexibleAssignments($user, $legacyType))
             ->map(fn ($id) => (int) $id)
             ->filter(fn (int $id) => $id > 0)
             ->unique()
             ->values();
+
+        return $this->filterExistingLegacyIds($ids, $legacyType);
+    }
+
+    /**
+     * Drop ids that point at deleted company/branch/… rows so a removed section/unit
+     * cannot keep an employee marked as its head.
+     *
+     * @param  Collection<int, int>  $ids
+     * @return Collection<int, int>
+     */
+    private function filterExistingLegacyIds(Collection $ids, string $legacyType): Collection
+    {
+        if ($ids->isEmpty()) {
+            return $ids;
+        }
+
+        $existing = match ($legacyType) {
+            'company' => Company::query()->whereIn('id', $ids->all())->pluck('id'),
+            'area' => Area::query()->whereIn('id', $ids->all())->pluck('id'),
+            'branch' => Branch::query()->whereIn('id', $ids->all())->pluck('id'),
+            'division' => Division::query()->whereIn('id', $ids->all())->pluck('id'),
+            'department' => Department::query()->whereIn('id', $ids->all())->pluck('id'),
+            'section_unit' => SectionUnit::query()->whereIn('id', $ids->all())->pluck('id'),
+            default => $ids,
+        };
+
+        $existingSet = $existing->map(fn ($id) => (int) $id)->all();
+
+        return $ids->filter(fn (int $id) => in_array($id, $existingSet, true))->values();
     }
 
     /**
@@ -186,6 +216,7 @@ class OrganizationLeadershipAssignmentService
                     OrganizationUnit::query()
                         ->whereIn('id', $unitIds->all())
                         ->where('legacy_source_type', $legacyType)
+                        ->where('is_active', true)
                         ->pluck('legacy_source_id')
                 );
             }
@@ -202,6 +233,7 @@ class OrganizationLeadershipAssignmentService
                     OrganizationUnit::query()
                         ->whereIn('id', $leaderUnitIds->all())
                         ->where('legacy_source_type', $legacyType)
+                        ->where('is_active', true)
                         ->pluck('legacy_source_id')
                 );
             }

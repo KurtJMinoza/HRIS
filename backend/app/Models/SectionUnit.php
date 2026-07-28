@@ -37,6 +37,18 @@ class SectionUnit extends Model
                 }
             }
         });
+
+        static::deleted(function (self $sectionUnit): void {
+            $employeeId = $sectionUnit->section_unit_head_id;
+            if (! $employeeId) {
+                return;
+            }
+            try {
+                app(\App\Services\EmployeeLevelResolver::class)->syncCachedLevel((int) $employeeId, 'section_unit_deleted');
+            } catch (\Throwable) {
+                // Employee level cache refresh should never block organization maintenance.
+            }
+        });
     }
 
     public function company(): BelongsTo

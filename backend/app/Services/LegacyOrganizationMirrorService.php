@@ -143,10 +143,129 @@ class LegacyOrganizationMirrorService
             return;
         }
 
-        OrganizationUnit::query()
+        $units = OrganizationUnit::query()
             ->where('legacy_source_type', $source[0])
             ->where('legacy_source_id', $source[1])
+            ->get(['id']);
+
+        OrganizationUnit::query()
+            ->whereIn('id', $units->pluck('id')->all())
             ->update(['is_active' => false]);
+
+        // Drop head hats when the legacy org row is gone — otherwise former heads stay
+        // marked Section/Unit Head (etc.) via active position/leader rows on the mirror unit.
+        foreach ($units as $unit) {
+            $this->deactivateLeadershipForUnit((int) $unit->id);
+        }
+    }
+
+    public function deactivateLeadershipForUnit(int $organizationUnitId): void
+    {
+        $employeeIds = collect();
+
+        if (Schema::hasTable('organization_position_assignments')) {
+            $employeeIds = $employeeIds->merge(
+                OrganizationPositionAssignment::query()
+                    ->where('organization_unit_id', $organizationUnitId)
+                    ->where('is_active', true)
+                    ->pluck('employee_id')
+            );
+
+            OrganizationPositionAssignment::query()
+                ->where('organization_unit_id', $organizationUnitId)
+                ->where('is_active', true)
+                ->update([
+                    'is_active' => false,
+                    'effective_to' => now()->toDateString(),
+                ]);
+        }
+
+        if (Schema::hasTable('organization_unit_leaders')) {
+            $employeeIds = $employeeIds->merge(
+                OrganizationUnitLeader::query()
+                    ->where('organization_unit_id', $organizationUnitId)
+                    ->where('is_active', true)
+                    ->pluck('employee_id')
+            );
+
+            OrganizationUnitLeader::query()
+                ->where('organization_unit_id', $organizationUnitId)
+                ->where('is_active', true)
+                ->update(['is_active' => false, 'is_primary' => false]);
+        }
+
+        foreach ($employeeIds->map(fn ($id) => (int) $id)->filter(fn (int $id) => $id > 0)->unique() as $employeeId) {
+            try {
+                app(EmployeeLevelResolver::class)->syncCachedLevel($employeeId, 'organization_unit_deactivated');
+            } catch (\Throwable) {
+                // Level cache refresh should never block org deletion.
+            }
+            \App\Support\EmployeeProfileCache::invalidate($employeeId);
+        }
+    }
+
+    /**
+     * Clear leadership on mirror units whose legacy company/branch/section/… row is gone.
+     *
+     * @return int Number of orphan mirror units cleaned
+     */
+    public function repairOrphanedLegacyLeadership(): int
+    {
+        if (! $this->tablesReady()) {
+            return 0;
+        }
+
+        $existingByType = [
+            'company' => Company::query()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'area' => Area::query()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'branch' => Branch::query()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'division' => Division::query()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'department' => Department::query()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'section_unit' => SectionUnit::query()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            'team' => Team::query()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+        ];
+
+        $cleaned = 0;
+        OrganizationUnit::query()
+            ->whereNotNull('legacy_source_type')
+            ->whereNotNull('legacy_source_id')
+            ->orderBy('id')
+            ->get(['id', 'legacy_source_type', 'legacy_source_id', 'is_active'])
+            ->each(function (OrganizationUnit $unit) use ($existingByType, &$cleaned): void {
+                $type = (string) $unit->legacy_source_type;
+                if (! array_key_exists($type, $existingByType)) {
+                    return;
+                }
+                if (in_array((int) $unit->legacy_source_id, $existingByType[$type], true)) {
+                    return;
+                }
+
+                $hasActiveLeadership = false;
+                if (Schema::hasTable('organization_position_assignments')) {
+                    $hasActiveLeadership = OrganizationPositionAssignment::query()
+                        ->where('organization_unit_id', (int) $unit->id)
+                        ->where('is_active', true)
+                        ->exists();
+                }
+                if (! $hasActiveLeadership && Schema::hasTable('organization_unit_leaders')) {
+                    $hasActiveLeadership = OrganizationUnitLeader::query()
+                        ->where('organization_unit_id', (int) $unit->id)
+                        ->where('is_active', true)
+                        ->exists();
+                }
+
+                if (! (bool) $unit->is_active && ! $hasActiveLeadership) {
+                    return;
+                }
+
+                if ((bool) $unit->is_active) {
+                    $unit->forceFill(['is_active' => false])->save();
+                }
+                $this->deactivateLeadershipForUnit((int) $unit->id);
+                $cleaned++;
+            });
+
+        return $cleaned;
     }
 
     public function syncCompany(Company $company): ?OrganizationUnit
