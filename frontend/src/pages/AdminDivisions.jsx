@@ -631,8 +631,6 @@ export default function AdminDivisions() {
       }
       setHeadOpen(false)
       setHeadDivision(null)
-      setHeadModalEmployees([])
-      setHeadModalLoadError(null)
       await fetchDivisions()
       await fetchEmployees()
       toast({ title: 'Division head updated', variant: 'success' })

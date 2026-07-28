@@ -598,8 +598,6 @@ export default function AdminDepartments() {
       }
       setHeadOpen(false)
       setHeadDepartment(null)
-      setHeadModalEmployees([])
-      setHeadModalLoadError(null)
       await fetchDepartments()
       await fetchEmployees()
       toast({ title: 'Department head updated', variant: 'success' })

@@ -329,11 +329,11 @@ function getCalendarDayVisual(record, dateKey, ctx) {
 
   /** Neutral frame + soft tint; status is plain text (no pill chrome). */
   const baseGridCell =
-    'touch-manipulation group relative flex h-full min-h-[3.65rem] w-full min-w-0 max-w-full flex-col rounded-lg border border-border bg-card p-1.5 text-left shadow-[0_8px_18px_-18px_rgba(15,23,42,0.7)] @sm:min-h-[4.75rem] @sm:p-2.5 transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-1 ring-offset-background hover:border-border/80 hover:bg-muted/35 active:scale-[0.995] dark:bg-card/80'
+    'touch-manipulation group relative flex h-full min-h-[4.75rem] w-full min-w-0 max-w-full flex-col rounded-lg border border-border bg-card p-1.5 text-left shadow-[0_8px_18px_-18px_rgba(15,23,42,0.7)] @sm:min-h-[5.25rem] @sm:p-2.5 transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-1 ring-offset-background hover:border-border/80 hover:bg-muted/35 active:scale-[0.995] dark:bg-card/80'
 
   /** Plain label: color only, no borders or badge backgrounds. */
   const L = {
-    ink: 'block max-w-full truncate text-[11px] font-medium leading-snug tracking-tight @sm:text-xs',
+    ink: 'block max-w-full text-[10px] font-semibold leading-snug tracking-tight line-clamp-2 @sm:text-xs @sm:font-medium',
     muted: 'text-muted-foreground',
     emerald: 'text-emerald-700 dark:text-emerald-400',
     amber: 'text-amber-800 dark:text-amber-300',
@@ -1701,6 +1701,9 @@ export default function EmployeeDashboard() {
     if (timeIn) rows.push({ label: 'In', value: formatTime(timeIn) })
     if (timeOut) rows.push({ label: 'Out', value: formatTime(timeOut) })
 
+    const hours = getAttendanceTotalHours(record)
+    if (hours != null) rows.push({ label: 'Hrs', value: `${Number(hours).toFixed(1)}h` })
+
     return rows.filter((row) => row.value && row.value !== '—')
   }
 
@@ -2549,13 +2552,16 @@ export default function EmployeeDashboard() {
               </div>
               <div className="mt-2 space-y-2 px-2.5 pb-3 @sm:px-4 md:pb-4">
                 <div className="mx-auto w-full max-w-6xl min-w-0">
-                  <div className="grid w-full min-w-0 grid-cols-7 grid-rows-[auto_repeat(6,minmax(3.25rem,auto))] gap-1 @sm:grid-rows-[auto_repeat(6,minmax(4.75rem,auto))] @sm:gap-2">
+                  <div className="grid w-full min-w-0 grid-cols-7 grid-rows-[auto_repeat(6,minmax(4.75rem,auto))] gap-1 @sm:grid-rows-[auto_repeat(6,minmax(5.25rem,auto))] @sm:gap-2">
                     {WEEKDAYS.map((w) => (
                       <div
                         key={w}
-                        className="min-w-0 rounded-md bg-card px-1 py-1.5 text-center text-[9px] font-extrabold uppercase leading-tight tracking-wide text-muted-foreground @sm:px-1.5 @sm:py-2.5 @sm:text-xs"
+                        className="min-w-0 rounded-md bg-card px-0.5 py-1.5 text-center text-[10px] font-extrabold uppercase leading-tight tracking-wide text-muted-foreground @sm:px-1.5 @sm:py-2.5 @sm:text-xs"
                       >
-                        {w}
+                        <span className="@sm:hidden" aria-hidden>
+                          {w.charAt(0)}
+                        </span>
+                        <span className="hidden @sm:inline">{w}</span>
                       </div>
                     ))}
                     {attendanceCalendarCells.map((cell, idx) => {
@@ -2578,7 +2584,7 @@ export default function EmployeeDashboard() {
                       const tooltipTitle = lines.length ? lines.join('\n') : undefined
 
                       return (
-                        <div key={`${key}-${idx}`} className="flex min-h-15 min-w-0 @sm:min-h-20">
+                        <div key={`${key}-${idx}`} className="flex min-h-19 min-w-0 @sm:min-h-21">
                           <button
                             type="button"
                             title={tooltipTitle}
@@ -2592,15 +2598,15 @@ export default function EmployeeDashboard() {
                               cell.isAdjacent && record && 'opacity-[0.88]',
                             )}
                           >
-                            <div className="flex items-start justify-between gap-1">
+                            <div className="flex items-start justify-between gap-0.5">
                               <span
                                 className={cn(
-                                  'text-sm font-semibold tabular-nums leading-none tracking-tight @sm:text-lg',
+                                  'text-xs font-semibold tabular-nums leading-none tracking-tight @sm:text-lg',
                                   cell.isAdjacent && !record && 'text-muted-foreground/80',
                                 )}
                               >
                                 {isToday ? (
-                                  <span className="inline-flex min-w-6 items-center justify-center rounded-md bg-orange-500 px-1.5 py-0.5 text-xs font-semibold text-white @sm:min-w-9 @sm:px-2.5 @sm:text-base">
+                                  <span className="inline-flex min-w-5 items-center justify-center rounded-md bg-orange-500 px-1 py-0.5 text-[10px] font-semibold text-white @sm:min-w-9 @sm:px-2.5 @sm:text-base">
                                     {cell.day}
                                   </span>
                                 ) : (
@@ -2608,20 +2614,20 @@ export default function EmployeeDashboard() {
                                 )}
                               </span>
                               {cell.isAdjacent && (
-                                <span className="shrink-0 text-[8px] font-medium uppercase tracking-wide text-muted-foreground @sm:text-[9px]">
+                                <span className="shrink-0 text-[7px] font-medium uppercase tracking-wide text-muted-foreground @sm:text-[9px]">
                                   {monthShort}
                                 </span>
                               )}
                             </div>
                             {visual.badge ? (
-                              <div className="mt-auto space-y-1 pt-1">
+                              <div className="mt-auto space-y-0.5 pt-1">
                                 <span className={visual.badgeClass}>{visual.badge}</span>
                                 {timeLines.length > 0 && (
-                                  <div className="hidden space-y-0.5 text-left text-[9px] font-semibold leading-tight text-muted-foreground @sm:block @sm:text-[10px]">
-                                    {timeLines.map((row) => (
+                                  <div className="space-y-0.5 text-left text-[8px] font-semibold leading-tight text-muted-foreground @sm:text-[10px]">
+                                    {timeLines.slice(0, 2).map((row) => (
                                       <div key={row.label} className="truncate tabular-nums">
-                                        <span className="uppercase tracking-wide">{row.label}:</span>{' '}
-                                        <span className="text-foreground/75">{row.value}</span>
+                                        <span className="uppercase tracking-wide">{row.label}</span>{' '}
+                                        <span className="text-foreground/80">{row.value}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -2743,7 +2749,7 @@ export default function EmployeeDashboard() {
       >
         <DialogContent
           className="w-[calc(100vw-1rem)] max-w-md rounded-2xl border-border sm:max-w-md"
-          innerClassName="gap-0 p-0 pr-0"
+          innerClassName="max-h-[min(92vh,40rem)] gap-0 overflow-y-auto p-0 pr-0"
           closeButtonClassName="right-4 top-4 bg-card/95"
         >
           {selectedDayDetails && (

@@ -744,8 +744,6 @@ export default function AdminSectionUnits() {
       }
       setHeadOpen(false)
       setHeadSection(null)
-      setHeadModalEmployees([])
-      setHeadModalLoadError(null)
       await fetchSectionUnits()
       await fetchEmployees()
       toast({ title: 'Section/Unit head updated', variant: 'success' })
