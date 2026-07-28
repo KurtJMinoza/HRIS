@@ -75,7 +75,7 @@ class AttendanceCorrectionBulkApprovalService
         );
         $scopedEmployeeIds = $actor->isAdmin()
             ? null
-            : $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'general');
+            : $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
         $accessibleEmployeeIds = is_array($scopedEmployeeIds)
             ? array_fill_keys([...array_map('intval', $scopedEmployeeIds), (int) $actor->id], true)
             : null;
@@ -348,18 +348,37 @@ class AttendanceCorrectionBulkApprovalService
             $nextPending = $allPending->get($correction->id)?->first(
                 fn (OrgApprovalRecord $record): bool => (int) $record->id !== (int) $pending->id,
             );
-            $correctionRows[] = [
-                'id' => (int) $correction->id,
-                'pending_approval' => true,
-                'approved' => false,
-                'status' => AttendanceCorrectionStatusService::STATUS_PENDING,
-                'approval_stage' => $nextPending?->approver_role === HrRole::AdminHr->value
-                    ? \App\Support\HrApprovalStages::PENDING_SECOND
-                    : \App\Support\HrApprovalStages::PENDING_FIRST,
-                'first_approver_id' => $correction->first_approver_id ?: $actor->id,
-                'first_approved_at' => $correction->first_approved_at ?: $now,
-                'updated_at' => $now,
-            ];
+            // No remaining pending steps after this approval — treat as final.
+            if ($nextPending === null) {
+                $correctionRows[] = [
+                    'id' => (int) $correction->id,
+                    'pending_approval' => false,
+                    'approved' => true,
+                    'approved_by' => $actor->id,
+                    'approved_at' => $now,
+                    'status' => AttendanceCorrectionStatusService::STATUS_APPROVED,
+                    'approval_stage' => AttendanceCorrectionApprovalService::STAGE_APPROVED,
+                    'final_approved_by' => $actor->id,
+                    'second_approver_id' => $correction->second_approver_id ?: $actor->id,
+                    'second_approved_at' => $correction->second_approved_at ?: $now,
+                    'first_approver_id' => $correction->first_approver_id ?: $actor->id,
+                    'first_approved_at' => $correction->first_approved_at ?: $now,
+                    'updated_at' => $now,
+                ];
+            } else {
+                $correctionRows[] = [
+                    'id' => (int) $correction->id,
+                    'pending_approval' => true,
+                    'approved' => false,
+                    'status' => AttendanceCorrectionStatusService::STATUS_PENDING,
+                    'approval_stage' => $nextPending->approver_role === HrRole::AdminHr->value
+                        ? \App\Support\HrApprovalStages::PENDING_SECOND
+                        : \App\Support\HrApprovalStages::PENDING_FIRST,
+                    'first_approver_id' => $correction->first_approver_id ?: $actor->id,
+                    'first_approved_at' => $correction->first_approved_at ?: $now,
+                    'updated_at' => $now,
+                ];
+            }
             $auditRows[] = [
                 'attendance_correction_id' => $correction->id,
                 'admin_id' => $actor->id,
@@ -369,8 +388,8 @@ class AttendanceCorrectionBulkApprovalService
                 'previous_time_out' => $correction->time_out,
                 'new_time_in' => $correction->time_in,
                 'new_time_out' => $correction->time_out,
-                'reason' => $notes ?? 'First approval.',
-                'action' => 'approve_first',
+                'reason' => $notes ?? ($nextPending === null ? 'Final approval.' : 'First approval.'),
+                'action' => $nextPending === null ? 'approve_final' : 'approve_first',
                 'approver_role' => $roleLabel,
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -396,11 +415,12 @@ class AttendanceCorrectionBulkApprovalService
                 'approver_name' => $approverName,
                 'updated_at' => $now,
             ]);
-            DB::table('attendance_corrections')->upsert(
-                $correctionRows,
-                ['id'],
-                ['pending_approval', 'approved', 'status', 'approval_stage', 'first_approver_id', 'first_approved_at', 'updated_at'],
-            );
+            // UPDATE-only: upsert INSERT path lacks required columns like user_id under MySQL strict mode.
+            foreach ($correctionRows as $row) {
+                $id = (int) $row['id'];
+                unset($row['id']);
+                DB::table('attendance_corrections')->where('id', $id)->update($row);
+            }
             AttendanceCorrectionAudit::query()->insert($auditRows);
             AttendanceCorrectionApproval::query()->insert($approvalRows);
         });
@@ -441,7 +461,7 @@ class AttendanceCorrectionBulkApprovalService
         $roleLabel = $this->hrRoleResolver->resolve($actor)->badgeLabel();
         $scopedEmployeeIds = $actor->isAdmin()
             ? null
-            : $this->dataScopeService->getScopedEmployeeIdsForUser($actor, 'general');
+            : $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
         $accessibleEmployeeIds = is_array($scopedEmployeeIds)
             ? array_fill_keys([...array_map('intval', $scopedEmployeeIds), (int) $actor->id], true)
             : null;

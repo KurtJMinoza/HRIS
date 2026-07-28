@@ -1237,7 +1237,8 @@ class PresenceFilingController extends Controller
             $canApprove = false;
         }
         $status = $this->correctionStatusService->resolvedStatus($c);
-        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $hrApprovedByWorkflow) {
+        // Only treat workflow HR-approval as final when no earlier pending step remains.
+        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $hrApprovedByWorkflow && $currentApproval === null) {
             $status = AttendanceCorrectionStatusService::STATUS_APPROVED;
         }
         $displayStatus = $this->correctionStatusService->displayStatusLabel($c);
@@ -1308,7 +1309,8 @@ class PresenceFilingController extends Controller
         bool $hrApprovedByWorkflow = false,
     ): array {
         $status = $this->correctionStatusService->resolvedStatus($c);
-        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $hrApprovedByWorkflow) {
+        // Only treat workflow HR-approval as final when no earlier pending step remains.
+        if ($status === AttendanceCorrectionStatusService::STATUS_PENDING && $hrApprovedByWorkflow && $currentApproval === null) {
             $status = AttendanceCorrectionStatusService::STATUS_APPROVED;
         }
         $displayStatus = $this->correctionStatusService->displayStatusLabel($c);
@@ -2116,11 +2118,31 @@ class PresenceFilingController extends Controller
                     $correction->filedBy,
                 );
 
-                $this->correctionStatusService->markFirstStepApproved(
-                    $correction,
-                    $actor,
-                    $nextPending?->approver_role === HrRole::AdminHr->value,
-                );
+                // Chain finished (no HR step, or later steps already approved): finalize now.
+                if ($nextPending === null) {
+                    $this->correctionStatusService->markHrFinalApproved($correction, $actor);
+                    $issueKind = $this->normalizeIssueKind($correction);
+                    $syncResult = $this->attendanceLogSyncService->syncApprovedCorrectionToLogs(
+                        $employee,
+                        $dateKey,
+                        $correction->time_in,
+                        $correction->time_out,
+                        $actor,
+                        $correction->id,
+                        $roleLabel,
+                        $issueKind
+                    );
+                    $correction->is_incomplete_record = ! ($syncResult['applied_time_in'] && $syncResult['applied_time_out']);
+                    $correction->attendance_logs_synced_at = now();
+                    $correction->attendance_logs_synced_by = $actor->id;
+                    $correction->save();
+                } else {
+                    $this->correctionStatusService->markFirstStepApproved(
+                        $correction,
+                        $actor,
+                        $nextPending->approver_role === HrRole::AdminHr->value,
+                    );
+                }
 
                 AttendanceCorrectionAudit::create([
                     'attendance_correction_id' => $correction->id,
@@ -2131,8 +2153,8 @@ class PresenceFilingController extends Controller
                     'previous_time_out' => $correction->time_out,
                     'new_time_in' => $correction->time_in,
                     'new_time_out' => $correction->time_out,
-                    'reason' => $validated['notes'] ?? 'First approval.',
-                    'action' => 'approve_first',
+                    'reason' => $validated['notes'] ?? ($nextPending === null ? 'Final approval.' : 'First approval.'),
+                    'action' => $nextPending === null ? 'approve_final' : 'approve_first',
                     'approver_role' => $roleLabel,
                 ]);
 
@@ -2148,7 +2170,33 @@ class PresenceFilingController extends Controller
                 return $nextPending;
             });
 
-            $nextLabel = $nextPending?->approver_role
+            if ($nextPending === null) {
+                if (! $this->isBulkApprovalRequest($request)) {
+                    AttendanceCorrectionModuleCache::flushAfterMutation(
+                        $actor,
+                        (int) ($employee->company_id ?? 0) ?: null,
+                        (int) $correction->id,
+                    );
+                    $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+                }
+
+                if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
+                    return response()->json([
+                        'message' => 'Attendance correction approved.',
+                        'request_id' => (int) $correction->id,
+                        'status' => 'approved',
+                        'date' => $dateKey,
+                        'approval_stage' => $correction->approval_stage,
+                    ]);
+                }
+
+                return response()->json([
+                    'message' => 'Attendance correction approved.',
+                    'presence_filing' => $this->correctionFormatter->format($this->correctionFormatter->freshWithDisplayRelations($correction), $tz, includeEmployee: true, actor: $actor, includeDisplayFields: true),
+                ]);
+            }
+
+            $nextLabel = $nextPending->approver_role
                 ? (HrRole::tryFrom((string) $nextPending->approver_role)?->badgeLabel() ?? 'next approver')
                 : 'next approver';
 

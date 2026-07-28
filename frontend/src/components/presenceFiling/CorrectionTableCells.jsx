@@ -202,9 +202,13 @@ export function ReviewStatusTableBadge({ item, showApprover = true, showApprover
         .replace(/^Pending\s+/i, '')
         .replace(/\s+Approval$/i, ' approval')
   )
-  const label = item?.status === 'pending' && currentStage
-    ? `Waiting for ${currentStage}`
-    : normalizeApprovalStatusLabel(ds || reviewStatusLabel(item))
+  // Bare "Pending" is a status fallback, not an approval stage title.
+  const stageForWaiting =
+    currentStage && !/^pending$/i.test(currentStage) ? currentStage : ''
+  const label =
+    item?.status === 'pending' && stageForWaiting
+      ? `Waiting for ${stageForWaiting}`
+      : normalizeApprovalStatusLabel(ds || reviewStatusLabel(item))
   const currentApprover = showApprover
     ? String(item?.current_approver_name || item?.current_approver || '').trim()
     : ''
