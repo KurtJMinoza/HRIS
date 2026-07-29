@@ -79,7 +79,25 @@ class OrgApprovalWorkflowService
 
         $existing = $this->records($moduleType, $requestId);
         if ($existing->isNotEmpty()) {
-            if ($this->chainNeedsSync($existing, $steps, $moduleType) && $this->requestIsPending($request, $moduleType)) {
+            $isPending = $this->requestIsPending($request, $moduleType);
+
+            // Re-filed pending requests can still carry Completed steps from an earlier
+            // submission (approved_at before filed_at, or no pending step left). Reset
+            // those so the chain matches the current pending status.
+            if ($isPending && $this->pendingRequestHasStaleApprovals($request, $existing)) {
+                Log::info('approval_chain: resetting stale org approval records for pending request', [
+                    'module_type' => $moduleType,
+                    'request_id' => $requestId,
+                    'existing_count' => $existing->count(),
+                    'resolved_count' => count($steps),
+                    'filed_at' => $this->requestFiledAt($request)?->toIso8601String(),
+                ]);
+                OrgApprovalRecord::query()
+                    ->where('module_type', $moduleType)
+                    ->where('request_id', $requestId)
+                    ->delete();
+                ReviewRequestCache::forget($moduleType, $requestId);
+            } elseif ($isPending && $this->chainNeedsSync($existing, $steps, $moduleType)) {
                 Log::info('approval_chain: syncing org approval records for pending request', [
                     'module_type' => $moduleType,
                     'request_id' => $requestId,
@@ -87,9 +105,11 @@ class OrgApprovalWorkflowService
                     'resolved_count' => count($steps),
                 ]);
                 $this->syncRecordsToChain($request, $moduleType, $requestId, $steps, $existing, $employee, $requestor ?? $employee);
-            }
 
-            return $this->records($moduleType, $requestId);
+                return $this->records($moduleType, $requestId);
+            } else {
+                return $this->records($moduleType, $requestId);
+            }
         }
 
         DB::transaction(function () use ($steps, $request, $moduleType, $requestId): void {
@@ -228,6 +248,63 @@ class OrgApprovalWorkflowService
     }
 
     /**
+     * True when a pending request's stored chain cannot be acted on (no pending step),
+     * or still shows Completed/Rejected from a prior filing before the current filed_at.
+     *
+     * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
+     */
+    private function pendingRequestHasStaleApprovals(Model $request, EloquentCollection $existing): bool
+    {
+        if ($existing->isEmpty()) {
+            return false;
+        }
+
+        $hasPendingStep = $existing->contains(
+            fn (OrgApprovalRecord $record): bool => $record->approval_status === OrgApprovalRecord::STATUS_PENDING
+        );
+        if (! $hasPendingStep) {
+            return true;
+        }
+
+        $filedAt = $this->requestFiledAt($request);
+        if ($filedAt === null) {
+            return false;
+        }
+
+        return $existing->contains(function (OrgApprovalRecord $record) use ($filedAt): bool {
+            if (! in_array($record->approval_status, [
+                OrgApprovalRecord::STATUS_APPROVED,
+                OrgApprovalRecord::STATUS_REJECTED,
+            ], true)) {
+                return false;
+            }
+
+            if ($record->approved_at === null) {
+                return false;
+            }
+
+            return $record->approved_at->lt($filedAt);
+        });
+    }
+
+    private function requestFiledAt(Model $request): ?Carbon
+    {
+        $value = $request->getAttribute('filed_at')
+            ?? $request->getAttribute('submitted_at')
+            ?? null;
+
+        if ($value instanceof Carbon) {
+            return $value;
+        }
+
+        if ($value !== null && $value !== '') {
+            return Carbon::parse($value);
+        }
+
+        return null;
+    }
+
+    /**
      * @param  array<int, array<string, mixed>>  $steps
      * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
      */
@@ -246,14 +323,36 @@ class OrgApprovalWorkflowService
                 ->where('request_id', $requestId)
                 ->delete();
 
+            $filedAt = $this->requestFiledAt($request);
+            $planned = [];
+
             foreach ($steps as $step) {
                 $prior = $existing->firstWhere('approver_role', $step['approver_role']->value);
-                $status = $prior?->approval_status ?? $this->legacyStatusForStep($request, $step);
-                $approvedAt = $status === OrgApprovalRecord::STATUS_APPROVED
-                    ? ($prior?->approved_at ?? $this->legacyApprovedAtForStep($request, $step))
-                    : null;
+                $status = $this->legacyStatusForStep($request, $step);
+                $approvedAt = null;
+                $remarks = null;
 
-                OrgApprovalRecord::query()->create([
+                if ($prior && in_array($prior->approval_status, [
+                    OrgApprovalRecord::STATUS_APPROVED,
+                    OrgApprovalRecord::STATUS_REJECTED,
+                ], true)) {
+                    $priorAt = $prior->approved_at;
+                    $staleVsFile = $filedAt !== null
+                        && $priorAt !== null
+                        && $priorAt->lt($filedAt);
+
+                    if (! $staleVsFile) {
+                        $status = $prior->approval_status;
+                        $approvedAt = $priorAt;
+                        $remarks = $prior->remarks;
+                    }
+                }
+
+                if ($status === OrgApprovalRecord::STATUS_APPROVED && $approvedAt === null) {
+                    $approvedAt = $this->legacyApprovedAtForStep($request, $step);
+                }
+
+                $planned[] = [
                     'request_id' => $requestId,
                     'module_type' => $moduleType,
                     'approval_level' => $step['approval_level'],
@@ -264,10 +363,27 @@ class OrgApprovalWorkflowService
                     'eligible_approver_ids' => $step['eligible_approver_ids'] ?? null,
                     'routing_rule' => $step['routing_rule'] ?? null,
                     'approval_status' => $status,
-                    'remarks' => $prior?->remarks,
+                    'remarks' => $remarks,
                     'approved_at' => $approvedAt,
                     'sequence_order' => $step['sequence_order'],
-                ]);
+                ];
+            }
+
+            // Never leave a pending request with only Completed/Rejected steps after sync.
+            if ($this->requestIsPending($request, $moduleType)
+                && ! collect($planned)->contains(
+                    fn (array $row): bool => $row['approval_status'] === OrgApprovalRecord::STATUS_PENDING
+                )
+            ) {
+                foreach ($planned as $index => $row) {
+                    $planned[$index]['approval_status'] = OrgApprovalRecord::STATUS_PENDING;
+                    $planned[$index]['approved_at'] = null;
+                    $planned[$index]['remarks'] = null;
+                }
+            }
+
+            foreach ($planned as $row) {
+                OrgApprovalRecord::query()->create($row);
             }
 
             $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
