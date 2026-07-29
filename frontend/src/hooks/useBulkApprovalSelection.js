@@ -31,7 +31,8 @@ export function useBulkApprovalSelection({
   const totalCount = Math.max(0, Number(totalMatchingCount) || 0)
 
   const pageAllSelected =
-    pageCount > 0 && pageSelectableRows.every((row) => selectedIds.has(Number(row.id)))
+    pageCount > 0 &&
+    (selectAllMatching || pageSelectableRows.every((row) => selectedIds.has(Number(row.id))))
 
   // Show after the page checkbox is checked (Attendance-style), when more exist across pages.
   const showPageSelectAllBanner =
@@ -65,18 +66,37 @@ export function useBulkApprovalSelection({
   }, [])
 
   const togglePageSelectAll = useCallback(() => {
+    // Uncheck clears everything (page or cross-page).
+    if (selectAllMatching || pageAllSelected) {
+      clearSelection()
+      return
+    }
+
+    // When more approvable rows exist beyond this page, header select = all matching pages.
+    if (totalCount > pageCount && totalCount > 0) {
+      setStoredFilters(bulkFilters)
+      setStoredBulkToken(bulkToken)
+      setSelectAllMatching(true)
+      setSelectedIds(new Set())
+      return
+    }
+
     setSelectAllMatching(false)
     setSelectedIds((prev) => {
-      if (pageAllSelected) {
-        const next = new Set(prev)
-        for (const row of pageSelectableRows) next.delete(Number(row.id))
-        return next
-      }
       const next = new Set(prev)
       for (const row of pageSelectableRows) next.add(Number(row.id))
       return next
     })
-  }, [pageAllSelected, pageSelectableRows])
+  }, [
+    bulkFilters,
+    bulkToken,
+    clearSelection,
+    pageAllSelected,
+    pageCount,
+    pageSelectableRows,
+    selectAllMatching,
+    totalCount,
+  ])
 
   const prevFiltersKey = useRef(filtersKey)
   useEffect(() => {
@@ -108,6 +128,19 @@ export function useBulkApprovalSelection({
     [selectAllMatching, selectedIds, storedBulkToken, storedFilters],
   )
 
+  const isRowSelected = useCallback(
+    (row) => {
+      const id = Number(row?.id)
+      if (!id) return false
+      if (selectAllMatching) {
+        // Cross-page select-all only covers currently-approvable rows.
+        return row?.status === 'pending' && Boolean(row?.actor_can_approve)
+      }
+      return selectedIds.has(id)
+    },
+    [selectAllMatching, selectedIds],
+  )
+
   return {
     selectedIds,
     selectAllMatching,
@@ -122,12 +155,7 @@ export function useBulkApprovalSelection({
     toggleRow,
     togglePageSelectAll,
     buildBulkApprovePayload,
-    isRowSelected: (row) => {
-      const id = Number(row?.id)
-      if (!id) return false
-      if (selectAllMatching) return true
-      return selectedIds.has(id)
-    },
+    isRowSelected,
     headerCheckboxChecked: selectAllMatching || pageAllSelected,
     headerCheckboxIndeterminate:
       !selectAllMatching && selectedIds.size > 0 && !pageAllSelected,

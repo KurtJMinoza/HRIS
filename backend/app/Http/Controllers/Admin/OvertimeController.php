@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Http\Controllers\Controller;
+use App\Enums\HrRole;
 use App\Jobs\BulkRejectionFollowUpJob;
 use App\Jobs\OvertimeBulkFollowUpJob;
 use App\Models\OrgApprovalRecord;
@@ -367,7 +368,7 @@ class OvertimeController extends Controller
         }
 
         $company = (string) ($request->query('company_id') ?? 'all');
-        $cacheKey = 'overtime:counts:'.OvertimeModuleCache::version().':'.$actor->id.':'.$company.':'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
+        $cacheKey = 'overtime:counts:'.OvertimeModuleCache::version().':'.$actor->id.':'.$company.':apqv2:'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
         $cacheHit = false;
 
         try {
@@ -392,8 +393,20 @@ class OvertimeController extends Controller
         }
 
         $today = today()->toDateString();
+        $approvablePending = $this->bulkApprovalQuery->approvableCount(
+            $actor,
+            $this->normalizeBulkApproveFilters([
+                'date_from' => $request->query('from_date') ?? $request->query('date_from'),
+                'date_to' => $request->query('to_date') ?? $request->query('date_to'),
+                'status' => Overtime::STATUS_PENDING,
+            ])
+        );
+        $pendingAll = (int) (clone $base)->where('status', Overtime::STATUS_PENDING)->count();
         $payload = [
-            'pending' => (int) (clone $base)->where('status', Overtime::STATUS_PENDING)->count(),
+            // Pending queue / chip = ready for this actor (matches bulk select-all).
+            'pending' => $approvablePending,
+            'approvable_pending' => $approvablePending,
+            'pending_all' => $pendingAll,
             'approved_today' => (int) (clone $base)->where('status', Overtime::STATUS_APPROVED)->whereDate('date', $today)->count(),
             'rejected_today' => (int) (clone $base)->where('status', Overtime::STATUS_REJECTED)->whereDate('date', $today)->count(),
             'my_filings' => (int) (clone $base)->where('user_id', (int) $actor->id)->count(),
@@ -1412,40 +1425,57 @@ class OvertimeController extends Controller
     private function applyFilingApprovalVisibility(User $actor, $query, Request $request): void
     {
         $status = (string) $request->query('status', '');
-        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
-        if ($scopedEmployeeIds === null) {
-            if ($status === Overtime::STATUS_PENDING) {
-                $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_OVERTIME, (int) $actor->id, 'overtimes.id');
-            }
+        $pendingOnly = $status === Overtime::STATUS_PENDING;
 
-            Log::info('filing_visibility: overtime admin list unrestricted for Admin HR', [
-                'current_user_id' => (int) $actor->id,
-                'current_employee_id' => (int) $actor->id,
-                'role' => $actor->role,
-                'current_approval_only' => $status === Overtime::STATUS_PENDING,
-            ]);
+        if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
+            if ($pendingOnly) {
+                // Match OvertimeBulkApprovalQuery::fastAdminHrApprovableQuery — current Admin HR step only.
+                $this->whereCurrentPendingAdminHrApproval($query, 'overtimes.id');
+            }
 
             return;
         }
 
+        $scopedEmployeeIds = $this->dataScopeService->getApprovalScopedEmployeeIdsForUser($actor);
+        if ($scopedEmployeeIds === null) {
+            return;
+        }
+
         $actorId = (int) $actor->id;
+
+        // Pending tab / bulk select-all: only requests waiting on this actor now.
+        if ($pendingOnly) {
+            $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_OVERTIME, $actorId, 'overtimes.id');
+
+            return;
+        }
+
         $query->where(function ($scope) use ($actorId): void {
             $this->whereCurrentPendingApprovalForActor($scope, OrgApprovalWorkflowService::MODULE_OVERTIME, $actorId, 'overtimes.id');
             $this->orWhereActorHasHandledApproval($scope, OrgApprovalWorkflowService::MODULE_OVERTIME, $actorId, 'overtimes.id');
         });
+    }
 
-        Log::info('filing_visibility: overtime admin list scoped for approvals', [
-            'current_user_id' => $actorId,
-            'current_employee_id' => $actorId,
-            'role' => $this->hrRoleResolver->resolve($actor)->value,
-            'can_view_my_filings' => true,
-            'can_view_assigned_approvals' => true,
-            'can_view_team_filings' => false,
-            'approval_scoped_employee_ids' => [],
-            'assigned_approval_request_ids' => 'current_pending_only',
-            'returned_all_filings_count' => null,
-            'request_status_filter' => $request->query('status'),
-        ]);
+    private function whereCurrentPendingAdminHrApproval($query, string $requestColumn): void
+    {
+        $query->whereExists(function ($approval) use ($requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as current_approval')
+                ->whereColumn('current_approval.request_id', $requestColumn)
+                ->where('current_approval.module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->where('current_approval.approver_role', HrRole::AdminHr->value)
+                ->whereNotExists(function ($earlier): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                        ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_OVERTIME)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                });
+        });
     }
 
     private function whereCurrentPendingApprovalForActor($query, string $moduleType, int $actorId, string $requestColumn): void
@@ -1597,7 +1627,7 @@ class OvertimeController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v5:v'.OvertimeModuleCache::version();
+        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v6:v'.OvertimeModuleCache::version();
     }
 
     /**

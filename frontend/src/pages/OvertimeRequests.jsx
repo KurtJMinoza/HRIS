@@ -1528,9 +1528,18 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     [activeItems, canApproveOvertime, tab],
   )
 
+  const bulkMatchingCount = (() => {
+    const preview = Number(totalMatchingApprovable) || 0
+    if (preview > 0) return preview
+    if (!allStatus || allStatus === 'all' || allStatus === 'pending') {
+      return Number(approvalQueueBadgeCount) || 0
+    }
+    return 0
+  })()
+
   const bulkSelection = useBulkApprovalSelection({
     pageRows: pageBulkRows,
-    totalMatchingCount: totalMatchingApprovable,
+    totalMatchingCount: bulkMatchingCount,
     bulkFilters: bulkApprovalFilters,
     bulkToken: bulkPreviewToken,
     filtersKey: bulkFiltersKey,

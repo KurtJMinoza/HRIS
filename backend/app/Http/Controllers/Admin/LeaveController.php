@@ -228,7 +228,7 @@ class LeaveController extends Controller
         $filters = $this->normalizedLeaveListFilters($request);
         unset($filters['status'], $filters['page'], $filters['per_page']);
         $hash = md5(json_encode($filters, JSON_THROW_ON_ERROR));
-        $cacheKey = 'leave:counts:'.LeaveModuleCache::version().':'.$actor->id.':'.$hash;
+        $cacheKey = 'leave:counts:'.LeaveModuleCache::version().':'.$actor->id.':'.$hash.':apqv2';
         $cacheHit = false;
 
         try {
@@ -264,13 +264,16 @@ class LeaveController extends Controller
         $rejected = (int) ($statusCounts[LeaveRequest::STATUS_REJECTED] ?? 0);
         $cancelled = (int) ($statusCounts['cancelled'] ?? 0);
         $allFilings = $pending + $approved + $rejected + $cancelled;
+        $approvablePending = $this->bulkApprovalQuery->approvableCount(
+            $actor,
+            array_merge($filters, ['status' => LeaveRequest::STATUS_PENDING])
+        );
 
         $payload = [
-            'pending' => $pending,
-            'approvable_pending' => $this->bulkApprovalQuery->approvableCount(
-                $actor,
-                array_merge($filters, ['status' => LeaveRequest::STATUS_PENDING])
-            ),
+            // Pending chip / queue = ready for this actor (matches bulk select-all), not all in-flight pending.
+            'pending' => $approvablePending,
+            'approvable_pending' => $approvablePending,
+            'pending_all' => $pending,
             'approved' => $approved,
             'rejected' => $rejected,
             'cancelled' => $cancelled,
@@ -1546,7 +1549,7 @@ class LeaveController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v5:v'.LeaveModuleCache::version();
+        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v6:v'.LeaveModuleCache::version();
     }
 
     /**
@@ -1740,9 +1743,12 @@ class LeaveController extends Controller
     private function applyFilingApprovalVisibility(User $actor, $query, Request $request): void
     {
         $status = (string) $request->query('status', '');
+        $pendingOnly = $status === LeaveRequest::STATUS_PENDING;
+
         if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
-            if ($status === LeaveRequest::STATUS_PENDING) {
-                $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_LEAVE, (int) $actor->id, 'leave_requests.id');
+            if ($pendingOnly) {
+                // Match LeaveBulkApprovalQuery::fastAdminHrApprovableQuery — current Admin HR step only.
+                $this->whereCurrentPendingAdminHrApproval($query, 'leave_requests.id');
             }
 
             return;
@@ -1754,9 +1760,40 @@ class LeaveController extends Controller
         }
 
         $actorId = (int) $actor->id;
+
+        // Pending tab / bulk select-all: only requests waiting on this actor now
+        // (not earlier steps they already handled that still show as pending overall).
+        if ($pendingOnly) {
+            $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_LEAVE, $actorId, 'leave_requests.id');
+
+            return;
+        }
+
         $query->where(function ($scope) use ($actorId): void {
             $this->whereCurrentPendingApprovalForActor($scope, OrgApprovalWorkflowService::MODULE_LEAVE, $actorId, 'leave_requests.id');
             $this->orWhereActorHasHandledApproval($scope, OrgApprovalWorkflowService::MODULE_LEAVE, $actorId, 'leave_requests.id');
+        });
+    }
+
+    private function whereCurrentPendingAdminHrApproval($query, string $requestColumn): void
+    {
+        $query->whereExists(function ($approval) use ($requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as current_approval')
+                ->whereColumn('current_approval.request_id', $requestColumn)
+                ->where('current_approval.module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->where('current_approval.approver_role', HrRole::AdminHr->value)
+                ->whereNotExists(function ($earlier): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                        ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_LEAVE)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                });
         });
     }
 

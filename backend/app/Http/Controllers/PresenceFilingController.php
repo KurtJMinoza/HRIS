@@ -1068,7 +1068,7 @@ class PresenceFilingController extends Controller
         }
 
         $company = (string) ($request->query('company_id') ?? 'all');
-        $cacheKey = 'attendance_correction:counts:v3:'.AttendanceCorrectionModuleCache::version().':'.$actor->id.':'.$company.':'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
+        $cacheKey = 'attendance_correction:counts:v3:'.AttendanceCorrectionModuleCache::version().':'.$actor->id.':'.$company.':apqv2:'.md5(json_encode($request->query(), JSON_THROW_ON_ERROR));
         try {
             $cached = Cache::get($cacheKey);
             if (is_array($cached)) {
@@ -1139,6 +1139,16 @@ class PresenceFilingController extends Controller
         $this->applyPresenceFilingApprovalVisibility($actor, $base, $request);
         $today = today()->toDateString();
         $counts = $this->correctionStatusService->aggregateStatusCounts($base);
+        $approvablePending = $this->bulkApprovalQuery->approvableCount(
+            $actor,
+            $this->normalizeBulkApproveFilters([
+                'date_from' => $request->query('from_date') ?? $request->query('date_from'),
+                'date_to' => $request->query('to_date') ?? $request->query('date_to'),
+                'issue_type' => $request->query('issue_type'),
+                'search' => $request->query('q') ?? $request->query('search'),
+                'status' => 'pending',
+            ])
+        );
         $myFilings = (clone $base)->where('user_id', (int) $actor->id)->count();
         $approvedToday = (clone $base)
             ->where('status', AttendanceCorrectionStatusService::STATUS_APPROVED)
@@ -1151,7 +1161,10 @@ class PresenceFilingController extends Controller
 
         $payload = [
             'total' => $counts['total'],
-            'pending' => $counts['pending'],
+            // Pending queue / chip = ready for this actor (matches bulk select-all).
+            'pending' => $approvablePending,
+            'approvable_pending' => $approvablePending,
+            'pending_all' => $counts['pending'],
             'approved' => $counts['approved'],
             'rejected' => $counts['rejected'],
             'cancelled' => $counts['cancelled'],
@@ -1183,7 +1196,7 @@ class PresenceFilingController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v2:v'.AttendanceCorrectionModuleCache::version();
+        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v3:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1383,20 +1396,52 @@ class PresenceFilingController extends Controller
     private function applyPresenceFilingApprovalVisibility(User $actor, $query, Request $request): void
     {
         $status = (string) $request->query('status', 'all');
+        $pendingOnly = $status === 'pending';
+
         if ($this->hrRoleResolver->isAdminHrAccount($actor)) {
-            if ($status === 'pending') {
-                $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, (int) $actor->id, 'attendance_corrections.id');
+            if ($pendingOnly) {
+                // Match PresenceFilingBulkApprovalQuery::fastAdminHrApprovableQuery — current Admin HR step only.
+                $this->whereCurrentPendingAdminHrApproval($query, 'attendance_corrections.id');
             }
 
             return;
         }
 
         $actorId = (int) $actor->id;
+
+        // Pending tab / bulk select-all: only requests waiting on this actor now.
+        if ($pendingOnly) {
+            $this->whereCurrentPendingApprovalForActor($query, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, $actorId, 'attendance_corrections.id');
+
+            return;
+        }
+
         $query->where(function ($scope) use ($actorId): void {
             $this->whereCurrentPendingApprovalForActor($scope, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, $actorId, 'attendance_corrections.id');
             $this->orWhereActorHasHandledApproval($scope, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, $actorId, 'attendance_corrections.id');
         });
+    }
 
+    private function whereCurrentPendingAdminHrApproval($query, string $requestColumn): void
+    {
+        $query->whereExists(function ($approval) use ($requestColumn): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as current_approval')
+                ->whereColumn('current_approval.request_id', $requestColumn)
+                ->where('current_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->where('current_approval.approver_role', HrRole::AdminHr->value)
+                ->whereNotExists(function ($earlier): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                        ->where('earlier_approval.module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                });
+        });
     }
 
     private function whereCurrentPendingApprovalForActor($query, string $moduleType, int $actorId, string $requestColumn): void

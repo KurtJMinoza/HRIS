@@ -666,25 +666,23 @@ export default function AdminLeave() {
   useEffect(() => {
     if (!user?.id || tab !== 'all') return undefined
     const controller = new AbortController()
+    // Status chips must use the same date scope as the list + bulk preview (not month-only).
+    const listScopeFilters = {
+      date_from: appliedFrom || undefined,
+      date_to: appliedTo || undefined,
+      signal: controller.signal,
+    }
     const monthFilters = {
       date_from: currentMonthRange.from,
       date_to: currentMonthRange.to,
       signal: controller.signal,
     }
-    const needsScoped = Boolean(appliedFrom || appliedTo)
-    const scopedPromise = needsScoped
-      ? getAdminLeaveCounts({
-          date_from: appliedFrom || undefined,
-          date_to: appliedTo || undefined,
-          signal: controller.signal,
-        })
-      : Promise.resolve(null)
 
-    Promise.all([scopedPromise, getAdminLeaveCounts(monthFilters)])
+    Promise.all([getAdminLeaveCounts(listScopeFilters), getAdminLeaveCounts(monthFilters)])
       .then(([scopedCounts, nextMonthlyCounts]) => {
         if (controller.signal.aborted) return
+        setLeaveCounts(scopedCounts)
         setMonthlyLeaveCounts(nextMonthlyCounts)
-        setLeaveCounts(scopedCounts || nextMonthlyCounts)
       })
       .catch((e) => {
         if (e?.name === 'AbortError' || controller.signal.aborted) return
@@ -1432,7 +1430,7 @@ export default function AdminLeave() {
 
   const statusCounts = {
     '': activeCounts.total,
-    pending: activeCounts.pending,
+    pending: activeCounts.approvablePending,
     approved: activeCounts.approved,
     rejected: activeCounts.rejected,
   }
@@ -1479,9 +1477,20 @@ export default function AdminLeave() {
     [canApproveLeave, leaveRequests],
   )
 
+  // Prefer live bulk-preview count; fall back to Pending chip count while preview loads
+  // (All / Pending only — never reuse approvable count on Approved/Rejected).
+  const bulkMatchingCount = (() => {
+    const preview = Number(totalMatchingApprovable) || 0
+    if (preview > 0) return preview
+    if (!statusFilter || statusFilter === 'pending') {
+      return Number(activeCounts.approvablePending) || 0
+    }
+    return 0
+  })()
+
   const bulkSelection = useBulkApprovalSelection({
     pageRows: pageBulkRows,
-    totalMatchingCount: totalMatchingApprovable,
+    totalMatchingCount: bulkMatchingCount,
     bulkFilters: bulkApprovalFilters,
     bulkToken: bulkPreviewToken,
     filtersKey: bulkFiltersKey,
