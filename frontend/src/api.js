@@ -14,6 +14,9 @@ const TOKEN_KEY = 'hris_token'
 const ATTENDANCE_DEVICE_TYPE_KEY = 'hris_device_type'
 const ATTENDANCE_DEVICE_TYPES = ['desktop', 'laptop', 'mobile', 'tablet', 'kiosk']
 const ATTENDANCE_LOCATION_TIMEOUT_MS = 10000
+const ATTENDANCE_MOBILE_LOCATION_TIMEOUT_MS = 20000
+const ATTENDANCE_IOS_LOCATION_TIMEOUT_MS = 25000
+const ATTENDANCE_LOCATION_HARD_TIMEOUT_BUFFER_MS = 5000
 const ATTENDANCE_LOCATION_PERMISSION_RETRY_DELAY_MS = 350
 const USE_SANCTUM_SESSION = String(import.meta.env.VITE_USE_SANCTUM_SESSION ?? 'true') !== 'false'
 let csrfCookieBootPromise = null
@@ -166,6 +169,14 @@ function operatingSystemName() {
   return 'unknown'
 }
 
+function isIosGeolocationBrowser() {
+  return operatingSystemName() === 'iOS'
+}
+
+function isMobileGeolocationDevice(deviceType = attendanceDeviceType()) {
+  return ['mobile', 'tablet'].includes(normalizeAttendanceDeviceType(deviceType) || deviceType)
+}
+
 function secureGeolocationContext() {
   if (typeof window === 'undefined') return true
   const protocol = window.location?.protocol
@@ -195,12 +206,18 @@ function geolocationErrorMessage(error, permission) {
     return 'Location access is blocked for this site.'
   }
   if (Number(error?.code) === 3 || error?.code === error?.TIMEOUT) {
-    return browserMessage || 'Location request timed out. Please try again or move closer to a window.'
+    return browserMessage || 'Location request timed out. Please keep Location Services enabled and try again near a window.'
   }
   if (Number(error?.code) === 2 || error?.code === error?.POSITION_UNAVAILABLE) {
-    return browserMessage || 'Position unavailable. Check Windows Location and browser site permissions, then try again.'
+    return browserMessage || 'Position unavailable. Turn on Location Services, allow Safari/browser location access, then try again.'
   }
   return browserMessage || 'Could not get your current location.'
+}
+
+function attendanceLocationTimeoutCap(deviceType) {
+  if (isIosGeolocationBrowser()) return ATTENDANCE_IOS_LOCATION_TIMEOUT_MS
+  if (isMobileGeolocationDevice(deviceType)) return ATTENDANCE_MOBILE_LOCATION_TIMEOUT_MS
+  return ATTENDANCE_LOCATION_TIMEOUT_MS
 }
 
 function makeGeolocationError(error, permission, retryAttempted = false) {
@@ -282,11 +299,12 @@ export async function captureAttendanceLocation({
   deviceType: requestedDeviceType,
 } = {}) {
   const deviceType = normalizeAttendanceDeviceType(device_type ?? requestedDeviceType) || attendanceDeviceType()
+  const timeoutCap = attendanceLocationTimeoutCap(deviceType)
   const permission = await geolocationPermissionState()
   const hasGeolocation = typeof navigator !== 'undefined' && Boolean(navigator.geolocation)
   const options = {
     enableHighAccuracy: enableHighAccuracy ?? true,
-    timeout: Math.min(Math.max(Number(timeoutMs) || ATTENDANCE_LOCATION_TIMEOUT_MS, 1000), ATTENDANCE_LOCATION_TIMEOUT_MS),
+    timeout: Math.min(Math.max(Number(timeoutMs) || timeoutCap, 1000), timeoutCap),
     maximumAge: maximumAgeMs ?? 0,
   }
   const requestedAtMs = Date.now()
@@ -329,12 +347,13 @@ export async function captureAttendanceLocation({
       clearTimeout(hardTimeoutId)
       callback(value)
     }
+    const hardTimeoutMs = Number(requestOptions.timeout || ATTENDANCE_LOCATION_TIMEOUT_MS) + ATTENDANCE_LOCATION_HARD_TIMEOUT_BUFFER_MS
     const hardTimeoutId = setTimeout(() => {
       const timeoutError = new Error('Unable to obtain precise location.')
       timeoutError.code = 3
       timeoutError.TIMEOUT = 3
       finish(reject, timeoutError)
-    }, requestOptions.timeout)
+    }, hardTimeoutMs)
 
     navigator.geolocation.getCurrentPosition(
       (position) => finish(resolve, position),
@@ -418,13 +437,19 @@ export async function captureAttendanceLocation({
       Number(error?.code) === 1 &&
       (permissionAfterError === 'granted' || permissionAfterError === 'prompt' || permissionAfterError === 'unknown')
 
-    if (browserDeniedButSiteNotBlocked) {
+    const shouldRetryWithMobileFallback =
+      !browserDeniedButSiteNotBlocked &&
+      (Number(error?.code) === 2 || Number(error?.code) === 3) &&
+      (isMobileGeolocationDevice(deviceType) || isIosGeolocationBrowser())
+
+    if (browserDeniedButSiteNotBlocked || shouldRetryWithMobileFallback) {
       await delayMs(ATTENDANCE_LOCATION_PERMISSION_RETRY_DELAY_MS)
       const retryPermission = await geolocationPermissionState()
       const retryOptions = {
         ...options,
         enableHighAccuracy: false,
-        maximumAge: Math.max(Number(options.maximumAge) || 0, 30000),
+        timeout: Math.max(Math.min(timeoutCap, 12000), 8000),
+        maximumAge: Math.max(Number(options.maximumAge) || 0, 120000),
       }
       try {
         return locationFromPosition(await readPosition(retryOptions), retryPermission, retryOptions, true)
