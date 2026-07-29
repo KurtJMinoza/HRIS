@@ -50,6 +50,12 @@ const AdminRecruitment = lazy(() => import('@/pages/AdminRecruitment'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 const AdminEmailNotifications = lazy(() => import('@/pages/AdminEmailNotifications'))
 const AdminEvaluation = lazy(() => import('@/pages/AdminEvaluation'))
+const EmployeeDashboard = lazy(() => import('@/pages/EmployeeDashboard'))
+const EmployeeAttendance = lazy(() => import('@/pages/EmployeeAttendance'))
+const EmployeeHolidaysPage = lazy(() => import('@/pages/EmployeeHolidaysPage'))
+const EmployeeCorrectionRequests = lazy(() => import('@/pages/EmployeeCorrectionRequests'))
+const EmployeeLeave = lazy(() => import('@/pages/EmployeeLeave'))
+const EmployeeOvertime = lazy(() => import('@/pages/EmployeeOvertime'))
 
 function withSuspense(node, fallback) {
   return (
@@ -113,6 +119,12 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-ov" path="overtime" element={withSuspense(<AdminOvertime />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-notifications" path="notifications" element={withSuspense(<NotificationsCenter />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ms" path="my-schedule" element={withSuspense(<MySchedule />, <MyScheduleRouteFallback />)} />,
+  <Route key="hr-my-dash" path="my-dashboard" element={withSuspense(<EmployeeDashboard />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-my-leave" path="my-leave" element={withSuspense(<EmployeeLeave />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-my-ot" path="my-overtime" element={withSuspense(<EmployeeOvertime />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-my-att" path="my-attendance" element={withSuspense(<EmployeeAttendance />, <DataTableRouteFallback titleWidth="w-72" />)} />,
+  <Route key="hr-my-corr" path="my-corrections" element={withSuspense(<EmployeeCorrectionRequests />, <DataTableRouteFallback titleWidth="w-72" />)} />,
+  <Route key="hr-my-hol" path="my-holidays" element={withSuspense(<EmployeeHolidaysPage />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-sr" path="schedule-requests" element={withSuspense(<ScheduleRequestsPage />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-dc-rules" path="daily-computation/rules" element={<AdminPayrollLogisticsPlaceholder />} />,
   <Route key="hr-dc-audit" path="daily-computation/audit" element={<AdminPayrollLogisticsPlaceholder />} />,

@@ -102,6 +102,7 @@ export const adminNavItems = [
     label: 'My Workspace',
     icon: User,
     children: [
+      { to: '/admin/my-dashboard', end: true, label: 'My Dashboard', icon: LayoutDashboard },
       { to: '/admin/my-schedule', end: false, label: 'My Schedule', icon: CalendarClock },
       { to: '/admin/qr', end: false, label: 'QR & Face ID', icon: QrCode },
       { to: '/admin/compensation/payslips', end: false, label: 'My Payslips', icon: FileText },

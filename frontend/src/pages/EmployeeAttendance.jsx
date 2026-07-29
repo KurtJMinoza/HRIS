@@ -22,6 +22,8 @@ import {
 } from 'lucide-react'
 import { exportRowsToXlsx } from '@/lib/excelExport'
 import { navigateAfterOverlayDismiss } from '@/lib/radixModalLock'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
+import { employeeSelfHref } from '@/lib/hrRoutes'
 import { AttendanceRecordsDataTable } from '@/components/attendance/AttendanceRecordsDataTable'
 import { AttendanceRecordDetailSheet } from '@/components/attendance/AttendanceRecordDetailSheet'
 import {
@@ -248,6 +250,9 @@ function filterEmployeeAttendanceRows(list, scopeSegment, debouncedSearchQuery, 
 
 export default function EmployeeAttendance() {
   const navigate = useNavigate()
+  const hrBase = useHrBasePath()
+  const correctionsPath = employeeSelfHref(hrBase, 'correction-requests')
+  const leavePath = employeeSelfHref(hrBase, 'requests')
   const [rows, setRows] = useState([])
   const [attSummary, setAttSummary] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -628,10 +633,10 @@ export default function EmployeeAttendance() {
               {isClockedIn ? 'Clock Out' : 'Clock In'}
             </Button>
             <Button variant="outline" className={attendanceOutlineButtonClass} asChild>
-              <Link to="/employee/correction-requests">File correction</Link>
+              <Link to={correctionsPath}>File correction</Link>
             </Button>
             <Button variant="outline" className={attendanceOutlineButtonClass} asChild>
-              <Link to="/employee/requests">Request leave</Link>
+              <Link to={leavePath}>Request leave</Link>
             </Button>
           </div>
         </div>
@@ -786,7 +791,7 @@ export default function EmployeeAttendance() {
             </p>
           </div>
           <Button variant="outline" asChild className={cn(attendanceOutlineButtonClass, 'h-10 w-full px-4 @md:w-auto')}>
-            <Link to="/employee/correction-requests">
+            <Link to={correctionsPath}>
               Go to Correction Requests
               <ChevronRight className="size-4" />
             </Link>
@@ -1067,8 +1072,8 @@ export default function EmployeeAttendance() {
         profileSrc={viewerUser?.profile_image}
         correctionsHref={
           detailRow
-            ? buildEmployeeCorrectionHref(detailRow)
-            : '/employee/correction-requests?file=1'
+            ? buildEmployeeCorrectionHref(detailRow, correctionsPath)
+            : `${correctionsPath}?file=1`
         }
         onCorrectionNavigate={(href) => navigateAfterOverlayDismiss(navigate, href)}
       />

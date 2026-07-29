@@ -15,6 +15,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useAuth } from '@/contexts/AuthContext'
+import { useHrBasePath } from '@/contexts/useHrBasePath'
+import { employeeSelfHref } from '@/lib/hrRoutes'
 import {
   getEmployeeDashboardAttendanceCalendar,
   getEmployeeDashboardSummary,
@@ -584,6 +586,11 @@ function LiveClock() {
 
 export default function EmployeeDashboard() {
   const navigate = useNavigate()
+  const hrBase = useHrBasePath()
+  const goSelf = useCallback(
+    (employeePath) => navigate(employeeSelfHref(hrBase, employeePath)),
+    [hrBase, navigate],
+  )
   const { user, refreshUser } = useAuth()
   const employeeDisplayName = formatEmployeeName(user, 'there')
 
@@ -1322,10 +1329,13 @@ export default function EmployeeDashboard() {
 
   const handleFileCorrection = useCallback(() => {
     if (!selectedDayDetails) return
-    const to = buildEmployeeCorrectionHref(selectedDayDetails)
+    const to = buildEmployeeCorrectionHref(
+      selectedDayDetails,
+      employeeSelfHref(hrBase, 'correction-requests'),
+    )
     setSelectedDay(null)
     navigateAfterOverlayDismiss(navigate, to)
-  }, [navigate, selectedDayDetails])
+  }, [hrBase, navigate, selectedDayDetails])
 
   const performanceWidget = evaluationWidget?.performance || null
   const evaluationModuleWidget = evaluationWidget?.evaluation || null
@@ -1809,7 +1819,7 @@ export default function EmployeeDashboard() {
                       size="sm"
                       variant="outline"
                       className="h-9 w-full gap-1.5 rounded-md px-3 text-sm font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] @sm:h-8 @sm:w-auto"
-                      onClick={() => navigate('/employee/qr')}
+                      onClick={() => goSelf('qr')}
                     >
                       <ScanFace className="size-3.5" />
                       Register Face
@@ -2356,14 +2366,14 @@ export default function EmployeeDashboard() {
                         <Button
                           size="sm"
                           className="h-9 w-full px-3 text-xs @sm:h-8 @sm:w-auto"
-                          onClick={() => navigate(`/employee/overtime?date=${encodeURIComponent(todayDate)}&segments=pre_shift`)}
+                          onClick={() => goSelf(`overtime?date=${encodeURIComponent(todayDate)}&segments=pre_shift`)}
                         >
                           File pre-shift
                         </Button>
                         <Button
                           size="sm"
                           className="h-9 w-full px-3 text-xs @sm:h-8 @sm:w-auto"
-                          onClick={() => navigate(`/employee/overtime?date=${encodeURIComponent(todayDate)}&segments=post_shift`)}
+                          onClick={() => goSelf(`overtime?date=${encodeURIComponent(todayDate)}&segments=post_shift`)}
                         >
                           File post-shift
                         </Button>
@@ -2374,7 +2384,7 @@ export default function EmployeeDashboard() {
                     <Button
                       size="sm"
                       className="h-9 w-full px-3 text-xs @sm:h-8 @sm:w-auto"
-                      onClick={() => navigate('/employee/overtime')}
+                      onClick={() => goSelf('overtime')}
                     >
                       File OT
                     </Button>
@@ -2432,7 +2442,7 @@ export default function EmployeeDashboard() {
           <Button
             size="sm"
             className="h-10 w-full rounded-lg bg-orange-600 px-5 text-sm font-bold text-white shadow-[0_12px_24px_-16px_rgba(234,88,12,0.8)] hover:bg-orange-700 @sm:w-auto"
-            onClick={() => navigate('/employee/requests')}
+            onClick={() => goSelf('requests')}
           >
             Request leave
           </Button>
@@ -2440,7 +2450,7 @@ export default function EmployeeDashboard() {
             size="sm"
             variant="outline"
             className="h-10 w-full rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
-            onClick={() => navigate('/employee/attendance')}
+            onClick={() => goSelf('attendance')}
           >
             View full attendance
           </Button>
@@ -2448,7 +2458,7 @@ export default function EmployeeDashboard() {
             size="sm"
             variant="outline"
             className="h-10 w-full rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
-            onClick={() => navigate('/employee/overtime')}
+            onClick={() => goSelf('overtime')}
           >
             File overtime
           </Button>
@@ -2480,7 +2490,7 @@ export default function EmployeeDashboard() {
               size="sm"
               variant="outline"
               className="h-10 w-full gap-2 rounded-lg border-border px-5 text-sm font-bold text-foreground @sm:w-auto"
-              onClick={() => navigate('/employee/qr')}
+              onClick={() => goSelf('qr')}
             >
               <ScanFace className="size-4" />
               Register Face
@@ -2704,7 +2714,7 @@ export default function EmployeeDashboard() {
                 type="button"
                 variant="outline"
                 className="h-10 w-full gap-2 rounded-lg border-orange-500/40 text-sm font-bold text-orange-700 hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-500/10"
-                onClick={() => navigate('/employee/holidays')}
+                onClick={() => goSelf('holidays')}
               >
                 <CalendarDays className="size-4" />
                 View full holiday calendar
@@ -3461,7 +3471,7 @@ export default function EmployeeDashboard() {
                       className="h-9 w-full justify-center gap-2 rounded-lg border-orange-600 bg-white px-4 text-xs font-medium text-orange-600 shadow-none hover:bg-orange-50 hover:text-orange-700 dark:border-orange-400 dark:bg-card dark:text-orange-300 dark:hover:bg-orange-500/10 sm:w-auto"
                       onClick={() => {
                         setEvaluationDetailsOpen(false)
-                        navigateAfterOverlayDismiss(navigate, '/employee/evaluations')
+                        navigateAfterOverlayDismiss(navigate, employeeSelfHref(hrBase, 'evaluations'))
                       }}
                     >
                       <ArrowUpRight className="size-4" strokeWidth={2.4} aria-hidden />
@@ -3732,7 +3742,7 @@ export default function EmployeeDashboard() {
                                 className="h-9 w-full font-semibold @sm:w-auto"
                                 onClick={() => {
                                   setOtDetailsOpen(false)
-                                  navigate(`/employee/overtime?date=${encodeURIComponent(row.date)}`)
+                                  goSelf(`overtime?date=${encodeURIComponent(row.date)}`)
                                 }}
                               >
                                 File OT
@@ -3767,7 +3777,7 @@ export default function EmployeeDashboard() {
             <Button type="button" variant="outline" onClick={() => setOtDetailsOpen(false)}>
               Close
             </Button>
-            <Button type="button" onClick={() => { setOtDetailsOpen(false); navigate('/employee/overtime') }}>
+            <Button type="button" onClick={() => { setOtDetailsOpen(false); goSelf('overtime') }}>
               File or manage OT
             </Button>
           </div>

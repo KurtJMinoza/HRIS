@@ -69,3 +69,39 @@ export function hrPanelPath(basePath, segment) {
   const s = String(segment || '').startsWith('/') ? segment : `/${segment}`
   return `${b}${s}`
 }
+
+/** Employee portal paths → My Workspace aliases under /admin (and other HR panels). */
+const EMPLOYEE_SELF_SEGMENT_ALIASES = {
+  dashboard: 'my-dashboard',
+  schedule: 'my-schedule',
+  qr: 'qr',
+  requests: 'my-leave',
+  overtime: 'my-overtime',
+  attendance: 'my-attendance',
+  'correction-requests': 'my-corrections',
+  holidays: 'my-holidays',
+  evaluations: 'evaluations',
+  payslips: 'compensation/payslips',
+  'loans-deductions': 'loans-deductions',
+  profile: 'profile',
+}
+
+/**
+ * Build a self-service href that works under `/employee` or admin My Workspace.
+ * @param {string} basePath e.g. `/admin` or `/employee`
+ * @param {string} employeePath e.g. `/employee/overtime?date=2026-01-01` or `overtime?date=...`
+ */
+export function employeeSelfHref(basePath, employeePath) {
+  const raw = String(employeePath || '').replace(/^\/employee\/?/, '').replace(/^\//, '')
+  const qIndex = raw.indexOf('?')
+  const pathPart = qIndex >= 0 ? raw.slice(0, qIndex) : raw
+  const query = qIndex >= 0 ? raw.slice(qIndex) : ''
+  const segment = pathPart.split('/')[0] || 'dashboard'
+  const rest = pathPart.includes('/') ? pathPart.slice(pathPart.indexOf('/')) : ''
+  const base = (basePath || '/employee').replace(/\/$/, '') || '/employee'
+  if (base === '/employee') {
+    return `/employee/${pathPart}${query}`
+  }
+  const alias = EMPLOYEE_SELF_SEGMENT_ALIASES[segment] || segment
+  return `${hrPanelPath(base, alias)}${rest}${query}`
+}
