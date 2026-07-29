@@ -2245,7 +2245,7 @@ export default function EmployeeDashboard() {
                             { id: 'late', label: 'Late', hint: 'Total days late', count: monthAttendanceMetrics.late, color: '#f97316', valueClass: 'text-orange-600' },
                             { id: 'undertime', label: 'Undertime', hint: 'Total days undertime', count: monthAttendanceMetrics.undertime, color: '#eab308', valueClass: 'text-amber-600' },
                           ].map((row) => (
-                            <div key={row.id} className="grid grid-cols-[0.75rem_minmax(0,1fr)_auto] items-start gap-2 border-b border-border py-1.5 last:border-b-0">
+                            <div key={row.id} className="grid grid-cols-[0.75rem_minmax(0,1fr)_auto] items-start gap-2 py-1.5">
                               <span className="mt-1.5 size-2 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
                               <div className="min-w-0">
                                 <p className="text-sm font-semibold text-slate-950 dark:text-slate-50">{row.label}</p>
