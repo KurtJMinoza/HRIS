@@ -393,7 +393,7 @@ class PresenceFilingCorrectionFormatter
             $current = collect($steps)->firstWhere('status', 'current');
             $label = $current['approver_role_label'] ?? null;
             if (is_string($label) && $label !== '') {
-                return 'Pending '.$label.' Approval';
+                return 'Pending '.rtrim(str_ireplace(' approval', '', $label)).' Approval';
             }
         }
 

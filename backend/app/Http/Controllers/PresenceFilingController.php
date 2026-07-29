@@ -301,6 +301,13 @@ class PresenceFilingController extends Controller
                 'acted_at' => now(),
             ]);
 
+            $this->approvalWorkflowService->resetRecordsForResubmit(
+                $correction,
+                OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+                $employee,
+                $employee,
+            );
+
             return $correction;
         });
 
@@ -538,6 +545,13 @@ class PresenceFilingController extends Controller
                 'notes' => $fullRemarks,
                 'acted_at' => now(),
             ]);
+
+            $this->approvalWorkflowService->resetRecordsForResubmit(
+                $correction,
+                OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+                $employee,
+                $actor,
+            );
 
             return $correction;
         });

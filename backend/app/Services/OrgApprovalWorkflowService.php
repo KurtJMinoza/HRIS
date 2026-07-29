@@ -295,6 +295,24 @@ class OrgApprovalWorkflowService
             ->firstWhere('approval_status', OrgApprovalRecord::STATUS_PENDING);
     }
 
+    /**
+     * Clear prior approval steps when a request is re-filed so the UI/workflow
+     * do not keep a stale "Completed" HR step from an earlier submission.
+     *
+     * @return EloquentCollection<int, OrgApprovalRecord>
+     */
+    public function resetRecordsForResubmit(Model $request, string $moduleType, User $employee, ?User $requestor = null): EloquentCollection
+    {
+        $requestId = (int) $request->getKey();
+        OrgApprovalRecord::query()
+            ->where('module_type', $moduleType)
+            ->where('request_id', $requestId)
+            ->delete();
+        ReviewRequestCache::forget($moduleType, $requestId);
+
+        return $this->ensureRecordsForRequest($request, $moduleType, $employee, $requestor ?? $employee);
+    }
+
     public function canAct(
         User $actor,
         Model $request,
