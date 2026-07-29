@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Clock, FileCheck, User, ScanLine, ArrowUpRight, ArrowDownRight, ArrowUpDown, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText, Search, SlidersHorizontal, MoreVertical } from 'lucide-react'
+import { Activity, ClipboardCheck, Clock, FileCheck, Target, User, ScanLine, ArrowUpRight, ArrowDownRight, ArrowUpDown, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText, Search, SlidersHorizontal, MoreVertical } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -221,6 +221,19 @@ function efficiencyLabel(pct) {
   if (pct >= 90) return 'Very Good'
   if (pct >= 85) return 'Good'
   return 'Needs Improvement'
+}
+
+function clampPercent(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 0
+  return Math.min(100, Math.max(0, numeric))
+}
+
+function efficiencyGrade(pct) {
+  if (pct >= 95) return 'A'
+  if (pct >= 90) return 'B'
+  if (pct >= 85) return 'C'
+  return 'D'
 }
 
 const ATTENDANCE_SUMMARY_STATUS_STYLES = {
@@ -1383,6 +1396,13 @@ export default function EmployeeDashboard() {
     () => getCalendarCells(calendarYear, calendarMonth),
     [calendarYear, calendarMonth],
   )
+  const attendanceEfficiencyPct = clampPercent(monthAttendanceMetrics.efficiency)
+  const attendanceEfficiencyCircumference = 2 * Math.PI * 104
+  const kpiPerformancePct = hasPerformanceSnapshotAverage ? clampPercent(performanceSnapshotAveragePercentage) : 0
+  const latestEvaluationPercentage = latestCompletedEvaluation?.percentage ?? evaluationModuleWidget?.latest_percentage
+  const hasEvaluationResult = latestEvaluationPercentage != null
+  const evaluationResultLabel = latestCompletedEvaluation?.rating || evaluationModuleWidget?.latest_rating || (hasEvaluationResult ? 'Completed' : 'No result')
+  const evaluationResultValue = hasEvaluationResult ? `${Number(latestEvaluationPercentage).toFixed(1)}%` : '-'
 
   const otMonthBreakdown = useMemo(() => {
     const pendingH = monthOtRequests
@@ -2131,7 +2151,187 @@ export default function EmployeeDashboard() {
         </Card>
         </Motion.div>
         {/* Attendance Summary — beside Leave Overview, same footprint as Today's Time */}
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@xl:col-start-1 @xl:row-start-2">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:col-span-2 @xl:col-span-2 @xl:col-start-1 @xl:row-start-2">
+          <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
+            <CardHeader className="border-b border-border px-4 py-3">
+              <div className="flex flex-col gap-3 @lg:flex-row @lg:items-center @lg:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-orange-100/70 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
+                    <Activity className="size-5" strokeWidth={2.25} aria-hidden />
+                  </span>
+                  <div className="min-w-0">
+                    <CardTitle className="text-base font-black text-slate-950 @md:text-lg dark:text-slate-50">
+                      Performance Overview
+                    </CardTitle>
+                    <CardDescription className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+                      View your attendance efficiency and performance status.
+                    </CardDescription>
+                  </div>
+                </div>
+                <div className="flex min-w-0 items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-sm dark:bg-card/85">
+                  <button type="button" className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-950 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-40 dark:text-slate-100 dark:hover:bg-orange-500/10 dark:hover:text-orange-300" onClick={goPrevCalendarMonth} aria-label="Previous month">
+                    <ChevronLeft className="size-4" strokeWidth={2.7} />
+                  </button>
+                  <Select value={attendanceMonthValue} onValueChange={handleAttendanceMonthSelect}>
+                    <SelectTrigger className="h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-transparent px-2 text-sm font-black text-slate-950 shadow-none ring-0 hover:bg-orange-50 focus:ring-0 focus-visible:ring-0 @lg:w-52 dark:text-slate-50 dark:hover:bg-orange-500/10">
+                      <CalendarDays className="size-4 shrink-0 text-orange-600 dark:text-orange-300" aria-hidden />
+                      <SelectValue placeholder="Select month" />
+                      {isViewingCurrentMonth ? (
+                        <span className="ml-1 hidden rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 @md:inline-flex dark:bg-slate-800 dark:text-slate-200">
+                          Current
+                        </span>
+                      ) : null}
+                    </SelectTrigger>
+                    <SelectContent position="popper" className="max-h-64 min-w-[var(--radix-select-trigger-width)] rounded-xl border-border p-1.5 shadow-xl">
+                      {attendanceMonthOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value} className="cursor-pointer rounded-lg py-2.5 pl-3 pr-8 text-sm font-semibold focus:bg-orange-50 focus:text-orange-700 dark:focus:bg-orange-500/10 dark:focus:text-orange-300">
+                          {option.label}
+                          {option.isCurrent ? <span className="ml-1.5 text-xs font-normal text-slate-500">Current</span> : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <button type="button" className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-950 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-40 dark:text-slate-100 dark:hover:bg-orange-500/10 dark:hover:text-orange-300" onClick={goNextCalendarMonth} disabled={!canGoNextMonth || loading || calendarLoading} aria-label="Next month">
+                    <ChevronRight className="size-4" strokeWidth={2.7} />
+                  </button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="grid gap-0 @xl:grid-cols-[1.04fr_0.96fr]">
+                <section className="px-4 py-3">
+                  <div className="hidden items-start gap-4">
+                    <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-orange-100/70 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
+                      <CalendarDays className="size-5" strokeWidth={2.25} aria-hidden />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-black text-slate-950 @md:text-xl dark:text-slate-50">Attendance Efficiency</h3>
+                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Your attendance summary for this period.</p>
+                    </div>
+                  </div>
+                  {loading || calendarLoading ? (
+                    <div className="flex h-28 items-center justify-center text-sm text-slate-500">Loading attendance summary...</div>
+                  ) : (
+                    <>
+                      <button type="button" className="grid w-full gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 @lg:grid-cols-[8.5rem_minmax(14rem,1fr)] @lg:items-center" onClick={() => setAttendanceSummaryModalOpen(true)} aria-label={`View full attendance details for ${getMonthLabel()}`}>
+                        <div className="relative mx-auto flex size-32 items-center justify-center @md:size-36">
+                          <svg className="absolute inset-0 size-full" viewBox="0 0 260 260" aria-hidden>
+                            <circle cx="130" cy="130" r="104" fill="none" stroke="#ffefe7" strokeWidth="18" />
+                            <circle
+                              cx="130"
+                              cy="130"
+                              r="104"
+                              fill="none"
+                              stroke="#ff5a0a"
+                              strokeLinecap="round"
+                              strokeWidth="18"
+                              strokeDasharray={`${attendanceEfficiencyCircumference * (attendanceEfficiencyPct / 100)} ${attendanceEfficiencyCircumference}`}
+                              style={{ transform: 'rotate(52deg)', transformOrigin: '130px 130px' }}
+                            />
+                          </svg>
+                          <div className="relative flex flex-col items-center justify-center text-center leading-none">
+                            <p className="text-3xl font-black tabular-nums text-slate-950 dark:text-slate-50">{attendanceEfficiencyPct.toFixed(1)}<span className="text-base">%</span></p>
+                            <p className="mt-2 text-[11px] font-semibold leading-none text-slate-600 dark:text-slate-400">Efficiency Rate</p>
+                            <span className={cn('mt-2 inline-flex items-center gap-1 rounded-full border-0 px-2 py-0.5 text-[10px] font-bold leading-none', efficiencyBadgeClass(monthAttendanceMetrics.efficiency))}>
+                              <span className="flex size-4 items-center justify-center rounded-full bg-white/55 text-[9px]">{efficiencyGrade(attendanceEfficiencyPct)}</span>
+                              {efficiencyLabel(monthAttendanceMetrics.efficiency)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="space-y-0">
+                          {[
+                            { id: 'present', label: 'Present', hint: 'Total days present', count: monthAttendanceMetrics.present, color: '#16a34a', valueClass: 'text-emerald-600' },
+                            { id: 'absent', label: 'Absent', hint: 'Total days absent', count: monthAttendanceMetrics.absent, color: '#ef4444', valueClass: 'text-red-600' },
+                            { id: 'late', label: 'Late', hint: 'Total days late', count: monthAttendanceMetrics.late, color: '#f97316', valueClass: 'text-orange-600' },
+                            { id: 'undertime', label: 'Undertime', hint: 'Total days undertime', count: monthAttendanceMetrics.undertime, color: '#eab308', valueClass: 'text-amber-600' },
+                          ].map((row) => (
+                            <div key={row.id} className="grid grid-cols-[0.75rem_minmax(0,1fr)_auto] items-start gap-2 border-b border-border py-1.5 last:border-b-0">
+                              <span className="mt-1.5 size-2 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-slate-950 dark:text-slate-50">{row.label}</p>
+                                <p className="hidden text-xs font-medium text-slate-500 dark:text-slate-400 @lg:block">{row.hint}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-base font-semibold tabular-nums text-slate-950 dark:text-slate-50">{row.count}</p>
+                                <p className={cn('text-[10px] font-semibold tabular-nums', row.valueClass)}>{formatAttendanceMetricPercent(row.count, attendanceSummaryBaseDays)}%</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </button>
+                      <div className="hidden">
+                        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+                          <CalendarDays className="size-5" strokeWidth={2.2} aria-hidden />
+                        </span>
+                        <div className="flex items-center gap-4">
+                          <p className="text-3xl font-black tabular-nums text-orange-600">{attendanceSummaryBaseDays}</p>
+                          <p className="text-sm font-semibold leading-6 text-slate-700 dark:text-slate-300">Total Working Days<br />in {getMonthLabel()}</p>
+                        </div>
+                        <div className="hidden h-12 w-px bg-orange-200 @lg:block dark:bg-orange-500/25" aria-hidden />
+                        <p className="max-w-xs text-xs font-medium leading-6 text-slate-600 dark:text-slate-400">Based on your company calendar and official working days.</p>
+                      </div>
+                    </>
+                  )}
+                </section>
+                <section className="border-t border-border bg-muted/15 px-4 py-3 @xl:border-l-0 @xl:border-t-0 dark:bg-muted/10">
+                  <div className="hidden items-start gap-4">
+                    <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-violet-100/80 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300">
+                      <Activity className="size-5" strokeWidth={2.25} aria-hidden />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-black text-slate-950 @md:text-xl dark:text-slate-50">Performance</h3>
+                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Your KPI and evaluation status.</p>
+                    </div>
+                  </div>
+                  {evaluationLoading ? (
+                    <div className="flex h-28 items-center justify-center text-sm text-slate-500">Loading performance...</div>
+                  ) : (
+                    <button type="button" className="grid w-full gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 @md:grid-cols-2 @xl:grid-cols-1" onClick={() => setEvaluationDetailsOpen(true)} aria-label="View performance details">
+                      <div className="rounded-xl bg-card p-3 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.75)] transition-colors hover:bg-muted/20 dark:bg-card/70 dark:hover:bg-card/80">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-orange-100/70 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
+                              <Target className="size-5" strokeWidth={2.25} aria-hidden />
+                            </span>
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-black text-slate-950 dark:text-slate-50">KPI Performance</h4>
+                              <p className="mt-1 text-xs font-medium text-slate-600 dark:text-slate-400">Monthly KPI Average</p>
+                            </div>
+                          </div>
+                          <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-900 dark:bg-orange-500/15 dark:text-orange-200">{performanceSnapshotCount > 0 ? `${performanceSnapshotCount} snapshots` : 'No snapshots'}</span>
+                        </div>
+                        <div className="mt-2 grid gap-2 @md:grid-cols-[minmax(0,1fr)_6rem] @md:items-center">
+                          <span className="text-xl font-black tabular-nums text-slate-950 @md:order-2 dark:text-slate-50">{hasPerformanceSnapshotAverage ? `${Number(performanceSnapshotAveragePercentage).toFixed(1)}%` : '-'}</span>
+                          <div className="h-2 overflow-hidden rounded-full bg-slate-200 @md:order-3 @md:col-start-2 dark:bg-slate-800">
+                            <div className="h-full rounded-full bg-orange-600" style={{ width: `${kpiPerformancePct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="rounded-xl bg-card p-3 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.75)] transition-colors hover:bg-muted/20 dark:bg-card/70 dark:hover:bg-card/80">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-orange-100/70 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
+                              <ClipboardCheck className="size-5" strokeWidth={2.25} aria-hidden />
+                            </span>
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-black text-slate-950 dark:text-slate-50">Evaluation Result</h4>
+                              <p className="mt-1 text-xs font-medium text-slate-600 dark:text-slate-400">Status</p>
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">{evaluationResultLabel}</span>
+                            <p className="mt-2 text-lg font-black tabular-nums text-slate-950 dark:text-slate-50">{evaluationResultValue}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )}
+                </section>
+              </div>
+            </CardContent>
+          </Card>
+        </Motion.div>
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="hidden @xl:col-start-1 @xl:row-start-2">
         <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] @sm:min-h-[11.2rem] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
@@ -2231,7 +2431,7 @@ export default function EmployeeDashboard() {
           </CardContent>
         </Card>
         </Motion.div>
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@xl:col-start-2 @xl:row-start-2">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="hidden @xl:col-start-2 @xl:row-start-2">
         <Card className="overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
