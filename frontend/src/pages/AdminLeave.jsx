@@ -192,11 +192,16 @@ const adminLeavePrimaryButtonClass =
 const adminLeaveOutlineButtonClass =
   'h-11 gap-2 rounded-lg border-border/80 bg-card px-5 text-sm font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
 const adminLeaveModalFieldClass =
-  'h-14 rounded-xl border-border/80 bg-background px-4 text-base font-medium text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
+  'h-11 w-full rounded-xl border-border/80 bg-background px-3 text-base font-medium text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 sm:h-14 sm:px-4 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
 const adminLeaveModalSelectClass =
-  'h-14 w-full rounded-xl border border-brand bg-background px-5 text-lg font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-background/40 dark:focus:ring-brand/20'
-const adminLeaveModalLabelClass = 'text-base font-semibold tracking-tight text-foreground'
+  'h-11 w-full rounded-xl border border-brand bg-background px-4 text-base font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 sm:h-14 sm:px-5 sm:text-lg dark:bg-background/40 dark:focus:ring-brand/20'
+const adminLeaveModalLabelClass = 'text-sm font-semibold tracking-tight text-foreground sm:text-base'
 const adminLeaveModalHintClass = 'text-[13px] leading-relaxed text-muted-foreground'
+const leaveFileModalShellClass =
+  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card'
+const leaveFileModalInnerClass = 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0'
+const leaveFileModalCloseClass =
+  'right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10 dark:border-white/10 dark:bg-card'
 
 function billableCreditDaysForForm(form) {
   const t = String(form?.type || '').toLowerCase()
@@ -218,7 +223,7 @@ function supportingDocUrls(leave) {
 
 function LeaveModalCalendarArt() {
   return (
-    <div className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-72 text-brand opacity-20 dark:opacity-25 @lg:block" aria-hidden>
+    <div className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-72 text-brand opacity-20 dark:opacity-25 lg:block" aria-hidden>
       <svg viewBox="0 0 280 160" className="h-full w-full" fill="none">
         <path d="M38 152C31 122 36 91 61 62C78 99 69 128 42 152" stroke="currentColor" strokeWidth="2" />
         <path d="M60 63L42 152" stroke="currentColor" strokeWidth="2" />
@@ -2537,19 +2542,20 @@ export default function AdminLeave() {
         <DialogContent
           showCloseButton
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-7 top-7 size-14 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted dark:border-white/10 dark:bg-card/90"
-          className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
-          innerClassName="gap-0 overflow-hidden p-0 pr-0"
+          closeButtonClassName={leaveFileModalCloseClass}
+          className={leaveFileModalShellClass}
+          innerClassName={leaveFileModalInnerClass}
           aria-describedby="leave-add-desc"
         >
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-8 pb-6 pt-8 text-left dark:to-brand/10 @md:px-12">
-              <AgcBrandLogo className="mb-7 h-9 @md:h-10" />
-              <div className="relative z-10 max-w-[43rem] space-y-3 pr-14 @md:pr-0">
-                <DialogTitle className="text-2xl font-bold tracking-tight text-foreground @md:text-3xl">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-4 pb-4 pt-4 text-left dark:to-brand/10 sm:px-7 sm:pb-5 sm:pt-7">
+              <AgcBrandLogo className="mb-4 h-8 sm:mb-6 sm:h-9" />
+              <div className="relative z-10 max-w-[43rem] space-y-2 pr-10 sm:space-y-3 sm:pr-12">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px]">Leave request</p>
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
                   File new leave
                 </DialogTitle>
-                <DialogDescription id="leave-add-desc" className="max-w-[42rem] text-base leading-relaxed text-muted-foreground @md:text-lg">
+                <DialogDescription id="leave-add-desc" className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground">
                   {showEmployeePicker
                     ? 'Select an employee in your scope, then choose dates and leave type.'
                     : 'Choose your leave type and dates. This request is for your own leave only.'}{' '}
@@ -2559,20 +2565,20 @@ export default function AdminLeave() {
               <LeaveModalCalendarArt />
             </DialogHeader>
 
-            <div className="px-8 py-7 @md:px-12">
-              <form id="admin-leave-file-form" className="space-y-6" onSubmit={handleAddLeave}>
+            <div className="px-4 py-4 sm:px-7 sm:py-6">
+              <form id="admin-leave-file-form" className="space-y-5 sm:space-y-6" onSubmit={handleAddLeave}>
                 {!showEmployeePicker && (
-                  <div className="rounded-xl border border-brand/25 bg-brand/[0.045] px-5 py-4 shadow-sm dark:border-brand/25 dark:bg-brand/10">
+                  <div className="rounded-xl border border-brand/25 bg-brand/[0.045] px-4 py-3 shadow-sm sm:px-5 sm:py-4 dark:border-brand/25 dark:bg-brand/10">
                     <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-brand">Filing leave as</p>
-                    <p className="mt-1.5 text-base font-semibold leading-snug text-foreground">
+                    <p className="mt-1.5 text-sm font-semibold leading-snug text-foreground sm:text-base">
                       {user?.name ?? '?'}
-                      {user?.hr_role_label ? <span className="font-normal text-muted-foreground"> ? {user.hr_role_label}</span> : null}
+                      {user?.hr_role_label ? <span className="font-normal text-muted-foreground"> · {user.hr_role_label}</span> : null}
                     </p>
                   </div>
                 )}
 
                 {showEmployeePicker ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2 sm:space-y-3">
                     <Label htmlFor="add-employee" className={adminLeaveModalLabelClass}>Employee</Label>
                     <select
                       id="add-employee"
@@ -2589,7 +2595,7 @@ export default function AdminLeave() {
                   </div>
                 ) : null}
 
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <Label htmlFor="add-type" className={adminLeaveModalLabelClass}>Leave type</Label>
                   <select
                     id="add-type"
@@ -2604,7 +2610,7 @@ export default function AdminLeave() {
                 </div>
 
                 {addForm.type === 'half_day' ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2 sm:space-y-3">
                     <Label htmlFor="add-half-type" className={adminLeaveModalLabelClass}>Half day type</Label>
                     <select
                       id="add-half-type"
@@ -2620,22 +2626,22 @@ export default function AdminLeave() {
                   </div>
                 ) : null}
 
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <Label className={adminLeaveModalLabelClass}>Date range</Label>
-                  <div className="grid grid-cols-1 gap-4 @md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                     <div className="relative">
-                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">From</span>
+                      <span className="pointer-events-none absolute left-3 top-2 text-xs font-medium text-muted-foreground sm:left-4 sm:text-sm">From</span>
                       <Input
                         id="add-start"
                         type="date"
                         required
                         value={addForm.start_date}
                         onChange={(e) => setAddForm((f) => ({ ...f, start_date: e.target.value }))}
-                        className={cn(adminLeaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
+                        className={cn(adminLeaveModalFieldClass, 'h-[3.75rem] px-3 pb-2.5 pt-6 sm:h-[4.25rem] sm:px-4 sm:pb-3 sm:pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
                       />
                     </div>
                     <div className="relative">
-                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">To</span>
+                      <span className="pointer-events-none absolute left-3 top-2 text-xs font-medium text-muted-foreground sm:left-4 sm:text-sm">To</span>
                       <Input
                         id="add-end"
                         type="date"
@@ -2643,7 +2649,7 @@ export default function AdminLeave() {
                         value={addForm.end_date}
                         min={addForm.start_date || undefined}
                         onChange={(e) => setAddForm((f) => ({ ...f, end_date: e.target.value }))}
-                        className={cn(adminLeaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
+                        className={cn(adminLeaveModalFieldClass, 'h-[3.75rem] px-3 pb-2.5 pt-6 sm:h-[4.25rem] sm:px-4 sm:pb-3 sm:pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
                       />
                     </div>
                   </div>
@@ -2699,7 +2705,7 @@ export default function AdminLeave() {
                   </p>
                 ) : null}
 
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <Label htmlFor="add-notes" className={adminLeaveModalLabelClass}>
                     Reason / remarks <span className="font-normal text-muted-foreground">(optional)</span>
                   </Label>
@@ -2711,9 +2717,9 @@ export default function AdminLeave() {
                       rows={4}
                       maxLength={500}
                       placeholder="Optional context for approvers..."
-                      className="min-h-28 w-full resize-none rounded-xl border border-border/80 bg-background px-4 pb-9 pt-4 text-base shadow-sm focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40"
+                      className="min-h-24 w-full resize-none rounded-xl border border-border/80 bg-background px-3 pb-8 pt-3 text-base shadow-sm focus-visible:border-brand focus-visible:ring-brand/25 sm:min-h-28 sm:px-4 sm:pb-9 sm:pt-4 dark:border-white/12 dark:bg-background/40"
                     />
-                    <span className="pointer-events-none absolute bottom-4 right-4 text-sm tabular-nums text-muted-foreground">
+                    <span className="pointer-events-none absolute bottom-3 right-3 text-xs tabular-nums text-muted-foreground sm:bottom-4 sm:right-4 sm:text-sm">
                       {addForm.notes.length} / 500
                     </span>
                   </div>
@@ -2746,13 +2752,13 @@ export default function AdminLeave() {
                   </div>
                 ) : null}
 
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <Label className={adminLeaveModalLabelClass}>Supporting documents (optional)</Label>
-                  <div className="rounded-xl border border-dashed border-border bg-muted/15 px-5 py-6 dark:border-white/15 dark:bg-white/[0.03]">
+                  <div className="rounded-xl border border-dashed border-border bg-muted/15 px-4 py-5 sm:px-5 sm:py-6 dark:border-white/15 dark:bg-white/[0.03]">
                     <div className="flex flex-col items-center justify-center gap-3 text-center">
-                      <label className="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg px-4 py-2 text-muted-foreground transition hover:text-foreground">
-                        <UploadCloud className="size-9 text-foreground" strokeWidth={1.7} aria-hidden />
-                        <span className="text-base font-medium text-muted-foreground">Drag and drop files here or click to upload</span>
+                      <label className="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg px-3 py-2 text-muted-foreground transition hover:text-foreground sm:px-4">
+                        <UploadCloud className="size-8 text-foreground sm:size-9" strokeWidth={1.7} aria-hidden />
+                        <span className="text-sm font-medium text-muted-foreground sm:text-base">Drag and drop files here or click to upload</span>
                         <span className={adminLeaveModalHintClass}>
                           Up to {MAX_LEAVE_SUPPORTING_FILES} files. PDF, PNG, JPG, DOC, DOCX up to 10MB each
                         </span>
@@ -2790,11 +2796,11 @@ export default function AdminLeave() {
             </div>
           </div>
 
-          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-8 py-5 @md:px-12">
+          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border/70 bg-card px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5">
             <Button
               type="button"
               variant="outline"
-              className="h-14 min-w-36 rounded-xl border-border/80 bg-card px-8 text-lg font-semibold text-foreground hover:bg-muted dark:border-white/10"
+              className="h-11 w-full rounded-xl border-border/80 bg-card px-6 text-base font-semibold text-foreground hover:bg-muted sm:h-12 sm:w-auto dark:border-white/10"
               onClick={() => setAddOpen(false)}
               disabled={addSubmitting}
             >
@@ -2803,7 +2809,7 @@ export default function AdminLeave() {
             <Button
               type="submit"
               form="admin-leave-file-form"
-              className="h-14 min-w-72 gap-4 rounded-xl bg-brand px-9 text-lg font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+              className="h-11 w-full gap-3 rounded-xl bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong sm:h-12 sm:w-auto sm:min-w-52 dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
               disabled={
                 addSubmitting ||
                 addFormRestDayBlocksSubmit ||

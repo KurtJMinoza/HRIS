@@ -70,7 +70,7 @@ export function EmployeeAvatarNameRoleCell({
   )
 
   return (
-    <div className={cn('flex min-w-0 max-w-[min(100%,20rem)] items-start gap-3', compact && 'gap-2.5')}>
+    <div className={cn('flex min-w-0 w-full max-w-full items-start gap-3', compact && 'gap-2.5')}>
       {profileTo ? (
         <Link
           to={profileTo}
@@ -85,8 +85,8 @@ export function EmployeeAvatarNameRoleCell({
       <div className="min-w-0 flex-1">
         <p
           className={cn(
-            'truncate font-semibold leading-snug tracking-tight text-foreground',
-            compact ? 'text-sm' : 'text-[15px]'
+            'break-words font-semibold leading-snug tracking-tight text-foreground',
+            compact ? 'truncate text-sm' : 'line-clamp-2 text-[15px]'
           )}
           title={display}
         >

@@ -71,11 +71,16 @@ const employeeLeavePrimaryButtonClass =
 const employeeLeaveOutlineButtonClass =
   'h-11 gap-2 rounded-lg border-border/80 bg-card px-5 text-sm font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
 const leaveModalFieldClass =
-  'h-14 rounded-xl border-border/80 bg-background px-4 text-base font-medium text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
+  'h-11 w-full rounded-xl border-border/80 bg-background px-3 text-base font-medium text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 sm:h-14 sm:px-4 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
 const leaveModalSelectClass =
-  'h-14 w-full rounded-xl border border-brand bg-background px-5 text-lg font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-background/40 dark:focus:ring-brand/20'
-const leaveModalLabelClass = 'text-base font-semibold tracking-tight text-foreground'
+  'h-11 w-full rounded-xl border border-brand bg-background px-4 text-base font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 sm:h-14 sm:px-5 sm:text-lg dark:bg-background/40 dark:focus:ring-brand/20'
+const leaveModalLabelClass = 'text-sm font-semibold tracking-tight text-foreground sm:text-base'
 const leaveModalHintClass = 'text-[13px] leading-relaxed text-muted-foreground'
+const leaveFileModalShellClass =
+  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card'
+const leaveFileModalInnerClass = 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0'
+const leaveFileModalCloseClass =
+  'right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10 dark:border-white/10 dark:bg-card'
 
 /** @param {{ document_url?: string|null, document_urls?: string[]|null }} leave */
 function supportingDocUrls(leave) {
@@ -280,7 +285,7 @@ function LeaveEmptyState({ onFileLeave }) {
 
 function LeaveModalCalendarArt() {
   return (
-    <div className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-72 text-brand opacity-20 dark:opacity-25 @lg:block" aria-hidden>
+    <div className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-72 text-brand opacity-20 dark:opacity-25 lg:block" aria-hidden>
       <svg viewBox="0 0 280 160" className="h-full w-full" fill="none">
         <path d="M38 152C31 122 36 91 61 62C78 99 69 128 42 152" stroke="currentColor" strokeWidth="2" />
         <path d="M60 63L42 152" stroke="currentColor" strokeWidth="2" />
@@ -1232,18 +1237,19 @@ function EmployeeLeaveSelfService() {
         <DialogContent
           showCloseButton
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-4 top-4 size-10 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted @md:right-7 @md:top-7 @md:size-14 dark:border-white/10 dark:bg-card/90"
-          className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
-          innerClassName="gap-0 overflow-hidden p-0 pr-0"
+          closeButtonClassName={leaveFileModalCloseClass}
+          className={leaveFileModalShellClass}
+          innerClassName={leaveFileModalInnerClass}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-5 pb-5 pt-6 text-left dark:to-brand/10 @md:px-12 @md:pb-6 @md:pt-8">
-              <AgcBrandLogo className="mb-5 h-8 @md:mb-7 @md:h-10" />
-              <div className="relative z-10 max-w-[43rem] space-y-3 pr-12 @md:pr-0">
-                <DialogTitle className="text-xl font-bold tracking-tight text-foreground @md:text-3xl">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-4 pb-4 pt-4 text-left dark:to-brand/10 sm:px-7 sm:pb-5 sm:pt-7">
+              <AgcBrandLogo className="mb-4 h-8 sm:mb-6 sm:h-9" />
+              <div className="relative z-10 max-w-[43rem] space-y-2 pr-10 sm:space-y-3 sm:pr-12">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px]">Leave request</p>
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
                   File new leave
                 </DialogTitle>
-                <DialogDescription className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground @md:text-lg">
+                <DialogDescription className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground">
                   Choose your leave type and dates. Leave cannot overlap another pending or approved leave for the same
                   dates. Add optional remarks and supporting documents if needed.
                 </DialogDescription>
@@ -1251,22 +1257,22 @@ function EmployeeLeaveSelfService() {
               <LeaveModalCalendarArt />
             </DialogHeader>
 
-            <div className="px-5 py-5 @md:px-12 @md:py-7">
+            <div className="px-4 py-4 sm:px-7 sm:py-6">
             {addError && (
               <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive dark:bg-destructive/15">
                 {addError}
               </div>
             )}
-            <form id="emp-leave-file-form" className="space-y-6" onSubmit={handleSubmit}>
-              <div className="space-y-3">
+            <form id="emp-leave-file-form" className="space-y-5 sm:space-y-6" onSubmit={handleSubmit}>
+              <div className="space-y-2 sm:space-y-3">
                 <Label htmlFor="leave-type" className={leaveModalLabelClass}>
                   Leave type
                 </Label>
                 <Select value={addForm.type} onValueChange={(value) => setAddForm((prev) => ({ ...prev, type: value }))}>
                   <SelectTrigger id="leave-type" className={leaveModalSelectClass}>
                     <SelectValue>
-                      <span className="flex items-center gap-4">
-                        <Briefcase className="size-5 text-brand" strokeWidth={2.2} aria-hidden />
+                      <span className="flex items-center gap-3 sm:gap-4">
+                        <Briefcase className="size-4 text-brand sm:size-5" strokeWidth={2.2} aria-hidden />
                         {leaveTypeLabel(addForm.type)}
                       </span>
                     </SelectValue>
@@ -1316,7 +1322,7 @@ function EmployeeLeaveSelfService() {
                 </div>
               )}
 
-              <div className="space-y-3">
+              <div className="space-y-2 sm:space-y-3">
                 <Label className={leaveModalLabelClass}>
                   {addForm.type === 'undertime' || addForm.type === 'half_day' ? 'Leave date' : 'Date range'}
                 </Label>
@@ -1331,25 +1337,25 @@ function EmployeeLeaveSelfService() {
                     />
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-4 @md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                     <div className="relative">
-                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">From</span>
+                      <span className="pointer-events-none absolute left-3 top-2 text-xs font-medium text-muted-foreground sm:left-4 sm:text-sm">From</span>
                       <Input
                         type="date"
                         value={addForm.start_date}
                         onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
-                        className={cn(leaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7')}
+                        className={cn(leaveModalFieldClass, 'h-[3.75rem] px-3 pb-2.5 pt-6 sm:h-[4.25rem] sm:px-4 sm:pb-3 sm:pt-7')}
                         required
                       />
                     </div>
                     <div className="relative">
-                      <span className="pointer-events-none absolute left-4 top-2 text-sm font-medium text-muted-foreground">To</span>
+                      <span className="pointer-events-none absolute left-3 top-2 text-xs font-medium text-muted-foreground sm:left-4 sm:text-sm">To</span>
                       <Input
                         type="date"
                         min={addForm.start_date || undefined}
                         value={addForm.end_date}
                         onChange={(e) => setAddForm((prev) => ({ ...prev, end_date: e.target.value }))}
-                        className={cn(leaveModalFieldClass, 'h-[4.25rem] px-4 pb-3 pt-7')}
+                        className={cn(leaveModalFieldClass, 'h-[3.75rem] px-3 pb-2.5 pt-6 sm:h-[4.25rem] sm:px-4 sm:pb-3 sm:pt-7')}
                         required
                       />
                     </div>
@@ -1528,11 +1534,11 @@ function EmployeeLeaveSelfService() {
             </div>
           </div>
 
-          <DialogFooter className="flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-card px-5 py-4 @sm:flex-row @sm:justify-end @md:px-12 @md:py-5">
+          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border/70 bg-card px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5">
             <Button
               type="button"
               variant="outline"
-              className="h-12 w-full rounded-xl border-border/80 bg-card px-6 text-base font-semibold text-foreground hover:bg-muted @sm:h-14 @sm:min-w-36 @sm:w-auto @md:px-8 @md:text-lg dark:border-white/10"
+              className="h-11 w-full rounded-xl border-border/80 bg-card px-6 text-base font-semibold text-foreground hover:bg-muted sm:h-12 sm:w-auto dark:border-white/10"
               onClick={() => setAddOpen(false)}
               disabled={submitting}
             >
@@ -1541,7 +1547,7 @@ function EmployeeLeaveSelfService() {
             <Button
               type="submit"
               form="emp-leave-file-form"
-              className="h-12 w-full gap-3 rounded-xl bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong @sm:h-14 @sm:min-w-72 @sm:w-auto @md:px-9 @md:text-lg dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+              className="h-11 w-full gap-3 rounded-xl bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong sm:h-12 sm:w-auto sm:min-w-52 dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
               disabled={submitting || isFormInvalidBasic || restDayBlocksSubmit}
             >
               {submitting && <Loader2 className="size-4 animate-spin" />}

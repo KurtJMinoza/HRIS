@@ -205,12 +205,12 @@ function LeaveDetailSection({ icon: Icon, title, children, className }) {
   return (
     <section
       className={cn(
-        'rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
+        'rounded-xl border border-border/70 bg-card p-4 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] sm:p-5 dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
         className
       )}
     >
-      <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
-        {Icon ? <Icon className="size-5 shrink-0" aria-hidden /> : null}
+      <h3 className="mb-3 flex items-center gap-2.5 border-b border-border/70 pb-2.5 text-[11px] font-black uppercase tracking-[0.18em] text-brand sm:mb-4 sm:gap-3 sm:pb-3 sm:tracking-[0.2em] dark:border-white/10">
+        {Icon ? <Icon className="size-4 shrink-0 sm:size-5" aria-hidden /> : null}
         {title}
       </h3>
       {children}
@@ -424,9 +424,9 @@ export function LeaveRequestDetailModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
-        closeButtonClassName="right-4 top-4 size-10 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted dark:border-white/10 dark:bg-card"
-        innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
-        className="max-h-[92vh] max-w-[min(100vw-1rem,38rem)] flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light dark:border-white/10 dark:bg-card dark:scheme-dark"
+        closeButtonClassName="right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10 dark:border-white/10 dark:bg-card"
+        innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0"
+        className="flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,38rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card dark:scheme-dark"
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Leave request details</DialogTitle>
@@ -442,38 +442,38 @@ export function LeaveRequestDetailModal({
         ) : null}
         {showContent && leave && (
           <>
-            <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">
-              <div className="space-y-5">
-                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-brand">Leave request</p>
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
+            <div className="shrink-0 border-b border-border/70 bg-card px-4 pb-4 pt-4 text-left dark:border-white/10 sm:px-7 sm:pb-6 sm:pt-7">
+              <div className="space-y-3 pr-10 sm:space-y-4 sm:pr-12">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px] sm:tracking-[0.22em]">Leave request</p>
+                <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+                  <span className="font-mono text-2xl font-black leading-none tracking-tight text-foreground sm:text-4xl">
                     #{leave.id}
                   </span>
                   <Badge
                     className={cn(
-                      'rounded-full px-3.5 py-1.5 text-sm font-bold',
+                      'rounded-full px-2.5 py-1 text-xs font-bold sm:px-3.5 sm:py-1.5 sm:text-sm',
                       leaveDisplayStatusBadgeClass(leave.display_status, leave.status)
                     )}
                   >
                     {badgeLabel}
                   </Badge>
                 </div>
-                <p className="text-sm leading-relaxed text-muted-foreground">
+                <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
                   Review summary, leave dates, approval chain, and history below.
                 </p>
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-7 py-6 text-sm dark:bg-card">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-card px-4 py-4 text-sm sm:space-y-5 sm:px-7 sm:py-6 dark:bg-card">
               <LeaveDetailSection icon={CalendarDays} title="Summary">
-                <dl className="grid grid-cols-[minmax(0,12.5rem)_1fr] gap-x-4 gap-y-4 text-sm">
+                <dl className="grid grid-cols-1 gap-y-3 text-sm sm:grid-cols-[minmax(0,10.5rem)_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-3">
                   {showEmployeeName ? (
                     <>
-                      <dt className="text-muted-foreground">Employee</dt>
-                      <dd className="font-bold text-foreground">{leave.employee_name || '—'}</dd>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Employee</dt>
+                      <dd className="break-words font-bold text-foreground">{leave.employee_name || '—'}</dd>
                     </>
                   ) : null}
-                  <dt className="text-muted-foreground">Leave type</dt>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Leave type</dt>
                   <dd>
                     <Badge
                       variant="outline"
@@ -482,22 +482,22 @@ export function LeaveRequestDetailModal({
                       {leaveTypeLabel(leave.type)}
                     </Badge>
                   </dd>
-                  <dt className="text-muted-foreground">Leave dates</dt>
-                  <dd className="font-bold tabular-nums text-foreground">{formatDateRangeLabel(leave.start_date, leave.end_date)}</dd>
-                  <dt className="text-muted-foreground">Duration</dt>
-                  <dd className="font-bold text-foreground">{formatDurationSummary(leave)}</dd>
-                  <dt className="text-muted-foreground">Date filed</dt>
-                  <dd className="tabular-nums text-foreground">{leave.created_at ? formatDateTime(leave.created_at) : '—'}</dd>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Leave dates</dt>
+                  <dd className="break-words font-bold tabular-nums text-foreground">{formatDateRangeLabel(leave.start_date, leave.end_date)}</dd>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Duration</dt>
+                  <dd className="break-words font-bold text-foreground">{formatDurationSummary(leave)}</dd>
+                  <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Date filed</dt>
+                  <dd className="break-words tabular-nums text-foreground">{leave.created_at ? formatDateTime(leave.created_at) : '—'}</dd>
                   {leave.reviewed_at ? (
                     <>
-                      <dt className="text-muted-foreground">Last updated</dt>
-                      <dd className="tabular-nums text-foreground">{formatDateTime(leave.reviewed_at)}</dd>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Last updated</dt>
+                      <dd className="break-words tabular-nums text-foreground">{formatDateTime(leave.reviewed_at)}</dd>
                     </>
                   ) : null}
                   {leave.approval_stage != null ? (
                     <>
-                      <dt className="text-muted-foreground">Approval stage</dt>
-                      <dd className="text-foreground">{String(leave.approval_stage)}</dd>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Approval stage</dt>
+                      <dd className="break-words text-foreground">{String(leave.approval_stage)}</dd>
                     </>
                   ) : null}
                 </dl>
@@ -583,18 +583,18 @@ export function LeaveRequestDetailModal({
               ) : null}
             </div>
 
-            <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-7 py-5 dark:border-white/10">
-              <p className="text-xs text-muted-foreground">
+            <div className="mt-auto flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-card px-4 py-4 dark:border-white/10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-7 sm:py-5">
+              <p className="hidden text-xs text-muted-foreground sm:block">
                 <kbd className="rounded border border-border bg-background px-1 font-mono text-[10px]">Esc</kbd> to close
               </p>
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                 {showActions ? (
                   <>
                     {canReject ? (
                       <Button
                         type="button"
                         variant="outline"
-                        className="min-w-24 rounded-lg border-rose-300 bg-card px-5 font-bold text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-800 dark:bg-card dark:text-rose-300 dark:hover:bg-rose-950/25"
+                        className="w-full min-w-0 rounded-lg border-rose-300 bg-card px-5 font-bold text-rose-700 hover:bg-rose-50 hover:text-rose-800 sm:w-auto sm:min-w-24 dark:border-rose-800 dark:bg-card dark:text-rose-300 dark:hover:bg-rose-950/25"
                         onClick={() => onReject?.(leave)}
                         disabled={actionLoading}
                       >
@@ -605,7 +605,7 @@ export function LeaveRequestDetailModal({
                     {canApprove ? (
                       <Button
                         type="button"
-                        className="min-w-24 rounded-lg bg-emerald-600 px-5 font-bold text-white hover:bg-emerald-700"
+                        className="w-full min-w-0 rounded-lg bg-emerald-600 px-5 font-bold text-white hover:bg-emerald-700 sm:w-auto sm:min-w-24"
                         onClick={() => onApprove?.(leave)}
                         disabled={actionLoading}
                       >
@@ -619,7 +619,7 @@ export function LeaveRequestDetailModal({
                   <Button
                     type="button"
                     variant="outline"
-                    className="min-w-24 rounded-lg border-destructive/50 bg-card px-5 font-bold text-destructive hover:bg-destructive/10 dark:bg-card"
+                    className="w-full min-w-0 rounded-lg border-destructive/50 bg-card px-5 font-bold text-destructive hover:bg-destructive/10 sm:w-auto sm:min-w-24 dark:bg-card"
                     onClick={() => onDelete?.(leave)}
                     disabled={actionLoading}
                   >
@@ -630,7 +630,7 @@ export function LeaveRequestDetailModal({
                 <Button
                   type="button"
                   variant="outline"
-                  className="min-w-24 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand dark:border-brand/55 dark:bg-card"
+                  className="w-full min-w-0 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand sm:w-auto sm:min-w-24 dark:border-brand/55 dark:bg-card"
                   onClick={() => onOpenChange(false)}
                   disabled={actionLoading}
                 >

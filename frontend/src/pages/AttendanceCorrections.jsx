@@ -255,7 +255,7 @@ function formatAttendanceDetailTime(value) {
 function AttendanceDetailNotice({ detail, loading, error }) {
   if (loading) {
     return (
-      <div className="rounded-xl border border-border bg-muted/25 px-4 py-3 text-sm text-muted-foreground">
+      <div className="rounded-xl border border-border bg-muted/25 px-3 py-3 text-sm text-muted-foreground sm:px-4">
         <span className="inline-flex items-center gap-2 font-medium">
           <Loader2 className="size-4 animate-spin" />
           Loading attendance detail...
@@ -265,7 +265,7 @@ function AttendanceDetailNotice({ detail, loading, error }) {
   }
   if (error) {
     return (
-      <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+      <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-3 text-sm text-amber-950 sm:px-4 dark:text-amber-100">
         {error}
       </div>
     )
@@ -280,22 +280,30 @@ function AttendanceDetailNotice({ detail, loading, error }) {
         : 'border-orange-500/40 bg-orange-500/10 text-orange-950 dark:text-orange-100'
 
   return (
-    <div className={cn('rounded-xl border px-4 py-3 text-sm shadow-sm', toneClass)}>
-      <p className="text-xs font-black uppercase tracking-[0.14em] opacity-80">Attendance detail</p>
-      <p className="mt-2 font-bold leading-relaxed">{detail.message}</p>
-      <dl className="mt-3 grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed">
-        <dt className="font-semibold opacity-80">Clock In</dt>
-        <dd>{formatAttendanceDetailTime(detail.clock_in)}</dd>
-        <dt className="font-semibold opacity-80">Clock Out</dt>
-        <dd>{formatAttendanceDetailTime(detail.clock_out)}</dd>
-        <dt className="font-semibold opacity-80">Schedule</dt>
-        <dd>
-          {detail.schedule_start || detail.schedule_end
-            ? `${formatAttendanceDetailTime(detail.schedule_start)} - ${formatAttendanceDetailTime(detail.schedule_end)}`
-            : 'No schedule found'}
-        </dd>
-        <dt className="font-semibold opacity-80">Status</dt>
-        <dd>{detail.attendance_status || '—'}</dd>
+    <div className={cn('rounded-xl border px-3 py-3 text-sm shadow-sm sm:px-4', toneClass)}>
+      <p className="text-[10px] font-black uppercase tracking-[0.14em] opacity-80 sm:text-xs">Attendance detail</p>
+      <p className="mt-2 text-sm font-bold leading-relaxed sm:text-[0.95rem]">{detail.message}</p>
+      <dl className="mt-3 grid grid-cols-1 gap-y-2 text-xs leading-relaxed sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-3 sm:gap-y-1.5">
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Clock In</dt>
+          <dd className="min-w-0 break-words">{formatAttendanceDetailTime(detail.clock_in)}</dd>
+        </div>
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Clock Out</dt>
+          <dd className="min-w-0 break-words">{formatAttendanceDetailTime(detail.clock_out)}</dd>
+        </div>
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Schedule</dt>
+          <dd className="min-w-0 break-words">
+            {detail.schedule_start || detail.schedule_end
+              ? `${formatAttendanceDetailTime(detail.schedule_start)} - ${formatAttendanceDetailTime(detail.schedule_end)}`
+              : 'No schedule found'}
+          </dd>
+        </div>
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Status</dt>
+          <dd className="min-w-0 break-words">{detail.attendance_status || '—'}</dd>
+        </div>
       </dl>
       {Array.isArray(detail.notes) && detail.notes.length > 0 ? (
         <div className="mt-3 space-y-1 border-t border-current/15 pt-3 text-xs leading-relaxed">
@@ -338,21 +346,21 @@ function AttendanceTimesHero({ timeIn, timeOut }) {
   const outLabel = formatTimeOnly(timeOut)
   return (
     <div className="divide-y divide-border/70 dark:divide-white/10">
-      <div className="flex min-h-14 items-center justify-between gap-4 py-2">
-        <p className="text-[15px] font-bold text-foreground">Time In</p>
-        <div className="flex items-center gap-4">
-          <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">{inLabel}</p>
-          <div className="flex size-10 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
-            <LogIn className="size-5" aria-hidden />
+      <div className="flex min-h-12 items-center justify-between gap-3 py-2 sm:min-h-14 sm:gap-4">
+        <p className="text-sm font-bold text-foreground sm:text-[15px]">Time In</p>
+        <div className="flex items-center gap-2.5 sm:gap-4">
+          <p className="font-mono text-lg font-black tabular-nums tracking-tight text-foreground sm:text-xl">{inLabel}</p>
+          <div className="flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 sm:size-10 dark:bg-brand/15 dark:ring-brand/25">
+            <LogIn className="size-4 sm:size-5" aria-hidden />
           </div>
         </div>
       </div>
-      <div className="flex min-h-14 items-center justify-between gap-4 py-4">
-        <p className="text-[15px] font-bold text-foreground">Time Out</p>
-        <div className="flex items-center gap-4">
-          <p className="font-mono text-xl font-black tabular-nums tracking-tight text-foreground">{outLabel}</p>
-          <div className="flex size-10 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 dark:bg-brand/15 dark:ring-brand/25">
-            <LogOut className="size-5" aria-hidden />
+      <div className="flex min-h-12 items-center justify-between gap-3 py-3 sm:min-h-14 sm:gap-4 sm:py-4">
+        <p className="text-sm font-bold text-foreground sm:text-[15px]">Time Out</p>
+        <div className="flex items-center gap-2.5 sm:gap-4">
+          <p className="font-mono text-lg font-black tabular-nums tracking-tight text-foreground sm:text-xl">{outLabel}</p>
+          <div className="flex size-9 items-center justify-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/15 sm:size-10 dark:bg-brand/15 dark:ring-brand/25">
+            <LogOut className="size-4 sm:size-5" aria-hidden />
           </div>
         </div>
       </div>
@@ -364,18 +372,33 @@ function CorrectionDetailSection({ icon: Icon, title, children, className }) {
   return (
     <section
       className={cn(
-        'rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
+        'rounded-xl border border-border/70 bg-card p-4 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] sm:p-5 dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]',
         className
       )}
     >
-      <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10 dark:text-brand">
-        {Icon ? <Icon className="size-5 shrink-0" aria-hidden /> : null}
+      <h3 className="mb-3 flex items-center gap-2.5 border-b border-border/70 pb-2.5 text-[11px] font-black uppercase tracking-[0.18em] text-brand sm:mb-4 sm:gap-3 sm:pb-3 sm:tracking-[0.2em] dark:border-white/10 dark:text-brand">
+        {Icon ? <Icon className="size-4 shrink-0 sm:size-5" aria-hidden /> : null}
         {title}
       </h3>
       {children}
     </section>
   )
 }
+
+const corrViewModalShellClass =
+  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,38rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card dark:scheme-dark'
+const corrViewModalInnerClass =
+  'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0'
+const corrViewModalBodyClass =
+  'min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-card px-4 py-4 text-sm sm:space-y-5 sm:px-7 sm:py-6 dark:bg-card'
+const corrFileModalShellClass =
+  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card dark:scheme-dark'
+const corrFileFieldClass =
+  'h-11 w-full rounded-xl border-input bg-background px-3 text-base text-foreground shadow-sm sm:h-[3.25rem] sm:px-4'
+const corrViewDetailDlClass =
+  'grid grid-cols-1 gap-y-3 text-sm sm:grid-cols-[minmax(0,10.5rem)_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-3'
+const corrViewDetailDtClass =
+  'text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal'
 
 function CorrectionInitialsAvatar({ name, imageUrl, className }) {
   return (
@@ -450,17 +473,17 @@ function CorrectionApprovalChain({ steps }) {
                     'border-amber-400/70 bg-amber-50/80 ring-2 ring-amber-500/20 dark:border-amber-400/35 dark:bg-amber-950/25'
                 )}
               >
-                <div className="flex gap-4">
-                  <CorrectionInitialsAvatar name={name} imageUrl={step.profile_image_url} />
+                <div className="flex gap-3 sm:gap-4">
+                  <CorrectionInitialsAvatar name={name} imageUrl={step.profile_image_url} className="size-10 sm:size-12" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[15px] font-bold leading-snug text-foreground">{name}</p>
-                    {role ? <p className="mt-1 text-sm font-medium text-foreground/85">{role}</p> : null}
+                    <p className="break-words text-sm font-bold leading-snug text-foreground sm:text-[15px]">{name}</p>
+                    {role ? <p className="mt-1 break-words text-xs font-medium text-foreground/85 sm:text-sm">{role}</p> : null}
                     {step?.is_self_approval ? (
                       <span className="mt-2 inline-flex w-fit rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/35 dark:text-amber-200">
                         Self Approval
                       </span>
                     ) : null}
-                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{statusLine}</p>
+                    <p className="mt-1 break-words text-xs leading-relaxed text-muted-foreground sm:text-sm">{statusLine}</p>
                     {remarks ? (
                       <p className="mt-3 text-sm leading-relaxed text-foreground">
                         <span className="font-semibold">Remarks: </span>
@@ -2114,16 +2137,16 @@ export default function AttendanceCorrections() {
       >
         <DialogContent
           showCloseButton
-          closeButtonClassName="right-4 top-4 size-10 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted dark:border-white/10 dark:bg-card"
-          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
-          className="max-h-[92vh] max-w-[min(100vw-1rem,38rem)] flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light dark:border-white/10 dark:bg-card dark:scheme-dark"
+          closeButtonClassName="right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10 dark:border-white/10 dark:bg-card"
+          innerClassName={corrViewModalInnerClass}
+          className={corrViewModalShellClass}
         >
           <DialogHeader className="sr-only">
             <DialogTitle>Correction request details</DialogTitle>
             <DialogDescription>Approval chain, attendance, and approval history.</DialogDescription>
           </DialogHeader>
           {selectedLoading && !selectedItem ? (
-            <div className="min-h-[28rem] px-7 py-8">
+            <div className="min-h-[18rem] px-4 py-6 sm:min-h-[28rem] sm:px-7 sm:py-8">
               <p className="text-sm font-medium text-muted-foreground">Loading request details…</p>
               <div className="h-4 w-44 animate-pulse rounded bg-muted" />
               <div className="mt-5 h-10 w-28 animate-pulse rounded bg-muted" />
@@ -2136,37 +2159,33 @@ export default function AttendanceCorrections() {
           ) : null}
           {selectedItem && (
             <>
-              <div className="shrink-0 border-b border-border/70 bg-card px-7 pb-7 pt-8 text-left dark:border-white/10">
-                <div className="space-y-5">
-                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-brand">
+              <div className="shrink-0 border-b border-border/70 bg-card px-4 pb-4 pt-4 text-left dark:border-white/10 sm:px-7 sm:pb-6 sm:pt-7">
+                <div className="space-y-3 pr-10 sm:space-y-4 sm:pr-12">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px] sm:tracking-[0.22em]">
                     Correction request
                   </p>
-                  <div className="flex flex-wrap items-center gap-3">
-                  <span className="font-mono text-4xl font-black leading-none tracking-tight text-foreground">
-                    #{selectedItem.id}
-                  </span>
-                  {selectedLoading ? <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden /> : null}
+                  <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+                    <span className="font-mono text-2xl font-black leading-none tracking-tight text-foreground sm:text-4xl">
+                      #{selectedItem.id}
+                    </span>
+                    {selectedLoading ? <Loader2 className="size-4 animate-spin text-muted-foreground sm:size-5" aria-hidden /> : null}
                     <Badge
                       className={cn(
-                        'rounded-full px-3.5 py-1.5 text-sm font-bold',
+                        'rounded-full px-2.5 py-1 text-xs font-bold sm:px-3.5 sm:py-1.5 sm:text-sm',
                         statusBadgeClass(selectedItem.display_status)
                       )}
                     >
                       {selectedItem.display_status || '—'}
                     </Badge>
                   </div>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-xs leading-relaxed text-muted-foreground sm:text-sm">
                     Review summary, attendance times, approval chain, and history below.
                   </p>
                 </div>
               </div>
-              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-7 py-6 text-sm dark:bg-card">
-                  <section className="rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]">
-                    <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
-                      <CalendarDays className="size-5 shrink-0" aria-hidden />
-                      Summary
-                    </h3>
-                    <div className="mb-4 rounded-xl border border-border/60 bg-muted/20 p-4 dark:bg-muted/10">
+              <div className={corrViewModalBodyClass}>
+                  <CorrectionDetailSection icon={CalendarDays} title="Summary">
+                    <div className="mb-3 rounded-xl border border-border/60 bg-muted/20 p-3 sm:mb-4 sm:p-4 dark:bg-muted/10">
                       <EmployeeAvatarNameRoleCell
                         name={selectedItem.employee_name || selectedItem.requested_by_name || 'Employee'}
                         imageUrl={selectedItem.employee_profile_image_url || selectedItem.requested_by_profile_image_url}
@@ -2174,49 +2193,47 @@ export default function AttendanceCorrections() {
                         hrRole={selectedItem.employee_hr_role ?? selectedItem.requested_by_hr_role}
                       />
                     </div>
-                    <div className="grid grid-cols-1 gap-x-8 gap-y-3 @lg:grid-cols-2">
-                      <div className="grid grid-cols-[minmax(0,11rem)_1fr] gap-x-3 gap-y-2.5 text-sm">
-                        <span className="text-muted-foreground">Attendance date</span>
-                        <span className="font-bold tabular-nums text-foreground">{formatDetailDate(selectedItem.date)}</span>
-                        <span className="text-muted-foreground">Day</span>
-                        <span className="font-bold text-foreground">{formatDayName(selectedItem.date, selectedItem.day_name)}</span>
-                        <span className="text-muted-foreground">Issue type</span>
-                        <span>
-                          <Badge variant="outline" className="rounded-full border-brand/25 bg-brand/10 px-3 py-1 font-bold text-brand dark:border-brand/30 dark:bg-brand/15">
-                            {issueLabel(selectedItem.issue_type)}
-                          </Badge>
-                        </span>
-                        <span className="text-muted-foreground">Requested time start</span>
-                        <span className="font-mono font-medium tabular-nums text-foreground">
-                          {formatTimeOnly(selectedItem.requested_time_in ?? selectedItem.time_in)}
-                        </span>
-                        <span className="text-muted-foreground">Requested time end</span>
-                        <span className="font-mono font-medium tabular-nums text-foreground">
-                          {formatTimeOnly(selectedItem.requested_time_out ?? selectedItem.time_out)}
-                        </span>
-                        <span className="text-muted-foreground">Last action</span>
-                        <span className="font-medium leading-relaxed text-foreground">{selectedItem.last_action_label || '—'}</span>
-                        {tab === 'all' ? (
-                          <>
-                            <span className="text-muted-foreground">Requested by</span>
-                            <span className="font-bold text-foreground">{selectedItem.requested_by_name || '—'}</span>
-                          </>
-                        ) : null}
-                        <span className="text-muted-foreground">Filed</span>
-                        <span className="tabular-nums text-foreground">{formatDateTime(selectedItem.filed_at)}</span>
-                        <span className="text-muted-foreground">Last updated</span>
-                        <span className="tabular-nums text-foreground">{formatDateTime(selectedItem.last_updated)}</span>
-                      </div>
-                    </div>
-                  </section>
+                    <dl className={corrViewDetailDlClass}>
+                      <dt className={corrViewDetailDtClass}>Attendance date</dt>
+                      <dd className="break-words font-bold tabular-nums text-foreground">{formatDetailDate(selectedItem.date)}</dd>
+                      <dt className={corrViewDetailDtClass}>Day</dt>
+                      <dd className="font-bold text-foreground">{formatDayName(selectedItem.date, selectedItem.day_name)}</dd>
+                      <dt className={corrViewDetailDtClass}>Issue type</dt>
+                      <dd>
+                        <Badge variant="outline" className="rounded-full border-brand/25 bg-brand/10 px-3 py-1 font-bold text-brand dark:border-brand/30 dark:bg-brand/15">
+                          {issueLabel(selectedItem.issue_type)}
+                        </Badge>
+                      </dd>
+                      <dt className={corrViewDetailDtClass}>Requested time start</dt>
+                      <dd className="font-mono font-medium tabular-nums text-foreground">
+                        {formatTimeOnly(selectedItem.requested_time_in ?? selectedItem.time_in)}
+                      </dd>
+                      <dt className={corrViewDetailDtClass}>Requested time end</dt>
+                      <dd className="font-mono font-medium tabular-nums text-foreground">
+                        {formatTimeOnly(selectedItem.requested_time_out ?? selectedItem.time_out)}
+                      </dd>
+                      <dt className={corrViewDetailDtClass}>Last action</dt>
+                      <dd className="break-words font-medium leading-relaxed text-foreground">{selectedItem.last_action_label || '—'}</dd>
+                      {tab === 'all' ? (
+                        <>
+                          <dt className={corrViewDetailDtClass}>Requested by</dt>
+                          <dd className="break-words font-bold text-foreground">{selectedItem.requested_by_name || '—'}</dd>
+                        </>
+                      ) : null}
+                      <dt className={corrViewDetailDtClass}>Filed</dt>
+                      <dd className="break-words tabular-nums text-foreground">{formatDateTime(selectedItem.filed_at)}</dd>
+                      <dt className={corrViewDetailDtClass}>Last updated</dt>
+                      <dd className="break-words tabular-nums text-foreground">{formatDateTime(selectedItem.last_updated)}</dd>
+                    </dl>
+                  </CorrectionDetailSection>
 
                   {selectedItem.attendance_logs_synced_at ? (
                     <div
                       role="status"
-                      className="rounded-xl border border-brand/20 bg-brand/10 px-5 py-4 text-sm text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/15"
+                      className="rounded-xl border border-brand/20 bg-brand/10 px-4 py-3 text-sm text-foreground shadow-sm sm:px-5 sm:py-4 dark:border-brand/25 dark:bg-brand/15"
                     >
                       <p className="flex items-center gap-2 font-black text-brand">
-                        <Info className="size-5" aria-hidden />
+                        <Info className="size-5 shrink-0" aria-hidden />
                         Applied to attendance
                       </p>
                       <p className="mt-2 leading-relaxed">
@@ -2230,22 +2247,14 @@ export default function AttendanceCorrections() {
                     </div>
                   ) : null}
 
-                  <section className="rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]">
-                    <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
-                      <Clock className="size-5 shrink-0" aria-hidden />
-                      Attendance times
-                    </h3>
+                  <CorrectionDetailSection icon={Clock} title="Attendance times">
                     <AttendanceTimesHero timeIn={selectedItem.time_in} timeOut={selectedItem.time_out} />
-                  </section>
+                  </CorrectionDetailSection>
 
                   {selectedItem.remarks ? (
-                    <section className="rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]">
-                      <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
-                        <MessageSquareText className="size-5 shrink-0" aria-hidden />
-                        Requester remarks
-                      </h3>
+                    <CorrectionDetailSection icon={MessageSquareText} title="Requester remarks">
                       <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selectedItem.remarks}</p>
-                    </section>
+                    </CorrectionDetailSection>
                   ) : null}
 
                   {selectedItem.hr_wait_message ? (
@@ -2267,11 +2276,7 @@ export default function AttendanceCorrections() {
                   ) : null}
 
                   {selectedItem.actor_can_add_hr_note ? (
-                    <section className="rounded-xl border border-border/70 bg-card p-5 shadow-[0_10px_28px_-22px_rgba(15,23,42,0.65),0_2px_8px_-6px_rgba(15,23,42,0.28)] dark:border-white/10 dark:bg-card/95 dark:shadow-[0_18px_42px_-28px_rgba(0,0,0,0.8)]">
-                      <h3 className="mb-4 flex items-center gap-3 border-b border-border/70 pb-3 text-[11px] font-black uppercase tracking-[0.2em] text-brand dark:border-white/10">
-                        <MessageSquareText className="size-5 shrink-0" aria-hidden />
-                        HR internal remark
-                      </h3>
+                    <CorrectionDetailSection icon={MessageSquareText} title="HR internal remark">
                       <p className="mb-3 text-xs text-muted-foreground">
                         Does not change workflow — stored in the audit trail only.
                       </p>
@@ -2291,14 +2296,14 @@ export default function AttendanceCorrections() {
                       >
                         {hrNoteSubmitting ? <Loader2 className="size-4 animate-spin" /> : 'Save remark'}
                       </Button>
-                    </section>
+                    </CorrectionDetailSection>
                   ) : null}
 
                   <CorrectionApprovalChain steps={selectedItem.approval_progress} />
                   <CorrectionHistoryTimeline history={selectedItem.approval_history} />
 
                   {selectedItem.rejection_note ? (
-                    <section className="rounded-lg border border-destructive/30 bg-destructive/[0.06] p-5 dark:border-destructive/25 dark:bg-destructive/10">
+                    <section className="rounded-lg border border-destructive/30 bg-destructive/[0.06] p-4 sm:rounded-xl sm:p-5 dark:border-destructive/25 dark:bg-destructive/10">
                       <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-destructive">
                         Rejection reason
                       </h3>
@@ -2306,15 +2311,15 @@ export default function AttendanceCorrections() {
                     </section>
                   ) : null}
               </div>
-              <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-card px-7 py-5 dark:border-white/10">
-                <p className="text-xs text-muted-foreground">
+              <div className="mt-auto flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-card px-4 py-4 dark:border-white/10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-7 sm:py-5">
+                <p className="hidden text-xs text-muted-foreground sm:block">
                   <kbd className="rounded border border-border bg-background px-1 font-mono text-[10px]">Esc</kbd> to close
                 </p>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                   {selectedItem.actor_can_approve ? (
                     <Button
                       type="button"
-                      className="gap-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700"
+                      className="w-full gap-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700 sm:w-auto"
                       onClick={() => {
                         setViewOpen(false)
                         openApprove(selectedItem)
@@ -2328,7 +2333,7 @@ export default function AttendanceCorrections() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      className="w-full gap-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive sm:w-auto"
                       onClick={() => {
                         setViewOpen(false)
                         openReject(selectedItem)
@@ -2339,7 +2344,7 @@ export default function AttendanceCorrections() {
                     </Button>
                   ) : null}
                   {selectedItem.actor_can_delete ? (
-                    <Button type="button" variant="destructive" onClick={() => setDeleteDialog({ open: true, item: selectedItem })}>
+                    <Button type="button" variant="destructive" className="w-full sm:w-auto" onClick={() => setDeleteDialog({ open: true, item: selectedItem })}>
                       <Trash2 className="size-4" />
                       Delete
                     </Button>
@@ -2347,7 +2352,7 @@ export default function AttendanceCorrections() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="min-w-24 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand dark:border-brand/55 dark:bg-card"
+                    className="w-full min-w-0 rounded-lg border-brand/70 bg-card px-6 font-bold text-brand hover:bg-brand/10 hover:text-brand sm:min-w-24 sm:w-auto dark:border-brand/55 dark:bg-card"
                     onClick={() => setViewOpen(false)}
                   >
                     Close
@@ -2438,29 +2443,39 @@ export default function AttendanceCorrections() {
       <Dialog open={fileOpen} onOpenChange={handleFileOpenChange}>
         <DialogContent
           showCloseButton
-          closeButtonClassName="border-border bg-card/95 text-foreground shadow-sm hover:bg-muted"
-          innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 pb-0 pl-0 pr-14 pt-0"
-          className="max-h-[92vh] max-w-lg flex flex-col overflow-hidden rounded-2xl border border-border bg-card p-0 text-card-foreground scheme-light @sm:max-w-2xl dark:scheme-dark"
+          closeButtonClassName="right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10"
+          innerClassName={corrViewModalInnerClass}
+          className={corrFileModalShellClass}
         >
-          <DialogHeader className="shrink-0 border-b border-border bg-muted/20 px-7 py-7 text-left">
-            <div className="space-y-2">
-              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-chart-5">Attendance correction</p>
-              <DialogTitle className="text-2xl font-black tracking-tight text-foreground">File correction request</DialogTitle>
-              <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
-                Choose the date and issue type. Only the time fields that apply to your issue are shown. Remarks are
-                required.
-              </DialogDescription>
-            </div>
-          </DialogHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card px-7 py-6">
-            <div className="space-y-5">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card">
+            <DialogHeader className="border-b border-border/70 px-4 pb-4 pt-4 text-left sm:px-7 sm:pb-5 sm:pt-7">
+              <div className="flex flex-col gap-3 pr-10 sm:flex-row sm:items-start sm:gap-4 sm:pr-12">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border sm:size-14">
+                  <FileText className="size-5 text-brand sm:size-6" aria-hidden />
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px] sm:tracking-[0.2em]">
+                    Attendance correction
+                  </p>
+                  <DialogTitle className="text-xl font-black tracking-tight text-foreground sm:text-2xl">
+                    File correction request
+                  </DialogTitle>
+                  <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
+                    Choose the date and issue type. Only the time fields that apply are shown. Remarks are required.
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="space-y-4 px-4 py-4 sm:space-y-5 sm:px-7 sm:py-6">
               {canSeeAll ? (
                 <div className="space-y-2">
-                  <Label htmlFor="file-employee" className="text-sm font-bold text-foreground">Employee *</Label>
-                  <div className="flex flex-col gap-2 @sm:flex-row">
+                  <Label htmlFor="file-employee" className="text-sm font-bold text-foreground">
+                    Employee <span className="text-destructive">*</span>
+                  </Label>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
                     <div className="min-w-0 flex-1">
                       <Select value={fileEmployeeId} onValueChange={setFileEmployeeId}>
-                        <SelectTrigger id="file-employee" className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm">
+                        <SelectTrigger id="file-employee" className={corrFileFieldClass}>
                           <SelectValue placeholder={fileEmployeesLoading ? 'Loading employees...' : 'Select employee'} />
                         </SelectTrigger>
                         <SelectContent>
@@ -2475,31 +2490,43 @@ export default function AttendanceCorrections() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-[3.25rem] shrink-0 rounded-xl border-brand/40 bg-background px-4 text-sm font-bold text-brand hover:bg-brand/10 hover:text-brand"
+                      className="h-11 w-full shrink-0 rounded-xl border-brand/40 bg-background px-4 text-sm font-bold text-brand hover:bg-brand/10 hover:text-brand sm:h-[3.25rem] sm:w-auto"
                       onClick={handleFileForMyself}
                     >
                       File for Myself
                     </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground">Select the employee whose attendance needs correction.</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Select the employee whose attendance needs correction.
+                  </p>
                 </div>
               ) : null}
               <div className="space-y-2">
-                <Label htmlFor="file-date" className="text-sm font-bold text-foreground">Date *</Label>
+                <Label htmlFor="file-date" className="text-sm font-bold text-foreground">
+                  Attendance date <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="file-date"
                   type="date"
-                  className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
+                  className={corrFileFieldClass}
                   value={fileDate}
                   onChange={(e) => setFileDate(e.target.value)}
                   max={new Date().toISOString().split('T')[0]}
                 />
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Select the date of the attendance record you want to correct.
+                </p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="file-issue" className="text-sm font-bold text-foreground">Issue type *</Label>
+                <Label htmlFor="file-issue" className="text-sm font-bold text-foreground">
+                  Issue type <span className="text-destructive">*</span>
+                </Label>
                 <Select modal={false} value={fileIssueKind} onValueChange={handleFileIssueKindChange}>
-                  <SelectTrigger id="file-issue" className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm">
-                    <SelectValue />
+                  <SelectTrigger id="file-issue" className={cn(corrFileFieldClass, 'w-full')}>
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <Clock className="size-4 shrink-0 text-brand sm:size-5" aria-hidden />
+                      <SelectValue />
+                    </div>
                   </SelectTrigger>
                   <SelectContent>
                     {ISSUE_KIND_OPTIONS.map((o) => (
@@ -2509,6 +2536,9 @@ export default function AttendanceCorrections() {
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Choose the type of correction you&apos;re requesting.
+                </p>
               </div>
               <AttendanceDetailNotice
                 detail={attendanceDetail}
@@ -2518,57 +2548,86 @@ export default function AttendanceCorrections() {
               <div
                 className={cn(
                   'grid gap-4',
-                  showFileTimeIn && showFileTimeOut ? 'grid-cols-1 @sm:grid-cols-2' : 'grid-cols-1'
+                  showFileTimeIn && showFileTimeOut ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'
                 )}
               >
                 {showFileTimeIn && (
                   <div key="file-time-in" className="space-y-2">
-                    <Label htmlFor="file-time-in" className="text-sm font-bold text-foreground">Actual clock in time *</Label>
+                    <Label htmlFor="file-time-in" className="text-sm font-bold text-foreground">
+                      Actual clock in time <span className="text-destructive">*</span>
+                    </Label>
                     <Input
                       id="file-time-in"
                       type="time"
                       step={60}
-                      className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
+                      className={corrFileFieldClass}
                       value={fileTimeIn}
                       onChange={(e) => setFileTimeIn(e.target.value)}
                     />
-                    <p className="text-xs text-muted-foreground">Enter the actual time you clocked in.</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Enter the actual time you clocked in.
+                    </p>
                   </div>
                 )}
                 {showFileTimeOut && (
                   <div key="file-time-out" className="space-y-2">
-                    <Label htmlFor="file-time-out" className="text-sm font-bold text-foreground">Actual clock out time *</Label>
+                    <Label htmlFor="file-time-out" className="text-sm font-bold text-foreground">
+                      Actual clock out time <span className="text-destructive">*</span>
+                    </Label>
                     <Input
                       id="file-time-out"
                       type="time"
                       step={60}
-                      className="h-[3.25rem] rounded-xl border-input bg-background px-4 text-base text-foreground shadow-sm"
+                      className={corrFileFieldClass}
                       value={fileTimeOut}
                       onChange={(e) => setFileTimeOut(e.target.value)}
                     />
-                    <p className="text-xs text-muted-foreground">Enter the actual time you clocked out.</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Enter the actual time you clocked out.
+                    </p>
                   </div>
                 )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="file-remarks" className="text-sm font-bold text-foreground">Remarks *</Label>
+                <Label htmlFor="file-remarks" className="text-sm font-bold text-foreground">
+                  Remarks <span className="text-destructive">*</span>
+                </Label>
                 <Textarea
                   id="file-remarks"
                   value={fileRemarks}
-                  onChange={(e) => setFileRemarks(e.target.value)}
+                  onChange={(e) => setFileRemarks(e.target.value.slice(0, 500))}
                   rows={4}
-                  className="min-h-[8.5rem] resize-y rounded-xl border-input bg-background p-4 text-base text-foreground shadow-sm placeholder:text-muted-foreground"
+                  maxLength={500}
+                  className="min-h-[7rem] w-full resize-y rounded-xl border-input bg-background p-3 text-base text-foreground shadow-sm placeholder:text-muted-foreground sm:min-h-[8.5rem] sm:p-4"
                   placeholder="Describe what happened and what correction you need…"
                   required
                 />
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    Provide details to help your approver understand the request.
+                  </p>
+                  <span className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
+                    {fileRemarks.length} / 500
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-3 border-t border-border bg-muted/15 px-7 py-5 sm:flex-row sm:justify-end">
-            <Button type="button" variant="outline" className="h-12 rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted" onClick={() => handleFileOpenChange(false)}>
+          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border bg-muted/15 px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 w-full rounded-xl border-border bg-background px-6 text-base font-semibold text-foreground shadow-sm hover:bg-muted sm:h-12 sm:w-auto"
+              onClick={() => handleFileOpenChange(false)}
+            >
               Cancel
             </Button>
-            <Button type="button" className="h-12 gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-7 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700" onClick={submitFile} disabled={submitting}>
+            <Button
+              type="button"
+              className="h-11 w-full gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-orange-600 px-7 text-base font-bold text-white shadow-[0_18px_32px_-20px_rgba(234,88,12,0.95)] ring-1 ring-orange-500/20 hover:from-orange-600 hover:to-orange-700 sm:h-12 sm:w-auto"
+              onClick={submitFile}
+              disabled={submitting}
+            >
               {submitting ? <Loader2 className="size-4 animate-spin" /> : 'Submit request'}
               {!submitting ? <Send className="size-4" aria-hidden /> : null}
             </Button>

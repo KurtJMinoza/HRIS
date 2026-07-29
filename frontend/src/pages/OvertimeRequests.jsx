@@ -724,16 +724,21 @@ const employeeOvertimePrimaryButtonClass =
 const employeeOvertimeOutlineButtonClass =
   'h-11 gap-2 rounded-lg border-border/80 bg-card px-5 text-sm font-semibold text-foreground shadow-sm transition hover:border-brand/45 hover:bg-brand/10 hover:text-brand dark:border-white/10 dark:bg-card/80 dark:hover:bg-brand/12'
 
-const otModalLabelClass = 'text-base font-semibold tracking-tight text-foreground'
+const otModalLabelClass = 'text-sm font-semibold tracking-tight text-foreground sm:text-base'
 const otModalFieldClass =
-  'h-14 rounded-xl border-border/80 bg-background px-4 text-base font-medium tabular-nums text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
+  'h-11 w-full rounded-xl border-border/80 bg-background px-3 text-base font-medium tabular-nums text-foreground shadow-sm transition focus-visible:border-brand focus-visible:ring-brand/25 sm:h-14 sm:px-4 dark:border-white/12 dark:bg-background/40 dark:focus-visible:border-brand/70'
 const otModalSelectClass =
-  'h-14 w-full rounded-xl border border-brand bg-background px-5 text-lg font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 dark:bg-background/40 dark:focus:ring-brand/20'
+  'h-11 w-full rounded-xl border border-brand bg-background px-4 text-base font-semibold text-foreground shadow-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15 sm:h-14 sm:px-5 sm:text-lg dark:bg-background/40 dark:focus:ring-brand/20'
+const otFileModalShellClass =
+  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card'
+const otFileModalInnerClass = 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0'
+const otFileModalCloseClass =
+  'right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10 dark:border-white/10 dark:bg-card'
 
 function OvertimeModalHeaderArt() {
   return (
     <div
-      className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-40 items-center justify-center text-brand opacity-20 dark:opacity-25 @lg:flex"
+      className="pointer-events-none absolute bottom-0 right-6 hidden h-40 w-40 items-center justify-center text-brand opacity-20 dark:opacity-25 lg:flex"
       aria-hidden
     >
       <Timer className="size-36" strokeWidth={1.15} />
@@ -2746,19 +2751,20 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         <DialogContent
           showCloseButton
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-4 top-4 size-10 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted @md:right-7 @md:top-7 @md:size-14 dark:border-white/10 dark:bg-card/90"
-          className="max-h-[92vh] max-w-[min(94vw,68rem)] rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] dark:border-white/10 dark:bg-card"
-          innerClassName="gap-0 overflow-hidden p-0 pr-0"
+          closeButtonClassName={otFileModalCloseClass}
+          className={otFileModalShellClass}
+          innerClassName={otFileModalInnerClass}
           aria-describedby="ot-file-desc"
         >
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-5 pb-5 pt-6 text-left dark:to-brand/10 @md:px-12 @md:pb-6 @md:pt-8">
-              <AgcBrandLogo className="mb-5 h-8 @md:mb-7 @md:h-10" />
-              <div className="relative z-10 max-w-[43rem] space-y-3 pr-12 @md:pr-0">
-                <DialogTitle className="text-xl font-bold tracking-tight text-foreground @md:text-3xl">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <DialogHeader className="relative overflow-hidden border-b border-border/70 bg-linear-to-br from-card via-card to-brand/5 px-4 pb-4 pt-4 text-left dark:to-brand/10 sm:px-7 sm:pb-5 sm:pt-7">
+              <AgcBrandLogo className="mb-4 h-8 sm:mb-6 sm:h-9" />
+              <div className="relative z-10 max-w-[43rem] space-y-2 pr-10 sm:space-y-3 sm:pr-12">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px]">Overtime request</p>
+                <DialogTitle className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
                   File New Overtime
                 </DialogTitle>
-                <DialogDescription id="ot-file-desc" className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground @md:text-lg">
+                <DialogDescription id="ot-file-desc" className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground">
                   Flexible OT filing before, during, or after your shift. Example format:
                   <span className="block">
                     6:00 AM - 8:00 AM -&gt; FOR OT, 5:00 PM - 12:00 MIDNIGHT -&gt; FOR OT.
@@ -2768,7 +2774,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               <OvertimeModalHeaderArt />
             </DialogHeader>
 
-            <div className="px-5 py-5 @md:px-12 @md:py-7">
+            <div className="px-4 py-4 sm:px-7 sm:py-6">
               {submitError && (
                 <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive dark:bg-destructive/15">
                   {submitError}
@@ -2786,8 +2792,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 </div>
               )}
 
-              <form id="ot-file-form" onSubmit={handleFileSubmit} className="space-y-6">
-                <div className="flex items-start gap-4 rounded-xl border border-brand/20 bg-brand/5 px-4 py-4 text-sm leading-relaxed text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/10 sm:text-base">
+              <form id="ot-file-form" onSubmit={handleFileSubmit} className="space-y-5 sm:space-y-6">
+                <div className="flex items-start gap-3 rounded-xl border border-brand/20 bg-brand/5 px-3 py-3 text-sm leading-relaxed text-foreground shadow-sm dark:border-brand/25 dark:bg-brand/10 sm:gap-4 sm:px-4 sm:py-4 sm:text-base">
                   <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-brand text-brand-foreground">
                     <Info className="size-4" strokeWidth={2.4} aria-hidden />
                   </span>
@@ -2815,7 +2821,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   </div>
                 )}
 
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <Label htmlFor="otm-date" className={otModalLabelClass}>
                     Date
                   </Label>
@@ -2833,8 +2839,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   />
                 </div>
 
-                <div className="grid gap-6 @md:grid-cols-2">
-                  <div className="space-y-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
+                  <div className="space-y-2 sm:space-y-3">
                     <Label htmlFor="otm-start" className={otModalLabelClass}>
                       Start time
                     </Label>
@@ -2848,7 +2854,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       required={selectedSegments.length === 0}
                     />
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-2 sm:space-y-3">
                     <Label htmlFor="otm-end" className={otModalLabelClass}>
                       End time
                     </Label>
@@ -2864,7 +2870,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   </div>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <Label className={otModalLabelClass}>PH pay condition</Label>
                   <Select value={phOtRule} onValueChange={handlePhOtRuleChange}>
                     <SelectTrigger className={cn(otModalSelectClass, 'justify-between [&>svg]:size-5 [&>svg]:text-foreground')}>
@@ -2891,7 +2897,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   </Select>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2 sm:space-y-3">
                   <Label htmlFor="otm-reason" className={otModalLabelClass}>
                     Reason (required)
                   </Label>
@@ -2905,16 +2911,16 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                       required
                       minLength={2}
                       placeholder="Enter reason for filing overtime..."
-                      className="min-h-28 resize-none rounded-xl border-border/80 bg-background px-4 pb-9 pt-4 text-base shadow-sm placeholder:text-muted-foreground focus-visible:border-brand focus-visible:ring-brand/25 dark:border-white/12 dark:bg-background/40"
+                      className="min-h-24 resize-none rounded-xl border-border/80 bg-background px-3 pb-8 pt-3 text-base shadow-sm placeholder:text-muted-foreground focus-visible:border-brand focus-visible:ring-brand/25 sm:min-h-28 sm:px-4 sm:pb-9 sm:pt-4 dark:border-white/12 dark:bg-background/40"
                     />
-                    <span className="pointer-events-none absolute bottom-4 right-4 text-sm tabular-nums text-muted-foreground">
+                    <span className="pointer-events-none absolute bottom-3 right-3 text-xs tabular-nums text-muted-foreground sm:bottom-4 sm:right-4 sm:text-sm">
                       {reason.length} / 500
                     </span>
                   </div>
                   <p className="text-[13px] leading-relaxed text-muted-foreground">Example: FOR OT</p>
                 </div>
 
-                <div className="flex items-start gap-4 rounded-xl border border-dashed border-brand/55 bg-brand/5 px-4 py-4 text-base dark:bg-brand/10 sm:px-5">
+                <div className="flex items-start gap-3 rounded-xl border border-dashed border-brand/55 bg-brand/5 px-3 py-3 text-sm dark:bg-brand/10 sm:gap-4 sm:px-5 sm:py-4 sm:text-base">
                   <FileText className="mt-1 size-5 shrink-0 text-brand" aria-hidden />
                   <div>
                     <p className="font-bold text-foreground">Format preview:</p>
@@ -2929,11 +2935,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             </div>
           </div>
 
-          <DialogFooter className="flex shrink-0 flex-col-reverse gap-3 border-t border-border/70 bg-card px-5 py-4 @sm:flex-row @sm:justify-end @md:px-12 @md:py-5">
+          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border/70 bg-card px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5">
             <Button
               type="button"
               variant="outline"
-              className="h-12 w-full rounded-xl border-border/80 bg-card px-6 text-base font-semibold text-foreground hover:bg-muted @sm:h-14 @sm:min-w-36 @sm:w-auto @md:px-8 @md:text-lg dark:border-white/10"
+              className="h-11 w-full rounded-xl border-border/80 bg-card px-6 text-base font-semibold text-foreground hover:bg-muted sm:h-12 sm:w-auto dark:border-white/10"
               onClick={() => setFileOpen(false)}
               disabled={submitting}
             >
@@ -2942,7 +2948,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             <Button
               type="submit"
               form="ot-file-form"
-              className="h-12 w-full gap-3 rounded-xl bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong @sm:h-14 @sm:min-w-72 @sm:w-auto @md:px-9 @md:text-lg dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
+              className="h-11 w-full gap-3 rounded-xl bg-brand px-6 text-base font-semibold text-brand-foreground shadow-[0_14px_28px_-18px_rgba(234,88,12,0.95)] hover:bg-brand-strong sm:h-12 sm:w-auto sm:min-w-52 dark:shadow-[0_14px_30px_-20px_rgba(251,146,60,0.8)]"
               disabled={!canSubmitFile}
             >
               {submitting && <Loader2 className="size-4 animate-spin" />}
@@ -2969,8 +2975,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         <DialogContent
           showCloseButton
           overlayClassName="bg-black/55 backdrop-blur-sm dark:bg-black/70"
-          closeButtonClassName="right-4 top-4 size-10 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted sm:right-5 sm:top-5 sm:size-11 dark:border-white/10 dark:bg-card/90"
-          className="w-[min(calc(100vw-1rem),58rem)] max-w-none max-h-[min(88vh,calc(100dvh-6rem))] min-h-0 flex flex-col overflow-hidden rounded-[18px] border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] sm:max-h-[min(90vh,calc(100dvh-8rem))] dark:border-white/10 dark:bg-card"
+          closeButtonClassName="right-3 top-3 size-9 rounded-xl border-border/80 bg-background/90 text-foreground shadow-sm hover:bg-muted sm:right-5 sm:top-5 sm:size-11 dark:border-white/10 dark:bg-card/90"
+          className="flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,58rem)] min-h-0 flex-col overflow-hidden rounded-2xl border-border/80 bg-card shadow-[0_24px_80px_-24px_rgba(0,0,0,0.5)] sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card"
           innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0"
           aria-describedby="ot-detail-desc"
         >
@@ -2983,24 +2989,24 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
           {detail ? (
             <>
-              <DialogHeader className="relative shrink-0 overflow-hidden border-b border-border/70 px-5 pb-4 pt-6 text-left dark:border-white/10 @sm:px-6 @sm:pb-5 @sm:pt-7 @md:px-8 @md:pb-6">
-                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-brand @sm:text-[11px]">Overtime request</p>
-                <div className="mt-3 flex flex-wrap items-center gap-3 pr-10 @sm:mt-4 @sm:gap-4 sm:pr-12">
-                  <DialogTitle className="font-mono text-3xl font-black leading-none tracking-tight text-foreground @sm:text-4xl">
+              <DialogHeader className="relative shrink-0 overflow-hidden border-b border-border/70 px-4 pb-4 pt-4 text-left dark:border-white/10 sm:px-6 sm:pb-5 sm:pt-7 md:px-8 md:pb-6">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-brand sm:text-[11px] sm:tracking-[0.22em]">Overtime request</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2.5 pr-10 sm:mt-4 sm:gap-4 sm:pr-12">
+                  <DialogTitle className="font-mono text-2xl font-black leading-none tracking-tight text-foreground sm:text-4xl">
                     #{detail.id}
                   </DialogTitle>
                   <OvertimeStatusPill row={detail} />
-                  {detailLoading ? <Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden /> : null}
+                  {detailLoading ? <Loader2 className="size-4 animate-spin text-muted-foreground sm:size-5" aria-hidden /> : null}
                 </div>
-                <DialogDescription id="ot-detail-desc" className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground @sm:mt-4 @sm:text-base">
+                <DialogDescription id="ot-detail-desc" className="mt-3 max-w-2xl text-xs leading-relaxed text-muted-foreground sm:mt-4 sm:text-sm md:text-base">
                   Review request information, overtime details, approval chain, and request history below.
                 </DialogDescription>
-                <div className="pointer-events-none absolute bottom-0 right-10 hidden overflow-hidden text-brand/10 opacity-70 dark:text-brand/15 @lg:block" aria-hidden>
+                <div className="pointer-events-none absolute bottom-0 right-10 hidden overflow-hidden text-brand/10 opacity-70 dark:text-brand/15 lg:block" aria-hidden>
                   <Timer className="size-36" strokeWidth={1.1} />
                 </div>
               </DialogHeader>
 
-              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 @sm:px-6 @sm:py-6 @md:px-8 [scrollbar-gutter:stable]">
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-4 sm:px-6 sm:py-6 md:px-8 [scrollbar-gutter:stable]">
                 <div className="space-y-6">
                   <div className="space-y-6">
                     <DetailSection title="Summary">
@@ -3017,17 +3023,17 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                           />
                         </div>
                       ) : null}
-                      <dl className="grid gap-x-6 gap-y-3 text-sm @sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
-                        <dt className="text-muted-foreground">Filed</dt>
-                        <dd className="font-medium tabular-nums text-foreground">
+                      <dl className="grid grid-cols-1 gap-y-3 text-sm sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] sm:gap-x-6">
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Filed</dt>
+                        <dd className="min-w-0 break-words font-medium tabular-nums text-foreground">
                           {detail.filed_at || detail.created_at ? formatDateTime(detail.filed_at || detail.created_at) : '—'}
                         </dd>
-                        <dt className="text-muted-foreground">Request ID</dt>
-                        <dd className="font-mono font-bold tabular-nums text-foreground">#{detail.id}</dd>
-                        <dt className="text-muted-foreground">Category</dt>
-                        <dd className="font-medium text-foreground">{otTypeLabel(detail.ot_type)}</dd>
-                        <dt className="text-muted-foreground">PH pay rule</dt>
-                        <dd className="font-medium text-foreground">
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Request ID</dt>
+                        <dd className="min-w-0 break-words font-mono font-bold tabular-nums text-foreground">#{detail.id}</dd>
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">Category</dt>
+                        <dd className="min-w-0 break-words font-medium text-foreground">{otTypeLabel(detail.ot_type)}</dd>
+                        <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:text-sm sm:font-normal sm:normal-case sm:tracking-normal">PH pay rule</dt>
+                        <dd className="min-w-0 break-words font-medium text-foreground">
                           {detail.ph_ot_rule_label || detail.ph_ot_rule || '—'}
                           {detail.ot_multiplier != null && detail.first_8_multiplier != null ? (
                             <span className="text-muted-foreground">
@@ -3160,12 +3166,12 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             <p className="px-6 py-8 text-center text-sm text-muted-foreground">No request data to display.</p>
           ) : null}
 
-          <DialogFooter className="shrink-0 border-t border-border/70 bg-card px-5 py-4 dark:border-white/10 @sm:px-6 @sm:py-5 @md:px-8">
+          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border/70 bg-card px-4 py-4 dark:border-white/10 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3 sm:px-6 sm:py-5 md:px-8">
             {detail && !detailLoading && detail.actor_can_delete ? (
               <Button
                 type="button"
                 variant="destructive"
-                className="h-12 min-w-[110px] rounded-xl px-5 text-base font-semibold"
+                className="h-11 w-full min-w-0 rounded-xl px-5 text-base font-semibold sm:h-12 sm:w-auto sm:min-w-[110px]"
                 onClick={() => setDeleteDialog({ open: true, row: detail })}
               >
                 <Trash2 className="size-4" />
@@ -3173,11 +3179,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
               </Button>
             ) : null}
             {detail && !detailLoading && showOvertimeActions(detail, canApproveOvertime) ? (
-              <div className="flex w-full flex-wrap gap-2 @sm:w-auto @sm:justify-end">
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-12 min-w-[110px] rounded-full border-rose-300 bg-rose-50 px-5 text-base font-bold text-rose-700 shadow-sm hover:bg-rose-100 dark:border-rose-800/80 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/45"
+                  className="h-11 w-full min-w-0 rounded-full border-rose-300 bg-rose-50 px-5 text-base font-bold text-rose-700 shadow-sm hover:bg-rose-100 sm:h-12 sm:w-auto sm:min-w-[110px] dark:border-rose-800/80 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/45"
                   onClick={() => openReject(detail)}
                 >
                   <XCircle className="size-4" />
@@ -3185,7 +3191,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 </Button>
                 <Button
                   type="button"
-                  className="h-12 min-w-[110px] rounded-full bg-emerald-600 px-5 text-base font-bold text-white shadow-[0_14px_26px_-14px_rgba(5,150,105,0.9)] hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+                  className="h-11 w-full min-w-0 rounded-full bg-emerald-600 px-5 text-base font-bold text-white shadow-[0_14px_26px_-14px_rgba(5,150,105,0.9)] hover:bg-emerald-700 sm:h-12 sm:w-auto sm:min-w-[110px] dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
                   onClick={() => openApprove(detail)}
                 >
                   <CheckCircle2 className="size-4" />
@@ -3193,7 +3199,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                 </Button>
               </div>
             ) : null}
-            <Button type="button" variant="outline" className="h-12 min-w-[110px] rounded-xl px-5 text-base font-semibold" onClick={() => setViewOpen(false)}>
+            <Button type="button" variant="outline" className="h-11 w-full min-w-0 rounded-xl px-5 text-base font-semibold sm:h-12 sm:w-auto sm:min-w-[110px]" onClick={() => setViewOpen(false)}>
               Close
             </Button>
           </DialogFooter>

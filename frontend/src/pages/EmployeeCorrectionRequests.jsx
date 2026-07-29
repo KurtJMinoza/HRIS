@@ -178,19 +178,27 @@ function AttendanceDetailNotice({ detail, loading, error }) {
     <div className={cn('rounded-xl border px-4 py-3 text-sm shadow-sm', toneClass)}>
       <p className="text-xs font-black uppercase tracking-[0.14em] opacity-80">Attendance detail</p>
       <p className="mt-2 font-bold leading-relaxed">{detail.message}</p>
-      <dl className="mt-3 grid grid-cols-1 gap-x-3 gap-y-2 text-xs sm:grid-cols-[minmax(0,7.5rem)_1fr] sm:gap-y-1.5">
-        <dt className="font-semibold opacity-80">Clock In</dt>
-        <dd>{formatAttendanceDetailTime(detail.clock_in)}</dd>
-        <dt className="font-semibold opacity-80">Clock Out</dt>
-        <dd>{formatAttendanceDetailTime(detail.clock_out)}</dd>
-        <dt className="font-semibold opacity-80">Schedule</dt>
-        <dd>
-          {detail.schedule_start || detail.schedule_end
-            ? `${formatAttendanceDetailTime(detail.schedule_start)} - ${formatAttendanceDetailTime(detail.schedule_end)}`
-            : 'No schedule found'}
-        </dd>
-        <dt className="font-semibold opacity-80">Status</dt>
-        <dd>{detail.attendance_status || '—'}</dd>
+      <dl className="mt-3 grid grid-cols-1 gap-y-2 text-xs leading-relaxed sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-3 sm:gap-y-1.5">
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Clock In</dt>
+          <dd className="min-w-0 break-words">{formatAttendanceDetailTime(detail.clock_in)}</dd>
+        </div>
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Clock Out</dt>
+          <dd className="min-w-0 break-words">{formatAttendanceDetailTime(detail.clock_out)}</dd>
+        </div>
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Schedule</dt>
+          <dd className="min-w-0 break-words">
+            {detail.schedule_start || detail.schedule_end
+              ? `${formatAttendanceDetailTime(detail.schedule_start)} - ${formatAttendanceDetailTime(detail.schedule_end)}`
+              : 'No schedule found'}
+          </dd>
+        </div>
+        <div className="flex flex-col gap-0.5 sm:contents">
+          <dt className="font-semibold opacity-80">Status</dt>
+          <dd className="min-w-0 break-words">{detail.attendance_status || '—'}</dd>
+        </div>
       </dl>
       {Array.isArray(detail.notes) && detail.notes.length > 0 ? (
         <div className="mt-3 space-y-1 border-t border-current/15 pt-3 text-xs leading-relaxed">
@@ -239,8 +247,8 @@ const brandCardClass =
   'rounded-2xl border border-border bg-card text-card-foreground shadow-sm dark:shadow-[0_18px_50px_-36px_rgba(0,0,0,0.45)]'
 
 const corrModalShellClass =
-  'flex max-h-[min(100dvh,100vh)] w-[calc(100vw-0.75rem)] max-w-[40rem] flex-col overflow-hidden rounded-xl border border-border bg-card p-0 text-card-foreground shadow-lg scheme-light sm:max-h-[92vh] sm:w-[calc(100vw-2rem)] sm:rounded-2xl sm:shadow-[0_28px_80px_-38px_rgba(15,23,42,0.9)] dark:scheme-dark'
-const corrModalInnerClass = 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0 sm:pr-14'
+  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:scheme-dark'
+const corrModalInnerClass = 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0'
 const corrModalHeaderPad = 'shrink-0 border-b border-border bg-card px-4 pb-4 pt-4 text-left sm:px-7 sm:pb-5 sm:pt-7'
 const corrModalBodyPad =
   'min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-4 py-4 sm:space-y-6 sm:px-7 sm:py-6'
@@ -1280,24 +1288,27 @@ function EmployeeCorrectionRequestsSelfService() {
           innerClassName={corrModalInnerClass}
           className={corrModalShellClass}
         >
-          <DialogHeader className={corrModalHeaderPad}>
-            <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:gap-4 sm:pr-2">
-              <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border sm:size-16">
-                <FileText className="size-6 text-primary sm:size-8" aria-hidden />
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card">
+            <DialogHeader className={corrModalHeaderPad}>
+              <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:gap-4 sm:pr-2">
+                <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border sm:size-16">
+                  <FileText className="size-6 text-primary sm:size-8" aria-hidden />
+                </div>
+                <div className="min-w-0 pt-0 sm:pt-1">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-primary sm:text-[11px]">
+                    Attendance correction
+                  </p>
+                  <DialogTitle className="mt-1.5 text-xl font-extrabold tracking-tight text-foreground sm:text-2xl">
+                    File correction request
+                  </DialogTitle>
+                  <DialogDescription className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
+                    Select the attendance issue first. Only the required time fields will appear, and remarks are required
+                    for approval.
+                  </DialogDescription>
+                </div>
               </div>
-              <div className="min-w-0 pt-0 sm:pt-1">
-                <DialogTitle className="text-xl font-extrabold tracking-tight text-foreground sm:text-2xl">
-                  File correction request
-                </DialogTitle>
-                <DialogDescription className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                  Select the attendance issue first. Only the required time fields will appear, and remarks are required
-                  for approval.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-          <div className={corrModalBodyPad}>
-            <div className="space-y-5">
+            </DialogHeader>
+            <div className="space-y-5 px-4 py-4 sm:space-y-6 sm:px-7 sm:py-6">
               <div className="space-y-2">
                 <Label htmlFor="emp-corr-date" className="text-sm font-bold text-foreground">
                   Attendance date <span className="text-destructive">*</span>
@@ -1347,7 +1358,7 @@ function EmployeeCorrectionRequestsSelfService() {
               <div
                 className={cn(
                   'grid gap-4',
-                  showFileTimeIn && showFileTimeOut ? 'grid-cols-1 @sm:grid-cols-2' : 'grid-cols-1'
+                  showFileTimeIn && showFileTimeOut ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'
                 )}
               >
                 {showFileTimeIn && (
