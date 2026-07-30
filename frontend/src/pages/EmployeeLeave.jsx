@@ -118,6 +118,7 @@ import { LeaveModalCreditsCard } from '@/components/leave/LeaveModalCreditsCard'
 import { formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
+import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
 import { useAuth } from '@/contexts/AuthContext'
 import AdminLeave from '@/pages/AdminLeave'
 
@@ -776,20 +777,22 @@ function EmployeeLeaveSelfService() {
       <div className="w-full min-w-0 overflow-hidden">
         <table className={leaveEmployeeTableClass}>
           <colgroup>
-            <col className="w-[11%]" />
-            <col className="w-[14%]" />
-            <col className="w-[9%]" />
-            <col className="w-[13%]" />
-            <col className="w-[18%]" />
-            <col className="w-[14%]" />
             <col className="w-[10%]" />
-            <col className="w-[11%]" />
+            <col className="w-[13%]" />
+            <col className="w-[8%]" />
+            <col className="w-[10%]" />
+            <col className="w-[12%]" />
+            <col className="w-[17%]" />
+            <col className="w-[13%]" />
+            <col className="w-[8%]" />
+            <col className="w-[9%]" />
           </colgroup>
           <thead>
             <tr className={requestModuleHeadRowClass}>
               <th className={requestModuleThClass}>Leave type</th>
               <th className={requestModuleThClass}>Date / range</th>
               <th className={requestModuleThClass}>Duration</th>
+              <th className={requestModuleThClass}>Uses credits</th>
               <th className={requestModuleThClass}>Supporting documents</th>
               <th className={requestModuleThClass}>Reason / remarks</th>
               <th className={requestModuleThClass}>Status</th>
@@ -799,10 +802,10 @@ function EmployeeLeaveSelfService() {
           </thead>
           <tbody>
             {loading ? (
-              <TableBodySkeleton rows={6} cols={8} />
+              <TableBodySkeleton rows={6} cols={9} />
             ) : !hasTableRows ? (
               <tr>
-                <td colSpan={8}>
+                <td colSpan={9}>
                   {rows.length > 0 ? (
                     <div className="flex min-h-[330px] flex-col items-center justify-center px-6 py-16 text-center">
                       <div className="mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
@@ -842,6 +845,9 @@ function EmployeeLeaveSelfService() {
                       {formatDateRangeShort(leave.start_date, leave.end_date)}
                     </td>
                     <td className={requestModuleTdMutedClass}>{durLabel}</td>
+                    <td className={requestModuleTdClass}>
+                      <LeaveCreditUsageBadge leave={leave} leaveCreditInfo={leaveCreditInfo} />
+                    </td>
                     <td className={requestModuleTdClass}>
                       {(() => {
                         const urls = supportingDocUrls(leave)
@@ -1214,6 +1220,7 @@ function EmployeeLeaveSelfService() {
                       <LeaveRequestMobileCard
                         key={leave.id}
                         leave={leave}
+                        leaveCreditInfo={leaveCreditInfo}
                         onView={openLeaveDetail}
                         onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
                       />

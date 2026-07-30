@@ -15,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class ScheduleController extends Controller
 {
@@ -59,7 +60,11 @@ class ScheduleController extends Controller
 
     public function index(): JsonResponse
     {
-        $schedules = WorkingSchedule::with('days')->orderBy('name')->get();
+        $query = WorkingSchedule::query()->orderBy('name');
+        if ($this->hasScheduleDaysTable()) {
+            $query->with('days');
+        }
+        $schedules = $query->get();
 
         return response()->json([
             'schedules' => $schedules->map(fn (WorkingSchedule $s) => $this->scheduleResponse($s)),
@@ -235,7 +240,9 @@ class ScheduleController extends Controller
         $schedule = WorkingSchedule::create($this->buildScheduleData($validated));
         if (($validated['shift_type'] ?? 'fixed') === WorkingSchedule::SHIFT_FLEXIBLE) {
             $this->syncFlexibleDays($schedule, $validated['days'] ?? []);
-            $schedule->load('days');
+            if ($this->hasScheduleDaysTable()) {
+                $schedule->load('days');
+            }
         }
 
         return response()->json([
@@ -285,7 +292,9 @@ class ScheduleController extends Controller
         if (($validated['shift_type'] ?? $schedule->shift_type) === WorkingSchedule::SHIFT_FLEXIBLE
             && array_key_exists('days', $validated)) {
             $this->syncFlexibleDays($schedule, $validated['days'] ?? []);
-            $schedule->load('days');
+            if ($this->hasScheduleDaysTable()) {
+                $schedule->load('days');
+            }
         }
 
         $affectedIds = User::query()
@@ -398,7 +407,11 @@ class ScheduleController extends Controller
      */
     public function preview(Request $request, int $id): JsonResponse
     {
-        $schedule = WorkingSchedule::with('days')->findOrFail($id);
+        $query = WorkingSchedule::query();
+        if ($this->hasScheduleDaysTable()) {
+            $query->with('days');
+        }
+        $schedule = $query->findOrFail($id);
 
         $validated = $request->validate([
             'date' => ['required', 'date'],
@@ -726,10 +739,13 @@ class ScheduleController extends Controller
      */
     private function syncFlexibleDays(WorkingSchedule $schedule, array $days): void
     {
-        $schedule->days()->delete();
-
         $restDays = [];
         $firstWorking = null;
+        $hasScheduleDays = $this->hasScheduleDaysTable();
+
+        if ($hasScheduleDays) {
+            $schedule->days()->delete();
+        }
 
         foreach ($days as $day) {
             if (! is_array($day)) {
@@ -753,8 +769,7 @@ class ScheduleController extends Controller
             $breakEnd = WorkingScheduleDay::normalizeTime($day['break_end'] ?? null);
             $crossesMidnight = (bool) ($day['crosses_midnight'] ?? false) || ($timeIn && $timeOut && $timeOut <= $timeIn);
 
-            $row = WorkingScheduleDay::create([
-                'working_schedule_id' => $schedule->id,
+            $rowPayload = [
                 'day_of_week' => $dayKey,
                 'is_working_day' => true,
                 'time_in' => $timeIn,
@@ -778,7 +793,10 @@ class ScheduleController extends Controller
                     ? (int) $day['half_day_threshold_minutes']
                     : null,
                 'crosses_midnight' => $crossesMidnight,
-            ]);
+            ];
+            $row = $hasScheduleDays
+                ? WorkingScheduleDay::create(array_merge(['working_schedule_id' => $schedule->id], $rowPayload))
+                : (object) $rowPayload;
 
             if ($firstWorking === null) {
                 $firstWorking = $row;
@@ -786,7 +804,7 @@ class ScheduleController extends Controller
         }
 
         $updates = ['rest_days' => $restDays];
-        if ($firstWorking instanceof WorkingScheduleDay) {
+        if ($firstWorking !== null) {
             $updates['time_in'] = $firstWorking->time_in;
             $updates['time_out'] = $firstWorking->time_out;
             $updates['break_start'] = $firstWorking->break_start;
@@ -860,9 +878,29 @@ class ScheduleController extends Controller
 
     private function scheduleResponse(WorkingSchedule $schedule): array
     {
-        $schedule->loadMissing('days');
+        $hasScheduleDays = $this->hasScheduleDaysTable();
+        if ($hasScheduleDays) {
+            $schedule->loadMissing('days');
+        }
         $daySchedule = $this->scheduleComputation->buildDayScheduleFromModel($schedule);
         $summary = $this->scheduleComputation->summarize(now()->toDateString(), $daySchedule);
+        $days = $hasScheduleDays
+            ? $schedule->days->map(fn (WorkingScheduleDay $day) => [
+                'day_of_week' => $day->day_of_week,
+                'is_working_day' => (bool) $day->is_working_day,
+                'time_in' => $day->time_in ? substr((string) $day->time_in, 0, 5) : null,
+                'time_out' => $day->time_out ? substr((string) $day->time_out, 0, 5) : null,
+                'break_start' => $day->break_start ? substr((string) $day->break_start, 0, 5) : null,
+                'break_end' => $day->break_end ? substr((string) $day->break_end, 0, 5) : null,
+                'break_minutes' => $day->break_minutes,
+                'expected_paid_minutes' => $day->expected_paid_minutes,
+                'grace_period_minutes' => $day->grace_period_minutes,
+                'early_timein_minutes' => $day->early_timein_minutes,
+                'overtime_buffer_minutes' => $day->overtime_buffer_minutes,
+                'half_day_threshold_minutes' => $day->half_day_threshold_minutes,
+                'crosses_midnight' => (bool) $day->crosses_midnight,
+            ])->values()->all()
+            : $this->legacyDaysResponse($schedule);
 
         return [
             'id' => $schedule->id,
@@ -891,24 +929,46 @@ class ScheduleController extends Controller
             'core_hours_start' => $schedule->core_hours_start,
             'core_hours_end' => $schedule->core_hours_end,
             'description' => $schedule->description,
-            'days' => $schedule->days->map(fn (WorkingScheduleDay $day) => [
-                'day_of_week' => $day->day_of_week,
-                'is_working_day' => (bool) $day->is_working_day,
-                'time_in' => $day->time_in ? substr((string) $day->time_in, 0, 5) : null,
-                'time_out' => $day->time_out ? substr((string) $day->time_out, 0, 5) : null,
-                'break_start' => $day->break_start ? substr((string) $day->break_start, 0, 5) : null,
-                'break_end' => $day->break_end ? substr((string) $day->break_end, 0, 5) : null,
-                'break_minutes' => $day->break_minutes,
-                'expected_paid_minutes' => $day->expected_paid_minutes,
-                'grace_period_minutes' => $day->grace_period_minutes,
-                'early_timein_minutes' => $day->early_timein_minutes,
-                'overtime_buffer_minutes' => $day->overtime_buffer_minutes,
-                'half_day_threshold_minutes' => $day->half_day_threshold_minutes,
-                'crosses_midnight' => (bool) $day->crosses_midnight,
-            ])->values()->all(),
+            'days' => $days,
             'is_active' => (bool) ($schedule->is_active ?? true),
             'created_at' => $schedule->created_at?->toIso8601String(),
             'updated_at' => $schedule->updated_at?->toIso8601String(),
         ];
+    }
+
+    private function hasScheduleDaysTable(): bool
+    {
+        static $exists = null;
+        if ($exists === null) {
+            $exists = Schema::hasTable('working_schedule_days');
+        }
+
+        return $exists;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function legacyDaysResponse(WorkingSchedule $schedule): array
+    {
+        $restDays = collect($schedule->rest_days ?? [])
+            ->map(fn ($day) => strtolower((string) $day))
+            ->all();
+
+        return collect(self::DAY_KEYS)->map(fn (string $dayKey) => [
+            'day_of_week' => $dayKey,
+            'is_working_day' => ! in_array($dayKey, $restDays, true),
+            'time_in' => $schedule->time_in ? substr((string) $schedule->time_in, 0, 5) : null,
+            'time_out' => $schedule->time_out ? substr((string) $schedule->time_out, 0, 5) : null,
+            'break_start' => $schedule->break_start ? substr((string) $schedule->break_start, 0, 5) : null,
+            'break_end' => $schedule->break_end ? substr((string) $schedule->break_end, 0, 5) : null,
+            'break_minutes' => null,
+            'expected_paid_minutes' => $schedule->expected_paid_minutes,
+            'grace_period_minutes' => $schedule->grace_period_minutes,
+            'early_timein_minutes' => $schedule->early_timein_minutes,
+            'overtime_buffer_minutes' => $schedule->overtime_buffer_minutes,
+            'half_day_threshold_minutes' => $schedule->half_day_threshold_minutes,
+            'crosses_midnight' => (bool) $schedule->crosses_midnight,
+        ])->values()->all();
     }
 }

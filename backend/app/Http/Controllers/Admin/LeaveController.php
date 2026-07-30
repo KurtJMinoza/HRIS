@@ -114,6 +114,8 @@ class LeaveController extends Controller
                 'status',
                 'notes',
                 'rejection_note',
+                'leave_credits_charged',
+                'leave_unpaid_credit_days',
                 'approval_stage',
                 'pending_approval',
                 'filed_by',
@@ -123,7 +125,7 @@ class LeaveController extends Controller
                 'created_at',
             ])
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,company_id,department_id,employee_level,employee_level_label',
+                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,company_id,department_id,employee_level,employee_level_label,employment_status,employment_status_effective_date,hire_date,leave_credits,schedule,working_schedule_id',
             ]);
 
         $this->applyFilingApprovalVisibility($actor, $query, $request);
@@ -148,7 +150,7 @@ class LeaveController extends Controller
             $currentApproval = $currentApprovals[(int) $l->id] ?? null;
             $canAct = $this->actorCanActOnListApproval($actor, $currentApproval, $actorIsAdminHr);
 
-            return [
+            return array_merge([
                 'id' => $l->id,
                 'request_id' => $l->id,
                 'request_no' => 'LV-'.$l->id,
@@ -168,6 +170,8 @@ class LeaveController extends Controller
                 'undertime_hours' => $l->undertime_minutes !== null ? round(((int) $l->undertime_minutes) / 60, 2) : null,
                 'half_type' => $l->half_type,
                 'duration' => $this->leaveDurationSummary($l),
+                'leave_credits_charged' => $l->leave_credits_charged,
+                'leave_unpaid_credit_days' => $l->leave_unpaid_credit_days,
                 'status' => $l->status,
                 'notes' => $l->notes,
                 'rejection_note' => $l->rejection_note,
@@ -183,7 +187,7 @@ class LeaveController extends Controller
                 'can_reject' => $canAct,
                 'actor_can_delete' => $this->canDeleteLeaveRequest($actor, $l),
                 'hr_wait_message' => $this->leaveListWaitMessage($l, $currentApproval, $canAct),
-            ];
+            ], $this->leaveCreditUsageMeta($l));
         });
 
         RequestPerformanceLogger::finish($perf, $request, $leaves->count(), [
@@ -484,7 +488,7 @@ class LeaveController extends Controller
 
         $leave = LeaveRequest::query()
             ->with([
-                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,employee_code,department_id,section_unit_id,department,role,employee_level,employee_level_label',
+                'user:id,name,first_name,middle_name,last_name,suffix,profile_image,employee_code,department_id,section_unit_id,department,role,employee_level,employee_level_label,employment_status,employment_status_effective_date,hire_date,leave_credits,schedule,working_schedule_id',
                 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
                 'filedBy:id,name,first_name,middle_name,last_name,suffix,role',
                 'firstApprover:id,name,first_name,middle_name,last_name,suffix',
@@ -587,7 +591,7 @@ class LeaveController extends Controller
                     'created_at',
                 ])
                 ->with([
-                    'user:id,name,first_name,middle_name,last_name,suffix,employee_level,employee_level_label',
+                    'user:id,name,first_name,middle_name,last_name,suffix,employee_level,employee_level_label,employment_status,employment_status_effective_date,hire_date,leave_credits,schedule,working_schedule_id',
                     'filedBy:id,name,first_name,middle_name,last_name,suffix',
                 ])
                 ->findOrFail($id);
@@ -1290,7 +1294,7 @@ class LeaveController extends Controller
         return response()->json([
             'message' => 'Notes updated.',
             'leave_request' => $this->leaveResponse($leave->fresh([
-                'user:id,name,first_name,middle_name,last_name,suffix,employee_level,employee_level_label', 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
+                'user:id,name,first_name,middle_name,last_name,suffix,employee_level,employee_level_label,employment_status,employment_status_effective_date,hire_date,leave_credits,schedule,working_schedule_id', 'reviewedByUser:id,name,first_name,middle_name,last_name,suffix',
                 'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
             ]), $request->user()),
         ]);
@@ -1549,7 +1553,7 @@ class LeaveController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v6:v'.LeaveModuleCache::version();
+        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v7:v'.LeaveModuleCache::version();
     }
 
     /**
@@ -1692,7 +1696,7 @@ class LeaveController extends Controller
     {
         $requester = ($leave->relationLoaded('filedBy') && $leave->filedBy) ? $leave->filedBy : $leave->user;
         if (! $requester) {
-            return [
+            return array_merge([
                 'requested_by_id' => null,
                 'requested_by_name' => null,
                 'requested_by_profile_image_url' => null,
@@ -1701,14 +1705,14 @@ class LeaveController extends Controller
                 'requested_by_role_label' => null,
                 'requested_by_employee_level' => null,
                 'requested_by_employee_level_label' => null,
-            ];
+            ], $this->leaveCreditUsageMeta($leave));
         }
 
         $hr = $requester->isAdmin()
             ? \App\Enums\HrRole::AdminHr
             : $this->hrRoleResolver->resolveForApprovalSubject($requester);
 
-        return [
+        return array_merge([
             'requested_by_id' => $requester->id,
             'requested_by_name' => $requester->display_name,
             'requested_by_profile_image_url' => $requester->profile_image_url,
@@ -1717,6 +1721,30 @@ class LeaveController extends Controller
             'requested_by_role_label' => $hr->badgeLabel(),
             'requested_by_employee_level' => $requester->employee_level,
             'requested_by_employee_level_label' => $requester->employee_level_label,
+        ], $this->leaveCreditUsageMeta($leave));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function leaveCreditUsageMeta(LeaveRequest $leave): array
+    {
+        $requester = $leave->user;
+        $type = (string) ($leave->type ?? '');
+        $consumes = $this->leaveCreditService->consumesCredits($type);
+        $eligible = $requester ? $this->leaveCreditService->eligibleForPaidLeavePool($requester) : false;
+        $billableDays = 0;
+
+        if ($consumes) {
+            $billableDays = $requester
+                ? $this->leaveCreditService->billableCreditDaysForUser($requester, $type, $leave->start_date, $leave->end_date)
+                : $this->leaveCreditService->billableCreditDaysFromFields($type, $leave->start_date, $leave->end_date);
+        }
+
+        return [
+            'leave_credit_consumes' => $consumes,
+            'leave_credit_eligible' => $eligible,
+            'leave_credit_billable_days' => $billableDays,
         ];
     }
 

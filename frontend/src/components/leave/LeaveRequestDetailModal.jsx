@@ -229,8 +229,9 @@ function LeaveInitialsAvatar({ name }) {
   )
 }
 
-function LeaveApprovalChain({ steps }) {
+function LeaveApprovalChain({ steps, leaveStatus }) {
   if (!Array.isArray(steps) || steps.length === 0) return null
+  const normalizedLeaveStatus = String(leaveStatus || '').toLowerCase()
 
   return (
     <LeaveDetailSection icon={UsersRound} title="Approval chain">
@@ -239,7 +240,11 @@ function LeaveApprovalChain({ steps }) {
           const name = approvalStepName(step)
           const role = approvalStepRole(step)
           const stepLabel = normalizeApprovalHeadTitle(step.label) || step.label
-          const statusLabel = humanStepStatus(step.status)
+          const stepStatus =
+            normalizedLeaveStatus === 'approved' && ['current', 'pending'].includes(String(step.status || '').toLowerCase())
+              ? 'completed'
+              : step.status
+          const statusLabel = humanStepStatus(stepStatus)
           const statusLine =
             step.acted_at != null && step.acted_at !== ''
               ? `${statusLabel} · ${formatDateTime(step.acted_at)}`
@@ -255,7 +260,7 @@ function LeaveApprovalChain({ steps }) {
               <div
                 className={cn(
                   'rounded-xl border border-border/70 bg-background/70 p-4 shadow-sm dark:border-white/10 dark:bg-background/35',
-                  step.status === 'current' &&
+                  stepStatus === 'current' &&
                     'border-amber-400/70 bg-amber-50/80 ring-2 ring-amber-500/20 dark:border-amber-400/35 dark:bg-amber-950/25'
                 )}
               >
@@ -545,7 +550,7 @@ export function LeaveRequestDetailModal({
                 </div>
               ) : null}
 
-              <LeaveApprovalChain steps={leave.approval_progress} />
+              <LeaveApprovalChain steps={leave.approval_progress} leaveStatus={leave.status} />
               <LeaveApprovalHistory history={leave.approval_history} />
 
               {leave.notes ? (

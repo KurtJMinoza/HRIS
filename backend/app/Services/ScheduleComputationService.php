@@ -6,6 +6,7 @@ use App\Models\WorkingSchedule;
 use App\Models\WorkingScheduleDay;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Single shared schedule computation engine.
@@ -359,7 +360,9 @@ class ScheduleComputationService
      */
     public function buildDayScheduleFromModel(WorkingSchedule $model, ?string $dateKey = null): array
     {
-        $model->loadMissing('days');
+        if (Schema::hasTable('working_schedule_days')) {
+            $model->loadMissing('days');
+        }
 
         if ($model->isFlexiblePerDay()) {
             $dayKey = $dateKey

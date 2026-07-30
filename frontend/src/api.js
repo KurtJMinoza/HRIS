@@ -909,6 +909,13 @@ export function inclusiveAttendanceDaySpan(fromDateStr, toDateStr) {
 // This reduces duplicate network calls across tabs/modules during rapid navigation.
 const GET_CACHE = new Map()
 const GET_IN_FLIGHT = new Map()
+let GET_CACHE_EPOCH = 0
+
+function clearAllGetCaches() {
+  GET_CACHE.clear()
+  GET_IN_FLIGHT.clear()
+  GET_CACHE_EPOCH += 1
+}
 
 function clearGetCacheByPrefix(prefix) {
   if (!prefix) return
@@ -925,6 +932,12 @@ function clearOrganizationGetCaches() {
   clearGetCacheByPrefix('/admin/companies')
 }
 
+function clearEmployeeSelfServiceGetCaches() {
+  clearGetCacheByPrefix('/employee/profile')
+  clearGetCacheByPrefix('/employee-dashboard')
+  clearGetCacheByPrefix('/leave')
+}
+
 /**
  * After HR changes an employee from the admin panel, clear both admin snapshot GET cache and the
  * employee self-service `/employee/profile` cache in this browser (in-memory). Also notify listeners
@@ -936,7 +949,7 @@ function clearCachesAfterAdminEmployeeDataChange(employeeId) {
   if (employeeId != null && employeeId !== '') {
     clearGetCacheByPrefix(`/admin/employees/${employeeId}/profile`)
   }
-  clearGetCacheByPrefix('/employee/profile')
+  clearEmployeeSelfServiceGetCaches()
   if (typeof window !== 'undefined') {
     const n = employeeId != null && employeeId !== '' ? Number(employeeId) : NaN
     if (Number.isFinite(n)) {
@@ -951,13 +964,15 @@ async function cachedAuthenticatedGetJson(path, { ttlMs = 0, timeoutMs, signal }
   }
 
   const cacheKey = path
+  const inFlightKey = `${GET_CACHE_EPOCH}:${path}`
+  const requestEpoch = GET_CACHE_EPOCH
   const now = Date.now()
   const cached = GET_CACHE.get(cacheKey)
   if (cached && cached.expiresAt > now) {
     return cached.data
   }
 
-  const inFlight = GET_IN_FLIGHT.get(cacheKey)
+  const inFlight = GET_IN_FLIGHT.get(inFlightKey)
   if (inFlight && !signal) return inFlight
 
   const requestPromise = (async () => {
@@ -969,7 +984,7 @@ async function cachedAuthenticatedGetJson(path, { ttlMs = 0, timeoutMs, signal }
     if (!res.ok) {
       throw new Error(data.message || 'Failed to load data')
     }
-    if (ttlMs > 0) {
+    if (ttlMs > 0 && requestEpoch === GET_CACHE_EPOCH) {
       GET_CACHE.set(cacheKey, {
         data,
         expiresAt: Date.now() + ttlMs,
@@ -978,11 +993,11 @@ async function cachedAuthenticatedGetJson(path, { ttlMs = 0, timeoutMs, signal }
     return data
   })()
 
-  GET_IN_FLIGHT.set(cacheKey, requestPromise)
+  GET_IN_FLIGHT.set(inFlightKey, requestPromise)
   try {
     return await requestPromise
   } finally {
-    GET_IN_FLIGHT.delete(cacheKey)
+    GET_IN_FLIGHT.delete(inFlightKey)
   }
 }
 
@@ -1059,6 +1074,7 @@ export function getToken() {
 }
 
 function clearToken() {
+  clearAllGetCaches()
   try {
     sessionStorage.removeItem(TOKEN_KEY)
     sessionStorage.removeItem(USER_KEY)

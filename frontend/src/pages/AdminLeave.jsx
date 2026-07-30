@@ -95,7 +95,7 @@ import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailMo
 import { EmployeeLeaveCalendarView } from '@/components/leave/EmployeeLeaveCalendarView'
 import { LeaveCreditsSummaryPanel } from '@/components/leave/LeaveCreditsSummaryPanel'
 import { LeaveModalCreditsCard } from '@/components/leave/LeaveModalCreditsCard'
-import { formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
+import { deriveLeaveCreditUsage, formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
 import {
   clearRequestReviewSearchParams,
   extractLeaveRequestFromReviewPayload,
@@ -105,6 +105,7 @@ import {
 } from '@/lib/leaveReviewDeepLink'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
+import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
@@ -1194,6 +1195,7 @@ export default function AdminLeave() {
       'Start date',
       'End date',
       'Duration',
+      'Uses leave credits',
       'Status',
       'Reason / remarks',
     ]
@@ -1203,6 +1205,7 @@ export default function AdminLeave() {
       leave.start_date || '',
       leave.end_date || '',
       formatDuration(leave),
+      `${deriveLeaveCreditUsage(leave).label} - ${deriveLeaveCreditUsage(leave).detail}`,
       leave.status || '',
       [leave.notes, leave.rejection_note].filter(Boolean).join(' | ') || '',
     ])
@@ -1947,20 +1950,22 @@ export default function AdminLeave() {
             <div className="hidden min-w-0 flex-1 overflow-hidden md:block">
               <table className={leaveEmployeeTableClass}>
                 <colgroup>
-                  <col className="w-[11%]" />
-                  <col className="w-[14%]" />
-                  <col className="w-[9%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[18%]" />
-                  <col className="w-[14%]" />
                   <col className="w-[10%]" />
-                  <col className="w-[11%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[17%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[8%]" />
+                  <col className="w-[9%]" />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
                     <th className={requestModuleThClass}>Leave type</th>
                     <th className={requestModuleThClass}>Date / range</th>
                     <th className={requestModuleThClass}>Duration</th>
+                    <th className={requestModuleThClass}>Uses credits</th>
                     <th className={requestModuleThClass}>Supporting documents</th>
                     <th className={requestModuleThClass}>Reason / remarks</th>
                     <th className={requestModuleThClass}>Status</th>
@@ -1988,6 +1993,9 @@ export default function AdminLeave() {
                           ) : (
                             formatDuration(leave)
                           )}
+                        </td>
+                        <td className={requestModuleTdClass}>
+                          <LeaveCreditUsageBadge leave={leave} leaveCreditInfo={leaveCreditInfo} />
                         </td>
                         <td className={requestModuleTdClass}>
                           {(() => {
@@ -2068,6 +2076,7 @@ export default function AdminLeave() {
                 <LeaveRequestMobileCard
                   key={leave.id}
                   leave={leave}
+                  leaveCreditInfo={leaveCreditInfo}
                   onView={openDetailDialog}
                   onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
                 />
@@ -2080,15 +2089,16 @@ export default function AdminLeave() {
               <table className={leaveAdminTableClass}>
                 <colgroup>
                   {canApproveLeave ? <col className="w-[3%]" /> : null}
-                  <col className={canApproveLeave ? 'w-[14%]' : 'w-[15%]'} />
-                  <col className={canApproveLeave ? 'w-[8%]' : 'w-[9%]'} />
-                  <col className={canApproveLeave ? 'w-[11%]' : 'w-[12%]'} />
-                  <col className="w-[7%]" />
+                  <col className={canApproveLeave ? 'w-[13%]' : 'w-[14%]'} />
+                  <col className={canApproveLeave ? 'w-[8%]' : 'w-[8%]'} />
                   <col className={canApproveLeave ? 'w-[10%]' : 'w-[11%]'} />
-                  <col className={canApproveLeave ? 'w-[13%]' : 'w-[15%]'} />
-                  <col className={canApproveLeave ? 'w-[14%]' : 'w-[15%]'} />
-                  <col className="w-[9%]" />
-                  <col className="w-[11%]" />
+                  <col className="w-[7%]" />
+                  <col className="w-[10%]" />
+                  <col className={canApproveLeave ? 'w-[9%]' : 'w-[10%]'} />
+                  <col className={canApproveLeave ? 'w-[12%]' : 'w-[14%]'} />
+                  <col className={canApproveLeave ? 'w-[13%]' : 'w-[13%]'} />
+                  <col className="w-[8%]" />
+                  <col className="w-[10%]" />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
@@ -2110,6 +2120,7 @@ export default function AdminLeave() {
                     <th className={requestModuleThClass}>Leave type</th>
                     <th className={requestModuleThClass}>Date / range</th>
                     <th className={requestModuleThClass}>Duration</th>
+                    <th className={requestModuleThClass}>Uses credits</th>
                     <th className={requestModuleThClass}>Supporting documents</th>
                     <th className={requestModuleThClass}>Reason / remarks</th>
                     <th className={requestModuleThClass}>Status</th>
@@ -2195,6 +2206,9 @@ export default function AdminLeave() {
                         ) : (
                           formatDuration(leave)
                         )}
+                      </td>
+                      <td className={requestModuleTdClass}>
+                        <LeaveCreditUsageBadge leave={leave} />
                       </td>
                       <td className={requestModuleTdClass}>
                         {(() => {

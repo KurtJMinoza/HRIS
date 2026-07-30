@@ -24,6 +24,7 @@ use App\Models\UserAdminActivityLog;
 use App\Models\UserPhoneChangeLog;
 use App\Models\WorkingSchedule;
 use App\Services\DataScopeService;
+use App\Services\EmployeeDashboardCacheService;
 use App\Services\HeadAssignmentEmployeeSearchService;
 use App\Services\EmployeeLevelResolver;
 use App\Services\EmployeeOrganizationAssignmentService;
@@ -1734,6 +1735,14 @@ class EmployeeController extends Controller
                 $this->forgetPayrollSalaryCaches((int) $employee->id);
             }
 
+            if ($leaveCreditRelevantFieldsTouched) {
+                $this->refreshLeaveCreditsAfterEmploymentChange(
+                    $employee->fresh() ?? $employee,
+                    $request->user(),
+                    $employmentFieldsTouched
+                );
+            }
+
             if ($salaryAuditDirty !== [] && $this->rbacService->can($request->user(), 'employees.sensitive')) {
                 UserAdminActivityLog::query()->create([
                     'subject_user_id' => $employee->id,
@@ -2448,12 +2457,33 @@ class EmployeeController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         }
+        $this->invalidateEmployeeLeaveCreditViews((int) $employee->id);
 
         return response()->json([
             'message' => 'Leave credits updated.',
             'leave_credits' => $balance,
             'employee' => $this->employeeResponse($employee->fresh(), $this->viewerCanSensitive($request->user()), false, false),
         ]);
+    }
+
+    private function refreshLeaveCreditsAfterEmploymentChange(User $employee, ?User $actor, bool $employmentFieldsTouched): void
+    {
+        $employeeId = (int) $employee->id;
+        $this->invalidateEmployeeLeaveCreditViews($employeeId);
+
+        $this->leaveCreditService->ensureAnnualRechargeForUser($employee);
+        if ($employmentFieldsTouched) {
+            $this->leaveCreditService->grantAnnualAllocationOnRegularizationIfEligible($employee, $actor);
+        }
+
+        $this->invalidateEmployeeLeaveCreditViews($employeeId);
+    }
+
+    private function invalidateEmployeeLeaveCreditViews(int $employeeId): void
+    {
+        $this->leaveCreditService->forgetSummaryCacheForUser($employeeId);
+        EmployeeProfileCache::invalidate($employeeId);
+        EmployeeDashboardCacheService::invalidate($employeeId);
     }
 
     private function loadScopedEmployee(Request $request, int $id, bool $forMutation = false): User

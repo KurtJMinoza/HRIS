@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class EmployeeScheduleAdjustmentService
@@ -247,7 +248,7 @@ class EmployeeScheduleAdjustmentService
         ?array $customSchedule
     ): ScheduleAssignmentSnapshot {
         $source = $template ?? new WorkingSchedule($customSchedule ?? []);
-        if ($template) {
+        if ($template && Schema::hasTable('working_schedule_days')) {
             $template->loadMissing('days');
         }
         $schedulePayload = $template

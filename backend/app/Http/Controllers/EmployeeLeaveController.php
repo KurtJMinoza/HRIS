@@ -114,7 +114,7 @@ class EmployeeLeaveController extends Controller
     private function mapEmployeeLeaveRow(LeaveRequest $l): array
     {
         $l->loadMissing([
-            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id,employment_status,employment_status_effective_date,hire_date,leave_credits,schedule,working_schedule_id',
             'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id,section_unit_id,division_id',
             'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
@@ -187,27 +187,51 @@ class EmployeeLeaveController extends Controller
     {
         $requester = ($leave->relationLoaded('filedBy') && $leave->filedBy) ? $leave->filedBy : $leave->user;
         if (! $requester) {
-            return [
+            return array_merge([
                 'requested_by_id' => null,
                 'requested_by_name' => null,
                 'requested_by_profile_image_url' => null,
                 'requested_by_position' => null,
                 'requested_by_hr_role' => null,
                 'requested_by_role_label' => null,
-            ];
+            ], $this->leaveCreditUsageMeta($leave));
         }
 
         $hr = $requester->isAdmin()
             ? \App\Enums\HrRole::AdminHr
             : $this->hrRoleResolver->resolveForApprovalSubject($requester);
 
-        return [
+        return array_merge([
             'requested_by_id' => $requester->id,
             'requested_by_name' => $requester->display_name,
             'requested_by_profile_image_url' => $requester->profile_image_url,
             'requested_by_position' => $requester->position,
             'requested_by_hr_role' => $hr->value,
             'requested_by_role_label' => $hr->badgeLabel(),
+        ], $this->leaveCreditUsageMeta($leave));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function leaveCreditUsageMeta(LeaveRequest $leave): array
+    {
+        $requester = $leave->user;
+        $type = (string) ($leave->type ?? '');
+        $consumes = $this->leaveCreditService->consumesCredits($type);
+        $eligible = $requester ? $this->leaveCreditService->eligibleForPaidLeavePool($requester) : false;
+        $billableDays = 0;
+
+        if ($consumes) {
+            $billableDays = $requester
+                ? $this->leaveCreditService->billableCreditDaysForUser($requester, $type, $leave->start_date, $leave->end_date)
+                : $this->leaveCreditService->billableCreditDaysFromFields($type, $leave->start_date, $leave->end_date);
+        }
+
+        return [
+            'leave_credit_consumes' => $consumes,
+            'leave_credit_eligible' => $eligible,
+            'leave_credit_billable_days' => $billableDays,
         ];
     }
 
@@ -854,7 +878,7 @@ class EmployeeLeaveController extends Controller
         $leave->refresh();
         LeaveModuleCache::flush();
         $leave->load([
-            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id',
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,employment_status,employment_status_effective_date,hire_date,leave_credits,schedule,working_schedule_id',
             'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
             'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
             'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',

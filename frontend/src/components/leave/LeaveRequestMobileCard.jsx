@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
+import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
 import { requestModuleCompactButtonClass } from '@/lib/requestModuleTable'
@@ -141,6 +142,7 @@ export default function LeaveRequestMobileCard({
   onReject,
   onDelete,
   onNotes,
+  leaveCreditInfo = null,
 }) {
   const pending = String(leave?.status || '').toLowerCase() === 'pending'
   const currentApprover = String(leave?.current_approver || leave?.current_approver_name || '').trim()
@@ -215,6 +217,12 @@ export default function LeaveRequestMobileCard({
             <div>
               <p className="font-semibold uppercase tracking-wide text-muted-foreground">Duration</p>
               <p className="mt-0.5 text-sm text-foreground">{durationLabel(leave)}</p>
+            </div>
+            <div>
+              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Uses credits</p>
+              <div className="mt-0.5">
+                <LeaveCreditUsageBadge leave={leave} compact leaveCreditInfo={leaveCreditInfo} />
+              </div>
             </div>
             <div>
               <p className="font-semibold uppercase tracking-wide text-muted-foreground">Documents</p>

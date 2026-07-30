@@ -381,6 +381,14 @@ function addYearsDateOnly(date, years) {
   return new Date(date.getFullYear() + years, date.getMonth(), date.getDate())
 }
 
+function formatDateOnlyForPayload(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return ''
+  const yy = date.getFullYear()
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const dd = String(date.getDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
 function FieldHint({ children }) {
   return <p className="text-xs text-muted-foreground leading-relaxed">{children}</p>
 }
@@ -800,10 +808,12 @@ export default function AdminEmployeeProfile() {
   const [payrollPeriodsError, setPayrollPeriodsError] = useState('')
   const [leaveCreditsBlock, setLeaveCreditsBlock] = useState(null)
   const [leaveCreditsLoading, setLeaveCreditsLoading] = useState(false)
+  const [workingScheduleTouched, setWorkingScheduleTouched] = useState(false)
 
   useEffect(() => {
     setLeaveCreditsBlock(null)
     setLeaveCreditsLoading(false)
+    setWorkingScheduleTouched(false)
   }, [employeeId])
 
   const [employeeStatusHistory, setEmployeeStatusHistory] = useState([])
@@ -1398,6 +1408,7 @@ export default function AdminEmployeeProfile() {
             monthly_rate: found.monthly_rate != null && found.monthly_rate !== '' ? String(found.monthly_rate) : '',
           }
           setForm(nextForm)
+          setWorkingScheduleTouched(false)
           setSkills(nextSkills)
           setGovIds(nextGovIds)
           setSecondaryIds(nextSecondaryIds)
@@ -2078,8 +2089,11 @@ export default function AdminEmployeeProfile() {
     const today = new Date()
     const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate())
     const effectiveDate = parseIsoDateOnly(form.employment_status_effective_date)
+    const hireDate = parseIsoDateOnly(form.hire_date)
     const isRegular = String(form.employment_status || '').trim().toLowerCase() === 'regular'
-    const eligibilityDate = effectiveDate ? addYearsDateOnly(effectiveDate, 1) : null
+    const serviceAnchorDate = effectiveDate || hireDate
+    const serviceAnchorDateLabel = formatDateOnlyForPayload(serviceAnchorDate)
+    const eligibilityDate = serviceAnchorDate ? addYearsDateOnly(serviceAnchorDate, 1) : null
     const eligibleNow = Boolean(isRegular && eligibilityDate && todayDateOnly.getTime() >= eligibilityDate.getTime())
     const annualAllocation = Math.max(0, Number(leaveCreditsBlock.annual_allocation ?? 7)) || 7
     const remaining = Number(leaveCreditsBlock.remaining ?? 0)
@@ -2106,8 +2120,8 @@ export default function AdminEmployeeProfile() {
           remaining > 0 || Number(leaveCreditsBlock.effective_available ?? 0) > 0
             ? null
             : null,
-        service_anchor_date: form.employment_status_effective_date || leaveCreditsBlock.service_anchor_date || null,
-        regular_service_start_date: form.employment_status_effective_date || leaveCreditsBlock.regular_service_start_date || null,
+        service_anchor_date: serviceAnchorDateLabel || leaveCreditsBlock.service_anchor_date || null,
+        regular_service_start_date: serviceAnchorDateLabel || leaveCreditsBlock.regular_service_start_date || null,
       }
     }
 
@@ -2124,13 +2138,13 @@ export default function AdminEmployeeProfile() {
         status_summary: 'Complete 1 full year of regular service to unlock paid leave credits.',
         unpaid_leave_notice: 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
         warning: 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
-        service_anchor_date: form.employment_status_effective_date || leaveCreditsBlock.service_anchor_date || null,
-        regular_service_start_date: form.employment_status_effective_date || leaveCreditsBlock.regular_service_start_date || null,
+        service_anchor_date: serviceAnchorDateLabel || leaveCreditsBlock.service_anchor_date || null,
+        regular_service_start_date: serviceAnchorDateLabel || leaveCreditsBlock.regular_service_start_date || null,
       }
     }
 
     return leaveCreditsBlock
-  }, [leaveCreditsBlock, form.employment_status, form.employment_status_effective_date])
+  }, [leaveCreditsBlock, form.employment_status, form.employment_status_effective_date, form.hire_date])
 
   const completionState = useMemo(() => {
     const sections = [
@@ -3931,6 +3945,9 @@ export default function AdminEmployeeProfile() {
       const salaryDerived = deriveDerivedSalaryFieldsFromBasic(form.monthly_salary, scheduleRateMeta)
       const composedHomeAddress = hasPartialStructuredAddress ? composeHomeAddress(form) : form.home_address
       const normalizedEmploymentStatus = normalizeEmploymentStatusValue(form.employment_status)
+      const workingSchedulePatch = workingScheduleTouched
+        ? { working_schedule_id: form.working_schedule_id ? Number(form.working_schedule_id) : null }
+        : {}
       const payload = {
         first_name: form.first_name || undefined,
         middle_name: form.middle_name || null,
@@ -3967,7 +3984,7 @@ export default function AdminEmployeeProfile() {
         payroll_effective_date: form.payroll_effective_date || null,
         contract_start_date: form.contract_start_date || null,
         contract_end_date: form.contract_end_date || null,
-        working_schedule_id: form.working_schedule_id ? Number(form.working_schedule_id) : null,
+        ...workingSchedulePatch,
         monthly_salary: parseSalaryNumber(form.monthly_salary),
         hourly_rate: salaryDerived.hourly_rate !== '' ? parseSalaryNumber(salaryDerived.hourly_rate) : parseSalaryNumber(form.hourly_rate),
         daily_rate: salaryDerived.daily_rate !== '' ? parseSalaryNumber(salaryDerived.daily_rate) : parseSalaryNumber(form.daily_rate),
@@ -4011,6 +4028,7 @@ export default function AdminEmployeeProfile() {
       }
       const updated = data.employee
       setEmployee(updated)
+      setWorkingScheduleTouched(false)
       profileSaveRollbackRef.current = null
       await refreshAdminEmployeeCaches(updated.id)
       // Refetch fresh profile payload immediately so dependent tabs (payroll/tax/payslip context)
@@ -5209,12 +5227,13 @@ export default function AdminEmployeeProfile() {
                   </Label>
                   <Select
                     value={form.working_schedule_id || 'none'}
-                    onValueChange={(v) =>
+                    onValueChange={(v) => {
+                      setWorkingScheduleTouched(true)
                       setForm((f) => ({
                         ...f,
                         working_schedule_id: v === 'none' ? '' : v,
                       }))
-                    }
+                    }}
                   >
                     <SelectTrigger className="h-11 w-full text-base">
                       <SelectValue placeholder="Select work schedule" />
@@ -8181,4 +8200,3 @@ export default function AdminEmployeeProfile() {
     </Motion.div>
   )
 }
-

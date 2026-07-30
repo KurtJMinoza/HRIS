@@ -31,6 +31,7 @@ use App\Services\HolidayCalendarService;
 use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
 use App\Services\HolidayPolicyCache;
+use App\Services\LeaveCreditService;
 use App\Services\LegacyOrganizationMirrorService;
 use App\Services\PayrollFreezeService;
 use App\Support\AdminDashboardCache;
@@ -94,7 +95,12 @@ class AppServiceProvider extends ServiceProvider
                 AttendanceCacheService::invalidate((int) $user->id);
                 EmployeeDashboardCacheService::invalidate((int) $user->id);
             }
+            if ($user->wasChanged(['hire_date', 'contract_start_date', 'contract_end_date', 'leave_credits', 'leave_credits_reset_date'])) {
+                app(LeaveCreditService::class)->forgetSummaryCacheForUser((int) $user->id);
+                EmployeeDashboardCacheService::invalidate((int) $user->id);
+            }
             if ($user->wasChanged(['employment_type', 'employment_status', 'employment_status_effective_date'])) {
+                app(LeaveCreditService::class)->forgetSummaryCacheForUser((int) $user->id);
                 AttendanceCacheService::invalidate((int) $user->id);
                 EmployeeDashboardCacheService::invalidate((int) $user->id);
                 HolidayPolicyCache::forgetPolicy((int) ($user->getEffectiveCompanyId() ?? 0));

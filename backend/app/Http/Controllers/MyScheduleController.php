@@ -17,6 +17,7 @@ use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Validation\ValidationException;
 
@@ -331,7 +332,10 @@ class MyScheduleController extends Controller
 
     protected function workingScheduleSummary(WorkingSchedule $schedule): array
     {
-        $schedule->loadMissing('days');
+        $hasScheduleDays = Schema::hasTable('working_schedule_days');
+        if ($hasScheduleDays) {
+            $schedule->loadMissing('days');
+        }
 
         $restDays = collect($schedule->rest_days ?? [])
             ->map(fn ($day) => strtoupper((string) $day))
@@ -358,7 +362,7 @@ class MyScheduleController extends Controller
             'days' => [],
         ];
 
-        if ($schedule->isFlexiblePerDay() || ($schedule->shift_type ?? '') === WorkingSchedule::SHIFT_FLEXIBLE) {
+        if ($hasScheduleDays && ($schedule->isFlexiblePerDay() || ($schedule->shift_type ?? '') === WorkingSchedule::SHIFT_FLEXIBLE)) {
             $summary['days'] = $this->flexibleDaysSummary($schedule);
             $summary['rest_days'] = collect($summary['days'])
                 ->filter(fn (array $day) => ! ($day['is_working_day'] ?? false))
