@@ -392,12 +392,13 @@ class LeaveCreditService
             return false;
         }
 
+        // Only skip when this employee already received the 7→14 allocation increase.
+        // Do NOT treat legacy eligibility_reconcile (old 0→7 grants) as already synced.
         $alreadySynced = LeaveCreditTransaction::query()
             ->where('user_id', $locked->id)
             ->whereIn('leave_type_context', [
                 'annual_allocation_sync',
                 'eligibility_allocation_topup',
-                'eligibility_reconcile',
             ])
             ->exists();
         if ($alreadySynced) {
