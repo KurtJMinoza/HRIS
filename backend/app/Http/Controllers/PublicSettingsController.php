@@ -41,6 +41,9 @@ class PublicSettingsController extends Controller
             'cache_hit' => $cacheHit,
             'time_ms' => round((microtime(true) - $start) * 1000),
         ];
+        $serverNow = now(config('attendance.timezone', 'Asia/Manila'));
+        $settings['server_time'] = $serverNow->toIso8601String();
+        $settings['server_time_epoch_ms'] = ($serverNow->getTimestamp() * 1000) + (int) floor(((int) $serverNow->format('u')) / 1000);
 
         Log::debug('[PublicSettings] response timing', [
             'endpoint' => 'public-settings',
@@ -48,6 +51,8 @@ class PublicSettingsController extends Controller
             'time_ms' => $settings['_debug']['time_ms'],
         ]);
 
-        return response()->json($settings);
+        return response()
+            ->json($settings)
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     }
 }

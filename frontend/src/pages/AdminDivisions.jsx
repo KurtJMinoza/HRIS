@@ -112,6 +112,7 @@ export default function AdminDivisions() {
   const { toast } = useToast()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const searchParamString = searchParams.toString()
   const [divisions, setDivisions] = useState([])
   const [departments, setDepartments] = useState([])
   const [branches, setBranches] = useState([])
@@ -266,7 +267,7 @@ export default function AdminDivisions() {
   const fetchDivisions = useCallback(async () => {
     setError(null)
     try {
-      const params = { fresh: true }
+      const params = {}
       if (companyFilter) params.company_id = companyFilter
       if (branchFilter) params.branch_id = branchFilter
       const data = await getDivisions(params)
@@ -314,12 +315,12 @@ export default function AdminDivisions() {
     setLoading(true)
     setError(null)
     try {
-      const divParams = { fresh: true, signal }
+      const divParams = { signal }
       if (companyFilter) divParams.company_id = companyFilter
       if (branchFilter) divParams.branch_id = branchFilter
       const [divData, branchData, companyData, deptData] = await Promise.all([
         getDivisions(divParams),
-        getBranches({ fresh: true, signal }),
+        getBranches({ signal }),
         getCompanies({ signal }),
         getDepartments({ signal }),
       ])
@@ -338,11 +339,13 @@ export default function AdminDivisions() {
   }, [branchFilter, companyFilter])
 
   useEffect(() => {
-    const params = {}
-    if (companyFilter) params.company_id = companyFilter
-    if (branchFilter) params.branch_id = branchFilter
-    setSearchParams(params, { replace: true })
-  }, [branchFilter, companyFilter, setSearchParams])
+    const params = new URLSearchParams()
+    if (companyFilter) params.set('company_id', companyFilter)
+    if (branchFilter) params.set('branch_id', branchFilter)
+    if (searchParamString !== params.toString()) {
+      setSearchParams(params, { replace: true })
+    }
+  }, [branchFilter, companyFilter, searchParamString, setSearchParams])
 
   useEffect(() => {
     setPage(1)

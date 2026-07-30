@@ -111,15 +111,23 @@ function LoginHrFigureMark({ className, presentation = 'tile' }) {
 }
 
 // —— Real-time clock for DTR ——
-function RealTimeClock() {
-  const [now, setNow] = useState(() => new Date())
+const DEFAULT_ATTENDANCE_TIME_ZONE = 'Asia/Manila'
+
+function resolveAttendanceTimestamp(attendance) {
+  return attendance?.verified_at || attendance?.created_at || new Date().toISOString()
+}
+
+function RealTimeClock({ offsetMs = 0, timeZone = DEFAULT_ATTENDANCE_TIME_ZONE }) {
+  const [now, setNow] = useState(() => new Date(Date.now() + offsetMs))
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000)
+    const update = () => setNow(new Date(Date.now() + offsetMs))
+    update()
+    const t = setInterval(update, 1000)
     return () => clearInterval(t)
-  }, [])
-  const time = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+  }, [offsetMs])
+  const time = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone })
   const [timeMain, timeSuffix] = time.split(' ')
-  const date = now.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  const date = now.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone })
   return (
     <div className="flex flex-col items-center gap-1">
       <div className="flex items-baseline gap-2.5 font-mono tabular-nums" aria-live="polite">
@@ -144,10 +152,10 @@ const FEATURES = [
   'Role-Based Dashboard',
 ]
 
-function formatKioskTime(iso) {
+function formatKioskTime(iso, timeZone = DEFAULT_ATTENDANCE_TIME_ZONE) {
   if (!iso) return '—'
   const d = new Date(iso)
-  return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
+  return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone })
 }
 
 /** Kiosk attendance confirmation dialog header — follows app light/dark theme. */
@@ -181,20 +189,22 @@ function KioskAttendanceModalBrandBar({ variant }) {
 }
 
 /** Relative day label for kiosk feed: Today, Yesterday, or a short date (en-PH). */
-function formatKioskDateLabel(iso) {
+function formatKioskDateLabel(iso, timeZone = DEFAULT_ATTENDANCE_TIME_ZONE) {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
-  const now = new Date()
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const startLog = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-  const dayDiff = Math.round((startToday - startLog) / 86400000)
+  const dateParts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+  const todayKey = dateParts.format(new Date())
+  const logKey = dateParts.format(d)
+  const dayDiff = Math.round((Date.parse(`${todayKey}T00:00:00Z`) - Date.parse(`${logKey}T00:00:00Z`)) / 86400000)
   if (dayDiff === 0) return 'Today'
   if (dayDiff === 1) return 'Yesterday'
-  const sameYear = d.getFullYear() === now.getFullYear()
+  const yearFormatter = new Intl.DateTimeFormat('en-PH', { timeZone, year: 'numeric' })
+  const sameYear = yearFormatter.format(d) === yearFormatter.format(new Date())
   return d.toLocaleDateString('en-PH', {
     month: 'short',
     day: 'numeric',
+    timeZone,
     ...(sameYear ? {} : { year: 'numeric' }),
   })
 }
@@ -348,7 +358,7 @@ function FaceLoginCapture({ onSuccess, className, hideInstruction, kioskMode, ki
       setFaceSuccessSummary({
         name: data?.user?.name ?? 'Employee',
         type: att?.type ?? 'clock_in',
-        recordedAt: att?.created_at ?? new Date().toISOString(),
+        recordedAt: resolveAttendanceTimestamp(att),
         typeLabel,
       })
     } catch (err) {
@@ -566,6 +576,8 @@ function SmartDTRPreview({ className }) {
   })
   const [kioskFaceInError, setKioskFaceInError] = useState(false)
   const [geofenceModuleEnabled, setGeofenceModuleEnabled] = useState(true)
+  const [attendanceTimeZone, setAttendanceTimeZone] = useState(DEFAULT_ATTENDANCE_TIME_ZONE)
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0)
   const lastScanRef = useRef({ text: null, at: 0 })
 
   const RECENT_VISIBLE_COUNT = 5
@@ -588,12 +600,43 @@ function SmartDTRPreview({ className }) {
     })
   }, [navigate])
 
+  const syncServerClock = useCallback(async (signal) => {
+    const requestStartedAt = Date.now()
+    const settings = await getPublicSettings({ signal, timeoutMs: 5000 })
+    const responseReceivedAt = Date.now()
+    const serverEpochMs = Number(settings?.server_time_epoch_ms)
+    if (Number.isFinite(serverEpochMs)) {
+      const clientMidpointMs = requestStartedAt + ((responseReceivedAt - requestStartedAt) / 2)
+      setServerClockOffsetMs(Math.round(serverEpochMs - clientMidpointMs))
+    }
+    if (typeof settings?.timezone === 'string' && settings.timezone.trim()) {
+      setAttendanceTimeZone(settings.timezone.trim())
+    }
+  }, [])
+
+  const kioskNowIso = useCallback(
+    () => new Date(Date.now() + serverClockOffsetMs).toISOString(),
+    [serverClockOffsetMs],
+  )
+
   useEffect(() => {
     fetchRecent()
     getAttendanceGeofenceModuleStatus().then((s) => setGeofenceModuleEnabled(s.enabled)).catch(() => {})
     const t = setInterval(fetchRecent, 30000)
     return () => clearInterval(t)
   }, [fetchRecent])
+
+  useEffect(() => {
+    const ac = new AbortController()
+    void syncServerClock(ac.signal).catch(() => {})
+    const t = setInterval(() => {
+      void syncServerClock().catch(() => {})
+    }, 60000)
+    return () => {
+      ac.abort()
+      clearInterval(t)
+    }
+  }, [syncServerClock])
 
   // Auto-clear inline scan result (longer when orphan clock-out hint is shown so user can tap File correction)
   useEffect(() => {
@@ -629,7 +672,12 @@ function SmartDTRPreview({ className }) {
         throw new Error('Please select Clock In or Clock Out before scanning.')
       }
       // Always submit the explicitly selected action to avoid unintended dual punches.
-      data = await recordAttendanceKiosk(kioskType, qrText, { attemptMeta, method: 'qr' })
+      data = await recordAttendanceKiosk(kioskType, qrText, {
+        attemptMeta,
+        clicked_at: kioskNowIso(),
+        timezone: attendanceTimeZone,
+        method: 'qr',
+      })
       usedType = kioskType
 
       playSuccess(SOUND_FEEDBACK_ENABLED)
@@ -640,7 +688,7 @@ function SmartDTRPreview({ className }) {
         employeeProfileImageUrl: data.employee_profile_image_url ?? null,
         employeeProfileImage: data.employee_profile_image ?? null,
         type: usedType,
-        recordedAt: data.attendance?.created_at ?? new Date().toISOString(),
+        recordedAt: resolveAttendanceTimestamp(data.attendance),
         status: data.attendance?.status ?? null,
         lateMinutes: data.attendance?.late_minutes ?? null,
         lateLabel: data.attendance?.late_label ?? null,
@@ -674,7 +722,11 @@ function SmartDTRPreview({ className }) {
 
   function openCapture(type) {
     setKioskType(type)
-    setKioskAttemptMeta(createAttendanceAttemptMeta('face'))
+    setKioskAttemptMeta({
+      ...createAttendanceAttemptMeta('face'),
+      clicked_at: kioskNowIso(),
+      timezone: attendanceTimeZone,
+    })
     setError(null)
     setScanResult(null)
   }
@@ -810,7 +862,7 @@ function SmartDTRPreview({ className }) {
 
       {/* Hero Clock */}
       <div className="relative z-10 flex flex-col items-center px-6 pt-1 pb-4">
-        <RealTimeClock />
+        <RealTimeClock offsetMs={serverClockOffsetMs} timeZone={attendanceTimeZone} />
       </div>
 
       <div className="relative z-10 mx-11 h-px bg-[#e3e5ea] dark:bg-border" aria-hidden />
@@ -924,6 +976,7 @@ function SmartDTRPreview({ className }) {
                 successResult={scanResult}
                 onFileAttendanceCorrection={goFileAttendanceCorrectionPortal}
                 theme={theme}
+                timeZone={attendanceTimeZone}
               />
             </div>
           ) : !kioskType ? (
@@ -972,6 +1025,8 @@ function SmartDTRPreview({ className }) {
                   kioskMode
                   kioskType={kioskType}
                   attemptMeta={kioskAttemptMeta}
+                  serverClockOffsetMs={serverClockOffsetMs}
+                  attendanceTimeZone={attendanceTimeZone}
                   onKioskAttendanceCorrection={(kc) => {
                     setKioskCorrectionModal({
                       open: true,
@@ -992,7 +1047,7 @@ function SmartDTRPreview({ className }) {
                       employeeProfileImageUrl: data.employee_profile_image_url ?? null,
                       employeeProfileImage: data.employee_profile_image ?? null,
                       type: kioskType,
-                      recordedAt: data.attendance?.created_at ?? new Date().toISOString(),
+                      recordedAt: resolveAttendanceTimestamp(data.attendance),
                       status: data.attendance?.status ?? null,
                       lateMinutes: data.attendance?.late_minutes ?? null,
                       lateLabel: data.attendance?.late_label ?? null,
@@ -1138,8 +1193,8 @@ function SmartDTRPreview({ className }) {
                       </div>
                       {/* Date + time + status badge */}
                       <div className="flex shrink-0 flex-col items-end gap-1">
-                        <span className="text-[10px] font-medium text-[#6b7280] dark:text-muted-foreground">{formatKioskDateLabel(log.created_at)}</span>
-                        <span className="font-mono text-[12px] font-bold text-[#111827] dark:text-foreground">{formatKioskTime(log.created_at)}</span>
+                        <span className="text-[10px] font-medium text-[#6b7280] dark:text-muted-foreground">{formatKioskDateLabel(log.created_at, attendanceTimeZone)}</span>
+                        <span className="font-mono text-[12px] font-bold text-[#111827] dark:text-foreground">{formatKioskTime(log.created_at, attendanceTimeZone)}</span>
                         {log.status === 'on_time' && (
                           <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#ff5a14] dark:text-[#fb923c]">
                             <CheckCircle2 className="size-3" aria-hidden />
@@ -1299,7 +1354,7 @@ function SmartDTRPreview({ className }) {
 
                 {summaryModal.recordedAt ? (
                   <p className="font-mono text-[2.05rem] font-bold tabular-nums tracking-tight text-slate-900 dark:text-zinc-50 sm:text-[2.25rem]">
-                    {formatKioskTime(summaryModal.recordedAt)}
+                    {formatKioskTime(summaryModal.recordedAt, attendanceTimeZone)}
                   </p>
                 ) : (
                   <p className="text-4xl font-bold text-slate-400 dark:text-zinc-500">—</p>

@@ -917,6 +917,14 @@ function clearGetCacheByPrefix(prefix) {
   }
 }
 
+function clearOrganizationGetCaches() {
+  clearGetCacheByPrefix('/admin/branches')
+  clearGetCacheByPrefix('/admin/departments')
+  clearGetCacheByPrefix('/admin/divisions')
+  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearGetCacheByPrefix('/admin/companies')
+}
+
 /**
  * After HR changes an employee from the admin panel, clear both admin snapshot GET cache and the
  * employee self-service `/employee/profile` cache in this browser (in-memory). Also notify listeners
@@ -945,7 +953,7 @@ async function cachedAuthenticatedGetJson(path, { ttlMs = 0, timeoutMs, signal }
   const cacheKey = path
   const now = Date.now()
   const cached = GET_CACHE.get(cacheKey)
-  if (cached && cached.expiresAt > now && !signal) {
+  if (cached && cached.expiresAt > now) {
     return cached.data
   }
 
@@ -1417,7 +1425,7 @@ export async function getPublicSettings(options = {}) {
     `${API_BASE}/public-settings`,
     {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
       ...(options.signal ? { signal: options.signal } : {}),
     },
     options.timeoutMs ?? 5000,
@@ -4238,6 +4246,7 @@ export async function getDepartments(params = {}) {
   const query = new URLSearchParams()
   if (params.lite) query.set('lite', '1')
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
+  if (params.division_id != null && params.division_id !== '') query.set('division_id', String(params.division_id))
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.fresh) query.set('_ts', String(Date.now()))
   const path = `/admin/departments${query.toString() ? `?${query.toString()}` : ''}`
@@ -4299,7 +4308,7 @@ export async function createDepartment(payload) {
     const msg = data.message || data.errors?.division_id?.[0] || data.errors?.logo?.[0] || data.errors?.name?.[0] || 'Failed to create department'
     throw new Error(msg)
   }
-  clearGetCacheByPrefix('/admin/departments')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -4319,9 +4328,7 @@ export async function unassignEmployeesFromDepartment(departmentId, employeeIds)
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.errors?.employee_ids?.[0] || data.message || 'Failed to unassign employees')
-  clearGetCacheByPrefix('/admin/departments')
-  clearGetCacheByPrefix('/admin/divisions')
-  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6043,7 +6050,7 @@ export async function updateDepartment(id, payload) {
       'Failed to update department'
     throw new Error(msg)
   }
-  clearGetCacheByPrefix('/admin/departments')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6051,7 +6058,7 @@ export async function deleteDepartment(id) {
   const res = await authenticatedFetch(`/admin/departments/${id}`, { method: 'DELETE' })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to delete department')
-  clearGetCacheByPrefix('/admin/departments')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6066,9 +6073,7 @@ export async function assignEmployeesToDepartment(departmentId, employeeIds, opt
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.errors?.employee_ids?.[0] || data.message || 'Failed to assign employees')
-  clearGetCacheByPrefix('/admin/departments')
-  clearGetCacheByPrefix('/admin/divisions')
-  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6293,13 +6298,13 @@ export async function getDivisions(params = {}) {
 
 export async function createDivision(payload) {
   const data = await jsonMutation('/admin/divisions', 'POST', payload, 'Failed to create division')
-  clearGetCacheByPrefix('/admin/divisions')
+  clearOrganizationGetCaches()
   return data
 }
 
 export async function updateDivision(id, payload) {
   const data = await jsonMutation(`/admin/divisions/${id}`, 'PATCH', payload, 'Failed to update division')
-  clearGetCacheByPrefix('/admin/divisions')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6307,7 +6312,7 @@ export async function deleteDivision(id) {
   const res = await authenticatedFetch(`/admin/divisions/${id}`, { method: 'DELETE' })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to delete division')
-  clearGetCacheByPrefix('/admin/divisions')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6329,14 +6334,14 @@ export async function assignEmployeesToDivision(divisionId, employeeIds, options
     },
     'Failed to assign employees',
   )
-  clearGetCacheByPrefix('/admin/divisions')
+  clearOrganizationGetCaches()
   clearGetCacheByPrefix('/admin/employees')
   return data
 }
 
 export async function unassignEmployeesFromDivision(divisionId, employeeIds) {
   const data = await jsonMutation(`/admin/divisions/${divisionId}/unassign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to unassign employees')
-  clearGetCacheByPrefix('/admin/divisions')
+  clearOrganizationGetCaches()
   clearGetCacheByPrefix('/admin/employees')
   return data
 }
@@ -6352,13 +6357,13 @@ export async function getSectionsOrUnits(params = {}) {
 
 export async function createSectionOrUnit(payload) {
   const data = await jsonMutation('/admin/sections-or-units', 'POST', payload, 'Failed to create section/unit')
-  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearOrganizationGetCaches()
   return data
 }
 
 export async function updateSectionOrUnit(id, payload) {
   const data = await jsonMutation(`/admin/sections-or-units/${id}`, 'PATCH', payload, 'Failed to update section/unit')
-  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6366,7 +6371,7 @@ export async function deleteSectionOrUnit(id) {
   const res = await authenticatedFetch(`/admin/sections-or-units/${id}`, { method: 'DELETE' })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to delete section/unit')
-  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6388,14 +6393,14 @@ export async function assignEmployeesToSectionOrUnit(sectionUnitId, employeeIds,
     },
     'Failed to assign employees',
   )
-  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearOrganizationGetCaches()
   clearGetCacheByPrefix('/admin/employees')
   return data
 }
 
 export async function unassignEmployeesFromSectionOrUnit(sectionUnitId, employeeIds) {
   const data = await jsonMutation(`/admin/sections-or-units/${sectionUnitId}/unassign-employees`, 'POST', { employee_ids: employeeIds }, 'Failed to unassign employees')
-  clearGetCacheByPrefix('/admin/sections-or-units')
+  clearOrganizationGetCaches()
   clearGetCacheByPrefix('/admin/employees')
   return data
 }
@@ -6560,6 +6565,7 @@ export async function createBranch(payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to create branch')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6571,6 +6577,7 @@ export async function updateBranch(id, payload) {
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to update branch')
+  clearOrganizationGetCaches()
   return data
 }
 
@@ -6578,6 +6585,7 @@ export async function deleteBranch(id) {
   const res = await authenticatedFetch(`/admin/branches/${id}`, { method: 'DELETE' })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to delete branch')
+  clearOrganizationGetCaches()
   return data
 }
 

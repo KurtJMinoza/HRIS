@@ -35,6 +35,7 @@ export function ScannerInput({
   /** SmartDTR: clock-out without clock-in hint → employee portal correction filing */
   onFileAttendanceCorrection,
   theme = 'light',
+  timeZone = 'Asia/Manila',
   className,
 }) {
   const submittingRef = useRef(submitting)
@@ -106,7 +107,7 @@ export function ScannerInput({
   function formatTime(iso) {
     if (!iso) return null
     return new Date(iso).toLocaleTimeString('en-PH', {
-      hour: '2-digit', minute: '2-digit', hour12: true,
+      hour: '2-digit', minute: '2-digit', hour12: true, timeZone,
     })
   }
 

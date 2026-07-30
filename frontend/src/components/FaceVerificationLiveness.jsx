@@ -46,19 +46,28 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
   ])
 }
 
-function formatKioskTime(iso) {
+function formatKioskTime(iso, timeZone = 'Asia/Manila') {
   if (!iso) return '-'
   const d = new Date(iso)
-  return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true })
+  return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone })
 }
 
-function buildImagePayload(capture, attendanceDeviceProfile, attemptMeta) {
+function resolveAttendanceTimestamp(attendance) {
+  return attendance?.verified_at || attendance?.created_at || new Date().toISOString()
+}
+
+function buildImagePayload(capture, attendanceDeviceProfile, attemptMeta, serverClockOffsetMs = 0, attendanceTimeZone) {
+  const capturedAtMs = Number(capture?.capturedAtMs) || Date.now()
+  const meta = attemptMeta || createAttendanceAttemptMeta('face')
+
   return {
+    ...meta,
     image_base64: capture?.imageBase64,
-    client_capture_started_at_ms: capture?.capturedAtMs,
+    client_capture_started_at_ms: capturedAtMs,
     device_type: attendanceDeviceProfile || undefined,
     camera_info: capture?.cameraInfo,
-    ...(attemptMeta || createAttendanceAttemptMeta('face')),
+    clicked_at: new Date(capturedAtMs + (Number(serverClockOffsetMs) || 0)).toISOString(),
+    timezone: attendanceTimeZone || meta.timezone,
   }
 }
 
@@ -76,6 +85,8 @@ export function FaceVerificationLiveness({
   onKioskCancel,
   onKioskErrorStateChange,
   attemptMeta,
+  serverClockOffsetMs = 0,
+  attendanceTimeZone,
   instructionText,
 }) {
   const [ready, setReady] = useState(false)
@@ -221,7 +232,13 @@ export function FaceVerificationLiveness({
     setApiErrorCode(null)
 
     try {
-      const payload = buildImagePayload(capture, attendanceDeviceProfile, attemptMetaRef.current)
+      const payload = buildImagePayload(
+        capture,
+        attendanceDeviceProfile,
+        attemptMetaRef.current,
+        serverClockOffsetMs,
+        attendanceTimeZone,
+      )
 
       if (onVerified) {
         await onVerified({
@@ -269,7 +286,7 @@ export function FaceVerificationLiveness({
       setSuccessSummary({
         name: data?.user?.name ?? 'Employee',
         type: att?.type ?? 'clock_in',
-        recordedAt: att?.created_at ?? new Date().toISOString(),
+        recordedAt: resolveAttendanceTimestamp(att),
         typeLabel,
       })
     } catch (err) {
@@ -369,6 +386,8 @@ export function FaceVerificationLiveness({
     onKioskSuccess,
     onSuccess,
     onVerified,
+    serverClockOffsetMs,
+    attendanceTimeZone,
     submitting,
   ])
 
@@ -670,7 +689,7 @@ export function FaceVerificationLiveness({
               </span>
             )}
             {successSummary.recordedAt && (
-              <span className="block font-mono text-lg font-bold text-slate-900">{formatKioskTime(successSummary.recordedAt)}</span>
+              <span className="block font-mono text-lg font-bold text-slate-900">{formatKioskTime(successSummary.recordedAt, attendanceTimeZone)}</span>
             )}
           </div>
           <Button

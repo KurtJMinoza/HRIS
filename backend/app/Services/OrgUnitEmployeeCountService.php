@@ -141,12 +141,13 @@ class OrgUnitEmployeeCountService implements OrgUnitEmployeeCounter
             : [];
 
         $unassignedByDivision = $this->unassignedToDivisionCountsBulk($divisionIds);
+        $assignedByDivision = $this->assignedDivisionCountsBulk($divisions);
 
         $result = [];
         foreach ($divisions as $division) {
             $id = (int) $division->id;
             $branchId = $division->branch_id ? (int) $division->branch_id : null;
-            $assigned = $this->assignedDivisionCount($id);
+            $assigned = (int) ($assignedByDivision[$id] ?? 0);
             $branch = $branchId !== null ? (int) ($branchCounts[$branchId] ?? 0) : 0;
             $unassigned = (int) ($unassignedByDivision[$id] ?? 0);
             $result[$id] = $this->formatDivisionCounts($assigned, $branch, $unassigned);
@@ -162,6 +163,129 @@ class OrgUnitEmployeeCountService implements OrgUnitEmployeeCounter
     public function forSectionUnits(Collection $sections): array
     {
         return $this->sectionUnitRoster->countsForSections($sections);
+    }
+
+    /**
+     * @param  Collection<int, Division>  $divisions
+     * @return array<int, int>
+     */
+    private function assignedDivisionCountsBulk(Collection $divisions): array
+    {
+        if ($divisions->isEmpty()) {
+            return [];
+        }
+
+        $divisionIds = $divisions->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($divisionIds === []) {
+            return [];
+        }
+
+        $departmentToDivision = Department::query()
+            ->whereIn('division_id', $divisionIds)
+            ->pluck('division_id', 'id')
+            ->map(fn ($divisionId) => (int) $divisionId)
+            ->all();
+
+        $sectionToDivision = SectionUnit::query()
+            ->whereIn('division_id', $divisionIds)
+            ->pluck('division_id', 'id')
+            ->map(fn ($divisionId) => (int) $divisionId)
+            ->all();
+
+        $departmentIds = array_map('intval', array_keys($departmentToDivision));
+        $sectionIds = array_map('intval', array_keys($sectionToDivision));
+
+        $membersByDivision = [];
+        foreach ($divisionIds as $divisionId) {
+            $membersByDivision[$divisionId] = [];
+        }
+
+        $primaryUsers = $this->rosterQuery()
+            ->where(function (Builder $query) use ($divisionIds, $departmentIds, $sectionIds): void {
+                $query->whereIn('division_id', $divisionIds);
+                if ($departmentIds !== []) {
+                    $query->orWhereIn('department_id', $departmentIds);
+                }
+                if ($sectionIds !== []) {
+                    $query->orWhereIn('section_unit_id', $sectionIds);
+                }
+            })
+            ->get(['id', 'division_id', 'department_id', 'section_unit_id']);
+
+        foreach ($primaryUsers as $user) {
+            $employeeId = (int) $user->id;
+            $divisionId = (int) ($user->division_id ?? 0);
+            if (isset($membersByDivision[$divisionId])) {
+                $membersByDivision[$divisionId][$employeeId] = true;
+            }
+
+            $departmentId = (int) ($user->department_id ?? 0);
+            if (isset($departmentToDivision[$departmentId])) {
+                $membersByDivision[$departmentToDivision[$departmentId]][$employeeId] = true;
+            }
+
+            $sectionId = (int) ($user->section_unit_id ?? 0);
+            if (isset($sectionToDivision[$sectionId])) {
+                $membersByDivision[$sectionToDivision[$sectionId]][$employeeId] = true;
+            }
+        }
+
+        $assignmentQuery = EmployeeOrganizationAssignment::query()
+            ->active()
+            ->where(function (Builder $query) use ($divisionIds, $departmentIds, $sectionIds): void {
+                $query->whereIn('division_id', $divisionIds);
+                if ($departmentIds !== []) {
+                    $query->orWhereIn('department_id', $departmentIds);
+                }
+                if ($sectionIds !== []) {
+                    $query->orWhereIn('section_unit_id', $sectionIds);
+                }
+            });
+
+        $assignments = $assignmentQuery->get(['employee_id', 'division_id', 'department_id', 'section_unit_id']);
+        if ($assignments->isNotEmpty()) {
+            $visibleAssignmentEmployeeIds = $this->rosterQuery()
+                ->whereIn('id', $assignments->pluck('employee_id')->map(fn ($id) => (int) $id)->unique()->values()->all())
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->flip()
+                ->all();
+
+            foreach ($assignments as $assignment) {
+                $employeeId = (int) $assignment->employee_id;
+                if (! isset($visibleAssignmentEmployeeIds[$employeeId])) {
+                    continue;
+                }
+
+                $divisionId = (int) ($assignment->division_id ?? 0);
+                if (isset($membersByDivision[$divisionId])) {
+                    $membersByDivision[$divisionId][$employeeId] = true;
+                }
+
+                $departmentId = (int) ($assignment->department_id ?? 0);
+                if (isset($departmentToDivision[$departmentId])) {
+                    $membersByDivision[$departmentToDivision[$departmentId]][$employeeId] = true;
+                }
+
+                $sectionId = (int) ($assignment->section_unit_id ?? 0);
+                if (isset($sectionToDivision[$sectionId])) {
+                    $membersByDivision[$sectionToDivision[$sectionId]][$employeeId] = true;
+                }
+            }
+        }
+
+        $counts = [];
+        foreach ($membersByDivision as $divisionId => $employeeIds) {
+            $counts[(int) $divisionId] = count($employeeIds);
+        }
+
+        return $counts;
     }
 
     private function rosterQuery(): Builder

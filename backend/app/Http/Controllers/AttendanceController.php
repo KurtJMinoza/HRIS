@@ -68,6 +68,12 @@ class AttendanceController extends Controller
 
     private const DEFAULT_CLICK_TIMESTAMP_MAX_DRIFT_MINUTES = 5;
 
+    /** Kiosk screens use server time as the source of truth when the device/browser clock is stale. */
+    private const KIOSK_CLIENT_TIMESTAMP_STALE_SECONDS = 60;
+
+    /** Allow tiny client/server sync jitter without rejecting the punch. */
+    private const CLIENT_TIMESTAMP_FUTURE_GRACE_SECONDS = 10;
+
     /** No schedule assigned at all (Admin → Schedule). */
     private const NO_SCHEDULE_ASSIGNED_MESSAGE = 'No schedule assigned. Please contact the administrator.';
 
@@ -586,6 +592,19 @@ class AttendanceController extends Controller
         }
 
         if ($parsed->greaterThan($serverReceivedAt)) {
+            $futureSeconds = max(0, $parsed->getTimestamp() - $serverReceivedAt->getTimestamp());
+            if ($futureSeconds <= self::CLIENT_TIMESTAMP_FUTURE_GRACE_SECONDS) {
+                Log::info('Attendance client timestamp slightly ahead; clamping to server receive time', [
+                    'path' => $request->path(),
+                    'type' => $request->input('type'),
+                    'method' => $request->input('method'),
+                    'client_attempt_id' => $request->input('client_attempt_id'),
+                    'future_seconds' => $futureSeconds,
+                ]);
+
+                return $serverReceivedAt->copy();
+            }
+
             throw ValidationException::withMessages([
                 'clicked_at' => ['Clock timestamp cannot be in the future. Please sync your device time and try again.'],
             ]);
@@ -593,6 +612,20 @@ class AttendanceController extends Controller
 
         $maxSeconds = $this->clickTimestampMaxDriftMinutes() * 60;
         $ageSeconds = $parsed->diffInSeconds($serverReceivedAt, false);
+        if ($this->isKioskAttendanceClient($request) && $ageSeconds > self::KIOSK_CLIENT_TIMESTAMP_STALE_SECONDS) {
+            Log::warning('Kiosk client timestamp stale; using server receive time for attendance punch', [
+                'path' => $request->path(),
+                'type' => $request->input('type'),
+                'method' => $request->input('method'),
+                'client_attempt_id' => $request->input('client_attempt_id'),
+                'age_seconds' => $ageSeconds,
+                'client_clicked_at' => $clickedAt,
+                'server_received_at' => $serverReceivedAt->toIso8601String(),
+            ]);
+
+            return $serverReceivedAt->copy();
+        }
+
         if ($ageSeconds > $maxSeconds) {
             throw ValidationException::withMessages([
                 'clicked_at' => ["Clock timestamp is too old. Please clock again within {$this->clickTimestampMaxDriftMinutes()} minutes."],

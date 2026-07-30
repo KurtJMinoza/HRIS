@@ -245,6 +245,7 @@ export default function AdminBranches() {
   const { toast } = useToast()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const searchParamString = searchParams.toString()
 
   const [branches, setBranches] = useState([])
   const [companies, setCompanies] = useState([])
@@ -298,12 +299,14 @@ export default function AdminBranches() {
 
   // Sync URL param when filter changes
   useEffect(() => {
+    const nextParams = new URLSearchParams()
     if (companyFilter) {
-      setSearchParams({ company_id: companyFilter }, { replace: true })
-    } else {
-      setSearchParams({}, { replace: true })
+      nextParams.set('company_id', companyFilter)
     }
-  }, [companyFilter, setSearchParams])
+    if (searchParamString !== nextParams.toString()) {
+      setSearchParams(nextParams, { replace: true })
+    }
+  }, [companyFilter, searchParamString, setSearchParams])
 
   useEffect(() => {
     setPage(1)

@@ -87,9 +87,172 @@ class SectionUnitRosterService
             return [];
         }
 
+        $sectionIds = $sections->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($sectionIds === []) {
+            return [];
+        }
+
+        $departmentIds = $sections->pluck('department_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $divisionIds = $sections->pluck('division_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $departmentPools = $departmentIds !== []
+            ? User::query()
+                ->visibleEmployees()
+                ->whereIn('department_id', $departmentIds)
+                ->selectRaw('department_id as group_key, COUNT(*) as aggregate_count')
+                ->groupBy('department_id')
+                ->pluck('aggregate_count', 'group_key')
+                ->map(fn ($count) => (int) $count)
+                ->all()
+            : [];
+
+        $divisionPools = $divisionIds !== []
+            ? User::query()
+                ->visibleEmployees()
+                ->whereIn('division_id', $divisionIds)
+                ->selectRaw('division_id as group_key, COUNT(*) as aggregate_count')
+                ->groupBy('division_id')
+                ->pluck('aggregate_count', 'group_key')
+                ->map(fn ($count) => (int) $count)
+                ->all()
+            : [];
+
+        $assignedBySection = [];
+        $sourceBySection = [];
+        $userOrgById = [];
+        foreach ($sections as $section) {
+            $sectionId = (int) $section->id;
+            $assignedBySection[$sectionId] = [];
+            $sourceBySection[$sectionId] = [
+                EmployeeOrganizationAssignment::TYPE_PRIMARY => [],
+                EmployeeOrganizationAssignment::TYPE_SHARED => [],
+                EmployeeOrganizationAssignment::TYPE_TEMPORARY => [],
+                EmployeeOrganizationAssignment::TYPE_ACTING => [],
+            ];
+        }
+
+        $primaryUsers = User::query()
+            ->visibleEmployees()
+            ->whereIn('section_unit_id', $sectionIds)
+            ->get(['id', 'department_id', 'division_id', 'section_unit_id']);
+
+        foreach ($primaryUsers as $user) {
+            $employeeId = (int) $user->id;
+            $sectionId = (int) ($user->section_unit_id ?? 0);
+            if (! isset($assignedBySection[$sectionId])) {
+                continue;
+            }
+
+            $userOrgById[$employeeId] = [
+                'department_id' => $user->department_id ? (int) $user->department_id : null,
+                'division_id' => $user->division_id ? (int) $user->division_id : null,
+                'section_unit_id' => $sectionId,
+            ];
+            $assignedBySection[$sectionId][$employeeId] = true;
+            $sourceBySection[$sectionId][EmployeeOrganizationAssignment::TYPE_PRIMARY][$employeeId] = true;
+        }
+
+        if ($this->assignmentsReady()) {
+            $assignments = EmployeeOrganizationAssignment::query()
+                ->active()
+                ->whereIn('section_unit_id', $sectionIds)
+                ->whereIn('assignment_type', self::SUPPLEMENTAL_ASSIGNMENT_TYPES)
+                ->orderByDesc('is_primary')
+                ->orderBy('id')
+                ->get(['employee_id', 'section_unit_id', 'assignment_type']);
+
+            if ($assignments->isNotEmpty()) {
+                $assignmentUsers = User::query()
+                    ->visibleEmployees()
+                    ->whereIn('id', $assignments->pluck('employee_id')->map(fn ($id) => (int) $id)->unique()->values()->all())
+                    ->get(['id', 'department_id', 'division_id', 'section_unit_id'])
+                    ->keyBy('id');
+
+                $supplementalSourceByEmployee = [];
+                foreach ($assignments as $assignment) {
+                    $employeeId = (int) $assignment->employee_id;
+                    $sectionId = (int) ($assignment->section_unit_id ?? 0);
+                    $user = $assignmentUsers->get($employeeId);
+                    if (! $user || ! isset($assignedBySection[$sectionId])) {
+                        continue;
+                    }
+
+                    $userOrgById[$employeeId] = [
+                        'department_id' => $user->department_id ? (int) $user->department_id : null,
+                        'division_id' => $user->division_id ? (int) $user->division_id : null,
+                        'section_unit_id' => $user->section_unit_id ? (int) $user->section_unit_id : null,
+                    ];
+                    $assignedBySection[$sectionId][$employeeId] = true;
+
+                    if ((int) ($user->section_unit_id ?? 0) === $sectionId) {
+                        continue;
+                    }
+
+                    $supplementalKey = $sectionId.':'.$employeeId;
+                    if (isset($supplementalSourceByEmployee[$supplementalKey])) {
+                        continue;
+                    }
+
+                    $type = in_array($assignment->assignment_type, self::SUPPLEMENTAL_ASSIGNMENT_TYPES, true)
+                        ? (string) $assignment->assignment_type
+                        : EmployeeOrganizationAssignment::TYPE_SHARED;
+                    $supplementalSourceByEmployee[$supplementalKey] = $type;
+                    $sourceBySection[$sectionId][$type][$employeeId] = true;
+                }
+            }
+        }
+
         $result = [];
         foreach ($sections as $section) {
-            $result[(int) $section->id] = $this->countsForSection($section);
+            $sectionId = (int) $section->id;
+            $departmentId = $section->department_id ? (int) $section->department_id : null;
+            $divisionId = $section->division_id ? (int) $section->division_id : null;
+            $pool = $departmentId !== null
+                ? (int) ($departmentPools[$departmentId] ?? 0)
+                : ($divisionId !== null ? (int) ($divisionPools[$divisionId] ?? 0) : 0);
+
+            $assignedInPool = 0;
+            foreach (array_keys($assignedBySection[$sectionId] ?? []) as $employeeId) {
+                $org = $userOrgById[(int) $employeeId] ?? null;
+                if (! $org) {
+                    continue;
+                }
+                if ($departmentId !== null && (int) ($org['department_id'] ?? 0) === $departmentId) {
+                    $assignedInPool++;
+                } elseif ($departmentId === null && $divisionId !== null && (int) ($org['division_id'] ?? 0) === $divisionId) {
+                    $assignedInPool++;
+                }
+            }
+
+            $assignedCount = count($assignedBySection[$sectionId] ?? []);
+            $result[$sectionId] = [
+                'assigned_employee_count' => $assignedCount,
+                'primary_employee_count' => count($sourceBySection[$sectionId][EmployeeOrganizationAssignment::TYPE_PRIMARY] ?? []),
+                'shared_employee_count' => count($sourceBySection[$sectionId][EmployeeOrganizationAssignment::TYPE_SHARED] ?? []),
+                'temporary_employee_count' => count($sourceBySection[$sectionId][EmployeeOrganizationAssignment::TYPE_TEMPORARY] ?? []),
+                'acting_employee_count' => count($sourceBySection[$sectionId][EmployeeOrganizationAssignment::TYPE_ACTING] ?? []),
+                'department_employee_count' => $pool,
+                'division_employee_count' => $pool,
+                'unassigned_employee_count' => max(0, $pool - $assignedInPool),
+                'total_employees' => $assignedCount,
+            ];
         }
 
         return $result;

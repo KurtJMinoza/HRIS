@@ -112,6 +112,7 @@ export default function AdminDepartments() {
   const { toast } = useToast()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const searchParamString = searchParams.toString()
   const [departments, setDepartments] = useState([])
   const [divisions, setDivisions] = useState([])
   const [branches, setBranches] = useState([])
@@ -246,7 +247,7 @@ export default function AdminDepartments() {
   const fetchDepartments = useCallback(async () => {
     setError(null)
     try {
-      const params = { fresh: true }
+      const params = {}
       if (branchFilter) params.branch_id = branchFilter
       if (companyFilter) params.company_id = companyFilter
       const data = await getDepartments(params)
@@ -294,7 +295,7 @@ export default function AdminDepartments() {
     setLoading(true)
     setError(null)
     try {
-      const deptParams = { fresh: true, signal }
+      const deptParams = { signal }
       if (branchFilter) deptParams.branch_id = branchFilter
       if (companyFilter) deptParams.company_id = companyFilter
       const divParams = { signal }
@@ -303,7 +304,7 @@ export default function AdminDepartments() {
       const [deptData, divData, branchData, companyData] = await Promise.all([
         getDepartments(deptParams),
         getDivisions(divParams),
-        getBranches({ fresh: true, signal }),
+        getBranches({ signal }),
         getCompanies({ signal }),
       ])
       if (isStale()) return
@@ -321,11 +322,13 @@ export default function AdminDepartments() {
   }, [branchFilter, companyFilter])
 
   useEffect(() => {
-    const params = {}
-    if (branchFilter) params.branch_id = branchFilter
-    if (companyFilter) params.company_id = companyFilter
-    setSearchParams(params, { replace: true })
-  }, [branchFilter, companyFilter, setSearchParams])
+    const params = new URLSearchParams()
+    if (branchFilter) params.set('branch_id', branchFilter)
+    if (companyFilter) params.set('company_id', companyFilter)
+    if (searchParamString !== params.toString()) {
+      setSearchParams(params, { replace: true })
+    }
+  }, [branchFilter, companyFilter, searchParamString, setSearchParams])
 
   useEffect(() => {
     setPage(1)
