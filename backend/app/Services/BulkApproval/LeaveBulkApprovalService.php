@@ -241,11 +241,12 @@ class LeaveBulkApprovalService
                 }
 
                 if ($firstStepRows !== []) {
-                    DB::table('leave_requests')->upsert(
-                        $firstStepRows,
-                        ['id'],
-                        ['first_approver_id', 'first_approved_at', 'approval_stage', 'updated_at'],
-                    );
+                    // UPDATE-only: upsert INSERT path lacks required columns like user_id under MySQL strict mode.
+                    foreach ($firstStepRows as $row) {
+                        $id = (int) $row['id'];
+                        unset($row['id']);
+                        LeaveRequest::query()->whereKey($id)->update($row);
+                    }
                 }
 
                 if ($bypassIds !== []) {
