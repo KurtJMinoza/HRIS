@@ -378,6 +378,9 @@ export default function AdminReports() {
     const detailedStatusCol = {
       label: 'Status',
       accessor: (row) => {
+        if ((row.status === 'leave' || row.status === 'halfday') && row.leave_pay_label) {
+          return row.leave_pay_label
+        }
         if (row.presence_label != null && String(row.presence_label).trim() !== '') {
           return row.presence_label
         }
@@ -408,7 +411,12 @@ export default function AdminReports() {
       align: 'center',
     }
     const leaveTypeCol = { label: 'Leave Type', accessor: (row) => formatLeaveType(row.leave_type), ...txt(110) }
-    const leaveStatusCol = { label: 'Leave Status', accessor: (row) => row.leave_status || '—', minW: 100, align: 'center' }
+    const leaveStatusCol = {
+      label: 'Leave Status',
+      accessor: (row) => row.leave_pay_label ? `${row.leave_status || 'approved'} · ${row.leave_pay_label}` : row.leave_status || '—',
+      minW: 150,
+      align: 'center',
+    }
     const leaveDurationCol = {
       label: 'Leave Duration',
       accessor: (row) => {

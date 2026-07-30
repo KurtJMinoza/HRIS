@@ -54,6 +54,33 @@ function formatLeaveType(value) {
   return LEAVE_TYPE_LABELS[value] || String(value).replace(/_/g, ' ')
 }
 
+function formatAttendanceReportStatus(row) {
+  if ((row.status === 'leave' || row.status === 'halfday') && row.leave_pay_label) {
+    return row.leave_pay_label
+  }
+  return row.status === 'undertime'
+    ? row.undertime_filing_status === 'approved'
+      ? 'Undertime (Approved)'
+      : 'Undertime (Unfiled)'
+    : row.status === 'clocked_in'
+      ? row.late_label
+        ? `Clocked In · ${row.late_label}`
+        : 'Clocked In'
+      : row.status === 'incomplete'
+        ? 'Incomplete'
+        : row.status === 'late' && row.late_label
+          ? row.late_label
+          : row.status === 'present'
+            ? row.late_label || 'Present'
+            : row.status === 'halfday'
+              ? row.late_label || 'Half Day'
+              : row.status === 'absent'
+                ? 'Absent'
+                : row.status === 'leave'
+                  ? 'Leave'
+                  : row.status || '—'
+}
+
 export default function EmployeeReports() {
   const [fromDate, setFromDate] = useState(() => firstDayOfMonthIso())
   const [toDate, setToDate] = useState(() => todayIso())
@@ -163,28 +190,7 @@ export default function EmployeeReports() {
         import('@react-pdf/renderer'),
         import('@/components/reports/ReportPdfDocument'),
       ])
-      const getStatusLabel = (row) =>
-        row.status === 'undertime'
-          ? row.undertime_filing_status === 'approved'
-            ? 'Undertime (Approved)'
-            : 'Undertime (Unfiled)'
-          : row.status === 'clocked_in'
-            ? row.late_label
-              ? `Clocked In · ${row.late_label}`
-              : 'Clocked In'
-            : row.status === 'incomplete'
-              ? 'Incomplete'
-              : row.status === 'late' && row.late_label
-                ? row.late_label
-                : row.status === 'present'
-                  ? 'Present'
-                  : row.status === 'halfday'
-                    ? 'Half Day'
-                    : row.status === 'absent'
-                      ? 'Absent'
-                      : row.status === 'leave'
-                        ? 'Leave'
-                        : row.status || '—'
+      const getStatusLabel = (row) => formatAttendanceReportStatus(row)
       const getLeaveDuration = (row) =>
         row.leave_type === 'undertime' &&
         row.leave_status === 'approved' &&
@@ -454,28 +460,7 @@ export default function EmployeeReports() {
                     </tr>
                   ) : (
                     dailyBreakdownRows.map((row) => {
-                      const statusLabel =
-                        row.status === 'undertime'
-                          ? row.undertime_filing_status === 'approved'
-                            ? 'Undertime (Approved)'
-                            : 'Undertime (Unfiled)'
-                          : row.status === 'clocked_in'
-                            ? row.late_label
-                              ? `Clocked In · ${row.late_label}`
-                              : 'Clocked In'
-                            : row.status === 'incomplete'
-                              ? 'Incomplete'
-                              : row.status === 'late' && row.late_label
-                                ? row.late_label
-                                : row.status === 'present'
-                                  ? row.late_label || 'Present'
-                                  : row.status === 'halfday'
-                                    ? row.late_label || 'Half Day'
-                                    : row.status === 'absent'
-                                      ? 'Absent'
-                                      : row.status === 'leave'
-                                        ? 'Leave'
-                                        : row.status || '—'
+                      const statusLabel = formatAttendanceReportStatus(row)
                       const leaveDuration =
                         row.leave_type === 'undertime' &&
                         row.leave_status === 'approved' &&

@@ -213,10 +213,10 @@ class AttendanceRollupService
         if ($status === 'leave') {
             $pay = (string) ($row['leave_pay_status'] ?? '');
             if ($pay === 'paid') {
-                return 'Paid leave';
+                return 'Leave with pay';
             }
             if ($pay === 'unpaid') {
-                return 'Unpaid leave';
+                return 'Leave without pay';
             }
 
             return 'Leave';
@@ -265,6 +265,13 @@ class AttendanceRollupService
         }
 
         if ($status === 'halfday') {
+            $pay = (string) ($row['leave_pay_status'] ?? '');
+            if ($pay === 'paid') {
+                return 'Leave with pay';
+            }
+            if ($pay === 'unpaid') {
+                return 'Leave without pay';
+            }
             $lateLabel = trim((string) ($row['late_label'] ?? ''));
 
             return $lateLabel !== '' ? $lateLabel : 'Half Day';
@@ -323,6 +330,13 @@ class AttendanceRollupService
         }
 
         if ($status === 'halfday') {
+            $pay = (string) ($row['leave_pay_status'] ?? '');
+            if ($pay === 'paid') {
+                return 'Leave with pay';
+            }
+            if ($pay === 'unpaid') {
+                return 'Leave without pay';
+            }
             $lateLabel = trim((string) ($row['late_label'] ?? ''));
 
             return $lateLabel !== '' ? $lateLabel : 'Half Day';
@@ -333,6 +347,14 @@ class AttendanceRollupService
         }
 
         if ($status === 'leave') {
+            $pay = (string) ($row['leave_pay_status'] ?? '');
+            if ($pay === 'paid') {
+                return 'Leave with pay';
+            }
+            if ($pay === 'unpaid') {
+                return 'Leave without pay';
+            }
+
             return 'On Leave';
         }
 
@@ -479,7 +501,7 @@ class AttendanceRollupService
     {
         return $normalized === 'leave'
             || $normalized === 'on leave'
-            || str_starts_with($normalized, 'paid leave')
-            || str_starts_with($normalized, 'unpaid leave');
+            || str_starts_with($normalized, 'leave with pay')
+            || str_starts_with($normalized, 'leave without pay');
     }
 }

@@ -6,6 +6,7 @@ use App\Models\AttendanceCorrection;
 use App\Models\AttendanceDailySummary;
 use App\Models\AttendanceLog;
 use App\Models\Company;
+use App\Models\LeaveRequest;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -28,6 +29,7 @@ class CompanyEfficiencyService
         private readonly EmployeeEvaluationResultService $employeeEvaluationResultService,
         private readonly EvaluationScoringService $evaluationScoringService,
         private readonly MergedKpiPerformanceService $mergedKpiPerformanceService,
+        private readonly LeaveCreditService $leaveCreditService,
     ) {}
 
     /**
@@ -322,6 +324,35 @@ class CompanyEfficiencyService
             ->unique(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString())
             ->keyBy(fn (AttendanceCorrection $row) => $row->user_id.'|'.Carbon::parse($row->date)->toDateString());
 
+        $approvedLeavesByDate = collect();
+        if ($employeeIds !== []) {
+            $approvedLeavesByEmployeeDate = [];
+            $approvedLeaves = LeaveRequest::query()
+                ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
+                ->whereIn('user_id', $employeeIds)
+                ->where('status', LeaveRequest::STATUS_APPROVED)
+                ->where('start_date', '<=', $toDateKey)
+                ->where('end_date', '>=', $fromDateKey)
+                ->orderBy('id')
+                ->get();
+
+            foreach ($approvedLeaves as $leave) {
+                $leaveStart = $leave->start_date->copy()->max($fromDate);
+                $leaveEnd = $leave->end_date->copy()->min($toDate);
+                $cursor = $leaveStart->copy();
+                while ($cursor->lessThanOrEqualTo($leaveEnd)) {
+                    $dateKey = $cursor->toDateString();
+                    $key = $leave->user_id.'|'.$dateKey;
+                    $existing = $approvedLeavesByEmployeeDate[$key] ?? null;
+                    if ($existing === null || (int) $leave->id > (int) $existing->id) {
+                        $approvedLeavesByEmployeeDate[$key] = $leave;
+                    }
+                    $cursor->addDay();
+                }
+            }
+            $approvedLeavesByDate = collect($approvedLeavesByEmployeeDate);
+        }
+
         // Evaluations include EXECom employees; attendance aggregation above does not.
         // Use latest applicable result as of period end so short ranges (Today/Yesterday)
         // still connect to the Performance Evaluation module.
@@ -351,6 +382,7 @@ class CompanyEfficiencyService
             'stored_summaries' => $storedSummaries,
             'logs_by_employee_date' => $logsByEmployeeDate,
             'approved_corrections' => $approvedCorrections,
+            'approved_leaves' => $approvedLeavesByDate,
             'all_employees_by_company' => $allEmployeesByCompany,
             'excluded_execom_by_company' => $excludedExecomByCompany,
             'latest_evaluations' => $latestEvaluationsByEmployee,
@@ -558,17 +590,22 @@ class CompanyEfficiencyService
 
         $status = strtolower((string) ($dailySummary['status'] ?? ''));
         if (
+            ! empty($dailySummary['is_leave'])
+            || ! empty($dailySummary['leave_pay_status'])
+            || ! empty($dailySummary['leave_pay_label'])
+            || in_array($status, ['leave', 'halfday'], true)
+        ) {
+            return true;
+        }
+
+        if (
             ! empty($dailySummary['is_rest_day'])
             || in_array($status, ['rest', 'rest_day', 'no_schedule_rest', 'upcoming'], true)
         ) {
             return false;
         }
 
-        if (
-            ! empty($dailySummary['is_leave'])
-            || ! empty($dailySummary['is_holiday'])
-            || in_array($status, ['leave', 'holiday'], true)
-        ) {
+        if (! empty($dailySummary['is_holiday']) || $status === 'holiday') {
             return false;
         }
 
@@ -586,9 +623,17 @@ class CompanyEfficiencyService
     ): array {
         $storeKey = $employee->id.'|'.$dateKey;
         $storedSummary = $ctx['stored_summaries']->get($storeKey);
+        $leave = $ctx['approved_leaves']->get($storeKey);
 
         if ($storedSummary !== null && ! $isToday) {
-            return $this->normalizeIncompletePunches($this->dailySummaryFromStoredRow($storedSummary));
+            return $this->normalizeIncompletePunches(
+                $this->applyApprovedLeaveOverride(
+                    $this->dailySummaryFromStoredRow($storedSummary),
+                    $employee,
+                    $leave instanceof LeaveRequest ? $leave : null,
+                    $dateKey,
+                )
+            );
         }
 
         // Today still uses the full attendance engine.
@@ -602,7 +647,26 @@ class CompanyEfficiencyService
                     effectiveSchedule: $ctx['schedule_cache'][$employee->id] ?? null,
                     preloadedLogs: $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? null,
                     correction: $ctx['approved_corrections']->get($storeKey),
+                    leave: $leave instanceof LeaveRequest ? $leave : null,
                 ),
+            );
+        }
+
+        if ($leave instanceof LeaveRequest && $leave->type !== 'undertime') {
+            return $this->applyApprovedLeaveOverride(
+                $this->attendanceDailySummaryService->computeForDate(
+                    user: $employee,
+                    dateKey: $dateKey,
+                    todayDate: $ctx['today_date'],
+                    nowTz: $ctx['now_tz'],
+                    effectiveSchedule: $ctx['schedule_cache'][$employee->id] ?? null,
+                    preloadedLogs: $ctx['logs_by_employee_date'][$employee->id][$dateKey] ?? null,
+                    correction: $ctx['approved_corrections']->get($storeKey),
+                    leave: $leave,
+                ),
+                $employee,
+                $leave,
+                $dateKey,
             );
         }
 
@@ -1244,10 +1308,17 @@ class CompanyEfficiencyService
     private function dailySummaryFromStoredRow(AttendanceDailySummary $stored): array
     {
         $status = (string) ($stored->status ?? '');
+        $extra = is_array($stored->extra) ? $stored->extra : [];
+        $leavePayStatus = $extra['leave_pay_status'] ?? null;
+        $leavePayLabel = $extra['leave_pay_label'] ?? null;
+        $statusLabel = $stored->presence_label ?: $status;
+        if (in_array($status, ['leave', 'halfday'], true) && is_string($leavePayLabel) && $leavePayLabel !== '') {
+            $statusLabel = $leavePayLabel;
+        }
 
         return [
             'status' => $status,
-            'status_label' => $stored->presence_label ?: $status,
+            'status_label' => $statusLabel,
             'schedule_in' => $stored->schedule_in,
             'schedule_out' => $stored->schedule_out,
             'formatted_time_in' => $stored->formatted_time_in,
@@ -1265,13 +1336,46 @@ class CompanyEfficiencyService
             'scheduled_regular_hours' => $stored->scheduled_regular_hours,
             'presence_label' => $stored->presence_label,
             'presence_issue' => $stored->presence_issue,
+            'leave_pay_status' => $leavePayStatus,
+            'leave_pay_label' => $leavePayLabel,
             'has_correction' => (bool) $stored->has_correction,
             'correction_approved' => (bool) $stored->correction_approved,
             'holiday_name' => $stored->holiday_name,
-            'late_label' => is_array($stored->extra) ? ($stored->extra['late_label'] ?? null) : null,
-            'correction_remarks' => is_array($stored->extra) ? ($stored->extra['correction_remarks'] ?? null) : null,
+            'late_label' => $extra['late_label'] ?? null,
+            'correction_remarks' => $extra['correction_remarks'] ?? null,
             'remarks' => null,
         ];
+    }
+
+    private function applyApprovedLeaveOverride(array $summary, User $employee, ?LeaveRequest $leave, string $dateKey): array
+    {
+        if (! $leave instanceof LeaveRequest) {
+            return $summary;
+        }
+
+        $leaveType = (string) $leave->type;
+        if ($leaveType === 'undertime') {
+            $summary['status'] = 'undertime';
+            $summary['is_leave'] = false;
+
+            return $summary;
+        }
+
+        $payStatus = $this->leaveCreditService->leavePayStatusForDate($employee, $leave, $dateKey);
+        $payLabel = $this->leaveCreditService->leavePayLabelForStatus($payStatus);
+        $status = $leaveType === 'half_day' ? 'halfday' : 'leave';
+
+        $summary['status'] = $status;
+        $summary['status_label'] = $payLabel ?? ($status === 'halfday' ? 'Half Day' : 'Leave');
+        $summary['display_badge'] = $summary['status_label'];
+        $summary['is_leave'] = true;
+        $summary['is_holiday'] = false;
+        $summary['leave_pay_status'] = $payStatus;
+        $summary['leave_pay_label'] = $payLabel;
+        $summary['presence_label'] = null;
+        $summary['presence_issue'] = null;
+
+        return $summary;
     }
 
     /**

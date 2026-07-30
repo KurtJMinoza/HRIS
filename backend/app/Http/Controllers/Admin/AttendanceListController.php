@@ -4,8 +4,11 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceDailySummary;
+use App\Models\LeaveRequest;
+use App\Models\User;
 use App\Services\AttendanceCacheService;
 use App\Services\DataScopeService;
+use App\Services\LeaveCreditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -27,6 +30,7 @@ class AttendanceListController extends Controller
 
     public function __construct(
         private readonly DataScopeService $dataScopeService,
+        private readonly LeaveCreditService $leaveCreditService,
     ) {}
 
     /**
@@ -186,6 +190,7 @@ class AttendanceListController extends Controller
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
         $rows = $paginator->getCollection()->map(fn (AttendanceDailySummary $s) => $this->formatRow($s))->values()->all();
+        $rows = $this->hydrateApprovedLeaveOverrides($rows);
 
         $totals = $this->computeTotals($rows);
 
@@ -232,6 +237,9 @@ class AttendanceListController extends Controller
 
         $extra = is_array($summary->extra) ? $summary->extra : [];
 
+        $leaveOverride = $this->leaveOverrideForStoredSummary($summary, $extra);
+        $status = $leaveOverride['status'] ?? $summary->status;
+
         return response()->json([
             'id' => (int) $summary->id,
             'employee_id' => (int) $summary->employee_id,
@@ -271,7 +279,9 @@ class AttendanceListController extends Controller
             'premium_type' => $summary->premium_type,
             'premium_description' => $extra['premium_description'] ?? null,
             'calculated_pay_factor' => $extra['calculated_pay_factor'] ?? null,
-            'status' => $summary->status,
+            'status' => $status,
+            'leave_pay_status' => $leaveOverride['pay_status'],
+            'leave_pay_label' => $leaveOverride['pay_label'],
             'presence_label' => $summary->presence_label,
             'presence_issue' => $summary->presence_issue,
             'overtime_status' => $summary->overtime_status,
@@ -330,6 +340,8 @@ class AttendanceListController extends Controller
 
     private function formatRow(AttendanceDailySummary $s): array
     {
+        $extra = is_array($s->extra) ? $s->extra : [];
+
         return [
             'id' => (int) $s->id,
             'employee_id' => (int) $s->employee_id,
@@ -362,6 +374,8 @@ class AttendanceListController extends Controller
             'total_premium_pay' => $s->total_premium_pay,
             'premium_type' => $s->premium_type,
             'status' => $s->status,
+            'leave_pay_status' => $extra['leave_pay_status'] ?? null,
+            'leave_pay_label' => $extra['leave_pay_label'] ?? null,
             'presence_label' => $s->presence_label,
             'presence_issue' => $s->presence_issue,
             'overtime_status' => $s->overtime_status,
@@ -373,6 +387,122 @@ class AttendanceListController extends Controller
             'correction_approved' => $s->correction_approved,
             'has_approved_overtime' => $s->has_approved_overtime,
             'payroll_impact_hours' => $s->payroll_impact_hours,
+        ];
+    }
+
+    private function hydrateApprovedLeaveOverrides(array $rows): array
+    {
+        $needsHydration = array_values(array_filter($rows, function (array $row): bool {
+            return ! empty($row['employee_id'])
+                && ! empty($row['date']);
+        }));
+
+        if ($needsHydration === []) {
+            return $rows;
+        }
+
+        $employeeIds = array_values(array_unique(array_map(fn (array $row) => (int) $row['employee_id'], $needsHydration)));
+        $dates = array_values(array_filter(array_map(fn (array $row) => (string) $row['date'], $needsHydration)));
+        sort($dates);
+        $from = $dates[0] ?? null;
+        $to = $dates[count($dates) - 1] ?? null;
+
+        if ($employeeIds === [] || $from === null || $to === null) {
+            return $rows;
+        }
+
+        $rangeStart = \Carbon\Carbon::parse($from);
+        $rangeEnd = \Carbon\Carbon::parse($to);
+        $employees = User::query()->whereIn('id', $employeeIds)->get()->keyBy('id');
+        $leaves = LeaveRequest::query()
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
+            ->whereIn('user_id', $employeeIds)
+            ->where('status', LeaveRequest::STATUS_APPROVED)
+            ->where('start_date', '<=', $to)
+            ->where('end_date', '>=', $from)
+            ->orderBy('id')
+            ->get();
+
+        $leaveByUserDate = [];
+        foreach ($leaves as $leave) {
+            $start = $leave->start_date->copy()->max($rangeStart);
+            $end = $leave->end_date->copy()->min($rangeEnd);
+            $cursor = $start->copy();
+            while ($cursor->lessThanOrEqualTo($end)) {
+                $dateKey = $cursor->toDateString();
+                $existing = $leaveByUserDate[$leave->user_id][$dateKey] ?? null;
+                if ($existing === null || $leave->id > $existing->id) {
+                    $leaveByUserDate[$leave->user_id][$dateKey] = $leave;
+                }
+                $cursor->addDay();
+            }
+        }
+
+        foreach ($rows as &$row) {
+            $employeeId = (int) ($row['employee_id'] ?? 0);
+            $dateKey = (string) ($row['date'] ?? '');
+            $leave = $leaveByUserDate[$employeeId][$dateKey] ?? null;
+            $employee = $employees->get($employeeId);
+            if (! $leave instanceof LeaveRequest || ! $employee instanceof User) {
+                continue;
+            }
+            $leaveType = (string) $leave->type;
+            if ($leaveType === 'undertime') {
+                $row['status'] = 'undertime';
+                continue;
+            }
+
+            $row['status'] = $leaveType === 'half_day' ? 'halfday' : 'leave';
+            $payStatus = $this->leaveCreditService->leavePayStatusForDate($employee, $leave, $dateKey);
+            $row['leave_pay_status'] = $payStatus;
+            $row['leave_pay_label'] = $this->leaveCreditService->leavePayLabelForStatus($payStatus);
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    private function leaveOverrideForStoredSummary(AttendanceDailySummary $summary, array $extra): array
+    {
+        $storedStatus = $extra['leave_pay_status'] ?? null;
+        if ($storedStatus !== null && in_array((string) $summary->status, ['leave', 'halfday'], true)) {
+            return [
+                'status' => $summary->status,
+                'pay_status' => $storedStatus,
+                'pay_label' => $extra['leave_pay_label'] ?? $this->leaveCreditService->leavePayLabelForStatus($storedStatus),
+            ];
+        }
+
+        if (! $summary->employee_id || ! $summary->date) {
+            return ['status' => $summary->status, 'pay_status' => null, 'pay_label' => null];
+        }
+
+        $employee = User::query()->find($summary->employee_id);
+        $dateKey = $summary->date->toDateString();
+        $leave = LeaveRequest::query()
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
+            ->where('user_id', $summary->employee_id)
+            ->where('status', LeaveRequest::STATUS_APPROVED)
+            ->where('start_date', '<=', $dateKey)
+            ->where('end_date', '>=', $dateKey)
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $employee instanceof User || ! $leave instanceof LeaveRequest) {
+            return ['status' => $summary->status, 'pay_status' => null, 'pay_label' => null];
+        }
+
+        $leaveType = (string) $leave->type;
+        if ($leaveType === 'undertime') {
+            return ['status' => 'undertime', 'pay_status' => null, 'pay_label' => null];
+        }
+
+        $payStatus = $this->leaveCreditService->leavePayStatusForDate($employee, $leave, $dateKey);
+
+        return [
+            'status' => $leaveType === 'half_day' ? 'halfday' : 'leave',
+            'pay_status' => $payStatus,
+            'pay_label' => $this->leaveCreditService->leavePayLabelForStatus($payStatus),
         ];
     }
 
@@ -416,7 +546,7 @@ class AttendanceListController extends Controller
         $searchHash = substr(hash('xxh128', ($validated['search'] ?? '') . '|' . ($validated['status'] ?? '')), 0, 12);
 
         return sprintf(
-            'attendance:list:%d:%s:%s:%s:%s:%s:%d:%d:%s:%s',
+            'attendance:list:v3:%d:%s:%s:%s:%s:%s:%d:%d:%s:%s',
             $userId,
             $validated['company_id'] ?? '_',
             $validated['branch_id'] ?? '_',

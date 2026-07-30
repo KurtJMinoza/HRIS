@@ -593,16 +593,7 @@ export default function AdminAttendance() {
     ]
     const statusCol = {
       label: 'Status',
-      accessor: (row) =>
-        row.status === 'late' && row.late_label
-          ? row.late_label
-          : row.status === 'halfday' && row.late_label
-            ? row.late_label
-            : row.status === '—'
-              ? '—'
-              : row.status === 'present' && row.has_approved_overtime
-                ? 'Present + OT'
-                : row.status,
+      accessor: (row) => resolveAdminStatusLabel(row),
     }
     return showPayrollAttendanceColumns ? [...base, ...payroll, statusCol] : [...base, statusCol]
   }

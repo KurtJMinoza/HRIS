@@ -17,6 +17,7 @@ use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
 use App\Services\PayrollComputationService;
 use App\Services\HrRoleResolver;
+use App\Services\LeaveCreditService;
 use App\Services\OvertimePayrollService;
 use App\Services\PremiumReportService;
 use App\Support\EmployeeScheduleResolver;
@@ -40,6 +41,7 @@ class AttendanceMonitoringController extends Controller
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly PremiumReportService $premiumReport,
         private readonly AttendanceRollupService $attendanceRollup,
+        private readonly LeaveCreditService $leaveCreditService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -501,6 +503,7 @@ class AttendanceMonitoringController extends Controller
             $employeeCompanyNames[$emp->id] = $co?->name ?? null;
         }
 
+        $employeesById = $employees->keyBy('id');
         $userIds = $employees->pluck('id')->all();
 
         $logs = AttendanceLog::query()
@@ -580,6 +583,8 @@ class AttendanceMonitoringController extends Controller
                 'start_date',
                 'end_date',
                 'status',
+                'leave_credits_charged',
+                'leave_unpaid_credit_days',
             ])
             ->whereIn('user_id', $userIds)
             ->where('status', LeaveRequest::STATUS_APPROVED)
@@ -589,13 +594,20 @@ class AttendanceMonitoringController extends Controller
 
         $leaveDatesByUser = [];
         foreach ($approvedLeaves as $leave) {
+            $leaveEmployee = $employeesById->get($leave->user_id);
             $leaveStart = $leave->start_date->copy()->max($from);
             $leaveEnd = $leave->end_date->copy()->min($to);
             $cursorLeave = $leaveStart->copy();
             while ($cursorLeave->lessThanOrEqualTo($leaveEnd)) {
-                $leaveDatesByUser[$leave->user_id][$cursorLeave->toDateString()] = [
+                $dateKey = $cursorLeave->toDateString();
+                $payStatus = $leaveEmployee instanceof User
+                    ? $this->leaveCreditService->leavePayStatusForDate($leaveEmployee, $leave, $dateKey)
+                    : null;
+                $leaveDatesByUser[$leave->user_id][$dateKey] = [
                     'type' => $leave->type,
                     'half_type' => $leave->half_type,
+                    'pay_status' => $payStatus,
+                    'pay_label' => $this->leaveCreditService->leavePayLabelForStatus($payStatus),
                 ];
                 $cursorLeave->addDay();
             }
@@ -981,6 +993,8 @@ class AttendanceMonitoringController extends Controller
                     'total_rendered_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                     'total_hours' => $effectiveWorkedMinutes !== null ? round($effectiveWorkedMinutes / 60, 2) : null,
                     'status' => $status,
+                    'leave_pay_status' => $leaveInfo['pay_status'] ?? null,
+                    'leave_pay_label' => $leaveInfo['pay_label'] ?? null,
                     'is_rest_day' => $isRestDayRow || $status === 'rest',
                     'is_rest_day_worked' => $isRestDayRow && ($effectiveTimeIn || $effectiveTimeOut),
                     'holiday_name' => $holidayOnDate['name'] ?? null,

@@ -29,6 +29,7 @@ class AttendanceDailySummaryService
         private readonly AttendanceRollupService $attendanceRollup,
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly PayrollComputationService $payrollComputation,
+        private readonly LeaveCreditService $leaveCreditService,
     ) {}
 
     /**
@@ -235,8 +236,14 @@ class AttendanceDailySummaryService
         $isLeave = $status === 'leave';
         $isRestDayStatus = in_array($status, ['rest', 'rest_day', 'no_schedule_rest'], true) || $isRestDay;
         $isHoliday = $status === 'holiday';
+        $leavePayStatus = $leave instanceof LeaveRequest
+            ? $this->leaveCreditService->leavePayStatusForDate($user, $leave, $dateKey)
+            : null;
 
         $statusLabel = $resolved['status_label'] ?? AttendanceStatusResolver::statusLabel($status);
+        if (($isLeave || $isHalfDay) && $leavePayStatus !== null) {
+            $statusLabel = $this->leaveCreditService->leavePayLabelForStatus($leavePayStatus) ?? $statusLabel;
+        }
         if ($isRestDayWorked) {
             $statusLabel = match ($status) {
                 'late' => 'Rest Day Worked Late',
@@ -252,6 +259,8 @@ class AttendanceDailySummaryService
             'status_label' => $statusLabel,
             'status_code' => $resolved['status_code'] ?? $status,
             'display_badge' => $statusLabel,
+            'leave_pay_status' => $leavePayStatus,
+            'leave_pay_label' => $this->leaveCreditService->leavePayLabelForStatus($leavePayStatus),
 
             'time_in' => $this->formatTimeInTz($effectiveTimeIn, $tz),
             'time_out' => $this->formatTimeInTz($effectiveTimeOut, $tz),

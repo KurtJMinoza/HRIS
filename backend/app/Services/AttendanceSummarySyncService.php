@@ -84,6 +84,8 @@ class AttendanceSummarySyncService
             'payroll_impact_hours' => $row['payroll_impact_hours'] ?? null,
             'extra' => array_filter([
                 'late_label' => $row['late_label'] ?? null,
+                'leave_pay_status' => $row['leave_pay_status'] ?? null,
+                'leave_pay_label' => $row['leave_pay_label'] ?? null,
                 'correction_id' => $row['correction_id'] ?? null,
                 'correction_remarks' => $row['correction_remarks'] ?? null,
                 'ot_payable_basis' => $row['ot_payable_basis'] ?? null,

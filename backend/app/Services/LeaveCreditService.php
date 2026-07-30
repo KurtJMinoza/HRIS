@@ -790,6 +790,28 @@ class LeaveCreditService
         return $this->dateIsPaidLeavePortion($user, $leave, $dateKey);
     }
 
+    public function leavePayStatusForDate(User $user, LeaveRequest $leave, string $dateKey): ?string
+    {
+        if ($leave->status !== LeaveRequest::STATUS_APPROVED) {
+            return null;
+        }
+
+        if (! $this->consumesCredits((string) $leave->type)) {
+            return null;
+        }
+
+        return $this->dateIsPaidLeavePortion($user, $leave, $dateKey) ? 'paid' : 'unpaid';
+    }
+
+    public function leavePayLabelForStatus(?string $payStatus): ?string
+    {
+        return match ($payStatus) {
+            'paid' => 'Leave with pay',
+            'unpaid' => 'Leave without pay',
+            default => null,
+        };
+    }
+
     public function dateIsPaidLeavePortion(User $user, LeaveRequest $leave, string $dateKey): bool
     {
         if ($leave->status !== LeaveRequest::STATUS_APPROVED) {

@@ -189,6 +189,8 @@ function isScheduledWorkDay(day) {
 function isAttendanceEfficiencyDetailDay(day) {
   if (!day?.date) return false
   if (day.is_rest_day_worked) return true
+  const status = String(day.status || '').toLowerCase()
+  if (status === 'leave' || status === 'halfday' || day.leave_pay_status || day.leave_pay_label) return true
   return isScheduledWorkDay(day)
 }
 
@@ -202,6 +204,7 @@ const ATTENDANCE_SUMMARY_SLICE_META = {
   absent: { label: 'Absent', color: '#ef4444' },
   late: { label: 'Late', color: '#f97316' },
   undertime: { label: 'Undertime', color: '#eab308' },
+  leave: { label: 'Leave', color: '#3b82f6' },
   efficiency: { label: 'Efficiency', color: '#8b5cf6' },
 }
 
@@ -241,10 +244,12 @@ const ATTENDANCE_SUMMARY_STATUS_STYLES = {
   absent: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300',
   late: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-orange-300',
   undertime: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300',
+  leave: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/25 dark:bg-blue-500/10 dark:text-blue-300',
 }
 
 function attendanceSummaryStatusKey(day) {
   const status = String(day?.status || day?.status_label || '').toLowerCase()
+  if (status === 'leave' || status === 'halfday' || day?.leave_pay_status || day?.leave_pay_label) return 'leave'
   const lateMinutes = Number(day?.late_minutes || 0)
   const undertimeMinutes = Number(day?.undertime_minutes || 0)
   if (status.includes('absent') || status === 'awol') return 'absent'
@@ -255,6 +260,9 @@ function attendanceSummaryStatusKey(day) {
 
 function attendanceSummaryStatusLabel(day) {
   if (day?.is_rest_day_worked) return 'Rest Day Worked'
+  if (day?.leave_pay_label) return day.leave_pay_label
+  if (day?.leave_pay_status === 'paid') return 'Leave with pay'
+  if (day?.leave_pay_status === 'unpaid') return 'Leave without pay'
   const key = attendanceSummaryStatusKey(day)
   return ATTENDANCE_SUMMARY_SLICE_META[key]?.label || 'Present'
 }
@@ -402,10 +410,13 @@ function getCalendarDayVisual(record, dateKey, ctx) {
   const lateLbl = String(record.late_label || '').trim()
 
   if (status === 'leave') {
+    const payStatus = String(record.leave_pay_status || '').toLowerCase()
+    const badge = String(record.leave_pay_label || record.status_label || '').trim() || 'Leave'
+    const tone = payStatus === 'unpaid' ? 'amber' : 'blue'
     return {
-      badge: 'Leave',
-      tileClass: `${baseGridCell} ${tint.blue}`,
-      badgeClass: `${L.ink} ${L.blue}`,
+      badge,
+      tileClass: `${baseGridCell} ${tint[tone]}`,
+      badgeClass: `${L.ink} ${L[tone]}`,
     }
   }
 
@@ -491,10 +502,13 @@ function getCalendarDayVisual(record, dateKey, ctx) {
   }
 
   if (status === 'halfday') {
+    const payStatus = String(record.leave_pay_status || '').toLowerCase()
+    const badge = String(record.leave_pay_label || record.status_label || '').trim() || 'Half day'
+    const tone = payStatus === 'unpaid' ? 'amber' : payStatus === 'paid' ? 'blue' : 'sky'
     return {
-      badge: 'Half day',
-      tileClass: `${baseGridCell} ${tint.sky}`,
-      badgeClass: `${L.ink} ${L.sky}`,
+      badge,
+      tileClass: `${baseGridCell} ${tint[tone]}`,
+      badgeClass: `${L.ink} ${L[tone]}`,
     }
   }
 
@@ -690,7 +704,7 @@ export default function EmployeeDashboard() {
       if (calendarCacheRef.current.has(mk)) continue
       try {
         const data = await getEmployeeDashboardAttendanceCalendar({ month: mk })
-        if (data?.meta?.schema_version === 17) {
+        if (data?.meta?.schema_version === 21) {
           calendarCacheRef.current.set(mk, data)
         }
       } catch {
@@ -703,7 +717,7 @@ export default function EmployeeDashboard() {
     const monthKey = calendarMonthSelectKey(year, month)
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    const cacheValid = cached && cached?.meta?.schema_version === 17
+    const cacheValid = cached && cached?.meta?.schema_version === 21
 
     if (cacheValid) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
@@ -913,10 +927,10 @@ export default function EmployeeDashboard() {
     if (!status) return '—'
     if (t.presence_issue === 'incomplete_pair' && t.presence_label) return t.presence_label
     if (t.presence_issue === 'correction_pending' && t.presence_label) return t.presence_label
-    if (status === 'leave') return 'On leave'
+    if (status === 'leave') return t.leave_pay_label || t.status_label || 'On leave'
     if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') return 'Rest Day'
     if (status === 'late') return timeIn && !timeOut ? 'Working' : (lateLabel || 'Late')
-    if (status === 'halfday') return timeIn && !timeOut ? 'Working' : 'Half Day'
+    if (status === 'halfday') return timeIn && !timeOut ? 'Working' : (t.leave_pay_label || t.status_label || 'Half Day')
     if (status === 'absent') {
       if (isRestDay(todayKey)) return 'Rest Day'
       return isPastAbsentCutoff() ? 'Missed clock-in' : 'Not started'
@@ -1209,8 +1223,9 @@ export default function EmployeeDashboard() {
       absent: monthAttendanceMetrics.absent,
       late: monthAttendanceMetrics.late,
       undertime: monthAttendanceMetrics.undertime,
+      leave: monthAttendanceMetrics.leaveDays,
     }
-    const slices = ['present', 'absent', 'late', 'undertime'].map((id) => {
+    const slices = ['present', 'absent', 'late', 'undertime', 'leave'].map((id) => {
       const count = counts[id]
       const meta = ATTENDANCE_SUMMARY_SLICE_META[id]
       return {
@@ -1586,11 +1601,13 @@ export default function EmployeeDashboard() {
     }
 
     if (status === 'leave') {
+      const leaveLabel = t.leave_pay_label || t.status_label || 'On leave'
+      const paidState = t.leave_pay_status === 'paid' ? 'paid' : t.leave_pay_status === 'unpaid' ? 'unpaid' : null
       return {
         tone: 'info',
         dotClass: 'bg-sky-500',
-        label: 'On leave',
-        detail: 'You are not expected to work today.',
+        label: leaveLabel,
+        detail: paidState ? `Approved ${paidState} leave.` : 'You are not expected to work today.',
       }
     }
 

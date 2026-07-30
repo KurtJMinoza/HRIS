@@ -2424,6 +2424,8 @@ class AttendanceController extends Controller
                 'start_date',
                 'end_date',
                 'status',
+                'leave_credits_charged',
+                'leave_unpaid_credit_days',
             ])
             ->where('user_id', $user->id)
             ->where('status', LeaveRequest::STATUS_APPROVED)
@@ -2606,12 +2608,7 @@ class AttendanceController extends Controller
 
             $leavePayStatus = null;
             if ($isOnLeave && $leaveOnDate) {
-                $lt = strtolower((string) $leaveOnDate->type);
-                if ($lt !== 'undertime' && $this->leaveCreditService->consumesCredits($lt)) {
-                    $leavePayStatus = $this->leaveCreditService->isPaidLeaveDay($user, $leaveOnDate, $dateKey)
-                        ? 'paid'
-                        : 'unpaid';
-                }
+                $leavePayStatus = $this->leaveCreditService->leavePayStatusForDate($user, $leaveOnDate, $dateKey);
             }
 
             $scheduleAssignedForRow = is_array($effectiveSchedule) && $effectiveSchedule !== [];
@@ -2974,6 +2971,7 @@ class AttendanceController extends Controller
                 'attendance_time_out_status' => $attendanceOtStatus,
                 'presence_filing' => null,
                 'leave_pay_status' => $leavePayStatus,
+                'leave_pay_label' => $this->leaveCreditService->leavePayLabelForStatus($leavePayStatus),
             ];
 
             if ($dateKey === $todayDate) {
@@ -3087,6 +3085,7 @@ class AttendanceController extends Controller
                 'presence_issue' => $todayPresenceIssue,
                 'presence_filing' => $todayPresenceFilingPayload,
                 'leave_pay_status' => $todayLeavePayStatus,
+                'leave_pay_label' => $this->leaveCreditService->leavePayLabelForStatus($todayLeavePayStatus),
                 'ot_detection' => $otDetection,
             ],
         ];

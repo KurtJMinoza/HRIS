@@ -17,6 +17,7 @@ use App\Services\EmployeeClassificationService;
 use App\Services\EvaluationScoringService;
 use App\Services\HolidayService;
 use App\Services\HolidayEligibilityService;
+use App\Services\LeaveCreditService;
 use App\Services\MergedKpiPerformanceService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
@@ -54,6 +55,7 @@ class EmployeeDashboardController extends Controller
         private readonly EmployeeClassificationService $employeeClassification,
         private readonly MergedKpiPerformanceService $mergedKpiPerformanceService,
         private readonly EvaluationScoringService $evaluationScoringService,
+        private readonly LeaveCreditService $leaveCreditService,
     ) {}
 
     /**
@@ -203,7 +205,7 @@ class EmployeeDashboardController extends Controller
             ->first();
 
         $todayLeave = LeaveRequest::query()
-            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status'])
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
             ->where('user_id', $employeeId)
             ->where('status', LeaveRequest::STATUS_APPROVED)
             ->where('start_date', '<=', $todayDate)
@@ -333,7 +335,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 19) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 21) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -390,7 +392,7 @@ class EmployeeDashboardController extends Controller
             ->groupBy(fn ($c) => $c->date->toDateString());
 
         $approvedLeaves = LeaveRequest::query()
-            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status'])
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
             ->where('user_id', $employeeId)
             ->where('status', LeaveRequest::STATUS_APPROVED)
             ->where('start_date', '<=', $toStr)
@@ -662,7 +664,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 19,
+                'schema_version' => 21,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -1060,6 +1062,10 @@ class EmployeeDashboardController extends Controller
         $lateMinutes = ($resolved['late_minutes'] ?? 0) > 0 ? (int) $resolved['late_minutes'] : null;
         $lateLabel = $resolved['late_label'] ?? null;
         $undertimeMinutes = ($resolved['undertime_minutes'] ?? 0) > 0 ? (int) $resolved['undertime_minutes'] : null;
+        $todayLeavePayStatus = $todayLeave instanceof LeaveRequest
+            ? $this->leaveCreditService->leavePayStatusForDate($user, $todayLeave, $todayDate)
+            : null;
+        $todayLeavePayLabel = $this->leaveCreditService->leavePayLabelForStatus($todayLeavePayStatus);
 
         if ($isRestDay && ! $hasTimeIn && ! $hasTimeOut) {
             $effectiveTimeIn = null;
@@ -1071,13 +1077,13 @@ class EmployeeDashboardController extends Controller
         // Status label
         $isRestDayWorked = (bool) ($resolved['is_rest_day_worked'] ?? false);
         $labelMap = [
-            'leave' => 'On leave',
+            'leave' => $todayLeavePayLabel ?? 'On leave',
             'rest' => $isRestDayWorked ? 'Rest Day Worked' : AttendanceStatusResolver::REST_DAY_LABEL,
             'absent' => 'Missed clock-in',
             'present' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present',
             'present_with_ot' => $hasTimeIn && ! $hasTimeOut ? 'Working' : 'Present with OT',
             'late' => $isRestDayWorked ? 'Rest Day Worked Late' : ($hasTimeIn && ! $hasTimeOut ? 'Working' : ($lateLabel ?: 'Late')),
-            'halfday' => $isRestDayWorked ? 'Rest Day Worked Half Day' : ($hasTimeIn && ! $hasTimeOut ? 'Working' : 'Half Day'),
+            'halfday' => $isRestDayWorked ? 'Rest Day Worked Half Day' : ($hasTimeIn && ! $hasTimeOut ? 'Working' : ($todayLeavePayLabel ?? 'Half Day')),
             'clocked_in' => 'Working',
             'undertime' => $isRestDayWorked ? 'Rest Day Worked Undertime' : 'Undertime',
             'incomplete' => 'Incomplete',
@@ -1090,6 +1096,8 @@ class EmployeeDashboardController extends Controller
                 ?? ($labelMap[$status] ?? ($status === '—' && $isRestDay ? AttendanceStatusResolver::REST_DAY_LABEL : $status)),
             'presence_label' => $resolved['presence_label'] ?? null,
             'presence_issue' => $resolved['presence_issue'] ?? null,
+            'leave_pay_status' => $todayLeavePayStatus,
+            'leave_pay_label' => $todayLeavePayLabel,
             'time_in' => $this->formatTimeInAttendanceTz($effectiveTimeIn),
             'time_out' => $this->formatTimeInAttendanceTz($effectiveTimeOut),
             'formatted_time_in' => $this->formatTimeForDisplay($effectiveTimeIn),

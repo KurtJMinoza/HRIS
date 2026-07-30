@@ -150,10 +150,10 @@ class AttendanceStatusResolver
             $hasTimeOut,
         );
 
-        // Priority 1: Holiday
-        if ($holiday !== null) {
+        // Priority 1: Approved Leave
+        if ($leave) {
             return $this->buildResult(
-                status: self::STATUS_HOLIDAY,
+                status: self::STATUS_LEAVE,
                 dateKey: $dateKey,
                 todayDate: $todayDate,
                 nowTz: $nowTz,
@@ -170,10 +170,10 @@ class AttendanceStatusResolver
             );
         }
 
-        // Priority 2: Approved Leave (overrides rest day)
-        if ($leave) {
+        // Priority 2: Holiday
+        if ($holiday !== null) {
             return $this->buildResult(
-                status: self::STATUS_LEAVE,
+                status: self::STATUS_HOLIDAY,
                 dateKey: $dateKey,
                 todayDate: $todayDate,
                 nowTz: $nowTz,

@@ -331,7 +331,12 @@ export function employeeDurationLabel(row) {
 }
 
 export function adminTypeReasonLabel(row) {
-  if (row.status === 'leave' || row.status === 'halfday') return 'Leave'
+  if (row.status === 'leave' || row.status === 'halfday') {
+    if (row.leave_pay_label) return row.leave_pay_label
+    if (row.leave_pay_status === 'paid') return 'Leave with pay'
+    if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
+    return 'Leave'
+  }
   if (row.has_correction) return 'Correction'
   if (row.presence_issue === 'correction_pending') return 'Late filing'
   if (row.status === 'late') return 'Late'
@@ -344,11 +349,17 @@ export function employeeTypeReasonLabel(row) {
   if (row.presence_filing?.status === 'approved') return 'Correction · Approved'
   if (row.presence_filing?.status === 'rejected') return 'Correction · Rejected'
   if (row.status === 'leave') {
-    if (row.leave_pay_status === 'paid') return 'Paid leave'
-    if (row.leave_pay_status === 'unpaid') return 'Unpaid leave'
+    if (row.leave_pay_label) return row.leave_pay_label
+    if (row.leave_pay_status === 'paid') return 'Leave with pay'
+    if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
     return 'Leave'
   }
-  if (row.status === 'halfday') return 'Half day'
+  if (row.status === 'halfday') {
+    if (row.leave_pay_label) return row.leave_pay_label
+    if (row.leave_pay_status === 'paid') return 'Leave with pay'
+    if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
+    return 'Half day'
+  }
   if (row.status === 'undertime') return 'Undertime'
   if (row.status === 'late') return 'Late filing'
   return 'Regular'
@@ -422,9 +433,19 @@ export function resolveAdminStatusLabel(row) {
   if (rawStatus === 'absent') return 'Absent'
   if (rawStatus === 'present_with_ot') return 'Present with OT'
   if (rawStatus === 'present') return row.has_approved_overtime ? 'Present + OT' : 'Present'
-  if (rawStatus === 'halfday') return row.late_label || 'Half Day'
+  if (rawStatus === 'halfday') {
+    if (row.leave_pay_label) return row.leave_pay_label
+    if (row.leave_pay_status === 'paid') return 'Leave with pay'
+    if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
+    return row.late_label || 'Half Day'
+  }
   if (rawStatus === 'incomplete') return 'Present (Incomplete)'
-  if (rawStatus === 'leave') return 'On Leave'
+  if (rawStatus === 'leave') {
+    if (row.leave_pay_label) return row.leave_pay_label
+    if (row.leave_pay_status === 'paid') return 'Leave with pay'
+    if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
+    return 'On Leave'
+  }
   if (row.presence_label) return row.presence_label
   return rawStatus || EMPTY_PLACEHOLDER
 }
@@ -436,8 +457,9 @@ export function resolveEmployeeStatusLabel(row) {
   if (row.is_rest_day_worked) return 'Rest Day Worked'
   if (row.status === 'rest' || row.is_rest_day) return 'Rest Day'
   if (row.status === 'leave') {
-    if (row.leave_pay_status === 'paid') return 'Paid leave'
-    if (row.leave_pay_status === 'unpaid') return 'Unpaid leave'
+    if (row.leave_pay_label) return row.leave_pay_label
+    if (row.leave_pay_status === 'paid') return 'Leave with pay'
+    if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
     return 'Leave'
   }
   if (row.presence_label) return row.presence_label
@@ -445,7 +467,12 @@ export function resolveEmployeeStatusLabel(row) {
   if (row.status === EMPTY_PLACEHOLDER) return EMPTY_PLACEHOLDER
   if (row.status === 'upcoming') return 'Upcoming'
   if (row.status === 'late' && row.late_label) return row.late_label
-  if (row.status === 'halfday') return row.late_label || 'Half Day'
+  if (row.status === 'halfday') {
+    if (row.leave_pay_label) return row.leave_pay_label
+    if (row.leave_pay_status === 'paid') return 'Leave with pay'
+    if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
+    return row.late_label || 'Half Day'
+  }
   if (row.status === 'absent') return 'Absent'
   if (row.status === 'incomplete') return 'Present (Incomplete)'
   if (row.status === 'present_with_ot') return 'Present with OT'

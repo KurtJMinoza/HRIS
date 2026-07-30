@@ -106,8 +106,13 @@ function dayHasRecordedAttendance(d) {
   return Boolean(d?.is_rest_day_worked || (d?.time_in && d?.time_out))
 }
 
+function dayHasApprovedLeave(d) {
+  return ['leave', 'halfday'].includes(String(d?.status || '').toLowerCase())
+    || Boolean(d?.leave_pay_status || d?.leave_pay_label)
+}
+
 function shouldMaskFutureAttendanceFields(d, todayKey) {
-  return d.date > todayKey && !dayHasRecordedAttendance(d)
+  return d.date > todayKey && !dayHasApprovedLeave(d) && !dayHasRecordedAttendance(d)
 }
 
 /** Map `/attendance/summary` day rows to Employee Attendance table rows. */
@@ -161,6 +166,7 @@ function mapSummaryDaysToRows(days, fromDate, toDate) {
         presence_label: d.presence_label ?? null,
         presence_issue: d.presence_issue ?? null,
         leave_pay_status: d.leave_pay_status ?? null,
+        leave_pay_label: d.leave_pay_label ?? null,
       }
     })
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
@@ -208,6 +214,7 @@ function mapSummaryTodayToAttendanceRow(todayIso, t) {
     presence_label: t.presence_label ?? null,
     presence_issue: t.presence_issue ?? null,
     leave_pay_status: t.leave_pay_status ?? null,
+    leave_pay_label: t.leave_pay_label ?? null,
   }
 }
 

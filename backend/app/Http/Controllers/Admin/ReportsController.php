@@ -48,6 +48,7 @@ class ReportsController extends Controller
         private readonly PremiumReportService $premiumReport,
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly AttendanceRollupService $attendanceRollup,
+        private readonly LeaveCreditService $leaveCreditService,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -704,6 +705,7 @@ class ReportsController extends Controller
 
         $undertimeThresholdMinutes = (int) config('attendance.undertime_threshold_minutes', 60);
 
+        $employeesById = $employees->keyBy('id');
         $userIds = $employees->pluck('id')->all();
 
         // verified_at is stored in UTC; convert the attendance-TZ range to UTC
@@ -768,6 +770,7 @@ class ReportsController extends Controller
 
         $leaves = $leavesQuery->get([
             'id', 'user_id', 'type', 'status', 'start_date', 'end_date', 'undertime_time', 'half_type',
+            'leave_credits_charged', 'leave_unpaid_credit_days',
         ]);
 
         /** @var array<int, array<string, array{type: string, status: string, start_date: string, end_date: string, duration_days: int, undertime_time?: string|null, half_type?: string|null}>> $leaveByUserDate */
@@ -796,6 +799,11 @@ class ReportsController extends Controller
 
             $cursorLeave = $leaveStartInRange->copy();
             while ($cursorLeave->lessThanOrEqualTo($leaveEndInRange)) {
+                $dateKey = $cursorLeave->toDateString();
+                $leaveEmployee = $employeesById->get($leave->user_id);
+                $payStatus = $leaveEmployee instanceof User
+                    ? $this->leaveCreditService->leavePayStatusForDate($leaveEmployee, $leave, $dateKey)
+                    : null;
                 $leaveByUserDate[$leave->user_id][$cursorLeave->toDateString()] = [
                     'type' => $leave->type,
                     'status' => $leave->status,
@@ -804,6 +812,8 @@ class ReportsController extends Controller
                     'duration_days' => $durationDays,
                     'undertime_time' => $leave->undertime_time ? substr((string) $leave->undertime_time, 0, 5) : null,
                     'half_type' => $leave->half_type,
+                    'pay_status' => $payStatus,
+                    'pay_label' => $this->leaveCreditService->leavePayLabelForStatus($payStatus),
                 ];
                 $cursorLeave->addDay();
             }
@@ -1430,6 +1440,8 @@ class ReportsController extends Controller
                         'presence_issue' => $presenceIssue,
                         'attendance_time_out_status' => $attendanceOtStatus,
                         'leave_type' => $leaveInfo['type'] ?? null,
+                        'leave_pay_status' => $leaveInfo['pay_status'] ?? null,
+                        'leave_pay_label' => $leaveInfo['pay_label'] ?? null,
                         'is_rest_day' => $isRestDayRow || $status === 'rest',
                         'is_rest_day_worked' => $isRestDayRow && ($effectiveTimeIn || $effectiveTimeOut),
                         'leave_status' => $leaveInfo['status'] ?? null,
