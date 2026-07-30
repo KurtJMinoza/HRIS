@@ -1036,11 +1036,8 @@ class PayrollComputationService
             && ($holidayQualification['eligible'] ?? true);
         $baseRegularPay = ($paidReg / 60.0) * $hourlyRate;
         $holidayIncrementMultiplier = $qualifiesStatutoryHolidayPremium ? max(0.0, $first8 - 1.0) : 0.0;
-        $normalizedHolidayTypeForPay = $holiday !== null
-            ? $this->holidayEligibility->normalizeHolidayType($holiday['type'] ?? null)
-            : null;
         $isWorkedSpecialNonWorking = $qualifiesStatutoryHolidayPremium
-            && $normalizedHolidayTypeForPay === 'special';
+            && $resolvedHolidayType === 'special';
         $isRestDayWorked = $isRestDay && $paidReg > 0;
         $restDayWorkedPay = 0.0;
 
@@ -4366,7 +4363,12 @@ class PayrollComputationService
                     : 0.0;
                 $lineCreated = $existingPremium > 0.0001 || (($shouldCreateWorked || $shouldCreate) && $evaluationAmount > 0.0001);
                 if ($lineCreated && $index !== null && $existingPremium < $evaluationAmount) {
-                    $this->applyUnworkedOrMissingHolidayPremiumToDay($days, $index, $evaluation, $dailyRate);
+                    $normalizedType = $this->holidayEligibility->normalizeHolidayType($evaluation['holiday_type'] ?? null);
+                    if ($normalizedType === 'special') {
+                        $this->applyWorkedSpecialNonWorkingPremiumToDay($days, $index, $evaluation, $dailyRate);
+                    } else {
+                        $this->applyUnworkedOrMissingHolidayPremiumToDay($days, $index, $evaluation, $dailyRate);
+                    }
                 }
                 $this->logHolidayPayEvaluation(
                     $evaluation,
@@ -4418,6 +4420,92 @@ class PayrollComputationService
         }
 
         return $evaluations;
+    }
+
+    /**
+     * Worked special non-working (SH): one line at the full statutory rate (e.g. 1.30×).
+     * Unlike RH (1.00× regular + premium increment), SH replaces the ordinary regular base.
+     *
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function applyWorkedSpecialNonWorkingPremiumToDay(
+        array &$days,
+        int $index,
+        array $evaluation,
+        float $dailyRate
+    ): void {
+        $amount = round((float) ($evaluation['amount'] ?? 0), 2);
+        if ($amount <= 0.0001) {
+            return;
+        }
+
+        $breakdown = is_array($days[$index]['breakdown'] ?? null) ? $days[$index]['breakdown'] : [];
+        $regularBaseRemoved = 0.0;
+        foreach ($breakdown as &$entry) {
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                continue;
+            }
+            $regularBaseRemoved = round((float) ($entry['amount'] ?? 0), 2);
+            $entry['amount'] = 0.0;
+        }
+        unset($entry);
+
+        $previousPremium = round((float) ($days[$index]['holiday_premium_pay'] ?? 0), 2);
+        $previousTotal = round((float) ($days[$index]['total_pay'] ?? 0), 2);
+        $days[$index]['holiday_premium_pay'] = $amount;
+        $days[$index]['total_pay'] = round($previousTotal - $regularBaseRemoved + ($amount - $previousPremium), 2);
+        $days[$index]['regular_pay'] = 0.0;
+        $days[$index]['conditions']['holiday_eligible'] = true;
+
+        $normalizedType = $this->holidayEligibility->normalizeHolidayType($evaluation['holiday_type'] ?? null) ?? 'special';
+        $isRestDay = (bool) ($days[$index]['is_rest_day'] ?? false);
+        $componentCode = (string) ($evaluation['component_code'] ?? $this->holidayEligibility->holidayPayComponentCode(
+            $normalizedType,
+            false,
+            $isRestDay
+        ));
+        $holidayName = (string) ($evaluation['holiday_name'] ?? 'Holiday');
+        $multiplier = round((float) ($evaluation['multiplier'] ?? $days[$index]['conditions']['first_8'] ?? 1.3), 2);
+        $hourlyRate = $dailyRate > 0 ? $dailyRate / 8 : 0;
+        $paidMinutes = (int) (($days[$index]['regular_day_minutes'] ?? 0) + ($days[$index]['regular_night_minutes'] ?? 0));
+
+        $hasPremiumLine = false;
+        foreach ($breakdown as &$entry) {
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) === 'holiday_premium') {
+                $hasPremiumLine = true;
+                $entry['component_code'] = $componentCode;
+                $entry['description'] = $this->holidayEligibility->holidayPayDescription($componentCode, $holidayName);
+                $entry['minutes'] = $paidMinutes > 0 ? $paidMinutes : (int) ($days[$index]['required_minutes'] ?? 480);
+                $entry['rate'] = $hourlyRate;
+                $entry['multiplier'] = $multiplier;
+                $entry['premium_multiplier'] = $multiplier;
+                $entry['amount'] = $amount;
+                $entry['worked'] = true;
+                $entry['unworked'] = false;
+                break;
+            }
+        }
+        unset($entry);
+
+        if (! $hasPremiumLine) {
+            $breakdown[] = [
+                'component' => 'holiday_premium',
+                'component_code' => $componentCode,
+                'description' => $this->holidayEligibility->holidayPayDescription($componentCode, $holidayName),
+                'minutes' => $paidMinutes > 0 ? $paidMinutes : (int) ($days[$index]['required_minutes'] ?? 480),
+                'rate' => $hourlyRate,
+                'multiplier' => $multiplier,
+                'premium_multiplier' => $multiplier,
+                'holiday_id' => $evaluation['holiday_id'] ?? null,
+                'holiday_name' => $holidayName,
+                'holiday_type' => $evaluation['holiday_type'] ?? null,
+                'amount' => $amount,
+                'worked' => true,
+                'unworked' => false,
+            ];
+        }
+
+        $days[$index]['breakdown'] = $breakdown;
     }
 
     /**
@@ -4535,7 +4623,7 @@ class PayrollComputationService
 
             $worked = (bool) ($holidayEvaluation['worked'] ?? ($status === 'worked'));
             if ($worked) {
-                // Premium increment only — regular pay line already includes the 1.00× base.
+                // RH worked: premium increment only (regular line has 1.00×). SH worked: full rate on holiday line.
                 $amount = max($dayAmount, $dayPremiumPay);
             } else {
                 $amount = max($dayAmount, $dayPremiumPay, $evaluationAmount);

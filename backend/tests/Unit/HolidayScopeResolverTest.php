@@ -123,6 +123,42 @@ class HolidayScopeResolverTest extends TestCase
         $this->assertFalse($resolver->appliesToEmployee($employeeHoliday, $aciEmployee, $date));
     }
 
+    public function test_stale_non_primary_assignment_does_not_grant_company_holiday_after_primary_transfer(): void
+    {
+        [$aciCompany, $aciBranch] = $this->seedCompanyWithBranches('ACI');
+        [$mchisiCompany, $mchisiBranch] = $this->seedCompanyWithBranches('MCHISI');
+        $employee = $this->employee($mchisiCompany, $mchisiBranch);
+
+        EmployeeOrganizationAssignment::withoutEvents(function () use ($employee, $aciCompany, $aciBranch, $mchisiCompany, $mchisiBranch): void {
+            EmployeeOrganizationAssignment::query()->create([
+                'employee_id' => (int) $employee->id,
+                'assignment_type' => EmployeeOrganizationAssignment::TYPE_PRIMARY,
+                'company_id' => $aciCompany,
+                'branch_id' => $aciBranch,
+                'is_primary' => false,
+                'is_active' => true,
+                'effective_from' => '2024-01-01',
+                'effective_to' => null,
+            ]);
+            EmployeeOrganizationAssignment::query()->create([
+                'employee_id' => (int) $employee->id,
+                'assignment_type' => EmployeeOrganizationAssignment::TYPE_PRIMARY,
+                'company_id' => $mchisiCompany,
+                'branch_id' => $mchisiBranch,
+                'is_primary' => true,
+                'is_active' => true,
+                'effective_from' => '2025-01-01',
+                'effective_to' => null,
+            ]);
+        });
+
+        $aciHoliday = $this->holiday('company', [$aciCompany]);
+        $resolver = app(HolidayScopeResolver::class);
+        $date = Carbon::parse('2026-07-29');
+
+        $this->assertFalse($resolver->appliesToEmployee($aciHoliday, $employee, $date));
+    }
+
     public function test_date_effective_primary_assignment_is_used_instead_of_stale_legacy_fields(): void
     {
         [$mchisiCompany, $mchisiBranch] = $this->seedCompanyWithBranches('MCHISI');

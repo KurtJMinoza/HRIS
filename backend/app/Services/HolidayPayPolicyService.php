@@ -316,7 +316,7 @@ class HolidayPayPolicyService
                 );
         } elseif (in_array($normalizedType, ['special_working', 'company'], true) || $normalizedType === null) {
             $result = $this->result(false, true, 'This day does not carry unworked holiday pay.', 'not_non_working_holiday');
-        } elseif (! $holidayModuleGrant && $normalizedType === 'special' && $unworkedPolicy === self::UNWORKED_NO_PAY) {
+        } elseif ($normalizedType === 'special' && $unworkedPolicy === self::UNWORKED_NO_PAY) {
             $result = $this->result(false, true, 'Special non-working holiday follows No Work, No Pay.', 'special_no_work_no_pay');
         } elseif (! $holidayAllowedForUnworkedPay) {
             $result = $this->result(
@@ -325,7 +325,7 @@ class HolidayPayPolicyService
                 'This holiday is not selected for unworked holiday pay.',
                 $kind.'_holiday_not_selected'
             );
-        } elseif (! $holidayModuleGrant && $normalizedType === 'special' && in_array($unworkedPolicy, [self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY], true)) {
+        } elseif ($normalizedType === 'special' && in_array($unworkedPolicy, [self::UNWORKED_PAID_LEAVE, self::UNWORKED_PAID_LEAVE_ONLY], true)) {
             $paidLeave = $this->hasApprovedPaidLeave($employee, $dateKey);
             $result = $this->result(
                 $paidLeave,
@@ -333,7 +333,7 @@ class HolidayPayPolicyService
                 $paidLeave ? 'Approved paid leave is paid as leave.' : 'No approved paid leave covers this special holiday.',
                 $paidLeave ? 'special_paid_leave' : 'special_no_paid_leave'
             );
-        } elseif (! $holidayModuleGrant && $normalizedType === 'special' && ! $employmentTypeMatch) {
+        } elseif ($normalizedType === 'special' && ! $employmentTypeMatch) {
             $result = $this->result(false, true, 'Employee employment type is not selected for unworked special holiday pay.', 'special_employment_type_excluded');
         } elseif ($normalizedType === 'special') {
             $attendance = (array) ($resolved['attendance'] ?? []);
@@ -544,9 +544,9 @@ class HolidayPayPolicyService
     }
 
     /**
-     * A persisted Admin Holiday is itself an instruction to pay covered employees
-     * when its type carries unworked pay. Policy Settings still govern seeded
-     * calendar defaults and any override for employees outside Holiday Coverage.
+     * Persisted Admin Regular Holidays grant unworked pay to covered employees.
+     * Special non-working holidays stay No Work, No Pay unless Policy Settings
+     * explicitly enables special_unworked.
      */
     private function holidayModuleGrantsUnworkedPay(array $holiday, bool $scopeMatch): bool
     {
@@ -557,7 +557,6 @@ class HolidayPayPolicyService
         return in_array($this->normalizeHolidayType($holiday['type'] ?? null), [
             'regular',
             'double',
-            'special',
         ], true);
     }
 
@@ -616,6 +615,11 @@ class HolidayPayPolicyService
         bool $worked,
         array $holiday
     ): bool {
+        if ($holidayKind === 'special' && ! $worked
+            && $this->unworkedPayPolicy($resolvedPolicy, 'special') === self::UNWORKED_NO_PAY) {
+            return false;
+        }
+
         if ($this->shouldIgnoreHolidayCoverage($resolvedPolicy, $holidayKind, $worked)) {
             return true;
         }
@@ -1042,28 +1046,78 @@ class HolidayPayPolicyService
     }
 
     /** @param  array<string, mixed>  $resolved */
+    public function syncUnworkedBlocksFromSelectionMode(array $resolved): array
+    {
+        $storedPayUnworkedSpecial = $this->storedPayUnworkedSpecialFlag($resolved);
+
+        foreach (['regular' => 'regular_unworked', 'special' => 'special_unworked'] as $kind => $block) {
+            $defaultMode = $kind === 'regular' ? 'dole_default' : 'no_work_no_pay_default';
+            $mode = (string) ($resolved[$block]['holiday_selection_mode'] ?? $defaultMode);
+
+            if ($mode === 'no_work_no_pay_default' && $kind === 'special') {
+                if (! $storedPayUnworkedSpecial) {
+                    $resolved[$block]['unworked_pay_policy'] = self::UNWORKED_NO_PAY;
+
+                    continue;
+                }
+
+                $resolved[$block]['holiday_selection_mode'] = 'all_special_holidays';
+                $mode = 'all_special_holidays';
+            }
+
+            if (in_array($mode, ['disabled', 'no_work_no_pay_default'], true)) {
+                $resolved[$block]['unworked_pay_policy'] = $kind === 'special'
+                    ? self::UNWORKED_NO_PAY
+                    : self::UNWORKED_DISABLED;
+
+                continue;
+            }
+
+            if ($mode === 'dole_default') {
+                $resolved[$block]['unworked_pay_policy'] = self::UNWORKED_DOLE_DEFAULT;
+
+                continue;
+            }
+
+            if (in_array($mode, ['all_regular_holidays', 'all_special_holidays'], true)) {
+                $resolved[$block]['unworked_pay_policy'] = self::UNWORKED_ALL_TYPES;
+
+                continue;
+            }
+
+            if (in_array($mode, ['selected_regular_holidays', 'selected_special_holidays'], true)) {
+                $employmentMode = (string) ($resolved[$block]['employment_type_mode'] ?? 'all_employment_types');
+                $resolved[$block]['unworked_pay_policy'] = $employmentMode === 'selected_employment_types'
+                    ? 'selected_employment_types'
+                    : self::UNWORKED_ALL_TYPES;
+            }
+        }
+
+        return $resolved;
+    }
+
+    /** @param  array<string, mixed>  $resolved */
+    private function storedPayUnworkedSpecialFlag(array $resolved): bool
+    {
+        if (array_key_exists('pay_unworked_special', $resolved)) {
+            return (bool) $resolved['pay_unworked_special'];
+        }
+
+        $mode = (string) ($resolved['special_unworked']['holiday_selection_mode'] ?? 'no_work_no_pay_default');
+        if (! in_array($mode, ['no_work_no_pay_default', 'disabled'], true)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /** @param  array<string, mixed>  $resolved */
     private function normalizeResolvedPolicy(array $resolved): array
     {
         $resolved = array_replace_recursive(Policy::DEFAULT_HOLIDAY_POLICY, $resolved);
-        $resolved['pay_unworked_regular'] = ($resolved['regular_unworked']['unworked_pay_policy'] ?? self::UNWORKED_DOLE_DEFAULT) !== self::UNWORKED_DISABLED;
-        $specialPolicy = (string) ($resolved['special_unworked']['unworked_pay_policy'] ?? self::UNWORKED_NO_PAY);
-        // ponytail: legacy policies only had pay_unworked_special — infer once when special_unworked was never stored
-        if (! isset($resolved['special_unworked']['unworked_pay_policy']) && empty($resolved['special_unworked'])) {
-            if ($resolved['pay_unworked_special'] ?? false) {
-                $specialPolicy = self::UNWORKED_ALL;
-                $resolved['special_unworked']['unworked_pay_policy'] = self::UNWORKED_ALL;
-            }
-        }
-        $resolved['pay_unworked_special'] = $specialPolicy !== self::UNWORKED_NO_PAY;
-        $resolved['eligibility']['company_may_pay_unworked_special'] = $resolved['pay_unworked_special'];
-        $resolved['eligibility']['special_no_work_no_pay'] = $specialPolicy === self::UNWORKED_NO_PAY;
         unset($resolved['unworked_special_multiplier']);
         $resolved['regular_unworked']['unworked_pay_policy'] ??= self::UNWORKED_DOLE_DEFAULT;
         $resolved['special_unworked']['unworked_pay_policy'] ??= self::UNWORKED_NO_PAY;
-        if (($resolved['special_unworked']['holiday_selection_mode'] ?? 'no_work_no_pay_default') === 'no_work_no_pay_default'
-            && $resolved['special_unworked']['unworked_pay_policy'] !== self::UNWORKED_NO_PAY) {
-            $resolved['special_unworked']['holiday_selection_mode'] = 'all_special_holidays';
-        }
         foreach (['regular' => 'regular_unworked', 'special' => 'special_unworked'] as $kind => $block) {
             $selectionModes = $kind === 'regular'
                 ? ['dole_default', 'selected_regular_holidays', 'all_regular_holidays', 'disabled']
@@ -1086,6 +1140,15 @@ class HolidayPayPolicyService
                 ? $employmentMode
                 : 'all_employment_types';
         }
+
+        $resolved = $this->syncUnworkedBlocksFromSelectionMode($resolved);
+
+        $resolved['pay_unworked_regular'] = ($resolved['regular_unworked']['unworked_pay_policy'] ?? self::UNWORKED_DOLE_DEFAULT) !== self::UNWORKED_DISABLED;
+        $specialPolicy = (string) ($resolved['special_unworked']['unworked_pay_policy'] ?? self::UNWORKED_NO_PAY);
+        $resolved['pay_unworked_special'] = $specialPolicy !== self::UNWORKED_NO_PAY;
+        $resolved['eligibility']['company_may_pay_unworked_special'] = $resolved['pay_unworked_special'];
+        $resolved['eligibility']['special_no_work_no_pay'] = ! $resolved['pay_unworked_special'];
+        $resolved['eligibility']['pay_unworked_regular'] = $resolved['pay_unworked_regular'];
         $resolved['regular_unworked']['eligible_employment_types'] = $this->eligibleEmploymentTypes($resolved, 'regular');
         $resolved['special_unworked']['eligible_employment_types'] = $this->eligibleEmploymentTypes($resolved, 'special');
         foreach (['regular_worked', 'special_worked'] as $block) {

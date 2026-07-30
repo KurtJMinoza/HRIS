@@ -13,6 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import {
   REGULAR_UNWORKED_OPTIONS,
@@ -279,8 +280,8 @@ export function HolidayPayPolicyCard({
   const regularHolidays = holidays.filter((holiday) => ['regular', 'regular_holiday'].includes(String(holiday.type).toLowerCase()))
   const specialHolidays = holidays.filter((holiday) => ['special', 'special_non_working', 'special_non_working_holiday'].includes(String(holiday.type).toLowerCase()))
 
-  const selectedHolidayCount =
-    holidayPolicy.regular_unworked.holiday_ids.length + holidayPolicy.special_unworked.holiday_ids.length
+  const selectedRegularHolidayCount = holidayPolicy.regular_unworked.holiday_ids.length
+  const selectedSpecialHolidayCount = holidayPolicy.special_unworked.holiday_ids.length
 
   const unworkedCoverageValue =
     holidayPolicy.regular_unworked.coverage_behaviour === 'ignore_coverage' ||
@@ -306,42 +307,44 @@ export function HolidayPayPolicyCard({
       ? 'selected_employment_types'
       : 'all_employment_types'
 
-  const includedHolidayMode = (() => {
-    if (
-      holidayPolicy.regular_unworked.holiday_selection_mode === 'selected_regular_holidays' ||
-      holidayPolicy.special_unworked.holiday_selection_mode === 'selected_special_holidays'
-    ) {
-      return 'selected'
-    }
-    if (holidayPolicy.special_unworked.holiday_selection_mode === 'all_special_holidays') {
-      return 'all_special'
-    }
-    return 'all_regular'
-  })()
+  const specialUnworkedEnabled = Boolean(holidayPolicy.pay_unworked_special)
+  const specialIncludedMode =
+    holidayPolicy.special_unworked.holiday_selection_mode === 'selected_special_holidays'
+      ? 'selected'
+      : 'all_special'
+
+  const regularIncludedMode =
+    holidayPolicy.regular_unworked.holiday_selection_mode === 'selected_regular_holidays'
+      ? 'selected'
+      : 'all_regular'
 
   const setBoth = (pairs) => {
     pairs.forEach(([path, value]) => onPolicyChange(path, value))
   }
 
-  const setIncludedHolidayMode = (value) => {
-    if (value === 'selected') {
-      setBoth([
-        [['regular_unworked', 'holiday_selection_mode'], 'selected_regular_holidays'],
-        [['special_unworked', 'holiday_selection_mode'], 'selected_special_holidays'],
-      ])
+  const setSpecialUnworkedEnabled = (enabled) => {
+    if (enabled) {
+      onPolicyChange(
+        ['special_unworked', 'holiday_selection_mode'],
+        specialIncludedMode === 'selected' ? 'selected_special_holidays' : 'all_special_holidays',
+      )
       return
     }
-    if (value === 'all_special') {
-      setBoth([
-        [['regular_unworked', 'holiday_selection_mode'], 'disabled'],
-        [['special_unworked', 'holiday_selection_mode'], 'all_special_holidays'],
-      ])
-      return
-    }
-    setBoth([
-      [['regular_unworked', 'holiday_selection_mode'], 'dole_default'],
-      [['special_unworked', 'holiday_selection_mode'], 'no_work_no_pay_default'],
-    ])
+    onPolicyChange(['special_unworked', 'holiday_selection_mode'], 'no_work_no_pay_default')
+  }
+
+  const setRegularIncludedMode = (value) => {
+    onPolicyChange(
+      ['regular_unworked', 'holiday_selection_mode'],
+      value === 'selected' ? 'selected_regular_holidays' : 'dole_default',
+    )
+  }
+
+  const setSpecialIncludedMode = (value) => {
+    onPolicyChange(
+      ['special_unworked', 'holiday_selection_mode'],
+      value === 'selected' ? 'selected_special_holidays' : 'all_special_holidays',
+    )
   }
 
   const setUnworkedEmploymentTypes = (value) => {
@@ -391,11 +394,10 @@ export function HolidayPayPolicyCard({
         <div className="flex gap-3 rounded-lg border border-border/60 bg-background px-4 py-3 text-sm">
           <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <p className="leading-relaxed text-muted-foreground">
-            <span className="font-medium text-foreground">Holiday Coverage</span> grants unworked pay to employees
-            inside a Regular or Special Non-Working holiday&apos;s organizational scope, even when this policy is off.
-            Step 1 Ignore Coverage pays included holidays outside that scope (unworked, and worked premium when
-            the employee works that day). Use Selected Holidays to limit which holidays apply. Calendar and
-            attendance always respect Holiday Coverage.
+            <span className="font-medium text-foreground">Regular Holidays</span> grant qualified unworked pay to
+            employees inside Holiday Coverage. <span className="font-medium text-foreground">Special Non-Working</span>{' '}
+            defaults to No Work, No Pay — turn on the switch below to pay unworked specials the same way (100% daily
+            rate when qualified). Worked premium rates live in the Multipliers tab.
           </p>
         </div>
 
@@ -429,23 +431,24 @@ export function HolidayPayPolicyCard({
             </div>
 
             <div className="space-y-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Included holidays</p>
-              <RadioGroup value={includedHolidayMode} onValueChange={setIncludedHolidayMode} className="grid gap-2">
-                <RadioTile idPrefix="included-holidays" value="all_regular" title="All Regular Holidays" />
-                <RadioTile idPrefix="included-holidays" value="all_special" title="All Special Non-Working Holidays" />
+              <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                Included Regular Holidays
+              </p>
+              <RadioGroup value={regularIncludedMode} onValueChange={setRegularIncludedMode} className="grid gap-2">
+                <RadioTile idPrefix="included-regular-holidays" value="all_regular" title="All Regular Holidays" />
                 <RadioTile
-                  idPrefix="included-holidays"
+                  idPrefix="included-regular-holidays"
                   value="selected"
-                  title="Selected Holidays"
-                  badge={`${selectedHolidayCount} ${selectedHolidayCount === 1 ? 'holiday' : 'holidays'} selected`}
+                  title="Selected Regular Holidays"
+                  badge={`${selectedRegularHolidayCount} ${selectedRegularHolidayCount === 1 ? 'holiday' : 'holidays'} selected`}
                   trailing={<ChevronRight className="size-4" />}
                 />
               </RadioGroup>
             </div>
           </div>
 
-          {includedHolidayMode === 'selected' ? (
-            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {regularIncludedMode === 'selected' ? (
+            <div className="mt-4">
               <HolidayChecklist
                 idPrefix="regular-holiday"
                 title="Regular holidays"
@@ -454,24 +457,94 @@ export function HolidayPayPolicyCard({
                 loading={holidaysLoading}
                 onChange={(value) => onPolicyChange(['regular_unworked', 'holiday_ids'], value)}
               />
-              <HolidayChecklist
-                idPrefix="special-holiday"
-                title="Special non-working holidays"
-                holidays={specialHolidays}
-                selected={holidayPolicy.special_unworked.holiday_ids}
-                loading={holidaysLoading}
-                onChange={(value) => onPolicyChange(['special_unworked', 'holiday_ids'], value)}
-              />
             </div>
           ) : null}
         </PolicyStepSection>
 
-        <PolicyStepSection number="2." title="Unworked pay">
+        <PolicyStepSection
+          number="2."
+          title="Special Non-Working — Unworked pay"
+          description="DOLE default is No Work, No Pay. Enable to pay the ordinary daily rate when the employee is qualified and did not work."
+        >
+          <div
+            className={cn(
+              'flex flex-col gap-3 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between',
+              specialUnworkedEnabled
+                ? 'border-orange-300/80 bg-orange-50/60 dark:border-orange-800/60 dark:bg-orange-950/20'
+                : 'border-border/70 bg-background',
+            )}
+          >
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-foreground">Pay unworked Special Non-Working Holidays</p>
+                <Badge
+                  variant="secondary"
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                    specialUnworkedEnabled
+                      ? 'bg-orange-100 text-orange-800 dark:bg-orange-950/50 dark:text-orange-200'
+                      : 'text-muted-foreground',
+                  )}
+                >
+                  {specialUnworkedEnabled ? 'Enabled' : 'Disabled'}
+                </Badge>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {specialUnworkedEnabled
+                  ? 'Qualified employees receive 100% daily rate when they do not work the special holiday (same as regular unworked pay).'
+                  : 'No Work, No Pay — unworked special non-working holidays are unpaid unless the employee works (130% if worked).'}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                {specialUnworkedEnabled ? 'On' : 'Off'}
+              </span>
+              <Switch
+                id="special-unworked-pay-toggle"
+                checked={specialUnworkedEnabled}
+                onCheckedChange={setSpecialUnworkedEnabled}
+                className="data-[state=checked]:bg-orange-600"
+                aria-label="Enable unworked pay for special non-working holidays"
+              />
+            </div>
+          </div>
+
+          {specialUnworkedEnabled ? (
+            <div className="mt-4 space-y-3">
+              <RadioGroup value={specialIncludedMode} onValueChange={setSpecialIncludedMode} className="grid gap-2 sm:grid-cols-2">
+                <RadioTile
+                  idPrefix="included-special-holidays"
+                  value="all_special"
+                  title="All Special Non-Working Holidays"
+                />
+                <RadioTile
+                  idPrefix="included-special-holidays"
+                  value="selected"
+                  title="Selected Special Holidays"
+                  badge={`${selectedSpecialHolidayCount} ${selectedSpecialHolidayCount === 1 ? 'holiday' : 'holidays'} selected`}
+                  trailing={<ChevronRight className="size-4" />}
+                />
+              </RadioGroup>
+              {specialIncludedMode === 'selected' ? (
+                <HolidayChecklist
+                  idPrefix="special-holiday"
+                  title="Special non-working holidays"
+                  holidays={specialHolidays}
+                  selected={holidayPolicy.special_unworked.holiday_ids}
+                  loading={holidaysLoading}
+                  onChange={(value) => onPolicyChange(['special_unworked', 'holiday_ids'], value)}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </PolicyStepSection>
+
+        <PolicyStepSection number="3." title="Unworked pay rules">
           <div className="grid gap-5 lg:grid-cols-[1fr_0.9fr]">
             <div className="space-y-3">
               <PolicySelect
                 id="regular-unworked-policy"
-                label="Pay policy"
+                label="Regular holiday pay policy"
                 value={holidayPolicy.regular_unworked.holiday_selection_mode}
                 options={REGULAR_UNWORKED_OPTIONS}
                 onChange={(value) => onPolicyChange(['regular_unworked', 'holiday_selection_mode'], value)}
@@ -512,7 +585,7 @@ export function HolidayPayPolicyCard({
           </div>
         </PolicyStepSection>
 
-        <PolicyStepSection number="3." title="Worked pay" description="On the actual holiday">
+        <PolicyStepSection number="4." title="Worked pay" description="On the actual holiday">
           <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
             DOLE double pay: regular pay (100%) plus holiday worked premium. Multipliers are set under
             Multipliers - Regular Holiday.
@@ -559,7 +632,7 @@ export function HolidayPayPolicyCard({
           <div>
             <h4 className="text-sm font-semibold text-foreground">Unworked holiday - attendance rules</h4>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Applied when evaluating unworked regular and special non-working holiday pay.
+              Applied when evaluating unworked regular holiday pay, and special non-working unworked pay when enabled.
             </p>
           </div>
           <div className="mt-4 grid gap-3 lg:grid-cols-3">

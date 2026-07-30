@@ -198,7 +198,59 @@ class HolidayPayPolicyServiceTest extends TestCase
         $this->assertSame('REGULAR_HOLIDAY_UNWORKED_PAY', $result['breakdown']['component_code']);
     }
 
-    public function test_admin_special_holiday_coverage_pays_when_policy_uses_no_work_no_pay(): void
+    public function test_stale_special_unworked_policy_respects_no_work_no_pay_selection_mode(): void
+    {
+        $service = $this->service(workedDates: ['2026-08-20']);
+        $policy = $this->policyWithHolidayRules([
+            'pay_unworked_special' => false,
+            'special_unworked' => [
+                'unworked_pay_policy' => 'all_employment_types',
+                'holiday_selection_mode' => 'no_work_no_pay_default',
+            ],
+        ]);
+        $holiday = ['id' => 821, 'date' => '2026-08-21', 'type' => 'special', 'name' => 'TEST SPECIAL NON WORKING HOLIDAY'];
+
+        $result = $service->computeHolidayPay($this->employee(), [
+            'date_key' => '2026-08-21',
+            'worked' => false,
+            'daily_rate' => 1000,
+            'hourly_rate' => 125,
+            'required_minutes' => 480,
+        ], $holiday, $policy);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame(0.0, $result['holiday_premium_pay']);
+        $this->assertSame('special_no_work_no_pay', $result['qualification']['rule']);
+    }
+
+    public function test_disabled_special_unworked_does_not_pay_outside_holiday_scope_with_ignore_coverage(): void
+    {
+        $service = $this->service(workedDates: ['2026-08-20']);
+        $policy = $this->policyWithHolidayRules([
+            'pay_unworked_special' => false,
+            'special_unworked' => [
+                'unworked_pay_policy' => 'all_employment_types',
+                'holiday_selection_mode' => 'no_work_no_pay_default',
+                'coverage_behaviour' => 'ignore_coverage',
+            ],
+        ]);
+        $holiday = ['id' => 821, 'date' => '2026-08-21', 'type' => 'special', 'name' => 'TEST SPECIAL NON WORKING HOLIDAY'];
+
+        $result = $service->determineEligibility(
+            $this->employee(),
+            $holiday,
+            '2026-08-21',
+            false,
+            $policy,
+            false
+        );
+
+        $this->assertFalse($result['holiday_scope_match']);
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('special_no_work_no_pay', $result['rule']);
+    }
+
+    public function test_admin_special_holiday_coverage_does_not_bypass_no_work_no_pay(): void
     {
         $service = $this->service(workedDates: ['2026-08-20']);
         $policy = $this->policyWithHolidayRules([
@@ -217,10 +269,34 @@ class HolidayPayPolicyServiceTest extends TestCase
             'required_minutes' => 480,
         ], $holiday, $policy);
 
+        $this->assertFalse($result['eligible']);
+        $this->assertSame(0.0, $result['holiday_premium_pay']);
+        $this->assertSame('special_no_work_no_pay', $result['qualification']['rule']);
+    }
+
+    public function test_admin_special_holiday_pays_unworked_when_policy_enabled(): void
+    {
+        $service = $this->service(workedDates: ['2026-08-20']);
+        $policy = $this->policyWithHolidayRules([
+            'special_unworked' => [
+                'unworked_pay_policy' => 'all_employment_types',
+                'holiday_selection_mode' => 'all_special_holidays',
+            ],
+        ]);
+        $holiday = ['id' => 821, 'date' => '2026-08-21', 'type' => 'special', 'name' => 'ALI Special Holiday'];
+
+        $result = $service->computeHolidayPay($this->employee(), [
+            'date_key' => '2026-08-21',
+            'worked' => false,
+            'daily_rate' => 1000,
+            'hourly_rate' => 125,
+            'required_minutes' => 480,
+        ], $holiday, $policy);
+
         $this->assertTrue($result['eligible']);
         $this->assertSame(1000.0, $result['holiday_premium_pay']);
         $this->assertSame(1.0, $result['unworked_multiplier']);
-        $this->assertSame('holiday_module_coverage', $result['unworked_pay_source']);
+        $this->assertSame('policy_settings', $result['unworked_pay_source']);
         $this->assertSame('SPECIAL_HOLIDAY_UNWORKED_PAY', $result['breakdown']['component_code']);
     }
 
@@ -271,7 +347,8 @@ class HolidayPayPolicyServiceTest extends TestCase
 
         $this->assertTrue($result['eligible']);
         $this->assertSame(1.3, $result['worked_first8_multiplier']);
-        $this->assertSame(300.0, $result['holiday_premium_pay']);
+        $this->assertSame(1300.0, $result['holiday_premium_pay']);
+        $this->assertSame('SPECIAL_HOLIDAY_WORKED_PAY', $result['breakdown']['component_code'] ?? null);
     }
 
     public function test_rest_days_are_skipped_to_previous_working_day(): void
@@ -361,8 +438,10 @@ class HolidayPayPolicyServiceTest extends TestCase
     {
         $service = $this->service(workedDates: ['2026-08-20']);
         $policy = $this->policyWithHolidayRules([
+            'pay_unworked_special' => true,
             'special_unworked' => [
                 'unworked_pay_policy' => 'company_policy',
+                'holiday_selection_mode' => 'all_special_holidays',
             ],
         ]);
         $holiday = ['date' => '2026-08-21', 'type' => 'special', 'name' => 'Special Day'];
@@ -377,8 +456,10 @@ class HolidayPayPolicyServiceTest extends TestCase
     {
         $service = $this->service(workedDates: ['2026-08-20']);
         $policy = $this->policyWithHolidayRules([
+            'pay_unworked_special' => true,
             'special_unworked' => [
                 'unworked_pay_policy' => 'company_policy',
+                'holiday_selection_mode' => 'all_special_holidays',
             ],
         ]);
         $holiday = ['date' => '2026-08-21', 'type' => 'special', 'name' => 'Special Day'];
@@ -575,6 +656,8 @@ class HolidayPayPolicyServiceTest extends TestCase
         $policy = $this->policyWithHolidayRules([
             'special_unworked' => [
                 'unworked_pay_policy' => 'selected_employment_types',
+                'holiday_selection_mode' => 'all_special_holidays',
+                'employment_type_mode' => 'selected_employment_types',
                 'eligible_employment_types' => ['regular'],
             ],
         ]);

@@ -148,12 +148,15 @@ class HolidayScopeResolver
             return $startsOnTime && $endsOnTime;
         });
 
-        $hasPrimaryAssignment = $assignments->contains(
-            fn (EmployeeOrganizationAssignment $row): bool => (bool) $row->is_primary || $row->assignment_type === EmployeeOrganizationAssignment::TYPE_PRIMARY
+        $primaryAssignments = $assignments->filter(
+            fn (EmployeeOrganizationAssignment $row): bool => (bool) $row->is_primary
         );
+        $hasPrimaryAssignment = $primaryAssignments->isNotEmpty();
 
+        // ponytail: when is_primary is set, ignore other active rows (assignment_type alone
+        // is unreliable in legacy data) so scoped holidays do not leak across companies.
         $contexts = $hasPrimaryAssignment ? [] : [$base];
-        foreach ($assignments as $assignment) {
+        foreach ($hasPrimaryAssignment ? $primaryAssignments : $assignments as $assignment) {
             $contexts[] = $this->normalizeContext([
                 'company_id' => $assignment->company_id !== null ? (int) $assignment->company_id : null,
                 'branch_id' => $assignment->branch_id !== null ? (int) $assignment->branch_id : null,

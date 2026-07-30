@@ -38,19 +38,7 @@ export const HOLIDAY_TYPE_OPTIONS = [
     value: 'special',
     label: 'Special Non-Working Holiday',
     short: 'SNW',
-    hint: 'Covered employees receive qualified unworked pay for this Admin Holiday; 130% if worked.',
-  },
-  {
-    value: 'special_working',
-    label: 'Special Working Day',
-    short: 'SWD',
-    hint: 'Declared "no holiday" — pay as ordinary day unless employer policy says otherwise.',
-  },
-  {
-    value: 'company',
-    label: 'Company Event',
-    short: 'Co',
-    hint: 'Internal observance — follow company policy; no default statutory premium.',
+    hint: 'No Work, No Pay by default; 130% if worked. Enable unworked pay in Policy Settings to pay 100% when qualified.',
   },
 ]
 
@@ -66,12 +54,6 @@ export const SWAP_HOLIDAY_TYPE_OPTIONS = [
     label: 'Special Non-Working Holiday',
     short: 'SNW',
     hint: '130% if worked. Common for government-proclaimed date swaps.',
-  },
-  {
-    value: 'company',
-    label: 'Company Holiday',
-    short: 'Co',
-    hint: 'Company-level swap — internal policy applies, no default statutory premium.',
   },
 ]
 
@@ -94,7 +76,7 @@ export function holidayImpactPreview(type) {
     case 'regular':
       return { label: 'Regular Holiday → 100% qualified unworked pay · 200% if worked', tone: 'teal' }
     case 'special':
-      return { label: 'Special Non-Working → 100% qualified unworked pay · 130% if worked', tone: 'amber' }
+      return { label: 'Special Non-Working → No Work, No Pay by default · 130% if worked (enable unworked pay in Policy Settings)', tone: 'amber' }
     case 'special_working':
       return { label: 'Special Working Day → ordinary rates (no statutory holiday premium)', tone: 'slate' }
     case 'company':

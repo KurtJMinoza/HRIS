@@ -609,6 +609,8 @@ class PayPolicyController extends Controller
             }
         }
 
+        $merged = $this->holidayPayPolicy->syncUnworkedBlocksFromSelectionMode($merged);
+
         $specialPolicy = (string) ($merged['special_unworked']['unworked_pay_policy'] ?? 'no_work_no_pay');
         $regularPolicy = (string) ($merged['regular_unworked']['unworked_pay_policy'] ?? 'dole_default');
         $merged['pay_unworked_regular'] = $regularPolicy !== 'disabled';

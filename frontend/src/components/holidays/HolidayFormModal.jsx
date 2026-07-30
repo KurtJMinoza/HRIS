@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { z } from 'zod'
 import { format, parseISO, isValid } from 'date-fns'
-import { BriefcaseBusiness, Building2, CalendarIcon, Gift, Info, Loader2, Megaphone, Save, Users } from 'lucide-react'
+import { Building2, CalendarIcon, Gift, Info, Loader2, Save, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,7 +50,7 @@ const formSchema = z
   .object({
     name: z.string().trim().min(1, 'Holiday name is required').max(255),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a valid date'),
-    type: z.enum(['regular', 'special', 'special_working', 'company']),
+    type: z.enum(['regular', 'special']),
     description: z.string().max(1000).optional().or(z.literal('')),
     scope: z.enum(['nationwide', 'company', 'branch', 'division', 'department', 'section_unit', 'employee']),
     companyIds: z.array(z.string()).default([]),
@@ -175,7 +175,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
       setValues({
         name: initial.name ?? '',
         date: typeof initial.date === 'string' ? initial.date.slice(0, 10) : '',
-        type: ['regular', 'special', 'special_working', 'company'].includes(initial.type) ? initial.type : 'regular',
+        type: ['regular', 'special'].includes(initial.type) ? initial.type : 'regular',
         description: initial.description ?? '',
         scope,
         companyIds: Array.isArray(initial.company_ids)
@@ -386,8 +386,6 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
   const typeIcon = {
     regular: CalendarIcon,
     special: Gift,
-    special_working: BriefcaseBusiness,
-    company: Megaphone,
   }
 
   async function onSubmit(e) {
@@ -577,7 +575,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                           </button>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">
-                          Regular vs Special vs Special Working follow DOLE proclamations. Company events use internal policy only.
+                          Regular Holiday and Special Non-Working Holiday follow DOLE proclamations.
                         </TooltipContent>
                       </Tooltip>
                     </div>

@@ -55,8 +55,6 @@ const AGCTEK_BRAND = {
 const TYPES = [
   { value: 'regular', label: 'Regular Holiday' },
   { value: 'special', label: 'Special Non-Working' },
-  { value: 'special_working', label: 'Special Working' },
-  { value: 'company', label: 'Company Event' },
 ]
 /** Visual + copy for each holiday type — full-cell tint, multiplier badge, tooltips. */
 const HOLIDAY_TYPE_META = {
@@ -84,7 +82,7 @@ const HOLIDAY_TYPE_META = {
     badge: 'bg-orange-600 text-white shadow-sm dark:bg-orange-500 dark:text-white',
     typePill: 'bg-amber-800/15 text-[10px] font-bold uppercase tracking-wide text-amber-950 dark:bg-amber-400/15 dark:text-amber-100',
     title:
-      'Special non-working day — 130% if worked; typically no pay if unworked (check monthly vs daily rules).',
+      'Special non-working day — No Work, No Pay by default; 130% if worked. Enable unworked pay in Policy Settings.',
   },
   special_working: {
     shortLabel: 'Sp. Work',
@@ -1067,8 +1065,6 @@ export default function AdminHoliday({ mode = 'admin' }) {
                           {[
                             { value: 'regular', label: 'Regular' },
                             { value: 'special', label: 'Special' },
-                            { value: 'special_working', label: 'Sp. work' },
-                            { value: 'company', label: 'Company' },
                           ].map(({ value, label }) => (
                             <button
                               key={value}
