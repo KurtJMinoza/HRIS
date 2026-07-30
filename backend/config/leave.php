@@ -34,7 +34,14 @@ return [
     | not carry over). HR manual adjustments may change users.leave_credits when eligible.
     |
     */
-    'annual_allocation' => (int) env('LEAVE_ANNUAL_CREDITS', 7),
+    'annual_allocation' => (int) env('LEAVE_ANNUAL_CREDITS', 14),
+
+    /*
+    | Previous annual pool size used when raising annual_allocation (e.g. 7 → 14).
+    | Eligible balances still on this legacy scale automatically receive the difference:
+    | 7/7 → 14/14, 5/7 → 12/14, etc.
+    */
+    'previous_annual_allocation' => (int) env('LEAVE_PREVIOUS_ANNUAL_CREDITS', 7),
 
     /*
     | When true, approving a contract renewal (non-probation regularization path) resets leave credits

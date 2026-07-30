@@ -29,7 +29,7 @@ use Illuminate\Validation\ValidationException;
  * credits even after one year of service. **Regular** employees with **less than one full year of
  * service**: **0** credits (not eligible yet). Only **Regular + ≥1 year** receive the annual pool.
  *
- * **Annual pool:** configurable via leave.annual_allocation (default 7). **January 1** full reset
+ * **Annual pool:** configurable via leave.annual_allocation (default 14). **January 1** full reset
  * for eligible employees; unused credits do not carry over (not cumulative).
  *
  * **Regularization / employment updates:** once the employee is Regular **and** has completed
@@ -45,19 +45,26 @@ class LeaveCreditService
 
     private static function summaryCacheKey(int $userId, bool $includePendingReservedDays = false): string
     {
-        return 'leave:balance:'.$userId.':summary:v2:pending:'.($includePendingReservedDays ? '1' : '0');
+        // Include annual allocation so raising 7→14 busts stale 7/7 summary rows automatically.
+        return 'leave:balance:'.$userId.':summary:v3:a'.self::annualAllocation().':pending:'.($includePendingReservedDays ? '1' : '0');
     }
 
     public function forgetSummaryCacheForUser(int $userId): void
     {
         Cache::forget("leave:balance:{$userId}:summary:v1");
+        foreach ([7, 14, self::annualAllocation()] as $annual) {
+            Cache::forget('leave:balance:'.$userId.':summary:v3:a'.$annual.':pending:0');
+            Cache::forget('leave:balance:'.$userId.':summary:v3:a'.$annual.':pending:1');
+        }
+        Cache::forget('leave:balance:'.$userId.':summary:v2:pending:0');
+        Cache::forget('leave:balance:'.$userId.':summary:v2:pending:1');
         Cache::forget(self::summaryCacheKey($userId, false));
         Cache::forget(self::summaryCacheKey($userId, true));
     }
 
     public static function annualAllocation(): int
     {
-        return max(0, (int) config('leave.annual_allocation', 7));
+        return max(0, (int) config('leave.annual_allocation', 14));
     }
 
     /** Human-readable copy for profile / leave UI. */
@@ -229,6 +236,9 @@ class LeaveCreditService
             if ($this->reconcileEligibleAnnualAllocationLocked($locked, null)) {
                 $changed = true;
             }
+            if ($this->ensureEligibleResetDateForDisplayLocked($locked)) {
+                $changed = true;
+            }
 
             return $changed;
         });
@@ -350,14 +360,12 @@ class LeaveCreditService
     }
 
     /**
-     * Backfill the annual allocation when the employee is already eligible this year but is still
-     * carrying a stale zero balance from an earlier ineligible/reset state.
-     *
-     * Important:
-     * - Do not overwrite employees who already have credits.
-     * - Do not overwrite employees who already had any leave-credit activity this year.
-     * - Only repair the common stale case: eligible now, current-year reset date is present, and
-     *   balance is still zero with no current-year transactions.
+     * When annual allocation increases (e.g. 7 → 14), eligible balances still on the legacy
+     * scale automatically receive the difference once:
+     * - 7/7 → 14/14 (+7)
+     * - 5/7 → 12/14 (+7)
+     * - 0 after using all 7 → 7/14 (+7)
+     * - stale eligible 0 with no usage → 14/14 (full current pool)
      *
      * @internal Called with row lock
      */
@@ -367,62 +375,106 @@ class LeaveCreditService
             return false;
         }
 
+        $allocation = self::annualAllocation();
+        $legacyAnnual = max(0, (int) config('leave.previous_annual_allocation', 7));
+        $delta = $allocation - $legacyAnnual;
+        if ($delta <= 0) {
+            return false;
+        }
+
         $current = (int) $locked->leave_credits;
-        if ($current > 0) {
+        if ($current >= $allocation) {
+            return false;
+        }
+
+        // Already beyond the legacy pool size — treat as already on the new scale.
+        if ($current > $legacyAnnual) {
+            return false;
+        }
+
+        $alreadySynced = LeaveCreditTransaction::query()
+            ->where('user_id', $locked->id)
+            ->whereIn('leave_type_context', [
+                'annual_allocation_sync',
+                'eligibility_allocation_topup',
+                'eligibility_reconcile',
+            ])
+            ->exists();
+        if ($alreadySynced) {
             return false;
         }
 
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
         $startOfYear = Carbon::now($tz)->startOfYear()->startOfDay();
-        $resetDate = $locked->leave_credits_reset_date;
-        if ($resetDate === null) {
-            return false;
-        }
-
-        $lastReset = Carbon::parse($resetDate, $tz)->startOfDay();
-        if ($lastReset->lessThan($startOfYear)) {
-            return false;
-        }
-
-        $currentYearTransactions = LeaveCreditTransaction::query()
+        $hasDeductionThisYear = LeaveCreditTransaction::query()
             ->where('user_id', $locked->id)
+            ->where('change_type', LeaveCreditTransaction::TYPE_DEDUCTION)
             ->where('created_at', '>=', $startOfYear->copy()->setTimezone('UTC'))
-            ->get(['change_type', 'leave_type_context']);
+            ->exists();
 
-        $hasMeaningfulCurrentYearTransactions = $currentYearTransactions->contains(function (LeaveCreditTransaction $tx) {
-            $type = (string) ($tx->change_type ?? '');
-            $context = (string) ($tx->leave_type_context ?? '');
+        if ($current <= 0) {
+            // Used entire legacy pool → keep the usage, only add the allocation increase.
+            // Stale empty eligible balance with no usage → grant full current annual pool.
+            $newBalance = $hasDeductionThisYear ? min($allocation, $delta) : $allocation;
+        } else {
+            $newBalance = min($allocation, $current + $delta);
+        }
 
-            // Ignore system-generated rows that merely zeroed-out or reset the stale balance while
-            // the employee was still considered ineligible. Those should not block the repair.
-            if ($type === LeaveCreditTransaction::TYPE_ANNUAL_RESET) {
-                return false;
-            }
-            if ($type === LeaveCreditTransaction::TYPE_ADJUSTMENT && $context === 'eligibility_normalize') {
-                return false;
-            }
-
-            return true;
-        });
-
-        if ($hasMeaningfulCurrentYearTransactions) {
+        if ($newBalance === $current) {
             return false;
         }
 
-        $allocation = self::annualAllocation();
-        $locked->leave_credits = $allocation;
+        $prev = $current;
+        $locked->leave_credits = $newBalance;
+        if ($locked->leave_credits_reset_date === null) {
+            $locked->leave_credits_reset_date = $startOfYear->toDateString();
+        }
         $locked->save();
 
         LeaveCreditTransaction::create([
             'user_id' => $locked->id,
             'change_type' => LeaveCreditTransaction::TYPE_ADDITION,
-            'delta' => $allocation,
-            'balance_after' => $allocation,
-            'reason' => 'Eligibility reconciliation: employee is Regular and has completed one full year of service; annual paid-leave pool restored.',
+            'delta' => $newBalance - $prev,
+            'balance_after' => $newBalance,
+            'reason' => 'Annual allocation increase ('.$legacyAnnual.' → '.$allocation.'): balance adjusted by +'.($newBalance - $prev).'.',
             'leave_request_id' => null,
             'actor_id' => $actor?->id,
-            'leave_type_context' => 'eligibility_reconcile',
+            'leave_type_context' => 'annual_allocation_sync',
         ]);
+
+        return true;
+    }
+
+    /**
+     * Eligible employees should always have a Jan 1 reset stamp for UI:
+     * "Recharged on Jan 1, 2026".
+     *
+     * @internal Called with row lock
+     */
+    private function ensureEligibleResetDateForDisplayLocked(User $locked): bool
+    {
+        if (! $this->eligibleForPaidLeavePool($locked)) {
+            return false;
+        }
+
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $startOfYear = Carbon::now($tz)->startOfYear()->startOfDay()->toDateString();
+        $current = $locked->leave_credits_reset_date
+            ? Carbon::parse($locked->leave_credits_reset_date, $tz)->toDateString()
+            : null;
+
+        if ($current === $startOfYear) {
+            return false;
+        }
+
+        // Missing or stale prior-year stamp with no recharge due yet — keep display on this year's Jan 1
+        // only when still missing. Prior-year dates are handled by applyAnnualRechargeIfDueLocked.
+        if ($current !== null) {
+            return false;
+        }
+
+        $locked->leave_credits_reset_date = $startOfYear;
+        $locked->save();
 
         return true;
     }
@@ -1068,15 +1120,17 @@ class LeaveCreditService
         $userId = (int) $user->id;
         $includePendingReservedDays = (bool) ($options['include_pending_reserved_days'] ?? false);
 
+        // Sync allocation before cache so unused 7/7 pools become 14/14 even when a summary is cached.
+        $baseUser = User::query()->find($userId);
+        if ($baseUser instanceof User) {
+            app(EmployeeStatusService::class)->syncAutomaticEmploymentStatus($baseUser);
+        }
+        $this->ensureAnnualRechargeForUserId($userId);
+
         return Cache::remember(
             self::summaryCacheKey($userId, $includePendingReservedDays),
             now()->addMinutes(self::SUMMARY_CACHE_TTL_MINUTES),
             function () use ($userId, $includePendingReservedDays): array {
-                $baseUser = User::query()->find($userId);
-                if ($baseUser instanceof User) {
-                    app(EmployeeStatusService::class)->syncAutomaticEmploymentStatus($baseUser);
-                }
-                $this->ensureAnnualRechargeForUserId($userId);
                 $user = User::query()
                     ->select([
                         'id',
@@ -1104,7 +1158,7 @@ class LeaveCreditService
                         'employment_status' => null,
                         'service_anchor_date' => null,
                         'regular_service_start_date' => null,
-                        'display' => '0/7 - Not yet eligible (under 1 year regular service)',
+                        'display' => '0/'.self::annualAllocation().' - Not yet eligible (under 1 year regular service)',
                         'status_summary' => 'Not eligible: paid leave credits require Regular status and one full year of service',
                         'unpaid_leave_notice' => 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
                         'warning' => 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
@@ -1155,11 +1209,17 @@ class LeaveCreditService
                     $warning = $unpaidLeaveNotice;
                 }
 
+                $resetDate = $user->leave_credits_reset_date;
+                if ($eligible && $resetDate === null) {
+                    $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+                    $resetDate = Carbon::now($tz)->startOfYear()->startOfDay();
+                }
+
                 return [
                     'remaining' => $remaining,
                     'annual_allocation' => $annual,
-                    'reset_date' => $user->leave_credits_reset_date?->toDateString(),
-                    'last_recharged_display' => self::lastAnnualRechargeDisplay($user->leave_credits_reset_date),
+                    'reset_date' => $resetDate?->toDateString(),
+                    'last_recharged_display' => self::lastAnnualRechargeDisplay($resetDate),
                     'recharge_policy' => self::annualRechargePolicyCopy(),
                     'pending_reserved_days' => $pendingReserved,
                     'effective_available' => $effectiveAvailable,

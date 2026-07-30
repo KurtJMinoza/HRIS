@@ -187,7 +187,7 @@ export function LeaveCreditsCard({
   const previewRows = fullHistory.slice(0, 3)
   const hasMoreActivity = fullHistory.length > 3
 
-  const rechargeLine = data.recharge_policy || 'Recharges on January 1st every year.'
+  const rechargeLine = data.recharge_policy || 'Recharges on January 1st every year (full reset; unused credits do not carry over).'
   const subtitleOneLine = 'Paid leave pool (vacation, sick, emergency, half-day, etc.).'
   const statusSummary =
     typeof data.status_summary === 'string' && data.status_summary.trim() !== '' ? data.status_summary.trim() : null

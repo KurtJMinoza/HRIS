@@ -160,14 +160,14 @@ export function deriveAdminEmployeeListLeaveCredits(emp) {
   if (!emp || typeof emp !== 'object') {
     return {
       remaining: 0,
-      annual: 7,
+      annual: 14,
       showEligibleBadge: false,
       fractionLabel: '—',
       title: '',
     }
   }
 
-  const annual = Math.max(0, Number(emp.leave_credits_annual_allocation ?? 7)) || 7
+  const annual = Math.max(0, Number(emp.leave_credits_annual_allocation ?? 14)) || 14
   const serverRemaining = Number(emp.leave_credits ?? 0)
 
   const today = new Date()

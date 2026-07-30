@@ -9,7 +9,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            $table->unsignedInteger('leave_credits')->default(7)->after('salary_effectivity_date');
+            $table->unsignedInteger('leave_credits')->default(14)->after('salary_effectivity_date');
             $table->unsignedSmallInteger('leave_credits_year')->nullable()->after('leave_credits');
         });
 

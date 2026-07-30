@@ -2095,12 +2095,12 @@ export default function AdminEmployeeProfile() {
     const serviceAnchorDateLabel = formatDateOnlyForPayload(serviceAnchorDate)
     const eligibilityDate = serviceAnchorDate ? addYearsDateOnly(serviceAnchorDate, 1) : null
     const eligibleNow = Boolean(isRegular && eligibilityDate && todayDateOnly.getTime() >= eligibilityDate.getTime())
-    const annualAllocation = Math.max(0, Number(leaveCreditsBlock.annual_allocation ?? 7)) || 7
+    const annualAllocation = Math.max(0, Number(leaveCreditsBlock.annual_allocation ?? 14)) || 14
     const remaining = Number(leaveCreditsBlock.remaining ?? 0)
 
     // Keep the server payload as the source of truth when it already matches the live employment data.
     // Only override the obvious stale UI case: Employment tab proves eligibility, but the snapshot still
-    // says 0/7 or ineligible because it has not caught up to the latest status/effective-date update yet.
+    // says 0/14 or ineligible because it has not caught up to the latest status/effective-date update yet.
     if (eligibleNow) {
       return {
         ...leaveCreditsBlock,

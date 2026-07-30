@@ -276,7 +276,7 @@ class EmployeeStatusServiceTest extends TestCase
         $resolvedAgain = $this->service->syncAutomaticEmploymentStatus($resolved->fresh(), initializeLeaveCredits: true);
 
         $this->assertSame(EmploymentStatus::Regular->value, $resolvedAgain->employment_status);
-        $this->assertSame(7, (int) $resolvedAgain->leave_credits);
+        $this->assertSame(14, (int) $resolvedAgain->leave_credits);
         $this->assertNotNull($resolvedAgain->leave_credits_initialized_at);
         $this->assertSame(1, LeaveCreditTransaction::query()
             ->where('user_id', $employee->id)

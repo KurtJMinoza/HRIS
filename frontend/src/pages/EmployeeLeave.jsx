@@ -986,8 +986,11 @@ function EmployeeLeaveSelfService() {
               <p className="text-xs text-teal-900/90 dark:text-teal-100/85">{leaveCreditInfo.status_summary}</p>
             ) : null}
             <p className="text-xs text-teal-900/80 dark:text-teal-200/80">
-              {leaveCreditInfo.recharge_policy || 'Recharges on January 1st every year.'}
+              {leaveCreditInfo.recharge_policy || 'Recharges on January 1st every year (full reset; unused credits do not carry over).'}
             </p>
+            {leaveCreditInfo.last_recharged_display ? (
+              <p className="text-xs text-teal-900/80 dark:text-teal-200/80">{leaveCreditInfo.last_recharged_display}</p>
+            ) : null}
             <p className="text-xs text-teal-900/80 dark:text-teal-200/80">
               {leaveCreditInfo.pending_reserved_days
                 ? `${leaveCreditInfo.pending_reserved_days} day(s) reserved by pending requests · `

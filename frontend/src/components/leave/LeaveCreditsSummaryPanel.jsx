@@ -48,7 +48,12 @@ export function LeaveCreditsSummaryPanel({ leaveCreditInfo, className }) {
               <p className="text-[15px] font-semibold text-foreground">{leaveCreditInfo.display}</p>
             ) : null}
             {leaveCreditInfo.status_summary ? <p>{leaveCreditInfo.status_summary}</p> : null}
-            <p>{leaveCreditInfo.recharge_policy || 'Recharge on January 1st every year (full reset; unused credits do not carry over).'}</p>
+            <p>{leaveCreditInfo.recharge_policy || 'Recharges on January 1st every year (full reset; unused credits do not carry over).'}</p>
+            {leaveCreditInfo.last_recharged_display ? (
+              <p>{leaveCreditInfo.last_recharged_display}</p>
+            ) : leaveCreditInfo.reset_date ? (
+              <p>Recharged on {leaveCreditInfo.reset_date}</p>
+            ) : null}
             <p>
               {pending > 0 ? (
                 <>
