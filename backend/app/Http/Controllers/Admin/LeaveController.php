@@ -310,7 +310,7 @@ class LeaveController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
-            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,undertime,half_day'],
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'half_type' => ['nullable', 'string', 'in:am,pm'],

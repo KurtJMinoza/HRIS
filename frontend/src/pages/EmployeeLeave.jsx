@@ -1301,12 +1301,6 @@ function EmployeeLeaveSelfService() {
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="emergency">
                       Emergency
                     </SelectItem>
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="undertime">
-                      Undertime
-                    </SelectItem>
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="half_day">
-                      Half Day
-                    </SelectItem>
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="other">
                       Other
                     </SelectItem>
@@ -1599,8 +1593,6 @@ function EmployeeLeaveSelfService() {
                   <option value="vacation">Vacation</option>
                   <option value="sick">Sick</option>
                   <option value="emergency">Emergency</option>
-                  <option value="undertime">Undertime</option>
-                  <option value="half_day">Half Day</option>
                   <option value="other">Other</option>
                 </select>
               </div>

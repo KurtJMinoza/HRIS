@@ -126,9 +126,6 @@ const LEAVE_TYPES = [
   { value: 'vacation', label: 'Vacation' },
   { value: 'sick', label: 'Sick' },
   { value: 'emergency', label: 'Emergency' },
-  // Undertime is time-based; admin leave form does not capture time,
-  // so we do not expose it here to avoid inaccurate computations.
-  { value: 'half_day', label: 'Half Day' },
   { value: 'other', label: 'Other' },
 ]
 
@@ -253,7 +250,7 @@ export default function AdminLeave() {
   const canLeaveNotes = perms.has('leave.notes')
   /** Pure HR only (`can_file_leave_for_others`); never for assigned org heads (also blocked by `hr_role` as a safeguard). */
   const isOrgHeadHrRole = ORG_HEAD_HR_ROLES.has(user?.hr_role ?? '')
-  const showEmployeePicker =
+  const canFileLeaveForOthers =
     user?.can_file_leave_for_others === true && !isOrgHeadHrRole
   const isAdminHr = user?.hr_role === 'admin_hr'
   const allLeaveTabLabel = isAdminHr ? 'All Filings' : 'For My Approval'
@@ -368,6 +365,9 @@ export default function AdminLeave() {
   const mineListLoadedOnceRef = useRef(false)
   const tabInitialized = useRef(false)
   const [tab, setTab] = useState('all')
+  // My Filings always files for the signed-in user; employee picker is All Filings / HR only.
+  const isMineTab = tab === 'mine'
+  const showEmployeePicker = canFileLeaveForOthers && !isMineTab
   const [myLeaveRequests, setMyLeaveRequests] = useState([])
   const [leaveCreditInfo, setLeaveCreditInfo] = useState(null)
   const [approvalQueueBadgeCount, setApprovalQueueBadgeCount] = useState(0)
@@ -1385,7 +1385,6 @@ export default function AdminLeave() {
     }
   }
 
-  const isMineTab = tab === 'mine'
   const filingOwnLeave =
     !showEmployeePicker || String(addForm.user_id || '') === String(user?.id ?? '')
   const addBillableCreditDays = useMemo(() => billableCreditDaysForForm(addForm), [addForm])
@@ -2581,7 +2580,7 @@ export default function AdminLeave() {
                 <DialogDescription id="leave-add-desc" className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground">
                   {showEmployeePicker
                     ? 'Select an employee in your scope, then choose dates and leave type.'
-                    : 'Choose your leave type and dates. This request is for your own leave only.'}{' '}
+                    : 'Choose your leave type and dates. This request is filed for you.'}{' '}
                   Leave cannot overlap another pending or approved leave for the same dates.
                 </DialogDescription>
               </div>
