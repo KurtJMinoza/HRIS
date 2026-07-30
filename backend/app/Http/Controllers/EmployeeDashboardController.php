@@ -335,7 +335,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 21) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 22) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -664,7 +664,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 21,
+                'schema_version' => 22,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,

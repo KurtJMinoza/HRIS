@@ -704,7 +704,7 @@ export default function EmployeeDashboard() {
       if (calendarCacheRef.current.has(mk)) continue
       try {
         const data = await getEmployeeDashboardAttendanceCalendar({ month: mk })
-        if (data?.meta?.schema_version === 21) {
+        if (data?.meta?.schema_version === 22) {
           calendarCacheRef.current.set(mk, data)
         }
       } catch {
@@ -717,7 +717,7 @@ export default function EmployeeDashboard() {
     const monthKey = calendarMonthSelectKey(year, month)
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    const cacheValid = cached && cached?.meta?.schema_version === 21
+    const cacheValid = cached && cached?.meta?.schema_version === 22
 
     if (cacheValid) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
@@ -3042,6 +3042,20 @@ export default function EmployeeDashboard() {
                         return null
                       })()}
                       {(() => {
+                        const rawPi = selectedDayDetails.payroll_impact_hours
+                        if (rawPi == null || rawPi === '') return null
+                        const piHours = Number(rawPi)
+                        if (!Number.isFinite(piHours)) return null
+                        return (
+                          <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2.5">
+                            <span className="font-medium text-muted-foreground">Payroll Impact</span>
+                            <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
+                              {piHours.toFixed(2)} hrs
+                            </span>
+                          </div>
+                        )
+                      })()}
+                      {(() => {
                         const timeIn = selectedDayDetails.formatted_time_in || selectedDayDetails.time_in
                         const timeOut = selectedDayDetails.formatted_time_out || selectedDayDetails.time_out
                         return (
@@ -3112,15 +3126,6 @@ export default function EmployeeDashboard() {
                             </span>
                           </div>
                         )}
-                      {typeof selectedDayDetails.payroll_impact_hours === 'number' &&
-                        Number.isFinite(selectedDayDetails.payroll_impact_hours) && (
-                          <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2.5">
-                            <span className="font-medium text-muted-foreground">Payroll Impact</span>
-                            <span className="font-semibold tabular-nums text-blue-700 dark:text-blue-300">
-                              {selectedDayDetails.payroll_impact_hours.toFixed(2)} hrs
-                            </span>
-                          </div>
-                        )}
                       {(() => {
                         const th = getAttendanceTotalHours(selectedDayDetails)
                         if (th == null) return null
@@ -3133,7 +3138,10 @@ export default function EmployeeDashboard() {
                       })()}
                       {!(selectedDayDetails.formatted_time_in || selectedDayDetails.time_in) &&
                         !(selectedDayDetails.formatted_time_out || selectedDayDetails.time_out) &&
-                        getAttendanceTotalHours(selectedDayDetails) == null && (
+                        getAttendanceTotalHours(selectedDayDetails) == null &&
+                        !['leave', 'halfday', 'half_day'].includes(String(selectedDayDetails.status || '').toLowerCase()) &&
+                        !selectedDayDetails.leave_pay_status &&
+                        !selectedDayDetails.leave_pay_label && (
                         <p className="rounded-xl border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
                           {selectedDayDetails.schedule_in && selectedDayDetails.schedule_out
                             ? 'No clock in/out yet for this scheduled day.'

@@ -172,11 +172,12 @@ class AttendanceDailySummaryService
 
         // Payroll impact via the SAME service as Attendance Monitoring
         $payrollImpactHours = null;
-        // Future days: only skip until a complete in/out pair exists (HR corrections, rest-day worked).
+        // Future days: skip until punches exist — except approved leave/holiday (already have pay impact).
         $hasCompletePunchPair = $hasTimeIn && $hasTimeOut;
+        $hasLeaveOrHoliday = $leave !== null || $holiday !== null;
         if (
-            ($hasCompletePunchPair || ! $isFuture)
-            && ($hasTimeIn || $hasTimeOut || $leave !== null || $holiday !== null)
+            (! $isFuture || $hasCompletePunchPair || $hasLeaveOrHoliday)
+            && ($hasTimeIn || $hasTimeOut || $hasLeaveOrHoliday)
         ) {
             $payrollImpactMinutes = $this->payrollComputation->payrollImpactMinutesForAttendanceDisplay(
                 $user,
