@@ -11,6 +11,36 @@ function getInitials(name) {
 }
 
 /**
+ * Prefer pending (current) step; else latest completed/rejected step with an approver name.
+ */
+export function approverFromApprovalProgress(progress) {
+  if (!Array.isArray(progress)) {
+    return { name: '', imageUrl: null }
+  }
+
+  let current = null
+  let lastActed = null
+  for (const step of progress) {
+    if (!step || typeof step !== 'object') continue
+    const status = String(step.status || '')
+    const name = String(step.approver_name || '').trim()
+    if (status === 'current') {
+      current = step
+      break
+    }
+    if ((status === 'completed' || status === 'rejected') && name) {
+      lastActed = step
+    }
+  }
+
+  const step = current || lastActed
+  const name = String(step?.approver_name || '').trim()
+  const imageUrl = step?.profile_image_url || null
+
+  return { name, imageUrl: imageUrl || null }
+}
+
+/**
  * Compact approver identity for leave / overtime / correction list tables.
  */
 export default function ApproverAvatarNameCell({
@@ -58,11 +88,13 @@ export function approverFromRequestRow(row) {
   if (!row || typeof row !== 'object') {
     return { name: '', imageUrl: null }
   }
+  const fromProgress = approverFromApprovalProgress(row.approval_progress)
   const name = String(
     row.current_approver_name
       || row.current_approver
       || row.approved_by_name
       || row.rejected_by_name
+      || fromProgress.name
       || ''
   ).trim()
   const imageUrl =
@@ -70,6 +102,7 @@ export function approverFromRequestRow(row) {
     || row.current_approver_profile_image_url
     || row.approved_by_profile_image
     || row.approved_by_profile_image_url
+    || fromProgress.imageUrl
     || null
 
   return { name, imageUrl }

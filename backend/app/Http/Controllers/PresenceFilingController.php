@@ -703,6 +703,10 @@ class PresenceFilingController extends Controller
         $paginator = $q->paginate($perPage, ['*'], 'page', $page)->withQueryString();
         $pageIds = $paginator->getCollection()->pluck('id')->map(fn ($id) => (int) $id)->all();
         $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
+        $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+        );
         $finalApprovedIds = $this->finalApprovedAttendanceCorrectionIds($pageIds);
         $empRole = $this->hrRoleResolver->resolveForApprovalSubject($user);
 
@@ -714,6 +718,7 @@ class PresenceFilingController extends Controller
                 $empRole,
                 $currentApprovals[(int) $c->id] ?? null,
                 isset($finalApprovedIds[(int) $c->id]),
+                $latestActedApprovals[(int) $c->id] ?? null,
             )
         );
 
@@ -955,6 +960,10 @@ class PresenceFilingController extends Controller
         $pageRows = $paginator->getCollection();
         $pageIds = $pageRows->pluck('id')->map(fn ($id) => (int) $id)->all();
         $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
+        $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+        );
         $finalApprovedIds = $this->finalApprovedAttendanceCorrectionIds($pageIds);
         $items = $paginator->getCollection()
             ->map(fn (AttendanceCorrection $c) => $this->attendanceCorrectionListRow(
@@ -963,6 +972,7 @@ class PresenceFilingController extends Controller
                 $tz,
                 $currentApprovals[(int) $c->id] ?? null,
                 isset($finalApprovedIds[(int) $c->id]),
+                $latestActedApprovals[(int) $c->id] ?? null,
             ));
 
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
@@ -1196,7 +1206,7 @@ class PresenceFilingController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v4:v'.AttendanceCorrectionModuleCache::version();
+        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v5:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1252,11 +1262,12 @@ class PresenceFilingController extends Controller
             ->all();
     }
 
-    private function attendanceCorrectionListRow(AttendanceCorrection $c, User $actor, string $tz, ?OrgApprovalRecord $currentApproval, bool $hrApprovedByWorkflow = false): array
+    private function attendanceCorrectionListRow(AttendanceCorrection $c, User $actor, string $tz, ?OrgApprovalRecord $currentApproval, bool $hrApprovedByWorkflow = false, ?OrgApprovalRecord $latestActedApproval = null): array
     {
         $auth = $currentApproval && $c->user
             ? $this->approvalWorkflowService->authorizePendingRecord($actor, $currentApproval, $c->user, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
             : ['allowed' => false];
+        $approverFields = $this->approvalWorkflowService->listApproverDisplayFields($currentApproval, $latestActedApproval);
         $canApprove = (bool) ($auth['allowed'] ?? false);
         if ($canApprove
             && $currentApproval?->approver_role === \App\Enums\HrRole::AdminHr->value
@@ -1273,7 +1284,7 @@ class PresenceFilingController extends Controller
             $displayStatus = 'Pending '.rtrim(str_ireplace(' approval', '', $this->approvalRecordStageLabel($currentApproval))).' Approval';
         }
 
-        return [
+        return array_merge([
             'id' => (int) $c->id,
             'request_id' => (int) $c->id,
             'correction_request_id' => (int) $c->id,
@@ -1298,10 +1309,6 @@ class PresenceFilingController extends Controller
             'status' => $status,
             'display_status' => $displayStatus,
             'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : null,
-            'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
-            'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
-            'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
-            'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
             'created_at' => $c->created_at?->toIso8601String(),
             'filed_at' => $c->filed_at?->toIso8601String(),
             'remarks' => $c->remarks,
@@ -1310,7 +1317,7 @@ class PresenceFilingController extends Controller
             'actor_can_reject' => $canApprove,
             'can_approve' => $canApprove,
             'can_reject' => $canApprove,
-        ];
+        ], $approverFields);
     }
 
     private function employeePresenceFilingsListCacheKey(User $user, Request $request, int $perPage, int $page): string
@@ -1323,7 +1330,7 @@ class PresenceFilingController extends Controller
             'per_page' => $perPage,
         ], static fn ($value): bool => $value !== null && $value !== '');
 
-        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v3:v'.AttendanceCorrectionModuleCache::version();
+        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v4:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1336,6 +1343,7 @@ class PresenceFilingController extends Controller
         HrRole $empRole,
         ?OrgApprovalRecord $currentApproval,
         bool $hrApprovedByWorkflow = false,
+        ?OrgApprovalRecord $latestActedApproval = null,
     ): array {
         $status = $this->correctionStatusService->resolvedStatus($c);
         // Only treat workflow HR-approval as final when no earlier pending step remains.
@@ -1352,8 +1360,9 @@ class PresenceFilingController extends Controller
         $timeOutIso = $c->time_out?->copy()->setTimezone($tz)->toIso8601String();
         $canDelete = $c->pending_approval && ! $c->approved && ! $c->rejected_at
             && ((int) $employee->id === (int) $c->user_id || (int) $employee->id === (int) $c->filed_by);
+        $approverFields = $this->approvalWorkflowService->listApproverDisplayFields($currentApproval, $latestActedApproval);
 
-        return [
+        return array_merge([
             'id' => (int) $c->id,
             'user_id' => (int) $c->user_id,
             'date' => $c->date?->toDateString(),
@@ -1369,10 +1378,6 @@ class PresenceFilingController extends Controller
             'status' => $status,
             'display_status' => $displayStatus,
             'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : null,
-            'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
-            'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
-            'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
-            'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
             'pending_approval' => (bool) $c->pending_approval,
             'approved' => (bool) $c->approved,
             'filed_at' => $c->filed_at?->toIso8601String(),
@@ -1391,7 +1396,7 @@ class PresenceFilingController extends Controller
             'requested_by_hr_role' => $empRole->value,
             'requested_by_role_label' => $empRole->badgeLabel(),
             'actor_can_delete' => $canDelete,
-        ];
+        ], $approverFields);
     }
 
     /**

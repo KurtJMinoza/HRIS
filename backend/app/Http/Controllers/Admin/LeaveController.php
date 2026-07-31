@@ -144,11 +144,20 @@ class LeaveController extends Controller
         // ponytail: list/calendar reads stay read-only. Chain sync on file/review/approve only
         // (ensureRecordsForRequest per pending row was the 5–10s open cost).
         $currentApprovals = $this->currentLeaveApprovalRecords($pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $pageIds = $pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+        );
         $actorIsAdminHr = $this->hrRoleResolver->isAdminHrAccount($actor);
 
-        $leaves = $pageLeaves->map(function (LeaveRequest $l) use ($actor, $currentApprovals, $actorIsAdminHr) {
+        $leaves = $pageLeaves->map(function (LeaveRequest $l) use ($actor, $currentApprovals, $latestActedApprovals, $actorIsAdminHr) {
             $currentApproval = $currentApprovals[(int) $l->id] ?? null;
             $canAct = $this->actorCanActOnListApproval($actor, $currentApproval, $actorIsAdminHr);
+            $approverFields = $this->approvalWorkflowService->listApproverDisplayFields(
+                $currentApproval,
+                $latestActedApprovals[(int) $l->id] ?? null,
+            );
 
             return array_merge([
                 'id' => $l->id,
@@ -176,10 +185,6 @@ class LeaveController extends Controller
                 'notes' => $l->notes,
                 'rejection_note' => $l->rejection_note,
                 'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : $l->approval_stage,
-                'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
-                'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
-                'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
-                'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
                 'created_at' => $l->created_at->toIso8601String(),
                 'display_status' => $this->leaveListDisplayStatus($l, $currentApproval),
                 'approval_stage' => $l->approval_stage,
@@ -189,7 +194,7 @@ class LeaveController extends Controller
                 'can_reject' => $canAct,
                 'actor_can_delete' => $this->canDeleteLeaveRequest($actor, $l),
                 'hr_wait_message' => $this->leaveListWaitMessage($l, $currentApproval, $canAct),
-            ], $this->leaveCreditUsageMeta($l));
+            ], $approverFields, $this->leaveCreditUsageMeta($l));
         });
 
         RequestPerformanceLogger::finish($perf, $request, $leaves->count(), [
@@ -1555,7 +1560,7 @@ class LeaveController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v8:v'.LeaveModuleCache::version();
+        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v9:v'.LeaveModuleCache::version();
     }
 
     /**

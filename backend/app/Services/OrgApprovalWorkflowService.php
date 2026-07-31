@@ -662,6 +662,138 @@ class OrgApprovalWorkflowService
     }
 
     /**
+     * Prefer the pending (current) approver; otherwise the latest approved/rejected actor.
+     *
+     * @return array{
+     *   current_approver_id: ?int,
+     *   current_approver: ?string,
+     *   current_approver_name: ?string,
+     *   current_approver_profile_image: ?string
+     * }
+     */
+    public function listApproverDisplayFields(?OrgApprovalRecord $pending, ?OrgApprovalRecord $latestActed = null): array
+    {
+        $record = $pending ?? $latestActed;
+        $name = $record?->approver?->display_name ?? $record?->approver_name;
+        $name = is_string($name) && trim($name) !== '' ? trim($name) : null;
+
+        return [
+            'current_approver_id' => $record?->approver_id !== null ? (int) $record->approver_id : null,
+            'current_approver' => $name,
+            'current_approver_name' => $name,
+            'current_approver_profile_image' => $record?->approver?->profile_image_url,
+        ];
+    }
+
+    /**
+     * Resolve list Approver column from approval_progress steps.
+     *
+     * @param  list<array<string, mixed>>  $progress
+     * @return array{
+     *   current_approver_id: ?int,
+     *   current_approver: ?string,
+     *   current_approver_name: ?string,
+     *   current_approver_profile_image: ?string
+     * }
+     */
+    public static function listApproverDisplayFieldsFromProgress(array $progress): array
+    {
+        $current = null;
+        $lastActed = null;
+        foreach ($progress as $step) {
+            if (! is_array($step)) {
+                continue;
+            }
+            $status = (string) ($step['status'] ?? '');
+            $name = trim((string) ($step['approver_name'] ?? ''));
+            if ($status === 'current') {
+                $current = $step;
+                break;
+            }
+            if (($status === 'completed' || $status === 'rejected') && $name !== '') {
+                $lastActed = $step;
+            }
+        }
+
+        $step = $current ?? $lastActed;
+        $name = $step ? trim((string) ($step['approver_name'] ?? '')) : '';
+        $name = $name !== '' ? $name : null;
+        $image = is_array($step) ? ($step['profile_image_url'] ?? null) : null;
+        $id = is_array($step) && isset($step['approver_id']) && is_numeric($step['approver_id'])
+            ? (int) $step['approver_id']
+            : null;
+
+        return [
+            'current_approver_id' => $id,
+            'current_approver' => $name,
+            'current_approver_name' => $name,
+            'current_approver_profile_image' => is_string($image) && $image !== '' ? $image : null,
+        ];
+    }
+
+    /**
+     * Latest approved/rejected step per request (highest sequence), for completed Approver column.
+     *
+     * @param  list<int>  $requestIds
+     * @return array<int, OrgApprovalRecord>
+     */
+    public function latestActedApprovalRecords(string $moduleType, array $requestIds): array
+    {
+        $moduleType = self::normalizeModuleType($moduleType) ?? $moduleType;
+        $requestIds = array_values(array_unique(array_filter(
+            array_map(static fn ($id): int => (int) $id, $requestIds),
+            static fn (int $id): bool => $id > 0,
+        )));
+        if ($requestIds === []) {
+            return [];
+        }
+
+        return OrgApprovalRecord::query()
+            ->select([
+                'id',
+                'request_id',
+                'module_type',
+                'approval_label',
+                'approver_role',
+                'approver_id',
+                'approver_name',
+                'approval_status',
+                'sequence_order',
+            ])
+            ->where('module_type', $moduleType)
+            ->whereIn('approval_status', [
+                OrgApprovalRecord::STATUS_APPROVED,
+                OrgApprovalRecord::STATUS_REJECTED,
+            ])
+            ->whereIn('request_id', $requestIds)
+            ->whereNotExists(function ($later) use ($moduleType): void {
+                $later
+                    ->selectRaw('1')
+                    ->from('org_approval_records as later_approval')
+                    ->whereColumn('later_approval.request_id', 'org_approval_records.request_id')
+                    ->where('later_approval.module_type', $moduleType)
+                    ->whereIn('later_approval.approval_status', [
+                        OrgApprovalRecord::STATUS_APPROVED,
+                        OrgApprovalRecord::STATUS_REJECTED,
+                    ])
+                    ->where(function ($q): void {
+                        $q->whereColumn('later_approval.sequence_order', '>', 'org_approval_records.sequence_order')
+                            ->orWhere(function ($same): void {
+                                $same->whereColumn('later_approval.sequence_order', '=', 'org_approval_records.sequence_order')
+                                    ->whereColumn('later_approval.id', '>', 'org_approval_records.id');
+                            });
+                    });
+            })
+            ->with('approver:id,name,first_name,middle_name,last_name,suffix,profile_image')
+            ->orderByDesc('sequence_order')
+            ->orderByDesc('id')
+            ->get()
+            ->unique('request_id')
+            ->mapWithKeys(fn (OrgApprovalRecord $record): array => [(int) $record->request_id => $record])
+            ->all();
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     public function buildApprovalProgress(

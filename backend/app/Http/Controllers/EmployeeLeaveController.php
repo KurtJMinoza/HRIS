@@ -152,12 +152,6 @@ class EmployeeLeaveController extends Controller
             'approval_stage' => $l->approval_stage,
             'approval_progress' => $approvalProgress,
             'current_stage' => $currentStep['label'] ?? $currentStep['approver_role_label'] ?? null,
-            'current_approver_id' => isset($currentStep['approver_id']) && is_numeric($currentStep['approver_id'])
-                ? (int) $currentStep['approver_id']
-                : null,
-            'current_approver_name' => $currentStep['approver_name'] ?? null,
-            'current_approver' => $currentStep['approver_name'] ?? null,
-            'current_approver_profile_image' => $currentStep['profile_image_url'] ?? null,
             'approval_history' => $l->approvalAudits->map(function (LeaveApprovalAudit $a) {
                 return [
                     'action' => $a->action,
@@ -167,7 +161,7 @@ class EmployeeLeaveController extends Controller
                     'actor_name' => $a->actor?->display_name,
                 ];
             })->values()->all(),
-        ], $this->documentFieldsForLeave($l), $this->leaveRequesterMeta($l), [
+        ], OrgApprovalWorkflowService::listApproverDisplayFieldsFromProgress($approvalProgress), $this->documentFieldsForLeave($l), $this->leaveRequesterMeta($l), [
             'actor_can_delete' => $this->canDeleteLeaveRequest($l->user, $l),
         ]);
     }

@@ -318,28 +318,20 @@ class EmployeeOvertimeController extends Controller
 
     private function deriveCurrentApproverName(Overtime $overtime): ?string
     {
-        $progress = $this->overtimeApprovalService->buildApprovalProgress($overtime);
-        foreach ($progress as $step) {
-            if (($step['status'] ?? '') === 'current') {
-                return $step['approver_name'] ?? null;
-            }
-        }
+        $fields = OrgApprovalWorkflowService::listApproverDisplayFieldsFromProgress(
+            $this->overtimeApprovalService->buildApprovalProgress($overtime)
+        );
 
-        return null;
+        return $fields['current_approver_name'];
     }
 
     private function deriveCurrentApproverProfileImage(Overtime $overtime): ?string
     {
-        $progress = $this->overtimeApprovalService->buildApprovalProgress($overtime);
-        foreach ($progress as $step) {
-            if (($step['status'] ?? '') === 'current') {
-                $url = $step['profile_image_url'] ?? null;
+        $fields = OrgApprovalWorkflowService::listApproverDisplayFieldsFromProgress(
+            $this->overtimeApprovalService->buildApprovalProgress($overtime)
+        );
 
-                return is_string($url) && $url !== '' ? $url : null;
-            }
-        }
-
-        return null;
+        return $fields['current_approver_profile_image'];
     }
 
     private function derivePendingDisplayStatus(Overtime $overtime, ?User $currentApprover): string
@@ -351,17 +343,6 @@ class EmployeeOvertimeController extends Controller
         }
 
         return 'Pending';
-    }
-
-    private function deriveStepNameFromApprover(?User $approver): ?string
-    {
-        if ($approver === null) {
-            return null;
-        }
-
-        $progress = $this->overtimeApprovalService->buildApprovalProgress($approver);
-
-        return null;
     }
 
     private function deriveTableStepName(string $approvalStage): ?string
@@ -501,6 +482,7 @@ class EmployeeOvertimeController extends Controller
         }
 
         $approvalProgress = $this->overtimeApprovalService->buildApprovalProgress($o);
+        $approverFields = OrgApprovalWorkflowService::listApproverDisplayFieldsFromProgress($approvalProgress);
         $currentStep = null;
         foreach ($approvalProgress as $step) {
             if (($step['status'] ?? null) === 'current') {
@@ -524,7 +506,6 @@ class EmployeeOvertimeController extends Controller
         if (! $stepName && $o->status === Overtime::STATUS_PENDING) {
             $stepName = $this->deriveTableStepName((string) ($o->approval_stage ?? ''));
         }
-        $currentApproverName = $currentStep['approver_name'] ?? null;
         $displayStatus = $this->deriveTableDisplayStatus($o->status, $stepName);
 
         return array_merge([
@@ -539,12 +520,6 @@ class EmployeeOvertimeController extends Controller
             'approval_progress' => $approvalProgress,
             'current_stage' => $currentStepLabel,
             'current_step_name' => $stepName,
-            'current_approver_name' => $currentApproverName,
-            'current_approver' => $currentApproverName,
-            'current_approver_id' => isset($currentStep['approver_id']) && is_numeric($currentStep['approver_id'])
-                ? (int) $currentStep['approver_id']
-                : null,
-            'current_approver_profile_image' => $currentStep['profile_image_url'] ?? null,
             'display_badge_color' => $this->deriveBadgeColor($o),
             'reason_summary' => $reasonSummary,
             'created_at' => $o->created_at?->toIso8601String(),
@@ -573,7 +548,7 @@ class EmployeeOvertimeController extends Controller
             'actor_can_delete' => $canCancel,
             'actor_can_approve' => false,
             'actor_can_reject' => false,
-        ], PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
+        ], $approverFields, PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
     }
 
     /**
@@ -683,7 +658,7 @@ class EmployeeOvertimeController extends Controller
         $filters = $this->employeeOvertimeFilters($request);
         $filtersHash = md5(json_encode([$filters, $paginationInput], JSON_THROW_ON_ERROR));
         $version = OvertimeModuleCache::version();
-        $cacheKey = "employee:overtime:list:{$user->id}:labels-v3:v{$version}:{$paginationInput['page']}:{$filtersHash}";
+        $cacheKey = "employee:overtime:list:{$user->id}:labels-v4:v{$version}:{$paginationInput['page']}:{$filtersHash}";
         $cacheHit = Cache::has($cacheKey);
 
         $payload = Cache::remember($cacheKey, now()->addSeconds(60), function () use ($user, $paginationInput, $filters) {

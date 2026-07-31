@@ -55,7 +55,10 @@ import { hrPanelPath } from '@/lib/hrRoutes'
 import { normalizeApprovalHeadTitle, sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
 import OvertimeStatusBadge from '@/components/overtime/OvertimeStatusBadge'
-import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
+import ApproverAvatarNameCell, {
+  approverFromApprovalProgress,
+  approverFromRequestRow,
+} from '@/components/approvals/ApproverAvatarNameCell'
 import { formatHHmmTo12h, toHhMm, toTimeInputValue } from '@/lib/timeFormat'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import {
@@ -1634,13 +1637,21 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     const currentStep = Array.isArray(ot.approval_progress)
       ? ot.approval_progress.find((step) => step?.status === 'current')
       : null
+    const fromProgress = approverFromApprovalProgress(ot.approval_progress)
     const currentStage = ot.current_stage || currentStep?.label || ot.current_step_name
     const currentStepName = normalizeApprovalHeadTitle(currentStage) || ot.current_step_name
-    const currentApprover = ot.current_approver_name || ot.current_approver || currentStep?.approver_name
+    const currentApprover =
+      ot.current_approver_name
+      || ot.current_approver
+      || ot.approved_by_name
+      || currentStep?.approver_name
+      || fromProgress.name
+      || null
     const currentApproverImage =
       ot.current_approver_profile_image
       || ot.current_approver_profile_image_url
       || currentStep?.profile_image_url
+      || fromProgress.imageUrl
       || null
     const patch = {
       ...ot,

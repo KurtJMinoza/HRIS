@@ -258,11 +258,20 @@ class OvertimeController extends Controller
         $pageRows = $paginator->getCollection();
         // ponytail: list reads stay read-only; approval records are created on submit/review/approve.
         $currentApprovals = $this->currentOvertimeApprovalRecords($pageRows->pluck('id')->map(fn ($id) => (int) $id)->all());
+        $pageIds = $pageRows->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
+            OrgApprovalWorkflowService::MODULE_OVERTIME,
+            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+        );
 
-        $items = $pageRows->map(function (Overtime $o) use ($actor, $currentApprovals) {
+        $items = $pageRows->map(function (Overtime $o) use ($actor, $currentApprovals, $latestActedApprovals) {
             $user = $o->user;
             $disp = $this->overtimeDisplayFields($o);
             $currentApproval = $currentApprovals[(int) $o->id] ?? null;
+            $approverFields = $this->approvalWorkflowService->listApproverDisplayFields(
+                $currentApproval,
+                $latestActedApprovals[(int) $o->id] ?? null,
+            );
             $auth = $currentApproval && $o->user
                 ? $this->approvalWorkflowService->authorizePendingRecord(
                     $actor,
@@ -307,19 +316,15 @@ class OvertimeController extends Controller
                 'display_status' => $this->overtimeListDisplayStatus($o, $currentApproval),
                 'display_badge_color' => $this->overtimeBadgeColor($o),
                 'current_step_name' => $this->overtimeCurrentStepName($currentApproval),
-                'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
-                'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
-                'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
                 'approval_stage' => $o->approval_stage,
                 'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : $o->approval_stage,
-                'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
                 'actor_can_approve' => (bool) ($auth['allowed'] ?? false),
                 'actor_can_reject' => (bool) ($auth['allowed'] ?? false),
                 'can_approve' => (bool) ($auth['allowed'] ?? false),
                 'can_reject' => (bool) ($auth['allowed'] ?? false),
                 'actor_can_delete' => $this->canDeleteOvertimeRequest($actor, $o),
                 'hr_wait_message' => $this->overtimeListWaitMessage($o, $currentApproval, (bool) ($auth['allowed'] ?? false)),
-            ], $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
+            ], $approverFields, $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
         })->values();
 
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
@@ -1629,7 +1634,7 @@ class OvertimeController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v7:v'.OvertimeModuleCache::version();
+        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v8:v'.OvertimeModuleCache::version();
     }
 
     /**
