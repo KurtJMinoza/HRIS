@@ -58,11 +58,16 @@ class CompanyController extends Controller
 
         $this->dataScopeService->restrictCompanyQuery($request->user(), $companiesQuery);
 
-        $companies = $companiesQuery
-            ->get()
-            ->map(fn (Company $c) => $this->companyResponse($c));
+        $companies = $companiesQuery->get();
+        $officersByCompany = $this->leadershipAssignments->officerInChargeByCompanyIds(
+            $companies->pluck('id')->map(fn ($id) => (int) $id)->all(),
+        );
 
-        return response()->json(['companies' => $companies]);
+        return response()->json([
+            'companies' => $companies->map(
+                fn (Company $c) => $this->companyResponse($c, $officersByCompany->get((int) $c->id)),
+            ),
+        ]);
     }
 
     /**
@@ -112,7 +117,7 @@ class CompanyController extends Controller
 
         return response()->json([
             'message' => 'Company created successfully.',
-            'company' => $this->companyResponse($company),
+            'company' => $this->companyResponse($company, $this->officerInChargeForCompany((int) $company->id)),
         ], 201);
     }
 
@@ -232,7 +237,10 @@ class CompanyController extends Controller
 
         return response()->json([
             'message' => 'Company updated successfully.',
-            'company' => $this->companyResponse($company->fresh(['companyHead:id,name,first_name,middle_name,last_name,suffix'])),
+            'company' => $this->companyResponse(
+                $company->fresh(['companyHead:id,name,first_name,middle_name,last_name,suffix']),
+                $this->officerInChargeForCompany((int) $company->id),
+            ),
         ]);
     }
 
@@ -281,7 +289,10 @@ class CompanyController extends Controller
 
         return response()->json([
             'message' => 'Company profile updated successfully.',
-            'company' => $this->companyResponse($company->fresh(['companyHead:id,name,first_name,middle_name,last_name,suffix'])),
+            'company' => $this->companyResponse(
+                $company->fresh(['companyHead:id,name,first_name,middle_name,last_name,suffix']),
+                $this->officerInChargeForCompany((int) $company->id),
+            ),
         ]);
     }
 
@@ -333,7 +344,12 @@ class CompanyController extends Controller
             ->selectRaw('coalesce(u.company_id, ub.company_id, dpb.company_id) as company_id, count(*) as total_employees');
     }
 
-    private function companyResponse(Company $c): array
+    private function officerInChargeForCompany(int $companyId): ?User
+    {
+        return $this->leadershipAssignments->officerInChargeByCompanyIds([$companyId])->get($companyId);
+    }
+
+    private function companyResponse(Company $c, ?User $officerInCharge = null): array
     {
         return [
             'id' => $c->id,
@@ -344,6 +360,10 @@ class CompanyController extends Controller
             'company_head_name' => $c->companyHead?->display_name,
             'company_head_profile_image' => $c->companyHead?->profile_image,
             'company_head_email' => $c->companyHead?->email,
+            'officer_in_charge_id' => $officerInCharge?->id,
+            'officer_in_charge_name' => $officerInCharge?->display_name,
+            'officer_in_charge_profile_image' => $officerInCharge?->profile_image,
+            'officer_in_charge_email' => $officerInCharge?->email,
             'phone' => $c->phone,
             'email' => $c->email,
             'tin' => $c->tin,

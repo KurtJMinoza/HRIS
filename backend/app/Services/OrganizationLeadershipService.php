@@ -8,6 +8,7 @@ use App\Models\OrganizationPositionType;
 use App\Models\OrganizationUnit;
 use App\Models\OrganizationUnitLeader;
 use App\Models\User;
+use App\Support\CompanyLeadershipPosition;
 use App\Support\OrganizationLeadershipScopeOptionsCache;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -91,7 +92,12 @@ class OrganizationLeadershipService
                 ->values();
         }
 
-        return $types;
+        return $types
+            ->reject(fn (OrganizationPositionType $type): bool => CompanyLeadershipPosition::isRetiredAssignableType(
+                $organizationLevel,
+                (string) $type->position_name,
+            ))
+            ->values();
     }
 
     /**
@@ -128,6 +134,10 @@ class OrganizationLeadershipService
         }
 
         $assignments = $assignmentRows
+            ->reject(fn (OrganizationPositionAssignment $assignment): bool => CompanyLeadershipPosition::isRetiredAssignableType(
+                $level,
+                (string) ($assignment->positionType?->position_name ?? ''),
+            ))
             ->map(fn (OrganizationPositionAssignment $assignment): array => $this->assignmentPayload($assignment, $legacyType))
             ->values()
             ->all();
@@ -200,9 +210,15 @@ class OrganizationLeadershipService
                     ->where('organization_level', $level)
                     ->first();
 
-                if (! $positionType) {
+                if (! $positionType || ! $positionType->is_active) {
                     throw ValidationException::withMessages([
                         "assignments.{$index}.position_type_id" => ['Invalid position type for this organization level.'],
+                    ]);
+                }
+
+                if (CompanyLeadershipPosition::isRetiredAssignableType($level, (string) $positionType->position_name)) {
+                    throw ValidationException::withMessages([
+                        "assignments.{$index}.position_type_id" => ['This leadership position is no longer assignable.'],
                     ]);
                 }
 
@@ -401,6 +417,10 @@ class OrganizationLeadershipService
     {
         $positionTypeId = (int) $assignment->position_type_id;
         $positionName = $assignment->positionType?->position_name;
+
+        if ($legacyType === 'company' && is_string($positionName) && $positionName !== '') {
+            return [$positionTypeId, CompanyLeadershipPosition::displayName($positionName)];
+        }
 
         if ($legacyType !== 'area' || ! in_array($positionName, ['Area Head', 'Head'], true)) {
             return [$positionTypeId, $positionName];

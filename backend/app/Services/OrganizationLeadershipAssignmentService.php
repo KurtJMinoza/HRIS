@@ -12,6 +12,7 @@ use App\Models\OrganizationUnit;
 use App\Models\OrganizationUnitLeader;
 use App\Models\SectionUnit;
 use App\Models\User;
+use App\Support\CompanyLeadershipPosition;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -27,9 +28,134 @@ class OrganizationLeadershipAssignmentService
      */
     public function companyIdsLedBy(User $user): Collection
     {
-        $ids = Company::query()->where('company_head_id', $user->id)->pluck('id');
+        $ids = Company::query()
+            ->where('company_head_id', $user->id)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $companyId): bool => $this->legacyCompanyHeadColumnCountsForUser($user, $companyId));
 
-        return $this->mergeLegacySourceIds($ids, $user, 'company');
+        return $this->mergeLegacySourceIds(
+            $ids,
+            $user,
+            'company',
+            fn (OrganizationPositionAssignment $assignment, string $name): bool => CompanyLeadershipPosition::isCompanyHead($name),
+        )->filter(fn (int $companyId): bool => $this->userCountsAsCompanyHeadForCompany($user, $companyId))->values();
+    }
+
+    /**
+     * @return Collection<int, int>
+     */
+    public function companyIdsWhereOfficerInCharge(User $user): Collection
+    {
+        return $this->mergeLegacySourceIds(
+            collect(),
+            $user,
+            'company',
+            fn (OrganizationPositionAssignment $assignment, string $name): bool => CompanyLeadershipPosition::isOfficerInCharge($name),
+        );
+    }
+
+    /**
+     * Primary Officer in Charge per company (flexible assignment), keyed by company id.
+     *
+     * @param  list<int>  $companyIds
+     * @return Collection<int, User>
+     */
+    public function officerInChargeByCompanyIds(array $companyIds): Collection
+    {
+        $companyIds = collect($companyIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($companyIds->isEmpty()
+            || ! Schema::hasTable('organization_units')
+            || ! Schema::hasTable('organization_position_assignments')) {
+            return collect();
+        }
+
+        $units = OrganizationUnit::query()
+            ->where('legacy_source_type', 'company')
+            ->whereIn('legacy_source_id', $companyIds->all())
+            ->where('is_active', true)
+            ->get(['id', 'legacy_source_id']);
+
+        if ($units->isEmpty()) {
+            return collect();
+        }
+
+        $unitToCompany = $units->mapWithKeys(
+            fn (OrganizationUnit $unit) => [(int) $unit->id => (int) $unit->legacy_source_id],
+        );
+
+        $assignments = OrganizationPositionAssignment::query()
+            ->active()
+            ->whereIn('organization_unit_id', $units->pluck('id')->all())
+            ->whereHas('positionType', fn ($query) => $query->where('can_approve', true)->where('is_active', true))
+            ->with('positionType')
+            ->orderBy('approval_priority')
+            ->orderByDesc('is_primary')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (OrganizationPositionAssignment $assignment): bool => CompanyLeadershipPosition::isOfficerInCharge(
+                (string) ($assignment->positionType?->position_name ?? ''),
+            ));
+
+        $employeeIds = $assignments->pluck('employee_id')->map(fn ($id) => (int) $id)->unique()->values();
+        $users = $employeeIds->isEmpty()
+            ? collect()
+            : User::query()
+                ->whereIn('id', $employeeIds->all())
+                ->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image', 'email'])
+                ->keyBy(fn (User $user) => (int) $user->id);
+
+        $byCompany = collect();
+        foreach ($assignments as $assignment) {
+            $companyId = (int) ($unitToCompany[(int) $assignment->organization_unit_id] ?? 0);
+            if ($companyId <= 0 || $byCompany->has($companyId)) {
+                continue;
+            }
+
+            $user = $users->get((int) $assignment->employee_id);
+            if ($user) {
+                $byCompany->put($companyId, $user);
+            }
+        }
+
+        return $byCompany;
+    }
+
+    public function hasCompanyLeadershipAssignment(User $user, int $companyId, bool $officerInCharge): bool
+    {
+        if ($companyId <= 0 || ! Schema::hasTable('organization_position_assignments')) {
+            return false;
+        }
+
+        $unitIds = OrganizationUnit::query()
+            ->where('legacy_source_type', 'company')
+            ->where('legacy_source_id', $companyId)
+            ->where('is_active', true)
+            ->pluck('id');
+
+        if ($unitIds->isEmpty()) {
+            return false;
+        }
+
+        return OrganizationPositionAssignment::query()
+            ->active()
+            ->where('employee_id', (int) $user->id)
+            ->whereIn('organization_unit_id', $unitIds->all())
+            ->whereHas('positionType', fn ($query) => $query->where('can_approve', true)->where('is_active', true))
+            ->with('positionType')
+            ->get()
+            ->contains(function (OrganizationPositionAssignment $assignment) use ($officerInCharge): bool {
+                $name = (string) ($assignment->positionType?->position_name ?? '');
+
+                return $officerInCharge
+                    ? CompanyLeadershipPosition::isOfficerInCharge($name)
+                    : CompanyLeadershipPosition::isCompanyHead($name);
+            });
     }
 
     /**
@@ -132,6 +258,7 @@ class OrganizationLeadershipAssignmentService
     public function leadsAnyUnit(User $user): bool
     {
         return $this->companyIdsLedBy($user)->isNotEmpty()
+            || $this->companyIdsWhereOfficerInCharge($user)->isNotEmpty()
             || $this->areaIdsLedBy($user)->isNotEmpty()
             || $this->branchIdsLedBy($user)->isNotEmpty()
             || $this->divisionIdsLedBy($user)->isNotEmpty()
@@ -151,12 +278,18 @@ class OrganizationLeadershipAssignmentService
     }
 
     /**
+     * @param  Collection<int, int>  $legacyColumnIds
+     * @param  (callable(OrganizationPositionAssignment, string): bool)|null  $positionFilter
      * @return Collection<int, int>
      */
-    private function mergeLegacySourceIds(Collection $legacyColumnIds, User $user, string $legacyType): Collection
-    {
+    private function mergeLegacySourceIds(
+        Collection $legacyColumnIds,
+        User $user,
+        string $legacyType,
+        ?callable $positionFilter = null,
+    ): Collection {
         $ids = $legacyColumnIds
-            ->merge($this->legacySourceIdsFromFlexibleAssignments($user, $legacyType))
+            ->merge($this->legacySourceIdsFromFlexibleAssignments($user, $legacyType, $positionFilter))
             ->map(fn ($id) => (int) $id)
             ->filter(fn (int $id) => $id > 0)
             ->unique()
@@ -194,9 +327,10 @@ class OrganizationLeadershipAssignmentService
     }
 
     /**
+     * @param  (callable(OrganizationPositionAssignment, string): bool)|null  $positionFilter
      * @return Collection<int, int>
      */
-    private function legacySourceIdsFromFlexibleAssignments(User $user, string $legacyType): Collection
+    private function legacySourceIdsFromFlexibleAssignments(User $user, string $legacyType, ?callable $positionFilter = null): Collection
     {
         if (! Schema::hasTable('organization_units')) {
             return collect();
@@ -205,10 +339,23 @@ class OrganizationLeadershipAssignmentService
         $fromUnits = collect();
 
         if (Schema::hasTable('organization_position_assignments')) {
-            $unitIds = OrganizationPositionAssignment::query()
+            $assignments = OrganizationPositionAssignment::query()
                 ->active()
                 ->where('employee_id', (int) $user->id)
                 ->whereHas('positionType', fn ($query) => $query->where('can_approve', true))
+                ->with('positionType')
+                ->get();
+
+            $unitIds = $assignments
+                ->filter(function (OrganizationPositionAssignment $assignment) use ($positionFilter): bool {
+                    if ($positionFilter === null) {
+                        return true;
+                    }
+
+                    $name = (string) ($assignment->positionType?->position_name ?? '');
+
+                    return $positionFilter($assignment, $name);
+                })
                 ->pluck('organization_unit_id');
 
             if ($unitIds->isNotEmpty()) {
@@ -223,9 +370,19 @@ class OrganizationLeadershipAssignmentService
         }
 
         if (Schema::hasTable('organization_unit_leaders')) {
-            $leaderUnitIds = OrganizationUnitLeader::query()
+            $leaders = OrganizationUnitLeader::query()
                 ->where('employee_id', (int) $user->id)
                 ->where('is_active', true)
+                ->get(['organization_unit_id', 'leader_role']);
+
+            $leaderUnitIds = $leaders
+                ->filter(function (OrganizationUnitLeader $leader) use ($positionFilter): bool {
+                    if ($positionFilter === null) {
+                        return true;
+                    }
+
+                    return $positionFilter(new OrganizationPositionAssignment(), (string) $leader->leader_role);
+                })
                 ->pluck('organization_unit_id');
 
             if ($leaderUnitIds->isNotEmpty()) {
@@ -240,5 +397,26 @@ class OrganizationLeadershipAssignmentService
         }
 
         return $fromUnits;
+    }
+
+    /**
+     * User counts as Company Head for a company only when not OIC-only (no Company Head assignment).
+     */
+    public function userCountsAsCompanyHeadForCompany(User $user, int $companyId): bool
+    {
+        if ($this->hasCompanyLeadershipAssignment($user, $companyId, true)
+            && ! $this->hasCompanyLeadershipAssignment($user, $companyId, false)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * companies.company_head_id counts only when the user is not OIC-only on that company.
+     */
+    private function legacyCompanyHeadColumnCountsForUser(User $user, int $companyId): bool
+    {
+        return $this->userCountsAsCompanyHeadForCompany($user, $companyId);
     }
 }

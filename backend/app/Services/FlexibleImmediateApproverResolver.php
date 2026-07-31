@@ -15,6 +15,7 @@ use App\Models\OrganizationUnit;
 use App\Models\OrganizationUnitLeader;
 use App\Models\SectionUnit;
 use App\Models\User;
+use App\Support\CompanyLeadershipPosition;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -1617,6 +1618,7 @@ class FlexibleImmediateApproverResolver
 
         $fromRole = match ($orgRole) {
             HrRole::CompanyHead => 'company_head',
+            HrRole::OfficerInCharge => 'officer_in_charge',
             HrRole::AreaHead => 'area_head',
             HrRole::BranchHead => 'branch_head',
             HrRole::DivisionHead => 'division_head',
@@ -1634,8 +1636,12 @@ class FlexibleImmediateApproverResolver
             $unit = $assignment->organizationUnit->loadMissing(['type', 'parent']);
             while ($unit) {
                 if ($this->isUserLeaderOfUnit($requestor, $unit)) {
-                    return match ($this->unitHierarchyLevel($unit)) {
-                        'company' => 'company_head',
+                    $unitLevel = $this->unitHierarchyLevel($unit);
+                    if ($unitLevel === 'company') {
+                        return $this->companyRequesterLevelFor($requestor, $unit);
+                    }
+
+                    return match ($unitLevel) {
                         'area' => 'area_head',
                         'branch' => 'branch_head',
                         'division' => 'division_head',
@@ -1651,8 +1657,18 @@ class FlexibleImmediateApproverResolver
         foreach (array_reverse(self::HIERARCHY_ORDER) as $legacyType) {
             $legacyId = (int) ($hierarchy[$legacyType] ?? 0);
             if ($legacyId > 0 && $this->isHeadOfLegacyUnit($requestor, $legacyType, $legacyId)) {
+                if ($legacyType === 'company') {
+                    $unit = OrganizationUnit::query()
+                        ->where('legacy_source_type', 'company')
+                        ->where('legacy_source_id', $legacyId)
+                        ->first();
+
+                    return $unit
+                        ? $this->companyRequesterLevelFor($requestor, $unit)
+                        : 'company_head';
+                }
+
                 return match ($legacyType) {
-                    'company' => 'company_head',
                     'area' => 'area_head',
                     'branch' => 'branch_head',
                     'division' => 'division_head',
@@ -1907,6 +1923,7 @@ class FlexibleImmediateApproverResolver
     {
         return match ($requesterLevel) {
             'company_head' => null,
+            'officer_in_charge' => $this->firstLevelWithId($hierarchy, ['company']),
             'area_head' => $this->firstLevelWithId($hierarchy, ['company']),
             'branch_head' => $this->firstLevelWithId($hierarchy, ['area', 'company']),
             'division_head' => $this->firstLevelWithId($hierarchy, ['branch', 'area', 'company']),
@@ -1948,6 +1965,22 @@ class FlexibleImmediateApproverResolver
     private function isHeadOfLegacyUnit(User $user, string $legacyType, int $legacyId): bool
     {
         $userId = (int) $user->id;
+
+        if ($legacyType === 'company') {
+            /** @var OrganizationLeadershipAssignmentService $assignments */
+            $assignments = app(OrganizationLeadershipAssignmentService::class);
+
+            if (Schema::hasTable('organization_position_assignments')
+                && $this->companyHasFlexibleLeadershipAssignments($legacyId)) {
+                return $assignments->hasCompanyLeadershipAssignment($user, $legacyId, false);
+            }
+
+            if ($this->legacyHeadEmployeeIdFor($legacyType, $legacyId) !== $userId) {
+                return false;
+            }
+
+            return $assignments->userCountsAsCompanyHeadForCompany($user, $legacyId);
+        }
 
         if ($this->legacyHeadEmployeeIdFor($legacyType, $legacyId) === $userId) {
             return true;
@@ -2079,6 +2112,8 @@ class FlexibleImmediateApproverResolver
             ApprovalWorkflowSetting::CHAIN_MODE_NEAREST_PLUS_ADMIN,
             ApprovalWorkflowSetting::CHAIN_MODE_FULL_HIERARCHY,
         ], true);
+
+        $scopeContext['detected_requester_level'] = $requesterLevel;
 
         $this->log($scopeContext, 'hierarchy chain resolution start', [
             'request_type' => $requestType,
@@ -2570,7 +2605,7 @@ class FlexibleImmediateApproverResolver
             'candidate_ids' => $candidates->pluck('employee')->map(fn (User $user) => (int) $user->id)->all(),
         ]);
 
-        return $this->pickCandidate($candidates, $unit, $subject, $requestType);
+        return $this->pickCandidate($candidates, $unit, $subject, $requestType, $context);
     }
 
     /**
@@ -2648,7 +2683,7 @@ class FlexibleImmediateApproverResolver
             return null;
         }
 
-        return $this->pickCandidate($candidates, $unit, $subject, $requestType);
+        return $this->pickCandidate($candidates, $unit, $subject, $requestType, $context);
     }
 
     private function unitUsesGenericApprovalScope(?string $unitLevel): bool
@@ -2659,6 +2694,21 @@ class FlexibleImmediateApproverResolver
     private function unitHasFlexibleApprovalAssignments(OrganizationUnit $unit): bool
     {
         return $unit->activePositionAssignments()
+            ->exists();
+    }
+
+    private function companyHasFlexibleLeadershipAssignments(int $companyId): bool
+    {
+        if (! Schema::hasTable('organization_position_assignments') || $companyId <= 0) {
+            return false;
+        }
+
+        return OrganizationUnit::query()
+            ->where('legacy_source_type', 'company')
+            ->where('legacy_source_id', $companyId)
+            ->where('is_active', true)
+            ->whereHas('activePositionAssignments', fn ($query) => $query
+                ->whereHas('positionType', fn ($typeQuery) => $typeQuery->where('can_approve', true)->where('is_active', true)))
             ->exists();
     }
 
@@ -2682,6 +2732,24 @@ class FlexibleImmediateApproverResolver
             return null;
         }
 
+        $resolvedUnit = $unit ?: OrganizationUnit::query()
+            ->where('legacy_source_type', $legacyType)
+            ->where('legacy_source_id', $legacyId)
+            ->first();
+
+        if ($legacyType === 'company') {
+            $legacyUser = User::query()->find($employeeId);
+            if ($legacyUser) {
+                /** @var OrganizationLeadershipAssignmentService $assignments */
+                $assignments = app(OrganizationLeadershipAssignmentService::class);
+                if (! $assignments->userCountsAsCompanyHeadForCompany($legacyUser, $legacyId)) {
+                    $this->log($context, 'legacy company head column points at OIC-only user — skipped', $levelLog);
+
+                    return null;
+                }
+            }
+        }
+
         $employee = User::query()->find($employeeId);
         if (! $employee || ! $this->isValidLeaderUser($employee, $skipIds)) {
             if ($employee) {
@@ -2692,7 +2760,7 @@ class FlexibleImmediateApproverResolver
         }
 
         $role = $this->defaultLeaderRoleForLegacyType($legacyType);
-        $resolvedUnit = $unit ?: OrganizationUnit::query()
+        $resolvedUnit = $resolvedUnit ?: OrganizationUnit::query()
             ->where('legacy_source_type', $legacyType)
             ->where('legacy_source_id', $legacyId)
             ->first();
@@ -2715,9 +2783,17 @@ class FlexibleImmediateApproverResolver
         ?OrganizationUnit $unit,
         User $subject,
         ?string $requestType,
+        array $context = [],
     ): ?array {
         if ($candidates->isEmpty()) {
             return null;
+        }
+
+        if ($this->unitHierarchyLevel($unit) === 'company') {
+            $candidates = $this->filterCompanyLevelCandidates($candidates, $context);
+            if ($candidates->isEmpty()) {
+                return null;
+            }
         }
 
         $selected = $candidates->first();
@@ -2817,6 +2893,10 @@ class FlexibleImmediateApproverResolver
 
     private function approvalLevelFor(?OrganizationUnit $unit, string $leaderRole, ?string $legacyType = null): string
     {
+        if (CompanyLeadershipPosition::isOfficerInCharge($leaderRole)) {
+            return HrRole::OfficerInCharge->value;
+        }
+
         if ($unit?->type?->code) {
             return Str::snake($unit->type->code.'_'.$leaderRole);
         }
@@ -3066,5 +3146,121 @@ class FlexibleImmediateApproverResolver
             'request_id' => $context['request_id'] ?? null,
             'module_type' => $context['module_type'] ?? null,
         ], $payload));
+    }
+
+    private function companyRequesterLevelFor(User $user, OrganizationUnit $unit): string
+    {
+        if ($this->userHasCompanyHeadAssignmentOnUnit($user, $unit)) {
+            return 'company_head';
+        }
+
+        if ($this->userHasOfficerInChargeAssignmentOnUnit($user, $unit)) {
+            return 'officer_in_charge';
+        }
+
+        return 'company_head';
+    }
+
+    private function userHasCompanyHeadAssignmentOnUnit(User $user, OrganizationUnit $unit): bool
+    {
+        if (! Schema::hasTable('organization_position_assignments')) {
+            return false;
+        }
+
+        return $unit->activePositionAssignments()
+            ->where('employee_id', (int) $user->id)
+            ->whereHas('positionType', fn ($query) => $query->where('can_approve', true)->where('is_active', true))
+            ->with('positionType')
+            ->get()
+            ->contains(fn (OrganizationPositionAssignment $assignment): bool => CompanyLeadershipPosition::isCompanyHead(
+                (string) ($assignment->positionType?->position_name ?? ''),
+            ));
+    }
+
+    private function userHasOfficerInChargeAssignmentOnUnit(User $user, OrganizationUnit $unit): bool
+    {
+        if (! Schema::hasTable('organization_position_assignments')) {
+            return false;
+        }
+
+        return $unit->activePositionAssignments()
+            ->where('employee_id', (int) $user->id)
+            ->whereHas('positionType', fn ($query) => $query->where('can_approve', true)->where('is_active', true))
+            ->with('positionType')
+            ->get()
+            ->contains(fn (OrganizationPositionAssignment $assignment): bool => CompanyLeadershipPosition::isOfficerInCharge(
+                (string) ($assignment->positionType?->position_name ?? ''),
+            ));
+    }
+
+    /**
+     * @param  Collection<int, array{assignment: OrganizationPositionAssignment, employee: User, leader_role: string}>  $candidates
+     * @param  array<string, mixed>  $context
+     * @return Collection<int, array{assignment: OrganizationPositionAssignment, employee: User, leader_role: string}>
+     */
+    private function filterCompanyLevelCandidates(Collection $candidates, array $context): Collection
+    {
+        $candidates = $candidates->reject(
+            fn (array $candidate): bool => CompanyLeadershipPosition::isRetiredCompanyLeadershipType((string) ($candidate['leader_role'] ?? '')),
+        )->values();
+
+        $requesterLevel = $this->resolveRequesterLevelFromContext($context);
+        $preference = (string) ($context['company_approver_preference'] ?? '');
+
+        if ($requesterLevel === 'officer_in_charge' || $preference === 'company_head_only') {
+            return $candidates->filter(
+                fn (array $candidate): bool => CompanyLeadershipPosition::isCompanyHead((string) ($candidate['leader_role'] ?? '')),
+            )->values();
+        }
+
+        if ($requesterLevel === 'area_head' || $preference === 'officer_in_charge') {
+            $officers = $candidates->filter(
+                fn (array $candidate): bool => CompanyLeadershipPosition::isOfficerInCharge((string) ($candidate['leader_role'] ?? '')),
+            )->values();
+
+            if ($officers->isNotEmpty()) {
+                return $officers;
+            }
+
+            return $candidates->filter(
+                fn (array $candidate): bool => CompanyLeadershipPosition::isCompanyHead((string) ($candidate['leader_role'] ?? '')),
+            )->values();
+        }
+
+        return $candidates->filter(function (array $candidate): bool {
+            $role = (string) ($candidate['leader_role'] ?? '');
+
+            return CompanyLeadershipPosition::isCompanyHead($role)
+                || CompanyLeadershipPosition::isOfficerInCharge($role);
+        })->values();
+    }
+
+    private function resolveRequesterLevelFromContext(array $context): string
+    {
+        $level = (string) ($context['detected_requester_level'] ?? $context['requester_level'] ?? '');
+        if ($level !== '') {
+            return $level;
+        }
+
+        $requesterId = (int) ($context['requester_employee_id'] ?? 0);
+        if ($requesterId <= 0) {
+            return 'employee';
+        }
+
+        $requester = User::query()->find($requesterId);
+        if (! $requester) {
+            return 'employee';
+        }
+
+        return match ($this->hrRoleResolver->resolveOrganizationalRole($requester)) {
+            HrRole::CompanyHead => 'company_head',
+            HrRole::OfficerInCharge => 'officer_in_charge',
+            HrRole::AreaHead => 'area_head',
+            HrRole::BranchHead => 'branch_head',
+            HrRole::DivisionHead => 'division_head',
+            HrRole::DepartmentHead => 'department_head',
+            HrRole::SectionUnitHead => 'section_unit_head',
+            default => 'employee',
+        };
     }
 }

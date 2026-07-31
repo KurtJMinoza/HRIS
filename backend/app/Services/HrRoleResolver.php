@@ -92,12 +92,16 @@ class HrRoleResolver
     }
 
     /**
-     * Company head > branch head > division head > department head > section/unit head > employee.
+     * Company head > officer in charge > area head > branch head > division head > department head > section/unit head > employee.
      */
     private function resolveOrgHierarchyFromAssignments(User $user): HrRole
     {
         if ($this->leadershipAssignments->companyIdsLedBy($user)->isNotEmpty()) {
             return HrRole::CompanyHead;
+        }
+
+        if ($this->leadershipAssignments->companyIdsWhereOfficerInCharge($user)->isNotEmpty()) {
+            return HrRole::OfficerInCharge;
         }
 
         if ($this->leadershipAssignments->areaIdsLedBy($user)->isNotEmpty()) {

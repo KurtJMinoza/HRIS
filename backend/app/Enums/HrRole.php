@@ -5,12 +5,13 @@ namespace App\Enums;
 /**
  * Resolved HR access role for RBAC (orthogonal to users.role admin|employee).
  * Priority when resolving from org assignments:
- * company_head > branch_head > department_head > section_unit_head > employee.
+ * company_head > officer_in_charge > area_head > branch_head > … > employee.
  */
 enum HrRole: string
 {
     case AdminHr = 'admin_hr';
     case CompanyHead = 'company_head';
+    case OfficerInCharge = 'officer_in_charge';
     case AreaHead = 'area_head';
     case BranchHead = 'branch_head';
     case DepartmentHead = 'department_head';
@@ -29,6 +30,7 @@ enum HrRole: string
         return match ($this) {
             self::AdminHr => 'Admin (HR)',
             self::CompanyHead => 'Company Head',
+            self::OfficerInCharge => 'Officer in Charge',
             self::AreaHead => 'Area Head',
             self::BranchHead => 'Branch Head',
             self::DepartmentHead => 'Department Head',

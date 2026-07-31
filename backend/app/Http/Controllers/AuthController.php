@@ -660,8 +660,10 @@ class AuthController extends Controller
         $computedStart = microtime(true);
         $hrResolver = app(HrRoleResolver::class);
         $hr = $hrResolver->resolve($user);
+        $orgRole = $hrResolver->resolveOrganizationalRole($user);
+        $displayHr = (! $user->isAdmin() && $orgRole !== HrRole::Employee) ? $orgRole : $hr;
         $hrRolesList = $hrResolver->listEffectiveHrRoles($user);
-        $hrRoleLabel = $user->isSuperAdmin() ? 'Super Admin' : $hr->badgeLabel();
+        $hrRoleLabel = $user->isSuperAdmin() ? 'Super Admin' : $displayHr->badgeLabel();
         $hrRoleLabels = $user->isSuperAdmin()
             ? ['Super Admin']
             : array_map(fn (HrRole $r) => $r->badgeLabel(), $hrRolesList);
@@ -760,7 +762,7 @@ class AuthController extends Controller
             /** Aligned with {@see User::ROSTER_ELIGIBLE_ROLES} for SPA filters (assign pools, profile, etc.). */
             'is_roster_staff' => $user->isRosterEligible(),
             'is_hr_admin' => $user->isAdmin(),
-            'hr_role' => $hr->value,
+            'hr_role' => $displayHr->value,
             'hr_role_label' => $hrRoleLabel,
             'hr_roles' => array_map(fn (HrRole $r) => $r->value, $hrRolesList),
             'hr_roles_labels' => $hrRoleLabels,

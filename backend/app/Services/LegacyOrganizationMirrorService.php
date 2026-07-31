@@ -88,15 +88,26 @@ class LegacyOrganizationMirrorService
 
     public function syncLegacyPrimaryHead(string $legacyType, int $legacyId, OrganizationUnit $unit): void
     {
-        $primary = OrganizationPositionAssignment::query()
+        $primaryQuery = OrganizationPositionAssignment::query()
             ->with('positionType')
             ->where('organization_unit_id', (int) $unit->id)
             ->active()
             ->orderBy('approval_priority')
-            ->orderByDesc('is_primary')
-            ->first();
+            ->orderByDesc('is_primary');
+
+        if ($legacyType === 'company') {
+            $primaryQuery->whereHas('positionType', fn ($query) => $query
+                ->where('position_name', 'Company Head')
+                ->where('is_active', true));
+        }
+
+        $primary = $primaryQuery->first();
 
         if (! $primary) {
+            if ($legacyType === 'company') {
+                Company::query()->whereKey($legacyId)->update(['company_head_id' => null]);
+            }
+
             return;
         }
 
@@ -281,7 +292,13 @@ class LegacyOrganizationMirrorService
             'sort_order' => (int) $company->id,
         ]);
 
-        $this->syncSingleLeader($unit, $company->company_head_id ? (int) $company->company_head_id : null, 'Company Head');
+        if (Schema::hasTable('organization_position_assignments')) {
+            // ponytail: assignments are source of truth — never mirror stale company_head_id as Company Head.
+            $this->syncLegacyPrimaryHead('company', (int) $company->id, $unit);
+            app(OrganizationLeadershipService::class)->syncUnitLeadersFromAssignments($unit->fresh());
+        } else {
+            $this->syncSingleLeader($unit, $company->company_head_id ? (int) $company->company_head_id : null, 'Company Head');
+        }
 
         return $unit;
     }

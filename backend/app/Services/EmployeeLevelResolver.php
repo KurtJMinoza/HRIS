@@ -14,6 +14,7 @@ use App\Models\OrganizationUnitLeader;
 use App\Models\SectionUnit;
 use App\Models\Team;
 use App\Models\User;
+use App\Services\OrganizationLeadershipAssignmentService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -184,6 +185,9 @@ class EmployeeLevelResolver
         $candidates = [];
 
         foreach (Company::query()->where('company_head_id', $user->id)->get(['id', 'name']) as $company) {
+            if ($this->userIsOfficerInChargeOnlyForCompany($user, (int) $company->id)) {
+                continue;
+            }
             $source = ['company_id' => (int) $company->id];
             if ($this->matchesContext($source, $context)) {
                 $candidates[] = $this->payload(6, 'company', (int) $company->id, $company->name, null, null);
@@ -549,5 +553,14 @@ class EmployeeLevelResolver
             'effective_from' => $effectiveFrom,
             'effective_to' => $effectiveTo,
         ];
+    }
+
+    private function userIsOfficerInChargeOnlyForCompany(User $user, int $companyId): bool
+    {
+        /** @var OrganizationLeadershipAssignmentService $assignments */
+        $assignments = app(OrganizationLeadershipAssignmentService::class);
+
+        return $assignments->companyIdsWhereOfficerInCharge($user)->contains($companyId)
+            && ! $assignments->companyIdsLedBy($user)->contains($companyId);
     }
 }

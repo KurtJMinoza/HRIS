@@ -14,7 +14,7 @@ use App\Services\OrganizationLeadershipAssignmentService;
 final class ManagementRole
 {
     /**
-     * @return 'company_head'|'area_head'|'branch_head'|'department_head'|'division_head'|'section_unit_head'|null
+     * @return 'company_head'|'officer_in_charge'|'area_head'|'branch_head'|'department_head'|'division_head'|'section_unit_head'|null
      */
     public static function resolve(User $user): ?string
     {
@@ -23,6 +23,10 @@ final class ManagementRole
 
         if ($assignments->companyIdsLedBy($user)->isNotEmpty()) {
             return 'company_head';
+        }
+
+        if ($assignments->companyIdsWhereOfficerInCharge($user)->isNotEmpty()) {
+            return 'officer_in_charge';
         }
 
         if ($assignments->areaIdsLedBy($user)->isNotEmpty()) {

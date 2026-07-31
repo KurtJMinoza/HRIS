@@ -610,8 +610,10 @@ class DataScopeService
                 ...$this->assignmentEmployeeIdsForOrgColumn('department_id', $departmentIds),
                 ...$this->assignmentEmployeeIdsForOrgColumn('section_unit_id', $sectionIds),
             ];
-        } elseif ($role === HrRole::CompanyHead) {
-            $companyIds = $this->companyIdsForCompanyHead($actor)->all();
+        } elseif ($role === HrRole::CompanyHead || $role === HrRole::OfficerInCharge) {
+            $companyIds = ($role === HrRole::OfficerInCharge
+                ? $this->leadershipAssignments->companyIdsWhereOfficerInCharge($actor)
+                : $this->companyIdsForCompanyHead($actor))->all();
             $branchIds = Branch::query()
                 ->whereIn('company_id', $companyIds)
                 ->pluck('id')

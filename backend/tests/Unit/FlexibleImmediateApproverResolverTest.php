@@ -2,7 +2,9 @@
 
 namespace Tests\Unit;
 
+use App\Enums\HrRole;
 use App\Models\ApprovalWorkflowSetting;
+use App\Models\Area;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
@@ -19,6 +21,9 @@ use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\FlexibleImmediateApproverResolver;
 use App\Services\HrApprovalChainResolver;
+use App\Services\HrRoleResolver;
+use App\Services\OrganizationLeadershipService;
+use App\Support\ManagementRole;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OrganizationLeadershipAssignmentScopeService;
 use Illuminate\Support\Facades\DB;
@@ -771,20 +776,244 @@ class FlexibleImmediateApproverResolverTest extends TestCase
         $this->assertSame(2, OrganizationUnitLeader::query()->where('employee_id', $leader->id)->count());
     }
 
-    public function test_company_head_and_co_company_head_can_both_exist(): void
+    public function test_retired_company_leadership_types_are_hidden_from_position_types(): void
     {
-        $employee = $this->user();
-        $head = $this->user();
-        $coHead = $this->user();
-        $company = $this->unit('Company', null, [], 'company');
+        $this->positionType('company', 'Co-Company Head', 2);
+        $this->positionType('company', 'Assistant Company Head', 4);
+
+        $types = app(OrganizationLeadershipService::class)->positionTypesForLevel('company')
+            ->pluck('position_name')
+            ->all();
+
+        $this->assertContains('Company Head', $types);
+        $this->assertContains('Officer-in-Charge', $types);
+        $this->assertNotContains('Co-Company Head', $types);
+        $this->assertNotContains('Assistant Company Head', $types);
+    }
+
+    public function test_retired_branch_division_department_section_types_are_hidden_from_position_types(): void
+    {
+        $this->positionType('branch', 'Assistant Branch Head', 2);
+        $this->positionType('branch', 'Branch OIC', 3);
+        $this->positionType('division', 'Assistant Division Head', 2);
+        $this->positionType('division', 'Division OIC', 3);
+        $this->positionType('department', 'Assistant Department Head', 2);
+        $this->positionType('department', 'Team Leader', 3);
+        $this->positionType('section_unit', 'Team Leader', 3);
+        $this->positionType('section_unit', 'Immediate Leader', 4);
+
+        $service = app(OrganizationLeadershipService::class);
+
+        $branch = $service->positionTypesForLevel('branch')->pluck('position_name')->all();
+        $this->assertContains('Branch Head', $branch);
+        $this->assertNotContains('Assistant Branch Head', $branch);
+        $this->assertNotContains('Branch OIC', $branch);
+
+        $division = $service->positionTypesForLevel('division')->pluck('position_name')->all();
+        $this->assertContains('Division Head', $division);
+        $this->assertNotContains('Assistant Division Head', $division);
+        $this->assertNotContains('Division OIC', $division);
+
+        $department = $service->positionTypesForLevel('department')->pluck('position_name')->all();
+        $this->assertContains('Department Head', $department);
+        $this->assertNotContains('Assistant Department Head', $department);
+        $this->assertNotContains('Team Leader', $department);
+
+        $section = $service->positionTypesForLevel('section_unit')->pluck('position_name')->all();
+        $this->assertContains('Section Head', $section);
+        $this->assertNotContains('Unit Head', $section);
+        $this->assertNotContains('Team Leader', $section);
+        $this->assertNotContains('Immediate Leader', $section);
+    }
+
+    public function test_area_head_with_oic_assigned_routes_to_oic_then_hr(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $areaHead = $this->user();
+        $officer = $this->user();
+        $companyHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+
+        $company = Company::query()->create(['name' => 'OIC Test Co '.Str::random(5)]);
+        $area = Area::query()->create([
+            'company_id' => (int) $company->id,
+            'area_name' => 'North Area',
+            'area_manager_employee_id' => (int) $areaHead->id,
+        ]);
+        $branch = Branch::query()->create([
+            'name' => 'Main Branch',
+            'company_id' => (int) $company->id,
+            'area_id' => (int) $area->id,
+        ]);
+
+        $companyUnit = $this->unit('Company', null, [
+            'legacy_source_type' => 'company',
+            'legacy_source_id' => (int) $company->id,
+            'company_id' => (int) $company->id,
+        ], 'company');
+        $areaUnit = $this->unit('Area', $companyUnit, [
+            'legacy_source_type' => 'area',
+            'legacy_source_id' => (int) $area->id,
+            'company_id' => (int) $company->id,
+        ], 'area');
+
         $headType = $this->positionType('company', 'Company Head', 1);
-        $coHeadType = $this->positionType('company', 'Co-Company Head', 2);
+        $oicType = $this->positionType('company', 'Officer-in-Charge', 2);
+        $this->companyLeadershipAssignment($companyUnit, $headType, $companyHead, (int) $company->id, true, 1);
+        $this->companyLeadershipAssignment($companyUnit, $oicType, $officer, (int) $company->id, false, 2);
 
-        $this->positionAssignment($company, $headType, $head, true, 1);
-        $this->positionAssignment($company, $coHeadType, $coHead, false, 2);
-        $this->assign($employee, $company);
+        $areaHead->forceFill([
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+        ])->save();
+        $this->assign($areaHead, $areaUnit);
 
-        $this->assertSame(2, OrganizationPositionAssignment::query()->where('organization_unit_id', $company->id)->active()->count());
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($areaHead, 'leave', $areaHead);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame($officer->id, $chain[0]['approver_id']);
+        $this->assertSame('officer_in_charge', $chain[0]['approval_level']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_area_head_without_oic_routes_to_company_head_then_hr(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $areaHead = $this->user();
+        $companyHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+
+        $company = Company::query()->create([
+            'name' => 'No OIC Co '.Str::random(5),
+            'company_head_id' => (int) $companyHead->id,
+        ]);
+        $area = Area::query()->create([
+            'company_id' => (int) $company->id,
+            'area_name' => 'South Area',
+            'area_manager_employee_id' => (int) $areaHead->id,
+        ]);
+        $branch = Branch::query()->create([
+            'name' => 'South Branch',
+            'company_id' => (int) $company->id,
+            'area_id' => (int) $area->id,
+        ]);
+
+        $companyUnit = $this->unit('Company', null, [
+            'legacy_source_type' => 'company',
+            'legacy_source_id' => (int) $company->id,
+            'company_id' => (int) $company->id,
+        ], 'company');
+        $areaUnit = $this->unit('Area', $companyUnit, [
+            'legacy_source_type' => 'area',
+            'legacy_source_id' => (int) $area->id,
+            'company_id' => (int) $company->id,
+        ], 'area');
+
+        $headType = $this->positionType('company', 'Company Head', 1);
+        $this->companyLeadershipAssignment($companyUnit, $headType, $companyHead, (int) $company->id, true, 1);
+
+        $areaHead->forceFill([
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+        ])->save();
+        $this->assign($areaHead, $areaUnit);
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($areaHead, 'leave', $areaHead);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame($companyHead->id, $chain[0]['approver_id']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_oic_filing_routes_to_company_head_then_hr(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $officer = $this->user();
+        $companyHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+
+        $company = Company::query()->create(['name' => 'OIC Filer Co '.Str::random(5)]);
+        $companyUnit = $this->unit('Company', null, [
+            'legacy_source_type' => 'company',
+            'legacy_source_id' => (int) $company->id,
+            'company_id' => (int) $company->id,
+        ], 'company');
+
+        $headType = $this->positionType('company', 'Company Head', 1);
+        $oicType = $this->positionType('company', 'Officer-in-Charge', 2);
+        $this->companyLeadershipAssignment($companyUnit, $headType, $companyHead, (int) $company->id, true, 1);
+        $this->companyLeadershipAssignment($companyUnit, $oicType, $officer, (int) $company->id, false, 2);
+
+        $officer->forceFill(['company_id' => (int) $company->id])->save();
+        $this->assign($officer, $companyUnit);
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($officer, 'leave', $officer);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame($companyHead->id, $chain[0]['approver_id']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
+    public function test_oic_user_resolves_as_officer_in_charge_not_company_head(): void
+    {
+        $officer = $this->user();
+        $companyHead = $this->user();
+
+        $company = Company::query()->create(['name' => 'Badge Co '.Str::random(5)]);
+        $companyUnit = $this->unit('Company', null, [
+            'legacy_source_type' => 'company',
+            'legacy_source_id' => (int) $company->id,
+            'company_id' => (int) $company->id,
+        ], 'company');
+
+        $headType = $this->positionType('company', 'Company Head', 1);
+        $oicType = $this->positionType('company', 'Officer-in-Charge', 2);
+        $this->companyLeadershipAssignment($companyUnit, $headType, $companyHead, (int) $company->id, true, 1);
+        $this->companyLeadershipAssignment($companyUnit, $oicType, $officer, (int) $company->id, false, 2);
+
+        $this->assertSame(HrRole::OfficerInCharge, app(HrRoleResolver::class)->resolveOrganizationalRole($officer));
+        $this->assertSame(HrRole::CompanyHead, app(HrRoleResolver::class)->resolveOrganizationalRole($companyHead));
+    }
+
+    public function test_oic_with_stale_company_head_id_column_still_resolves_as_officer_in_charge_and_files_to_company_head(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $officer = $this->user();
+        $companyHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+
+        $company = Company::query()->create([
+            'name' => 'Stale Mirror Co '.Str::random(5),
+        ]);
+        $companyUnit = $this->unit('Company', null, [
+            'legacy_source_type' => 'company',
+            'legacy_source_id' => (int) $company->id,
+            'company_id' => (int) $company->id,
+        ], 'company');
+
+        $headType = $this->positionType('company', 'Company Head', 1);
+        $oicType = $this->positionType('company', 'Officer-in-Charge', 2);
+        $this->companyLeadershipAssignment($companyUnit, $headType, $companyHead, (int) $company->id, true, 1);
+        $this->companyLeadershipAssignment($companyUnit, $oicType, $officer, (int) $company->id, false, 2);
+
+        // Stale legacy column (no Company::save — observer would repair from assignments).
+        Company::query()->whereKey($company->id)->update(['company_head_id' => (int) $officer->id]);
+
+        $officer->forceFill(['company_id' => (int) $company->id])->save();
+        $this->assign($officer, $companyUnit);
+
+        $this->assertSame(HrRole::OfficerInCharge, app(HrRoleResolver::class)->resolveOrganizationalRole($officer));
+        $this->assertSame('officer_in_charge', ManagementRole::resolve($officer));
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($officer, 'leave', $officer);
+
+        $this->assertCount(2, $chain);
+        $this->assertSame($companyHead->id, $chain[0]['approver_id']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
     }
 
     public function test_department_head_and_team_leader_same_employee_is_allowed(): void
@@ -1132,6 +1361,29 @@ class FlexibleImmediateApproverResolverTest extends TestCase
         $this->assign($deptHead, $departmentUnit);
         Department::query()->whereKey($departmentLegacyId)->update(['department_head_id' => (int) $deptHead->id]);
         $deptHead->forceFill(['department_id' => $departmentLegacyId])->save();
+    }
+
+    private function companyLeadershipAssignment(
+        OrganizationUnit $companyUnit,
+        OrganizationPositionType $type,
+        User $leader,
+        int $companyLegacyId,
+        bool $primary,
+        int $priority,
+    ): OrganizationPositionAssignment {
+        $assignment = $this->positionAssignment($companyUnit, $type, $leader, $primary, $priority);
+
+        app(OrganizationLeadershipAssignmentScopeService::class)->syncAssignmentScopes(
+            $assignment,
+            [
+                'approval_scope_mode' => 'all',
+                'scope_request_type' => 'all',
+            ],
+            'company',
+            $companyLegacyId,
+        );
+
+        return $assignment;
     }
 
     private function divisionHeadScope(

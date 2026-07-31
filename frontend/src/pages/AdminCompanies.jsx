@@ -1015,6 +1015,25 @@ function CompanyHeadOverview({
                     ) : null}
                   </div>
                 </div>
+                {company.officer_in_charge_name ? (
+                  <>
+                    <p className="mt-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Officer in charge</p>
+                    <div className="mt-3 flex items-center gap-3">
+                      <Avatar className="size-11 border border-border/60 shadow-sm">
+                        <AvatarImage src={profileImageUrl(company.officer_in_charge_profile_image)} alt="" />
+                        <AvatarFallback className="bg-emerald-600/15 text-sm font-bold text-emerald-900 dark:bg-emerald-500/25 dark:text-emerald-100">
+                          {initials(company.officer_in_charge_name || '?')}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-foreground">{company.officer_in_charge_name}</p>
+                        {company.officer_in_charge_email ? (
+                          <p className="truncate text-xs text-muted-foreground">{company.officer_in_charge_email}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
               </div>
             </div>
           </CardContent>
@@ -1977,6 +1996,18 @@ export default function AdminCompanies() {
                             </div>
                           </div>
                         )}
+                        {company.officer_in_charge_name ? (
+                          <div className="mt-3 flex items-center gap-3 border-t border-border/50 pt-3 dark:border-white/10">
+                            <Avatar className="size-11 shrink-0 rounded-full border-2 border-background shadow-sm ring-1 ring-border/60 dark:ring-white/10">
+                              <AvatarImage src={profileImageUrl(company.officer_in_charge_profile_image)} className="object-cover" />
+                              <AvatarFallback className="bg-brand/10 text-xs font-bold text-brand dark:bg-brand/15">{initials(company.officer_in_charge_name)}</AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-muted-foreground">Officer in charge</p>
+                              <p className="truncate text-sm font-semibold text-foreground">{company.officer_in_charge_name}</p>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
 
                       <div className="mt-4 grid grid-cols-3 divide-x divide-border/70 rounded-xl border border-border/60 bg-background/60 dark:divide-white/10 dark:border-white/10 dark:bg-background/30">
@@ -2534,6 +2565,14 @@ export default function AdminCompanies() {
                             </button>
                           </>
                         )}
+                        {detailCompany.officer_in_charge_name ? (
+                          <>
+                            <span className="text-muted-foreground">OIC</span>
+                            <Badge variant="secondary" className="h-6 rounded-full border border-amber-200/80 bg-amber-100/90 px-2.5 text-xs font-semibold text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-100">
+                              {detailCompany.officer_in_charge_name}
+                            </Badge>
+                          </>
+                        ) : null}
                       </div>
                       {detailCompany.created_at && (
                         <p className="mt-1.5 text-xs text-muted-foreground">{formatEstablishedLabel(detailCompany.created_at)}</p>

@@ -9,10 +9,13 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
+use App\Models\OrganizationPositionAssignment;
+use App\Models\OrganizationUnit;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Support\HrApprovalStages;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Centralized two-step approval chain for organization requests.
@@ -374,7 +377,8 @@ class HrApprovalChainResolver
             HrRole::DepartmentHead => HrRole::DivisionHead,
             HrRole::DivisionHead => HrRole::BranchHead,
             HrRole::BranchHead => HrRole::AreaHead,
-            HrRole::AreaHead => HrRole::CompanyHead,
+            HrRole::AreaHead => HrRole::OfficerInCharge,
+            HrRole::OfficerInCharge => HrRole::CompanyHead,
             HrRole::CompanyHead, HrRole::AdminHr => null,
         };
     }
@@ -387,6 +391,7 @@ class HrApprovalChainResolver
             HrRole::DepartmentHead => $this->resolveDepartmentHeadFor($employee),
             HrRole::BranchHead => $this->resolveBranchHeadFor($employee),
             HrRole::AreaHead => null,
+            HrRole::OfficerInCharge => $this->resolveOfficerInChargeFor($employee),
             HrRole::CompanyHead => $this->resolveCompanyHeadFor($employee),
             default => null,
         };
@@ -466,6 +471,7 @@ class HrApprovalChainResolver
         $level = strtolower($approvalLevel);
 
         return match (true) {
+            str_contains($level, 'officer_in_charge') || str_contains($level, 'officer in charge') => HrRole::OfficerInCharge,
             str_contains($level, 'company') => HrRole::CompanyHead,
             str_contains($level, 'area') => HrRole::AreaHead,
             str_contains($level, 'branch') => HrRole::BranchHead,
@@ -528,7 +534,7 @@ class HrApprovalChainResolver
             return $this->formatFlexibleStep($scoped, 1);
         }
 
-        if (in_array($targetRole, [HrRole::BranchHead, HrRole::AreaHead, HrRole::CompanyHead], true)) {
+        if (in_array($targetRole, [HrRole::BranchHead, HrRole::AreaHead, HrRole::OfficerInCharge, HrRole::CompanyHead], true)) {
             Log::info('approval_chain: legacy scoped fallback found no approver for role', array_merge($context, [
                 'target_role' => $targetRole->value,
                 'subject_role' => $subjectRole->value,
@@ -577,7 +583,7 @@ class HrApprovalChainResolver
         $organizationType = match ($targetRole) {
             HrRole::BranchHead => 'branch',
             HrRole::AreaHead => 'area',
-            HrRole::CompanyHead => 'company',
+            HrRole::OfficerInCharge, HrRole::CompanyHead => 'company',
             default => null,
         };
 
@@ -589,6 +595,8 @@ class HrApprovalChainResolver
         if ($organizationId <= 0) {
             return null;
         }
+
+        $subjectRole = $this->roleResolver->resolveForApprovalSubject($subject);
 
         return $this->flexibleImmediateApproverResolver->resolveOrgHead(
             $organizationType,
@@ -604,6 +612,15 @@ class HrApprovalChainResolver
                 'organization_type' => $organizationType,
                 'organization_id' => $organizationId,
                 'requester_hierarchy' => $this->hierarchyForScopedFallback($subject, $context),
+                'detected_requester_level' => match ($subjectRole) {
+                    HrRole::AreaHead => 'area_head',
+                    HrRole::OfficerInCharge => 'officer_in_charge',
+                    HrRole::CompanyHead => 'company_head',
+                    default => 'employee',
+                },
+                'company_approver_preference' => $targetRole === HrRole::OfficerInCharge
+                    ? 'officer_in_charge'
+                    : ($targetRole === HrRole::CompanyHead ? 'company_head_only' : ''),
             ],
         );
     }
@@ -758,11 +775,87 @@ class HrApprovalChainResolver
     private function resolveCompanyHeadFor(User $employee): ?User
     {
         $company = $this->companyFor($employee);
-        if (! $company?->company_head_id) {
+        if (! $company) {
             return null;
         }
 
-        return User::query()->activeRoster()->find($company->company_head_id);
+        $companyId = (int) $company->id;
+        if ($companyId > 0 && Schema::hasTable('organization_units')) {
+            $resolved = $this->flexibleImmediateApproverResolver->resolveOrgHead(
+                'company',
+                $companyId,
+                $employee,
+                null,
+                [(int) $employee->id],
+                [
+                    'company_approver_preference' => 'company_head_only',
+                    'detected_requester_level' => 'officer_in_charge',
+                ],
+            );
+            $approver = $resolved['approver'] ?? null;
+            if ($approver instanceof User) {
+                return $approver;
+            }
+        }
+
+        if (! $company->company_head_id) {
+            return null;
+        }
+
+        $head = User::query()->activeRoster()->find((int) $company->company_head_id);
+        if (! $head) {
+            return null;
+        }
+
+        /** @var OrganizationLeadershipAssignmentService $assignments */
+        $assignments = app(OrganizationLeadershipAssignmentService::class);
+        if ($assignments->companyIdsWhereOfficerInCharge($head)->contains($companyId)
+            && ! $assignments->companyIdsLedBy($head)->contains($companyId)) {
+            return null;
+        }
+
+        return $head;
+    }
+
+    private function resolveOfficerInChargeFor(User $employee): ?User
+    {
+        $company = $this->companyFor($employee);
+        if (! $company) {
+            return null;
+        }
+
+        if (! Schema::hasTable('organization_units') || ! Schema::hasTable('organization_position_assignments')) {
+            return null;
+        }
+
+        $unit = OrganizationUnit::query()
+            ->where('legacy_source_type', 'company')
+            ->where('legacy_source_id', (int) $company->id)
+            ->first();
+
+        if (! $unit) {
+            return null;
+        }
+
+        $assignment = OrganizationPositionAssignment::query()
+            ->active()
+            ->where('organization_unit_id', (int) $unit->id)
+            ->whereHas('positionType', function ($query): void {
+                $query->where('can_approve', true)
+                    ->where(function ($nameQuery): void {
+                        $nameQuery->where('position_name', 'Officer-in-Charge')
+                            ->orWhere('position_name', 'Officer in Charge');
+                    });
+            })
+            ->orderBy('approval_priority')
+            ->orderByDesc('is_primary')
+            ->first();
+
+        if (! $assignment?->employee_id) {
+            return null;
+        }
+
+        return User::query()->activeRoster()->find((int) $assignment->employee_id);
     }
 
     private function sectionUnitFor(User $employee): ?SectionUnit
