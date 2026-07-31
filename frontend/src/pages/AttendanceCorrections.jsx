@@ -111,6 +111,7 @@ import {
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
 import CorrectionRequestMobileCard from '@/components/presenceFiling/CorrectionRequestMobileCard'
+import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
@@ -1991,6 +1992,11 @@ export default function AttendanceCorrections() {
                           <TableHead className="w-[12%] px-1.5 py-2.5">
                             <SortHead col="review_status" label="Status" />
                           </TableHead>
+                          <TableHead className="w-[12%] px-1.5 py-2.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              Approver
+                            </span>
+                          </TableHead>
                           <TableHead className="hidden w-[20%] min-w-[12rem] px-1.5 py-2.5 xl:table-cell">
                             <SortHead col="remarks" label="Remarks" />
                           </TableHead>
@@ -2061,7 +2067,10 @@ export default function AttendanceCorrections() {
                                 <TimeCell iso={tOut} />
                               </TableCell>
                               <TableCell className={cn('max-w-[12rem] align-middle', cellPad)}>
-                                <ReviewStatusTableBadge item={item} />
+                                <ReviewStatusTableBadge item={item} showApprover={false} />
+                              </TableCell>
+                              <TableCell className={cn('min-w-0 align-middle', cellPad)}>
+                                <ApproverAvatarNameCell {...approverFromRequestRow(item)} />
                               </TableCell>
                               <TableCell
                                 className={cn('hidden min-w-0 align-top xl:table-cell', cellPad)}

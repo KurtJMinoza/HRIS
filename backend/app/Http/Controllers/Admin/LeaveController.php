@@ -176,8 +176,10 @@ class LeaveController extends Controller
                 'notes' => $l->notes,
                 'rejection_note' => $l->rejection_note,
                 'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : $l->approval_stage,
+                'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
                 'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
                 'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+                'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
                 'created_at' => $l->created_at->toIso8601String(),
                 'display_status' => $this->leaveListDisplayStatus($l, $currentApproval),
                 'approval_stage' => $l->approval_stage,
@@ -1553,7 +1555,7 @@ class LeaveController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v7:v'.LeaveModuleCache::version();
+        return 'leave:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v8:v'.LeaveModuleCache::version();
     }
 
     /**
@@ -1656,7 +1658,7 @@ class LeaveController extends Controller
                     ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
                     ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
             })
-            ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+            ->with('approver:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->orderBy('sequence_order')
             ->orderBy('id')
             ->get()

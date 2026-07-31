@@ -1196,7 +1196,7 @@ class PresenceFilingController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v3:v'.AttendanceCorrectionModuleCache::version();
+        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v4:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1223,7 +1223,7 @@ class PresenceFilingController extends Controller
                     ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
                     ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
             })
-            ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+            ->with('approver:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->orderBy('sequence_order')
             ->orderBy('id')
             ->get()
@@ -1298,8 +1298,10 @@ class PresenceFilingController extends Controller
             'status' => $status,
             'display_status' => $displayStatus,
             'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : null,
+            'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
             'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
             'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+            'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
             'created_at' => $c->created_at?->toIso8601String(),
             'filed_at' => $c->filed_at?->toIso8601String(),
             'remarks' => $c->remarks,
@@ -1321,7 +1323,7 @@ class PresenceFilingController extends Controller
             'per_page' => $perPage,
         ], static fn ($value): bool => $value !== null && $value !== '');
 
-        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v2:v'.AttendanceCorrectionModuleCache::version();
+        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v3:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1367,8 +1369,10 @@ class PresenceFilingController extends Controller
             'status' => $status,
             'display_status' => $displayStatus,
             'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : null,
+            'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
             'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
             'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+            'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
             'pending_approval' => (bool) $c->pending_approval,
             'approved' => (bool) $c->approved,
             'filed_at' => $c->filed_at?->toIso8601String(),
@@ -1763,7 +1767,7 @@ class PresenceFilingController extends Controller
                 'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
                 'attendanceLogsSyncedBy:id,name,first_name,middle_name,last_name,suffix',
                 'rejectedBy:id,name,first_name,middle_name,last_name,suffix',
-                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver:id,name,first_name,middle_name,last_name,suffix'),
+                'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver:id,name,first_name,middle_name,last_name,suffix,profile_image'),
                 'audits' => fn ($r) => $r->orderBy('created_at')->with('admin:id,name,first_name,middle_name,last_name,suffix'),
             ])
             ->find($id);
@@ -1831,7 +1835,7 @@ class PresenceFilingController extends Controller
                 ->select(['id', 'request_id', 'module_type', 'approval_label', 'approver_role', 'approver_id', 'approver_name', 'eligible_approver_ids', 'approval_status', 'remarks', 'approved_at', 'sequence_order'])
                 ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
                 ->where('request_id', (int) $c->id)
-                ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+                ->with('approver:id,name,first_name,middle_name,last_name,suffix,profile_image')
                 ->orderBy('sequence_order')
                 ->orderBy('id')
                 ->get();

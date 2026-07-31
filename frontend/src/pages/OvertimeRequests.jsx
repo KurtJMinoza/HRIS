@@ -55,6 +55,7 @@ import { hrPanelPath } from '@/lib/hrRoutes'
 import { normalizeApprovalHeadTitle, sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
 import OvertimeStatusBadge from '@/components/overtime/OvertimeStatusBadge'
+import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { formatHHmmTo12h, toHhMm, toTimeInputValue } from '@/lib/timeFormat'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import {
@@ -600,14 +601,12 @@ function OvertimeRequestMobileCard({
                 <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-foreground/90">{row.reason}</p>
               </div>
             ) : null}
-            {pending && currentApprover ? (
-              <div className="col-span-2">
-                <p className="text-xs leading-snug">
-                  <span className="font-semibold text-muted-foreground">Current approver: </span>
-                  <span className="text-foreground">{currentApprover}</span>
-                </p>
+            <div className="col-span-2">
+              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Approver</p>
+              <div className="mt-1">
+                <ApproverAvatarNameCell {...approverFromRequestRow(row)} />
               </div>
-            ) : null}
+            </div>
           </div>
 
           <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
@@ -1638,12 +1637,18 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     const currentStage = ot.current_stage || currentStep?.label || ot.current_step_name
     const currentStepName = normalizeApprovalHeadTitle(currentStage) || ot.current_step_name
     const currentApprover = ot.current_approver_name || ot.current_approver || currentStep?.approver_name
+    const currentApproverImage =
+      ot.current_approver_profile_image
+      || ot.current_approver_profile_image_url
+      || currentStep?.profile_image_url
+      || null
     const patch = {
       ...ot,
       current_stage: currentStage,
       current_step_name: currentStepName,
       current_approver_name: currentApprover,
       current_approver: currentApprover,
+      current_approver_profile_image: currentApproverImage,
     }
     const applyPatch = (row) => (
       String(row?.id ?? row?.request_id ?? '') === id ? { ...row, ...patch } : row
@@ -2531,17 +2536,18 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   <Table className={overtimeTableClass}>
                     <colgroup>
                       {showBulkCheckbox ? <col className="w-[3%]" /> : null}
-                      <col className={showRequesterColumn ? 'w-[5%]' : 'w-[7%]'} />
-                      {showRequesterColumn ? <col className="w-[14%]" /> : null}
+                      <col className={showRequesterColumn ? 'w-[5%]' : 'w-[6%]'} />
+                      {showRequesterColumn ? <col className="w-[12%]" /> : null}
+                      <col className={showRequesterColumn ? 'w-[8%]' : 'w-[9%]'} />
+                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[11%]'} />
+                      <col className={showRequesterColumn ? 'w-[6%]' : 'w-[7%]'} />
+                      <col className={showRequesterColumn ? 'w-[7%]' : 'w-[9%]'} />
                       <col className={showRequesterColumn ? 'w-[9%]' : 'w-[10%]'} />
+                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[11%]'} />
+                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[11%]'} />
                       <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
                       <col className={showRequesterColumn ? 'w-[7%]' : 'w-[8%]'} />
-                      <col className={showRequesterColumn ? 'w-[8%]' : 'w-[10%]'} />
-                      <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
-                      <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
-                      <col className={showRequesterColumn ? 'w-[11%]' : 'w-[14%]'} />
-                      <col className={showRequesterColumn ? 'w-[8%]' : 'w-[10%]'} />
-                      <col className="w-[10%]" />
+                      <col className="w-[9%]" />
                     </colgroup>
                     <TableHeader>
                       <TableRow className={cn(requestModuleHeadRowClass, 'sticky top-0 z-10 backdrop-blur supports-backdrop-filter:bg-muted/80 hover:bg-muted/60 dark:supports-backdrop-filter:bg-card/90 dark:hover:bg-card/80')}>
@@ -2570,6 +2576,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                         <TableHead className={requestModuleThClass}>PH pay rule</TableHead>
                         <TableHead className={requestModuleThClass}>Reason / remarks</TableHead>
                         <TableHead className={requestModuleThClass}>Status</TableHead>
+                        <TableHead className={requestModuleThClass}>Approver</TableHead>
                         <TableHead className={requestModuleThRightClass}>Date requested</TableHead>
                         <TableHead className={requestModuleThRightClass}>Actions</TableHead>
                       </TableRow>
@@ -2627,7 +2634,10 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                               <RemarksPreviewCell text={row.reason} />
                             </TableCell>
                             <TableCell className={requestModuleTdClass}>
-                              <OvertimeStatusCell row={row} />
+                              <OvertimeStatusCell row={row} showApprover={false} />
+                            </TableCell>
+                            <TableCell className={requestModuleTdClass}>
+                              <ApproverAvatarNameCell {...approverFromRequestRow(row)} />
                             </TableCell>
                             <TableCell className={cn(requestModuleTdMutedClass, 'text-right')}>
                               {formatTableDate(filed)}

@@ -82,6 +82,7 @@ import {
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
 import CorrectionRequestMobileCard from '@/components/presenceFiling/CorrectionRequestMobileCard'
+import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
 import { resetRadixModalLock } from '@/lib/radixModalLock'
 
@@ -1173,6 +1174,9 @@ function EmployeeCorrectionRequestsSelfService() {
                         <TableHead className="w-[12%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="review_status" label="Status" />
                         </TableHead>
+                        <TableHead className="w-[14%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                          Approver
+                        </TableHead>
                         <TableHead className="hidden w-[12%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground xl:table-cell">
                           <SortHead col="remarks" label="Remarks" />
                         </TableHead>
@@ -1235,7 +1239,10 @@ function EmployeeCorrectionRequestsSelfService() {
                               <TimeCell iso={tOut} />
                             </TableCell>
                             <TableCell className="px-1.5! py-2.5! align-top">
-                              <ReviewStatusTableBadge item={row} />
+                              <ReviewStatusTableBadge item={row} showApprover={false} />
+                            </TableCell>
+                            <TableCell className="px-1.5! py-2.5! align-middle">
+                              <ApproverAvatarNameCell {...approverFromRequestRow(row)} />
                             </TableCell>
                             <TableCell
                               className="hidden max-w-48 px-1.5! py-2.5! align-top xl:table-cell"

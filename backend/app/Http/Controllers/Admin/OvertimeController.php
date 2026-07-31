@@ -307,7 +307,9 @@ class OvertimeController extends Controller
                 'display_status' => $this->overtimeListDisplayStatus($o, $currentApproval),
                 'display_badge_color' => $this->overtimeBadgeColor($o),
                 'current_step_name' => $this->overtimeCurrentStepName($currentApproval),
+                'current_approver_id' => $currentApproval?->approver_id !== null ? (int) $currentApproval->approver_id : null,
                 'current_approver_name' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
+                'current_approver_profile_image' => $currentApproval?->approver?->profile_image_url,
                 'approval_stage' => $o->approval_stage,
                 'current_stage' => $currentApproval ? $this->approvalRecordStageLabel($currentApproval) : $o->approval_stage,
                 'current_approver' => $currentApproval?->approver?->display_name ?? $currentApproval?->approver_name,
@@ -1627,7 +1629,7 @@ class OvertimeController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v6:v'.OvertimeModuleCache::version();
+        return 'overtime:list:'.((int) $actor->id).':'.$company.':'.$status.':'.$page.':'.$hash.':labels-v7:v'.OvertimeModuleCache::version();
     }
 
     /**
@@ -1665,7 +1667,7 @@ class OvertimeController extends Controller
                     ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
                     ->whereColumn('earlier_approval.sequence_order', '<', 'org_approval_records.sequence_order');
             })
-            ->with('approver:id,name,first_name,middle_name,last_name,suffix')
+            ->with('approver:id,name,first_name,middle_name,last_name,suffix,profile_image')
             ->orderBy('sequence_order')
             ->orderBy('id')
             ->get()

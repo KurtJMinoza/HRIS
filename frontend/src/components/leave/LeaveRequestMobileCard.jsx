@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
+import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
 import { requestModuleCompactButtonClass } from '@/lib/requestModuleTable'
@@ -145,7 +146,6 @@ export default function LeaveRequestMobileCard({
   leaveCreditInfo = null,
 }) {
   const pending = String(leave?.status || '').toLowerCase() === 'pending'
-  const currentApprover = String(leave?.current_approver || leave?.current_approver_name || '').trim()
   const remarksPreview = [leave?.notes, leave?.rejection_note].filter(Boolean).join('\n\n') || ''
   const docs = supportingDocUrls(leave)
   const employeeName = leave?.employee_name || '—'
@@ -254,14 +254,12 @@ export default function LeaveRequestMobileCard({
                 <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-foreground/90">{remarksPreview}</p>
               </div>
             ) : null}
-            {pending && currentApprover ? (
-              <div className="col-span-2">
-                <p className="text-xs leading-snug">
-                  <span className="font-semibold text-muted-foreground">Current approver: </span>
-                  <span className="text-foreground">{currentApprover}</span>
-                </p>
+            <div className="col-span-2">
+              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Approver</p>
+              <div className="mt-1">
+                <ApproverAvatarNameCell {...approverFromRequestRow(leave)} />
               </div>
-            ) : null}
+            </div>
           </div>
 
           <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">

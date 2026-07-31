@@ -8,6 +8,7 @@ import {
   ReviewStatusTableBadge,
   TimeCell,
 } from '@/components/presenceFiling/CorrectionTableCells'
+import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
 import { requestModuleCompactButtonClass } from '@/lib/requestModuleTable'
@@ -59,8 +60,6 @@ export default function CorrectionRequestMobileCard({
   const empImg = item?.employee_profile_image_url || item?.requested_by_profile_image_url
   const tIn = item?.requested_time_in ?? item?.time_in
   const tOut = item?.requested_time_out ?? item?.time_out
-  const currentApprover = String(item?.current_approver_name || item?.current_approver || '').trim()
-  const pending = String(item?.status || '').toLowerCase() === 'pending'
   const lastAction = item?.last_action_label ? String(item.last_action_label).trim() : ''
   const canDelete = Boolean(showDelete || item?.actor_can_delete)
   const remarksPreview = remarksUserText(item?.remarks || '')
@@ -150,14 +149,12 @@ export default function CorrectionRequestMobileCard({
                 <p className="mt-0.5 line-clamp-2 text-sm leading-snug text-foreground/90">{remarksPreview}</p>
               </div>
             ) : null}
-            {pending && currentApprover ? (
-              <div className="col-span-2">
-                <p className="text-xs leading-snug">
-                  <span className="font-semibold text-muted-foreground">Current approver: </span>
-                  <span className="text-foreground">{currentApprover}</span>
-                </p>
+            <div className="col-span-2">
+              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Approver</p>
+              <div className="mt-1">
+                <ApproverAvatarNameCell {...approverFromRequestRow(item)} />
               </div>
-            ) : null}
+            </div>
             {lastAction ? (
               <div className="col-span-2">
                 <p className="text-xs leading-snug">

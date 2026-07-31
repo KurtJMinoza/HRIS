@@ -117,6 +117,7 @@ import { LeaveCreditsSummaryPanel } from '@/components/leave/LeaveCreditsSummary
 import { LeaveModalCreditsCard } from '@/components/leave/LeaveModalCreditsCard'
 import { formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
+import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
 import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
 import { useAuth } from '@/contexts/AuthContext'
@@ -777,15 +778,16 @@ function EmployeeLeaveSelfService() {
       <div className="w-full min-w-0 overflow-hidden">
         <table className={leaveEmployeeTableClass}>
           <colgroup>
-            <col className="w-[10%]" />
-            <col className="w-[13%]" />
-            <col className="w-[8%]" />
-            <col className="w-[10%]" />
-            <col className="w-[12%]" />
-            <col className="w-[17%]" />
-            <col className="w-[13%]" />
-            <col className="w-[8%]" />
             <col className="w-[9%]" />
+            <col className="w-[12%]" />
+            <col className="w-[7%]" />
+            <col className="w-[9%]" />
+            <col className="w-[11%]" />
+            <col className="w-[14%]" />
+            <col className="w-[11%]" />
+            <col className="w-[12%]" />
+            <col className="w-[7%]" />
+            <col className="w-[8%]" />
           </colgroup>
           <thead>
             <tr className={requestModuleHeadRowClass}>
@@ -796,16 +798,17 @@ function EmployeeLeaveSelfService() {
               <th className={requestModuleThClass}>Supporting documents</th>
               <th className={requestModuleThClass}>Reason / remarks</th>
               <th className={requestModuleThClass}>Status</th>
+              <th className={requestModuleThClass}>Approver</th>
               <th className={requestModuleThRightClass}>Date filed</th>
               <th className={requestModuleThRightClass}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <TableBodySkeleton rows={6} cols={9} />
+              <TableBodySkeleton rows={6} cols={10} />
             ) : !hasTableRows ? (
               <tr>
-                <td colSpan={9}>
+                <td colSpan={10}>
                   {rows.length > 0 ? (
                     <div className="flex min-h-[330px] flex-col items-center justify-center px-6 py-16 text-center">
                       <div className="mb-6 flex size-24 items-center justify-center rounded-full bg-brand/10 text-brand dark:bg-brand/15">
@@ -880,8 +883,10 @@ function EmployeeLeaveSelfService() {
                         status={leave.status}
                         displayStatus={leave.display_status}
                         currentStage={leave.current_stage}
-                        currentApproverName={leave.current_approver || leave.current_approver_name}
                       />
+                    </td>
+                    <td className={requestModuleTdClass}>
+                      <ApproverAvatarNameCell {...approverFromRequestRow(leave)} />
                     </td>
                     <td className={cn(requestModuleTdMutedClass, 'text-right')}>
                       {leave.created_at ? formatDateTime(leave.created_at) : '—'}

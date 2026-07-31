@@ -106,6 +106,7 @@ import {
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
 import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
+import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
@@ -463,6 +464,11 @@ export default function AdminLeave() {
     const currentStage = leave.current_stage || currentStep?.label || leave.current_step_name
     const normalizedStage = normalizeApprovalHeadTitle(currentStage)
     const currentApprover = leave.current_approver || leave.current_approver_name || currentStep?.approver_name
+    const currentApproverImage =
+      leave.current_approver_profile_image
+      || leave.current_approver_profile_image_url
+      || currentStep?.profile_image_url
+      || null
     const displayStatus = leave.display_status || (
       String(leave.status || '').toLowerCase() === 'pending' && normalizedStage
         ? `Waiting for ${normalizedStage}`
@@ -473,6 +479,7 @@ export default function AdminLeave() {
       current_stage: currentStage,
       current_approver: currentApprover,
       current_approver_name: currentApprover,
+      current_approver_profile_image: currentApproverImage,
       display_status: displayStatus,
     }
     const applyPatch = (row) => (
@@ -1197,6 +1204,7 @@ export default function AdminLeave() {
       'Duration',
       'Uses leave credits',
       'Status',
+      'Approver',
       'Reason / remarks',
     ]
     const rows = leaveRequests.map((leave) => [
@@ -1207,6 +1215,7 @@ export default function AdminLeave() {
       formatDuration(leave),
       `${deriveLeaveCreditUsage(leave).label} - ${deriveLeaveCreditUsage(leave).detail}`,
       leave.status || '',
+      leave.current_approver_name || leave.current_approver || '',
       [leave.notes, leave.rejection_note].filter(Boolean).join(' | ') || '',
     ])
     const csv = [headers, ...rows]
@@ -1949,15 +1958,16 @@ export default function AdminLeave() {
             <div className="hidden min-w-0 flex-1 overflow-hidden md:block">
               <table className={leaveEmployeeTableClass}>
                 <colgroup>
-                  <col className="w-[10%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[8%]" />
-                  <col className="w-[10%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[17%]" />
-                  <col className="w-[13%]" />
-                  <col className="w-[8%]" />
                   <col className="w-[9%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[7%]" />
+                  <col className="w-[9%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[11%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[7%]" />
+                  <col className="w-[8%]" />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
@@ -1968,6 +1978,7 @@ export default function AdminLeave() {
                     <th className={requestModuleThClass}>Supporting documents</th>
                     <th className={requestModuleThClass}>Reason / remarks</th>
                     <th className={requestModuleThClass}>Status</th>
+                    <th className={requestModuleThClass}>Approver</th>
                     <th className={requestModuleThRightClass}>Date filed</th>
                     <th className={requestModuleThRightClass}>Actions</th>
                   </tr>
@@ -2032,8 +2043,10 @@ export default function AdminLeave() {
                             status={leave.status}
                             displayStatus={leave.display_status}
                             currentStage={leave.current_stage}
-                            currentApproverName={leave.current_approver || leave.current_approver_name}
                           />
+                        </td>
+                        <td className={requestModuleTdClass}>
+                          <ApproverAvatarNameCell {...approverFromRequestRow(leave)} />
                         </td>
                         <td className={cn(requestModuleTdMutedClass, 'text-right')}>
                           {leave.created_at ? formatDate(leave.created_at) : '—'}
@@ -2088,16 +2101,17 @@ export default function AdminLeave() {
               <table className={leaveAdminTableClass}>
                 <colgroup>
                   {canApproveLeave ? <col className="w-[3%]" /> : null}
-                  <col className={canApproveLeave ? 'w-[13%]' : 'w-[14%]'} />
-                  <col className={canApproveLeave ? 'w-[8%]' : 'w-[8%]'} />
-                  <col className={canApproveLeave ? 'w-[10%]' : 'w-[11%]'} />
-                  <col className="w-[7%]" />
-                  <col className="w-[10%]" />
+                  <col className={canApproveLeave ? 'w-[12%]' : 'w-[13%]'} />
+                  <col className={canApproveLeave ? 'w-[7%]' : 'w-[8%]'} />
                   <col className={canApproveLeave ? 'w-[9%]' : 'w-[10%]'} />
-                  <col className={canApproveLeave ? 'w-[12%]' : 'w-[14%]'} />
-                  <col className={canApproveLeave ? 'w-[13%]' : 'w-[13%]'} />
+                  <col className="w-[6%]" />
                   <col className="w-[8%]" />
-                  <col className="w-[10%]" />
+                  <col className={canApproveLeave ? 'w-[8%]' : 'w-[9%]'} />
+                  <col className={canApproveLeave ? 'w-[10%]' : 'w-[11%]'} />
+                  <col className={canApproveLeave ? 'w-[10%]' : 'w-[11%]'} />
+                  <col className={canApproveLeave ? 'w-[11%]' : 'w-[12%]'} />
+                  <col className="w-[7%]" />
+                  <col className="w-[9%]" />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
@@ -2123,6 +2137,7 @@ export default function AdminLeave() {
                     <th className={requestModuleThClass}>Supporting documents</th>
                     <th className={requestModuleThClass}>Reason / remarks</th>
                     <th className={requestModuleThClass}>Status</th>
+                    <th className={requestModuleThClass}>Approver</th>
                     <th className={requestModuleThRightClass}>Date filed</th>
                     <th className={requestModuleThRightClass}>Actions</th>
                   </tr>
@@ -2247,7 +2262,6 @@ export default function AdminLeave() {
                           status={leave.status}
                           displayStatus={leave.display_status}
                           currentStage={leave.current_stage}
-                          currentApproverName={leave.current_approver || leave.current_approver_name}
                           hrWaitMessage={
                             leave.status === 'pending' && !leave.actor_can_approve
                               ? leave.hr_wait_message ||
@@ -2255,6 +2269,9 @@ export default function AdminLeave() {
                               : null
                           }
                         />
+                      </td>
+                      <td className={requestModuleTdClass}>
+                        <ApproverAvatarNameCell {...approverFromRequestRow(leave)} />
                       </td>
                       <td className={cn(requestModuleTdMutedClass, 'text-right')}>
                         {leave.created_at ? formatDate(leave.created_at) : '—'}

@@ -328,6 +328,20 @@ class EmployeeOvertimeController extends Controller
         return null;
     }
 
+    private function deriveCurrentApproverProfileImage(Overtime $overtime): ?string
+    {
+        $progress = $this->overtimeApprovalService->buildApprovalProgress($overtime);
+        foreach ($progress as $step) {
+            if (($step['status'] ?? '') === 'current') {
+                $url = $step['profile_image_url'] ?? null;
+
+                return is_string($url) && $url !== '' ? $url : null;
+            }
+        }
+
+        return null;
+    }
+
     private function derivePendingDisplayStatus(Overtime $overtime, ?User $currentApprover): string
     {
         $step = $this->deriveCurrentStepName($overtime);
@@ -453,6 +467,8 @@ class EmployeeOvertimeController extends Controller
             'display_badge_color' => $this->deriveBadgeColor($o),
             'current_step_name' => $this->deriveCurrentStepName($o),
             'current_approver_name' => $this->deriveCurrentApproverName($o),
+            'current_approver' => $this->deriveCurrentApproverName($o),
+            'current_approver_profile_image' => $this->deriveCurrentApproverProfileImage($o),
             'approval_stage' => $o->approval_stage,
             'approval_progress' => $this->mergeOvertimeRemarksIntoProgress(
                 $o,
@@ -525,6 +541,10 @@ class EmployeeOvertimeController extends Controller
             'current_step_name' => $stepName,
             'current_approver_name' => $currentApproverName,
             'current_approver' => $currentApproverName,
+            'current_approver_id' => isset($currentStep['approver_id']) && is_numeric($currentStep['approver_id'])
+                ? (int) $currentStep['approver_id']
+                : null,
+            'current_approver_profile_image' => $currentStep['profile_image_url'] ?? null,
             'display_badge_color' => $this->deriveBadgeColor($o),
             'reason_summary' => $reasonSummary,
             'created_at' => $o->created_at?->toIso8601String(),
@@ -663,7 +683,7 @@ class EmployeeOvertimeController extends Controller
         $filters = $this->employeeOvertimeFilters($request);
         $filtersHash = md5(json_encode([$filters, $paginationInput], JSON_THROW_ON_ERROR));
         $version = OvertimeModuleCache::version();
-        $cacheKey = "employee:overtime:list:{$user->id}:labels-v2:v{$version}:{$paginationInput['page']}:{$filtersHash}";
+        $cacheKey = "employee:overtime:list:{$user->id}:labels-v3:v{$version}:{$paginationInput['page']}:{$filtersHash}";
         $cacheHit = Cache::has($cacheKey);
 
         $payload = Cache::remember($cacheKey, now()->addSeconds(60), function () use ($user, $paginationInput, $filters) {
