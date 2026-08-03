@@ -2491,12 +2491,14 @@ class PayslipService
     public function snapshotForPayslipRender(Payslip $payslip, User $employee): array
     {
         $snapshotRaw = $payslip->snapshot ?? [];
-        $payrollModule = (string) ($payslip->payroll_module ?? PayrollBatchRun::MODULE_STANDARD);
+        $payrollModule = $this->normalizePayrollModule((string) ($payslip->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
         $isLocked = in_array((string) $payslip->status, Payslip::lockingStatuses(), true);
+        $isExecom = $payrollModule === PayrollBatchRun::MODULE_EXECOM;
 
-        // Draft/voided rows must recompute from current attendance + payroll rules. Bulk generation
-        // can persist a stale snapshot (for example pre-fix allowance day counts).
-        if (! $isLocked) {
+        // EXECOM drafts are fixed-basic + gated extras from generation/recompute. Live-rerunning
+        // every list/preview request can drop OT/holiday when the daily engine is unavailable and
+        // makes batch MetricCards flip (e.g. net 217,681.41 → 217,050.40). Use the stored snapshot.
+        if (! $isLocked && ! $isExecom) {
             try {
                 $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
                 $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
@@ -2516,7 +2518,7 @@ class PayslipService
         }
 
         if (is_array($snapshotRaw) && $snapshotRaw !== []) {
-            $snapshotRaw = $this->snapshotWithPayrollModule($snapshotRaw, (string) ($payslip->payroll_module ?? ''));
+            $snapshotRaw = $this->snapshotWithPayrollModule($snapshotRaw, $payrollModule);
             $periodInput = $this->periodInputFromPayslip($payslip);
             $snapshotRaw = $this->applyGovernmentExemptionToPayslipSnapshot(
                 $snapshotRaw,
@@ -2525,29 +2527,32 @@ class PayslipService
                 ! empty($periodInput['to_date']) ? Carbon::parse((string) $periodInput['to_date']) : ($payslip->pay_period_end ?? now()),
                 (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
             );
-            if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            if ($isLocked || $isExecom) {
                 return $this->frozenSnapshotForPayslipView($snapshotRaw);
             }
 
             return $this->normalizeSnapshotForPayslipView($snapshotRaw);
         }
 
-        try {
-            $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
-            $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
-            if ($snapshot !== []) {
-                return $this->normalizeSnapshotForPayslipView($snapshot);
+        // No stored snapshot: only non-EXECOM attempts a live build here.
+        if (! $isExecom) {
+            try {
+                $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
+                $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
+                if ($snapshot !== []) {
+                    return $this->normalizeSnapshotForPayslipView($snapshot);
+                }
+            } catch (Throwable $e) {
+                Log::warning('Payslip render: live recomputation failed, falling back to stored snapshot', [
+                    'payslip_id' => (int) $payslip->id,
+                    'user_id' => (int) $employee->id,
+                    'error' => $e->getMessage(),
+                ]);
             }
-        } catch (Throwable $e) {
-            Log::warning('Payslip render: live recomputation failed, falling back to stored snapshot', [
-                'payslip_id' => (int) $payslip->id,
-                'user_id' => (int) $employee->id,
-                'error' => $e->getMessage(),
-            ]);
         }
 
         return $this->normalizeSnapshotForPayslipView(
-            $this->snapshotWithPayrollModule(is_array($snapshotRaw) ? $snapshotRaw : [], (string) ($payslip->payroll_module ?? ''))
+            $this->snapshotWithPayrollModule(is_array($snapshotRaw) ? $snapshotRaw : [], $payrollModule)
         );
     }
 
@@ -3343,9 +3348,29 @@ class PayslipService
      */
     private function sanitizeExecomPayslipSummary(array $summary, array $snapshot = []): array
     {
-        $lines = [];
-        $basicAmount = $this->resolveExecomBasicPayDisplayAmount($summary);
+        $policy = $this->resolveExecomSettingsForSanitize($summary, $snapshot);
+        $paidLeaveAmount = round(max(0.0, (float) ($summary['paid_leave_amount'] ?? 0)), 2);
+        $leaveDeduction = round(max(0.0, (float) ($summary['leave_deduction'] ?? 0)), 2);
 
+        // Prefer computation-authored paid-leave lines when present.
+        foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
+            if (is_array($line) && $this->isExecomPaidLeaveEarningLine($line)) {
+                $paidLeaveAmount = round(max($paidLeaveAmount, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+            }
+        }
+        if (! (bool) $policy['allow_paid_leave']) {
+            $paidLeaveAmount = 0.0;
+        }
+
+        $fullBasic = $this->resolveExecomBasicPayDisplayAmount($summary);
+        // If summary already split basic, prefer that period basic + paid leave as the full amount.
+        $periodBasic = round(max(0.0, (float) ($summary['period_basic_before_leave_split'] ?? 0)), 2);
+        if ($periodBasic > 0.0) {
+            $fullBasic = $periodBasic;
+        }
+        $basicAmount = round(max(0.0, $fullBasic - $paidLeaveAmount), 2);
+
+        $lines = [];
         if ($basicAmount > 0.0) {
             $lines[] = [
                 'key' => 'execom_basic_pay',
@@ -3357,9 +3382,44 @@ class PayslipService
                 'resolved_amount' => $basicAmount,
             ];
         }
+        if ($paidLeaveAmount > 0.0) {
+            $paidLeaveDays = $this->resolveExecomLeaveDayUnits(
+                $summary,
+                'paid_leave_day_units',
+                $paidLeaveAmount
+            );
+            $lines[] = [
+                'key' => 'execom_approved_paid_leave',
+                'label' => 'Approved Paid Leave',
+                'name' => 'Approved Paid Leave',
+                'category' => 'paid_leave',
+                'component_code' => 'EXECOM_PAID_LEAVE',
+                'amount' => $paidLeaveAmount,
+                'resolved_amount' => $paidLeaveAmount,
+                'units' => $this->formatExecomDayBasedUnits($paidLeaveDays),
+            ];
+        }
 
         foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
-            if (! is_array($line) || $this->isExecomAttendanceBasedEarningLine($line) || $this->isExecomBasicPayLine($line)) {
+            if (
+                ! is_array($line)
+                || $this->isExecomBasicPayLine($line)
+                || $this->isExecomPaidLeaveEarningLine($line)
+            ) {
+                continue;
+            }
+
+            $isOt = $this->isExecomOvertimeEarningLine($line);
+            $isHoliday = $this->isExecomHolidayEarningLine($line);
+
+            // Keep gated OT/holiday; still drop Regular pay and other attendance base lines.
+            if ($isOt && ! (bool) $policy['allow_overtime']) {
+                continue;
+            }
+            if ($isHoliday && ! (bool) $policy['allow_holiday_pay']) {
+                continue;
+            }
+            if (! $isOt && ! $isHoliday && $this->isExecomAttendanceBasedEarningLine($line)) {
                 continue;
             }
             if (! $this->execomPayslipLineScheduleApplies($line, $summary, $snapshot, true)) {
@@ -3379,24 +3439,382 @@ class PayslipService
         $summary['daily_computation_earning_lines'] = [];
         $summary['daily_computation_days'] = [];
         $summary['payslip_earning_lines'] = array_values($lines);
-        $summary['payslip_custom_deduction_lines'] = $this->filterExecomScheduledDeductionLines(
-            $summary['payslip_custom_deduction_lines'] ?? [],
-            $summary,
-            $snapshot
-        );
+
+        if (! (bool) $policy['apply_custom_deductions']) {
+            $summary['payslip_custom_deduction_lines'] = [];
+            $summary['custom_deductions_this_period'] = 0.0;
+            $summary['custom_deductions_full_monthly'] = 0.0;
+        } else {
+            $summary['payslip_custom_deduction_lines'] = $this->filterExecomScheduledDeductionLines(
+                $summary['payslip_custom_deduction_lines'] ?? [],
+                $summary,
+                $snapshot
+            );
+        }
+
+        // Preserve unpaid-leave policy deduction lines even when custom deductions are off.
+        $govLines = is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [];
+        $leavePolicyLines = [];
+        $otherGovLines = [];
+        foreach ($govLines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            if ($this->isExecomUnpaidLeavePolicyLine($line)) {
+                if ($leaveDeduction > 0.0) {
+                    $unpaidLeaveDays = $this->resolveExecomLeaveDayUnits(
+                        $summary,
+                        'unpaid_leave_day_units',
+                        $leaveDeduction,
+                        is_array($line['metadata'] ?? null) ? $line['metadata'] : []
+                    );
+                    $line['amount'] = $leaveDeduction;
+                    $line['resolved_amount'] = $leaveDeduction;
+                    $line['units'] = $this->formatExecomDayBasedUnits($unpaidLeaveDays)
+                        ?: (trim((string) ($line['units'] ?? '')) ?: null);
+                    $leavePolicyLines[] = $line;
+                }
+                continue;
+            }
+            $otherGovLines[] = $line;
+        }
+        if ($leaveDeduction > 0.0 && $leavePolicyLines === []) {
+            $unpaidLeaveDays = $this->resolveExecomLeaveDayUnits(
+                $summary,
+                'unpaid_leave_day_units',
+                $leaveDeduction
+            );
+            $leavePolicyLines[] = [
+                'key' => 'execom_leave_unpaid_policy',
+                'label' => 'Approved Leave — Unpaid under EXECOM payroll policy',
+                'name' => 'Approved Leave — Unpaid under EXECOM payroll policy',
+                'category' => 'leave_deduction',
+                'component_code' => 'EXECOM_UNPAID_LEAVE',
+                'amount' => $leaveDeduction,
+                'resolved_amount' => $leaveDeduction,
+                'units' => $this->formatExecomDayBasedUnits($unpaidLeaveDays),
+            ];
+        }
+        $summary['payslip_deduction_lines'] = array_values(array_merge($otherGovLines, $leavePolicyLines));
+
+        if (! (bool) $policy['apply_allowances']) {
+            $summary['payslip_earning_lines'] = array_values(array_filter(
+                $summary['payslip_earning_lines'],
+                fn ($line): bool => is_array($line) && (
+                    $this->isExecomBasicPayLine($line)
+                    || $this->isExecomPaidLeaveEarningLine($line)
+                    || ((bool) $policy['allow_overtime'] && $this->isExecomOvertimeEarningLine($line))
+                    || ((bool) $policy['allow_holiday_pay'] && $this->isExecomHolidayEarningLine($line))
+                )
+            ));
+        }
+        if (! (bool) $policy['allow_overtime']) {
+            $summary['overtime_breakdown'] = [];
+            $summary['overtime_total_amount'] = 0.0;
+            $summary['overtime_total_hours'] = 0.0;
+            $summary['payslip_earning_lines'] = array_values(array_filter(
+                $summary['payslip_earning_lines'],
+                fn ($line): bool => ! is_array($line) || ! $this->isExecomOvertimeEarningLine($line)
+            ));
+        }
+        if (! (bool) $policy['allow_holiday_pay']) {
+            $summary['holiday_premium_breakdown'] = [];
+            $summary['payslip_earning_lines'] = array_values(array_filter(
+                $summary['payslip_earning_lines'],
+                fn ($line): bool => ! is_array($line) || ! $this->isExecomHolidayEarningLine($line)
+            ));
+        } else {
+            // Allow holiday pay still requires Holiday Module coverage/scope.
+            $summary['holiday_premium_breakdown'] = array_values(array_filter(
+                is_array($summary['holiday_premium_breakdown'] ?? null) ? $summary['holiday_premium_breakdown'] : [],
+                fn ($item): bool => is_array($item)
+                    && (bool) ($item['eligible'] ?? false)
+                    && (bool) ($item['scope_match'] ?? $item['calendar_scope_match'] ?? false)
+                    && round((float) ($item['amount'] ?? 0), 2) > 0.0
+            ));
+            $summary['payslip_earning_lines'] = array_values(array_filter(
+                $summary['payslip_earning_lines'],
+                function ($line): bool {
+                    if (! is_array($line) || ! $this->isExecomHolidayEarningLine($line)) {
+                        return true;
+                    }
+
+                    return $this->isExecomHolidayLineInHolidayScope($line);
+                }
+            ));
+        }
+
+        $otAmount = 0.0;
+        $holidayAmount = 0.0;
+        foreach ($summary['payslip_earning_lines'] as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $amt = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+            if ($this->isExecomOvertimeEarningLine($line)) {
+                $otAmount += $amt;
+            } elseif ($this->isExecomHolidayEarningLine($line)) {
+                $holidayAmount += $amt;
+            }
+        }
+        if ($otAmount <= 0.0 && (bool) $policy['allow_overtime']) {
+            $otAmount = round(max(0.0, (float) ($summary['overtime_total_amount'] ?? 0)), 2);
+            if ($otAmount > 0.0) {
+                $summary['payslip_earning_lines'][] = [
+                    'key' => 'execom_overtime',
+                    'label' => 'Overtime',
+                    'name' => 'Overtime',
+                    'category' => 'overtime',
+                    'component_code' => 'OT_PAY',
+                    'amount' => $otAmount,
+                    'resolved_amount' => $otAmount,
+                ];
+            }
+        }
+        if ($holidayAmount <= 0.0 && (bool) $policy['allow_holiday_pay']) {
+            foreach (is_array($summary['holiday_premium_breakdown'] ?? null) ? $summary['holiday_premium_breakdown'] : [] as $item) {
+                if (is_array($item)
+                    && (bool) ($item['eligible'] ?? true)
+                    && (bool) ($item['scope_match'] ?? $item['calendar_scope_match'] ?? false)
+                ) {
+                    $holidayAmount += round(max(0.0, (float) ($item['amount'] ?? 0)), 2);
+                }
+            }
+            $holidayAmount = round($holidayAmount, 2);
+            if ($holidayAmount > 0.0) {
+                $summary['payslip_earning_lines'][] = [
+                    'key' => 'execom_holiday_pay',
+                    'label' => 'Holiday premium',
+                    'name' => 'Holiday premium',
+                    'category' => 'holiday_pay',
+                    'component_code' => 'HOLIDAY_PREMIUM',
+                    'amount' => $holidayAmount,
+                    'resolved_amount' => $holidayAmount,
+                ];
+            }
+        }
+
+        $summary['payslip_earning_lines'] = array_values($this->deduplicatePayslipLines($summary['payslip_earning_lines']));
+        $allowanceAmount = 0.0;
+        foreach ($summary['payslip_earning_lines'] as $line) {
+            if (! is_array($line)
+                || $this->isExecomBasicPayLine($line)
+                || $this->isExecomPaidLeaveEarningLine($line)
+                || $this->isExecomOvertimeEarningLine($line)
+                || $this->isExecomHolidayEarningLine($line)
+            ) {
+                continue;
+            }
+            $allowanceAmount += round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+        }
+
+        $summary['execom_settings'] = $policy;
+        $summary['paid_leave_amount'] = $paidLeaveAmount;
+        $summary['leave_deduction'] = $leaveDeduction;
         $summary['basic_pay'] = $basicAmount;
         $summary['basic_pay_this_period'] = $basicAmount;
         $summary['basic_salary_period'] = $basicAmount;
         $summary['basic_salary'] = $basicAmount;
-        $summary['total_pay'] = $basicAmount;
-        $summary['attendance_premium_pay_this_period'] = 0.0;
+        $summary['overtime_total_amount'] = round($otAmount, 2);
+        $summary['non_basic_earnings_this_period'] = round(
+            $paidLeaveAmount + $otAmount + $holidayAmount + $allowanceAmount,
+            2
+        );
+        $summary['total_pay'] = round($basicAmount + $paidLeaveAmount + $otAmount + $holidayAmount, 2);
+        $summary['attendance_premium_pay_this_period'] = round($otAmount + $holidayAmount, 2);
         $summary['attendance_deduction'] = 0.0;
-        $summary['leave_deduction'] = 0.0;
         $summary['late_minutes'] = 0;
         $summary['undertime_minutes'] = 0;
         $summary['absent_days'] = 0;
 
         return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $metadata
+     */
+    private function resolveExecomLeaveDayUnits(
+        array $summary,
+        string $summaryKey,
+        float $amount,
+        array $metadata = []
+    ): float {
+        $fromSummary = (float) ($summary[$summaryKey] ?? 0);
+        if ($fromSummary > 0.0) {
+            return round($fromSummary, 4);
+        }
+
+        $fromMeta = (float) ($metadata['leave_day_units'] ?? 0);
+        if ($fromMeta > 0.0) {
+            return round($fromMeta, 4);
+        }
+
+        $dailyRate = (float) ($summary['daily_rate'] ?? 0);
+        if ($amount > 0.0 && $dailyRate > 0.0) {
+            return round($amount / $dailyRate, 4);
+        }
+
+        return 0.0;
+    }
+
+    private function formatExecomDayBasedUnits(float $days): ?string
+    {
+        $days = round(max(0.0, $days), 4);
+        if ($days <= 0.0) {
+            return null;
+        }
+
+        $label = abs($days - round($days)) < 0.00005
+            ? (string) (int) round($days)
+            : rtrim(rtrim(number_format($days, 4, '.', ''), '0'), '.');
+        $n = (float) $label;
+
+        return $label.' '.($n == 1.0 ? 'day' : 'days');
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $snapshot
+     * @return array{
+     *     apply_custom_deductions: bool,
+     *     apply_allowances: bool,
+     *     allow_paid_leave: bool,
+     *     allow_overtime: bool,
+     *     allow_holiday_pay: bool,
+     *     auto_present_attendance_reports: bool
+     * }
+     */
+    private function resolveExecomSettingsForSanitize(array $summary, array $snapshot): array
+    {
+        $defaults = ExecomPayrollSetting::defaults();
+        unset($defaults['company_id']);
+
+        $fromSummary = is_array($summary['execom_settings'] ?? null) ? $summary['execom_settings'] : [];
+        $merged = array_merge($defaults, array_intersect_key($fromSummary, $defaults));
+
+        // Draft/open views should honor the live Quick Setup row (global fallback included).
+        try {
+            $companyId = isset($summary['company_id']) && is_numeric($summary['company_id'])
+                ? (int) $summary['company_id']
+                : (isset($snapshot['company_id']) && is_numeric($snapshot['company_id'])
+                    ? (int) $snapshot['company_id']
+                    : null);
+            $live = app(ExecomPayrollPolicyResolver::class)->resolve($companyId);
+            unset($live['company_id']);
+
+            return array_merge($merged, array_intersect_key($live, $defaults));
+        } catch (\Throwable) {
+            return $merged;
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isExecomPaidLeaveEarningLine(array $line): bool
+    {
+        $haystack = strtolower(implode(' ', [
+            (string) ($line['key'] ?? ''),
+            (string) ($line['component_code'] ?? ''),
+            (string) ($line['category'] ?? ''),
+            (string) ($line['label'] ?? ''),
+            (string) ($line['name'] ?? ''),
+        ]));
+
+        return str_contains($haystack, 'execom_approved_paid_leave')
+            || str_contains($haystack, 'execom_paid_leave')
+            || str_contains($haystack, 'approved paid leave')
+            || ($line['category'] ?? '') === 'paid_leave';
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isExecomUnpaidLeavePolicyLine(array $line): bool
+    {
+        $haystack = strtolower(implode(' ', [
+            (string) ($line['key'] ?? ''),
+            (string) ($line['component_code'] ?? ''),
+            (string) ($line['category'] ?? ''),
+            (string) ($line['label'] ?? ''),
+            (string) ($line['name'] ?? ''),
+        ]));
+
+        return str_contains($haystack, 'execom_leave_unpaid')
+            || str_contains($haystack, 'unpaid under execom')
+            || str_contains($haystack, 'execom_unpaid_leave');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isExecomOvertimeEarningLine(array $line): bool
+    {
+        $haystack = strtolower(implode(' ', [
+            (string) ($line['key'] ?? ''),
+            (string) ($line['component'] ?? ''),
+            (string) ($line['component_code'] ?? ''),
+            (string) ($line['category'] ?? ''),
+            (string) ($line['label'] ?? ''),
+            (string) ($line['name'] ?? ''),
+        ]));
+
+        return str_contains($haystack, 'overtime')
+            || str_contains($haystack, 'ot_pay')
+            || str_contains($haystack, 'nd_pay')
+            || str_contains($haystack, 'night_diff');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isExecomHolidayEarningLine(array $line): bool
+    {
+        $haystack = strtolower(implode(' ', [
+            (string) ($line['key'] ?? ''),
+            (string) ($line['component'] ?? ''),
+            (string) ($line['component_code'] ?? ''),
+            (string) ($line['category'] ?? ''),
+            (string) ($line['label'] ?? ''),
+            (string) ($line['name'] ?? ''),
+        ]));
+
+        return str_contains($haystack, 'holiday')
+            || str_contains($haystack, 'rest_day_worked');
+    }
+
+    /**
+     * EXECOM holiday lines must be inside Holiday Module coverage/scope.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function isExecomHolidayLineInHolidayScope(array $line): bool
+    {
+        $haystack = strtolower(implode(' ', [
+            (string) ($line['key'] ?? ''),
+            (string) ($line['component'] ?? ''),
+            (string) ($line['component_code'] ?? ''),
+            (string) ($line['label'] ?? ''),
+            (string) ($line['name'] ?? ''),
+        ]));
+
+        if (str_contains($haystack, 'rest_day') && ! str_contains($haystack, 'holiday')) {
+            return true;
+        }
+
+        $meta = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if (array_key_exists('scope_match', $meta)) {
+            return (bool) $meta['scope_match'];
+        }
+        if (array_key_exists('calendar_scope_match', $meta)) {
+            return (bool) $meta['calendar_scope_match'];
+        }
+        if (array_key_exists('scope_match', $line)) {
+            return (bool) $line['scope_match'];
+        }
+
+        return false;
     }
 
     /**
@@ -4040,7 +4458,10 @@ class PayslipService
 
             // Regular-pay lines use day-split display ("X days, Y hrs Z mins") because
             // they span multiple work days. All other lines use simple "X hrs Y mins".
+            // Explicit day-unit strings (leave / holiday "1 day") must stay day-based.
             $usesDaySplitUnits = str_contains($lineKey, 'regular_pay');
+            $hasExplicitDayUnits = $unitsStr !== null
+                && preg_match('/^\d+(?:\.\d+)?\s*days?$/i', $unitsStr) === 1;
             $formatted = $this->formatUnitsAndAmount($minutesWorked, $hourlyRate);
             $unitsFromMinutes = $usesDaySplitUnits
                 ? ($this->formatPayslipUnitsFromMinutes($minutesWorked) ?? $formatted['units'])
@@ -4072,11 +4493,15 @@ class PayslipService
                     $label = $defaultLabel;
                 }
             }
+            $unitsOut = $hasExplicitDayUnits
+                ? $this->sanitizePayslipText($unitsStr)
+                : ($unitsFromMinutes ?: (($unitsStr !== null && $unitsStr !== '') ? $this->sanitizePayslipText($unitsStr) : null));
+
             $out[] = array_merge($row, [
                 'key' => isset($row['key']) ? (string) $row['key'] : '',
                 'label' => $label,
                 'amount' => ($isHolidayPayLine || $amountFromMinutes === null) ? $amt : $amountFromMinutes,
-                'units' => $unitsFromMinutes ?: (($unitsStr !== null && $unitsStr !== '') ? $this->sanitizePayslipText($unitsStr) : null),
+                'units' => $unitsOut,
                 'minutes_worked' => $minutesWorked,
                 'hourly_rate' => $hourlyRate,
             ]);
@@ -5352,7 +5777,8 @@ class PayslipService
             throw new \RuntimeException('Active EXECOM profile is required for EXECOM payroll (user_id='.(int) $employee->id.').');
         }
 
-        $settings = ExecomPayrollSetting::forCompany($profile->company_id ? (int) $profile->company_id : null);
+        $companyId = $profile->company_id ? (int) $profile->company_id : null;
+        $settings = app(ExecomPayrollPolicyResolver::class)->setting($companyId);
         $periodContext = array_merge($periodCtx, [
             'pay_cycle_preview' => $preview ?? $periodCtx['pay_cycle_preview'] ?? null,
             'pay_cycle_code' => $periodCtx['pay_cycle_code'] ?? data_get($preview, 'pay_cycle_code', data_get($preview, 'code')),

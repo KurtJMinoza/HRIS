@@ -9,9 +9,9 @@ class ExecomPayrollSetting extends Model
 {
     protected $fillable = [
         'company_id',
-        'apply_government_deductions',
         'apply_custom_deductions',
         'apply_allowances',
+        'allow_paid_leave',
         'allow_overtime',
         'allow_holiday_pay',
         'auto_present_attendance_reports',
@@ -21,9 +21,9 @@ class ExecomPayrollSetting extends Model
     protected function casts(): array
     {
         return [
-            'apply_government_deductions' => 'boolean',
             'apply_custom_deductions' => 'boolean',
             'apply_allowances' => 'boolean',
+            'allow_paid_leave' => 'boolean',
             'allow_overtime' => 'boolean',
             'allow_holiday_pay' => 'boolean',
             'auto_present_attendance_reports' => 'boolean',
@@ -39,9 +39,9 @@ class ExecomPayrollSetting extends Model
     {
         return [
             'company_id' => $companyId,
-            'apply_government_deductions' => true,
             'apply_custom_deductions' => true,
             'apply_allowances' => true,
+            'allow_paid_leave' => true,
             'allow_overtime' => false,
             'allow_holiday_pay' => false,
             'auto_present_attendance_reports' => true,
@@ -50,14 +50,48 @@ class ExecomPayrollSetting extends Model
 
     public static function forCompany(?int $companyId): self
     {
-        $setting = self::query()
-            ->where('company_id', $companyId)
+        if ($companyId !== null) {
+            $setting = self::query()
+                ->where('company_id', $companyId)
+                ->first();
+
+            if ($setting instanceof self) {
+                return $setting;
+            }
+        }
+
+        // Quick Setup saves the global row (company_id null). Company-scoped EXECOM
+        // employees must inherit that when no company-specific override exists.
+        $global = self::query()
+            ->whereNull('company_id')
             ->first();
 
-        if ($setting instanceof self) {
-            return $setting;
+        if ($global instanceof self) {
+            return $global;
         }
 
         return new self(self::defaults($companyId));
+    }
+
+    /**
+     * @return array{
+     *     apply_custom_deductions: bool,
+     *     apply_allowances: bool,
+     *     allow_paid_leave: bool,
+     *     allow_overtime: bool,
+     *     allow_holiday_pay: bool,
+     *     auto_present_attendance_reports: bool
+     * }
+     */
+    public function toPolicyArray(): array
+    {
+        return [
+            'apply_custom_deductions' => (bool) $this->apply_custom_deductions,
+            'apply_allowances' => (bool) $this->apply_allowances,
+            'allow_paid_leave' => (bool) ($this->allow_paid_leave ?? true),
+            'allow_overtime' => (bool) $this->allow_overtime,
+            'allow_holiday_pay' => (bool) $this->allow_holiday_pay,
+            'auto_present_attendance_reports' => (bool) $this->auto_present_attendance_reports,
+        ];
     }
 }

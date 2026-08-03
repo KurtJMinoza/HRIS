@@ -63,21 +63,53 @@ function formatMoney(value) {
 }
 
 const DEFAULT_SETTINGS = {
-  apply_government_deductions: true,
   apply_custom_deductions: true,
   apply_allowances: true,
+  allow_paid_leave: true,
   allow_overtime: false,
   allow_holiday_pay: false,
   auto_present_attendance_reports: true,
 }
 
-const SETTINGS_LABELS = {
-  apply_government_deductions: 'Apply government deductions',
-  apply_custom_deductions: 'Apply custom deductions',
-  apply_allowances: 'Apply allowances',
-  allow_overtime: 'Allow overtime',
-  allow_holiday_pay: 'Allow holiday pay',
-  auto_present_attendance_reports: 'Auto present attendance reports',
+const SETTINGS_META = {
+  apply_custom_deductions: {
+    label: 'Apply custom deductions',
+    description: 'Include employee-specific and company deductions such as loans, cash advances, and manual deductions.',
+  },
+  apply_allowances: {
+    label: 'Apply allowances',
+    description: 'Load EXECOM employee allowances from Employee Compensation into gross pay and the payslip.',
+  },
+  allow_paid_leave: {
+    label: 'Allow paid leave',
+    description: 'Include approved paid leave as payable time in EXECOM payroll.',
+  },
+  allow_overtime: {
+    label: 'Allow overtime',
+    description: 'Include approved overtime earnings using existing overtime multipliers and pay conditions.',
+  },
+  allow_holiday_pay: {
+    label: 'Allow holiday pay',
+    description: 'Include Holiday Module pay components (worked/unworked) only when the holiday covers the employee (scope/coverage), using Policy Settings multipliers. EXECOM staff match by their regular employment class (e.g. Regular / Full-time), not a separate EXECom type.',
+  },
+  auto_present_attendance_reports: {
+    label: 'Auto present attendance reports',
+    description: 'For eligible scheduled workdays with no attendance, mark EXECOM employees Auto Present in attendance reports.',
+  },
+}
+
+const SETTINGS_ORDER = Object.keys(DEFAULT_SETTINGS)
+
+function behaviorPreviewLines(settings) {
+  return [
+    'Government deductions: Applied via Employee Exemptions',
+    `Custom deductions: ${settings.apply_custom_deductions ? 'Applied' : 'Not applied'}`,
+    `Allowances: ${settings.apply_allowances ? 'Included' : 'Not included'}`,
+    `Paid leave: ${settings.allow_paid_leave ? 'Included when approved and paid' : 'Not included'}`,
+    `Overtime: ${settings.allow_overtime ? 'Included' : 'Not included'}`,
+    `Holiday pay: ${settings.allow_holiday_pay ? 'Included when in Holiday Module scope' : 'Not included'}`,
+    `Attendance: ${settings.auto_present_attendance_reports ? 'Auto-present when eligible' : 'Actual attendance'}`,
+  ]
 }
 
 export default function AdminExecomManagementPage() {
@@ -225,7 +257,12 @@ export default function AdminExecomManagementPage() {
   async function saveSettings() {
     setSettingsSaving(true)
     try {
-      await updateExecomPayrollSettings(settings)
+      const payload = SETTINGS_ORDER.reduce((acc, key) => {
+        acc[key] = Boolean(settings[key])
+        return acc
+      }, {})
+      const data = await updateExecomPayrollSettings(payload)
+      setSettings({ ...DEFAULT_SETTINGS, ...(data.settings || payload) })
       toast({ title: 'EXECOM settings saved' })
     } catch (e) {
       toast({ title: 'Settings save failed', description: e.message, variant: 'error' })
@@ -565,28 +602,42 @@ export default function AdminExecomManagementPage() {
               <div>
                 <div className="text-sm font-extrabold">EXECOM Payroll Settings</div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  Default settings • Configure deductions, allowances, overtime, holiday pay, and auto-present behavior.
+                  Default settings • Configure custom deductions, allowances, leave, overtime, holiday pay, and attendance behavior. Government deductions always apply and are controlled by Employee Exemptions.
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                {Object.keys(DEFAULT_SETTINGS).map((key) => (
-                  <label
-                    key={key}
-                    className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/80 bg-background/80 p-3 text-sm font-medium text-foreground transition hover:border-brand/40 hover:bg-brand/5 dark:bg-input/20"
-                  >
-                    <Checkbox
-                      checked={Boolean(settings[key])}
-                      onCheckedChange={(checked) => setSettings((prev) => ({ ...prev, [key]: Boolean(checked) }))}
-                      className="mt-0.5 border-brand/50 data-[state=checked]:border-brand data-[state=checked]:bg-brand data-[state=checked]:text-brand-foreground"
-                    />
-                    <span>
-                      <span className="block font-bold">{SETTINGS_LABELS[key] || key.replaceAll('_', ' ')}</span>
-                      <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
-                        {settings[key] ? 'Enabled' : 'Disabled'}
+                {SETTINGS_ORDER.map((key) => {
+                  const meta = SETTINGS_META[key] || { label: key.replaceAll('_', ' '), description: '' }
+                  return (
+                    <label
+                      key={key}
+                      className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/80 bg-background/80 p-3 text-sm font-medium text-foreground transition hover:border-brand/40 hover:bg-brand/5 dark:bg-input/20"
+                    >
+                      <Checkbox
+                        checked={Boolean(settings[key])}
+                        onCheckedChange={(checked) => setSettings((prev) => ({ ...prev, [key]: Boolean(checked) }))}
+                        className="mt-0.5 border-brand/50 data-[state=checked]:border-brand data-[state=checked]:bg-brand data-[state=checked]:text-brand-foreground"
+                      />
+                      <span>
+                        <span className="block font-bold">{meta.label}</span>
+                        <span className="mt-0.5 block text-xs font-semibold text-foreground/80">
+                          {settings[key] ? 'Enabled' : 'Disabled'}
+                        </span>
+                        <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                          {meta.description}
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                ))}
+                    </label>
+                  )
+                })}
+              </div>
+              <div className="rounded-xl border border-border/70 bg-card/80 p-3 text-sm">
+                <div className="font-extrabold text-foreground">Current EXECOM Payroll Behavior</div>
+                <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  {behaviorPreviewLines(settings).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
               </div>
               <div className="flex justify-end">
                 <Button type="button" onClick={saveSettings} disabled={settingsSaving} className={ORANGE_BUTTON}>

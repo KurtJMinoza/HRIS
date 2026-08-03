@@ -511,19 +511,24 @@ export default function AdminExecomFinalizePayrollPage() {
   const totals = useMemo(() => {
     const aggregate = selectedBatch?.aggregate || {}
     const batchTotals = selectedBatch?.totals || {}
+    const hasBatchTotals = batchTotals.total_net != null
+      || batchTotals.total_gross != null
+      || aggregate.total_net_pay != null
+      || aggregate.total_gross_pay != null
     const gross = Number(batchTotals.total_gross ?? aggregate.total_gross_pay ?? selectedBatch?.total_gross_pay ?? 0)
     const deductions = Number(batchTotals.total_deductions ?? aggregate.total_deductions ?? selectedBatch?.total_deductions ?? 0)
     const net = Number(batchTotals.total_net ?? aggregate.total_net_pay ?? selectedBatch?.total_net_pay ?? 0)
     const rowGross = payslips.reduce((sum, row) => sum + Number(row.gross_pay || 0), 0)
     const rowDeductions = payslips.reduce((sum, row) => sum + Number(row.total_deductions || 0), 0)
     const rowNet = payslips.reduce((sum, row) => sum + Number(row.net_pay || 0), 0)
-    const employeeCount = payslips.length > 0
-      ? payslips.length
-      : Number(batchTotals.employee_count ?? aggregate.payslip_count ?? selectedBatch?.employee_count ?? 0)
+    const employeeCount = Number(batchTotals.employee_count ?? aggregate.payslip_count ?? selectedBatch?.employee_count ?? 0)
+      || payslips.length
+    // Prefer batch aggregate so MetricCards stay aligned with persisted EXECOM payroll
+    // (row live-recompute previously flipped net by dropping OT, e.g. 217681.41 → 217050.40).
     return {
-      gross: payslips.length > 0 ? rowGross : gross,
-      deductions: payslips.length > 0 ? rowDeductions : deductions,
-      net: payslips.length > 0 ? rowNet : net,
+      gross: hasBatchTotals ? gross : rowGross,
+      deductions: hasBatchTotals ? deductions : rowDeductions,
+      net: hasBatchTotals ? net : rowNet,
       employeeCount,
     }
   }, [selectedBatch, payslips])
@@ -1002,7 +1007,12 @@ export default function AdminExecomFinalizePayrollPage() {
                 <div className="divide-y divide-border/70 rounded-xl border border-border/80">
                   {earningLines(breakdownRow).filter((line) => lineAmount(line) > 0).map((line, idx) => (
                     <div key={`${line?.key || line?.label || 'earning'}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
-                      <span className="text-muted-foreground">{line?.label || line?.name || 'Earning'}</span>
+                      <span className="text-muted-foreground">
+                        {line?.label || line?.name || 'Earning'}
+                        {String(line?.units || '').trim() ? (
+                          <span className="ml-2 text-xs tabular-nums text-muted-foreground/80">({String(line.units).trim()})</span>
+                        ) : null}
+                      </span>
                       <span className="font-semibold tabular-nums text-foreground">{formatPeso(lineAmount(line))}</span>
                     </div>
                   ))}
@@ -1013,7 +1023,12 @@ export default function AdminExecomFinalizePayrollPage() {
                 <div className="divide-y divide-border/70 rounded-xl border border-border/80">
                   {deductionLines(breakdownRow).filter((line) => lineAmount(line) > 0).map((line, idx) => (
                     <div key={`${line?.key || line?.label || 'deduction'}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
-                      <span className="text-muted-foreground">{line?.label || line?.name || 'Deduction'}</span>
+                      <span className="text-muted-foreground">
+                        {line?.label || line?.name || 'Deduction'}
+                        {String(line?.units || '').trim() ? (
+                          <span className="ml-2 text-xs tabular-nums text-muted-foreground/80">({String(line.units).trim()})</span>
+                        ) : null}
+                      </span>
                       <span className="font-semibold tabular-nums text-foreground">{formatPeso(lineAmount(line))}</span>
                     </div>
                   ))}

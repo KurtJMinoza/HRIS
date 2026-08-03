@@ -17,6 +17,19 @@ class EmploymentTypeResolverTest extends TestCase
         $this->assertSame($expected, (new EmploymentTypeResolver)->resolveForEmployee($employee));
     }
 
+    public function test_labor_employment_type_ignores_execom_flag(): void
+    {
+        $employee = new User([
+            'employment_type' => 'full_time',
+            'employment_status' => 'regular',
+            'is_execom' => true,
+        ]);
+
+        $resolver = new EmploymentTypeResolver;
+        $this->assertSame('execom', $resolver->resolveForEmployee($employee));
+        $this->assertSame('regular', $resolver->resolveLaborEmploymentType($employee));
+    }
+
     public static function employeeTypes(): array
     {
         return [

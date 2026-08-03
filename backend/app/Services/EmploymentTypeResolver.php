@@ -47,6 +47,15 @@ class EmploymentTypeResolver
             return 'execom';
         }
 
+        return $this->resolveLaborEmploymentType($employee);
+    }
+
+    /**
+     * Labor-law employment class (ignores EXECOM payroll-module flag).
+     * Holiday policy "regular/full_time" selections should still match EXECOM staff.
+     */
+    public function resolveLaborEmploymentType(User $employee): string
+    {
         $type = $this->normalize($employee->employment_type);
         $status = $this->normalize($employee->employment_status);
 

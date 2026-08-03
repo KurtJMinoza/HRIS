@@ -86,6 +86,82 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame('999.00', (string) $payslip->gross_pay);
     }
 
+    public function test_execom_sanitize_keeps_overtime_and_holiday_when_allowed(): void
+    {
+        $service = $this->payslipServiceWithoutConstructor();
+        $method = (new ReflectionClass(PayslipService::class))->getMethod('sanitizeExecomPayslipSummary');
+        $method->setAccessible(true);
+
+        $summary = [
+            'execom_settings' => [
+                'apply_custom_deductions' => false,
+                'apply_allowances' => false,
+                'allow_paid_leave' => true,
+                'allow_overtime' => true,
+                'allow_holiday_pay' => true,
+                'auto_present_attendance_reports' => true,
+            ],
+            'basic_pay' => 25000.0,
+            'basic_pay_this_period' => 25000.0,
+            'paid_leave_amount' => 0.0,
+            'leave_deduction' => 0.0,
+            'overtime_total_amount' => 500.0,
+            'payslip_earning_lines' => [
+                [
+                    'key' => 'execom_basic_pay',
+                    'label' => 'Basic Pay',
+                    'category' => 'basic_pay',
+                    'component_code' => 'BASIC_SALARY',
+                    'amount' => 25000.0,
+                ],
+                [
+                    'key' => 'daily:ot_pay',
+                    'label' => 'Overtime',
+                    'component' => 'ot_pay',
+                    'category' => 'overtime',
+                    'amount' => 500.0,
+                ],
+                [
+                    'key' => 'daily:holiday_premium',
+                    'label' => 'Holiday premium',
+                    'component' => 'holiday_premium',
+                    'category' => 'holiday_pay',
+                    'amount' => 1000.0,
+                    'metadata' => ['scope_match' => true],
+                ],
+                [
+                    'key' => 'holiday:out-of-scope:REGULAR_HOLIDAY_UNWORKED_PAY',
+                    'label' => 'Regular Holiday — Unworked Pay: OUT',
+                    'category' => 'holiday_pay',
+                    'amount' => 769.23,
+                    'metadata' => ['scope_match' => false],
+                ],
+                [
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 999.0,
+                ],
+            ],
+            'payslip_deduction_lines' => [],
+            'payslip_custom_deduction_lines' => [],
+        ];
+
+        $out = $method->invoke($service, $summary, []);
+        $labels = array_map(
+            static fn (array $line): string => (string) ($line['label'] ?? ''),
+            $out['payslip_earning_lines']
+        );
+
+        $this->assertContains('Basic Pay', $labels);
+        $this->assertContains('Overtime', $labels);
+        $this->assertContains('Holiday premium', $labels);
+        $this->assertNotContains('Regular Holiday — Unworked Pay: OUT', $labels);
+        $this->assertNotContains('Regular pay', $labels);
+        $this->assertSame(500.0, $out['overtime_total_amount']);
+        $this->assertSame(1500.0, $out['attendance_premium_pay_this_period']);
+        $this->assertSame(26500.0, $out['total_pay']);
+    }
+
     private function payslipServiceWithoutConstructor(): PayslipService
     {
         return (new ReflectionClass(PayslipService::class))->newInstanceWithoutConstructor();

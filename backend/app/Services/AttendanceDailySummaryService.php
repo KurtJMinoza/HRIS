@@ -30,6 +30,7 @@ class AttendanceDailySummaryService
         private readonly OvertimePayrollService $overtimePayroll,
         private readonly PayrollComputationService $payrollComputation,
         private readonly LeaveCreditService $leaveCreditService,
+        private readonly ExecomAttendancePresentationService $execomAttendancePresentation,
     ) {}
 
     /**
@@ -254,7 +255,7 @@ class AttendanceDailySummaryService
             };
         }
 
-        return [
+        $summary = [
             'date' => $dateKey,
             'status' => in_array($status, ['rest', 'rest_day', 'no_schedule_rest'], true) ? 'rest' : $status,
             'status_label' => $statusLabel,
@@ -309,7 +310,21 @@ class AttendanceDailySummaryService
 
             'schedule_in' => is_array($daySchedule) ? ($daySchedule['in'] ?? null) : null,
             'schedule_out' => is_array($daySchedule) ? ($daySchedule['out'] ?? null) : null,
+
+            // Context for EXECOM presentation gates
+            'leave' => $leave,
+            'has_leave' => $leave instanceof LeaveRequest || $isLeave,
+            'has_holiday' => $isHoliday || $holiday !== null,
+            'has_punch' => $hasTimeIn || $hasTimeOut,
+            'has_correction' => $correction !== null,
+            'is_future' => $isFuture,
+            'day_schedule' => $daySchedule,
+            'scheduled_regular_hours' => is_array($daySchedule) && ! empty($daySchedule['in']) && ! empty($daySchedule['out'])
+                ? round(AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $daySchedule, $tz) / 60, 2)
+                : null,
         ];
+
+        return $this->execomAttendancePresentation->apply($user, $dateKey, $summary);
     }
 
     /**

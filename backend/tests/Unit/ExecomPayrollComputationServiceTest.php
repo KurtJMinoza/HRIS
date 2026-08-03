@@ -73,7 +73,6 @@ class ExecomPayrollComputationServiceTest extends TestCase
         ]);
         $settings = new ExecomPayrollSetting([
             ...ExecomPayrollSetting::defaults(1),
-            'apply_government_deductions' => false,
             'apply_custom_deductions' => false,
             'apply_allowances' => false,
         ]);
@@ -114,6 +113,329 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $this->assertSame(0.0, $summary['attendance_deduction']);
         $this->assertSame(0.0, $summary['leave_deduction']);
         $this->assertSame(0.0, $summary['attendance_display_summary']['payroll_impact_deduction']);
+        $this->assertFalse($summary['execom_settings']['allow_overtime']);
+        $this->assertFalse($summary['execom_settings']['allow_holiday_pay']);
+        $this->assertTrue($summary['execom_settings']['allow_paid_leave']);
+        $this->assertSame('Not included', $summary['execom_payroll_policy']['Overtime']);
+    }
+
+    public function test_execom_applies_leave_deduction_when_paid_leave_disabled(): void
+    {
+        $calculator = $this->createMock(PayrollCalculatorService::class);
+        $calculator->method('buildEmployeeCompensationSummary')->willReturn([
+            'earnings' => [],
+            'deductions' => [],
+            'totals' => [],
+        ]);
+        $calculator->method('calculateAllStatutoryContributions')->willReturn([
+            'totals' => ['employee_deduction' => 0.0, 'employer_contribution' => 0.0],
+        ]);
+        $calculator->method('calculateWithholdingTax')->willReturn(['withholding_per_month' => 0.0]);
+        $calculator->method('monthlyTaxableCompensationForWithholding')->willReturn(26000.00);
+        $calculator->method('mergeEmployeeTaxProfileIntoWithholdingParams')->willReturnArgument(1);
+
+        $schedule = $this->createMock(DeductionScheduleService::class);
+        $schedule->method('summarizeForPayrollComputation')->willReturn([
+            'government' => [],
+            'custom_lines' => [],
+            'earning_lines' => [
+                [
+                    'code' => 'BASIC_SALARY',
+                    'name' => 'Basic Pay',
+                    'is_basic_salary_line' => true,
+                    'scheduled_this_period' => 26000.00,
+                    'earning_schedule_type' => 'both',
+                ],
+            ],
+            'employee_statutory_this_period' => 0.0,
+            'withholding_this_period' => 0.0,
+            'custom_deductions_this_period' => 0.0,
+            'custom_deductions_full_monthly' => 0.0,
+        ]);
+        $schedule->method('buildPayslipEarningDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipDeductionDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipCustomDeductionDisplayLines')->willReturn([]);
+        $deductionApplication = $this->createMock(DeductionApplicationService::class);
+        $deductionApplication->method('enforcePriorityAndLegalLimitsForPayrollPeriod')->willReturn([
+            'custom_lines' => [],
+            'custom_deductions_this_period' => 0.0,
+            'legal_warnings' => [],
+            'minimum_take_home_floor' => 0.0,
+        ]);
+
+        $service = new ExecomPayrollComputationService($calculator, $schedule, $deductionApplication);
+        $employee = (new User)->forceFill(['id' => 1101, 'name' => 'EXECOM Leave']);
+        $profile = (new ExecomEmployeeProfile)->forceFill([
+            'id' => 21,
+            'employee_id' => 1101,
+            'company_id' => 1,
+            'fixed_salary' => 26000.00,
+            'is_active' => true,
+        ]);
+        $settings = new ExecomPayrollSetting([
+            ...ExecomPayrollSetting::defaults(1),
+            'apply_custom_deductions' => false,
+            'apply_allowances' => false,
+            'allow_paid_leave' => false,
+        ]);
+
+        $computed = $service->computeExecomPayroll(
+            $employee,
+            Carbon::parse('2026-05-01'),
+            Carbon::parse('2026-05-15'),
+            $profile,
+            $settings,
+            [
+                'company_working_days' => 26,
+                'execom_leave_day_units' => 1.0,
+            ]
+        );
+
+        $summary = $computed['summary'];
+        $this->assertSame(1000.00, $summary['leave_deduction']);
+        $this->assertSame(26000.00, $summary['gross_pay_this_period']);
+        $this->assertSame(25000.00, $summary['net_pay']);
+        $this->assertSame(26000.00, $summary['basic_pay_this_period']);
+        $this->assertSame(
+            'Approved Leave — Unpaid under EXECOM payroll policy',
+            $summary['payslip_deduction_lines'][0]['label']
+        );
+        $this->assertSame('1 day', $summary['payslip_deduction_lines'][0]['units']);
+    }
+
+    public function test_execom_shows_approved_paid_leave_when_enabled(): void
+    {
+        $calculator = $this->createMock(PayrollCalculatorService::class);
+        $calculator->method('buildEmployeeCompensationSummary')->willReturn([
+            'earnings' => [],
+            'deductions' => [],
+            'totals' => [],
+        ]);
+        $calculator->method('calculateAllStatutoryContributions')->willReturn([
+            'totals' => ['employee_deduction' => 0.0, 'employer_contribution' => 0.0],
+        ]);
+        $calculator->method('calculateWithholdingTax')->willReturn(['withholding_per_month' => 0.0]);
+        $calculator->method('monthlyTaxableCompensationForWithholding')->willReturn(26000.00);
+        $calculator->method('mergeEmployeeTaxProfileIntoWithholdingParams')->willReturnArgument(1);
+
+        $schedule = $this->createMock(DeductionScheduleService::class);
+        $schedule->method('summarizeForPayrollComputation')->willReturn([
+            'government' => [],
+            'custom_lines' => [],
+            'earning_lines' => [
+                [
+                    'code' => 'BASIC_SALARY',
+                    'name' => 'Basic Pay',
+                    'is_basic_salary_line' => true,
+                    'scheduled_this_period' => 26000.00,
+                    'earning_schedule_type' => 'both',
+                ],
+            ],
+            'employee_statutory_this_period' => 0.0,
+            'withholding_this_period' => 0.0,
+            'custom_deductions_this_period' => 0.0,
+            'custom_deductions_full_monthly' => 0.0,
+        ]);
+        $schedule->method('buildPayslipEarningDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipDeductionDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipCustomDeductionDisplayLines')->willReturn([]);
+        $deductionApplication = $this->createMock(DeductionApplicationService::class);
+        $deductionApplication->method('enforcePriorityAndLegalLimitsForPayrollPeriod')->willReturn([
+            'custom_lines' => [],
+            'custom_deductions_this_period' => 0.0,
+            'legal_warnings' => [],
+            'minimum_take_home_floor' => 0.0,
+        ]);
+
+        $service = new ExecomPayrollComputationService($calculator, $schedule, $deductionApplication);
+        $employee = (new User)->forceFill(['id' => 1103, 'name' => 'EXECOM Paid Leave']);
+        $profile = (new ExecomEmployeeProfile)->forceFill([
+            'id' => 23,
+            'employee_id' => 1103,
+            'company_id' => 1,
+            'fixed_salary' => 26000.00,
+            'is_active' => true,
+        ]);
+
+        $computed = $service->computeExecomPayroll(
+            $employee,
+            Carbon::parse('2026-05-01'),
+            Carbon::parse('2026-05-15'),
+            $profile,
+            new ExecomPayrollSetting([
+                ...ExecomPayrollSetting::defaults(1),
+                'apply_custom_deductions' => false,
+                'apply_allowances' => false,
+                'allow_paid_leave' => true,
+            ]),
+            [
+                'company_working_days' => 26,
+                'execom_leave_day_units' => 1.0,
+            ]
+        );
+
+        $summary = $computed['summary'];
+        $this->assertSame(1000.00, $summary['paid_leave_amount']);
+        $this->assertSame(0.0, $summary['leave_deduction']);
+        $this->assertSame(25000.00, $summary['basic_pay_this_period']);
+        $this->assertSame(26000.00, $summary['gross_pay_this_period']);
+        $this->assertSame('Basic Pay', $summary['payslip_earning_lines'][0]['label']);
+        $this->assertSame(25000.00, $summary['payslip_earning_lines'][0]['amount']);
+        $this->assertSame('Approved Paid Leave', $summary['payslip_earning_lines'][1]['label']);
+        $this->assertSame(1000.00, $summary['payslip_earning_lines'][1]['amount']);
+        $this->assertSame('1 day', $summary['payslip_earning_lines'][1]['units']);
+    }
+
+    public function test_execom_includes_overtime_and_holiday_only_when_allowed(): void
+    {
+        $calculator = $this->createMock(PayrollCalculatorService::class);
+        $calculator->method('buildEmployeeCompensationSummary')->willReturn([
+            'earnings' => [],
+            'deductions' => [],
+            'totals' => [],
+        ]);
+        $calculator->method('calculateAllStatutoryContributions')->willReturn([
+            'totals' => ['employee_deduction' => 0.0, 'employer_contribution' => 0.0],
+        ]);
+        $calculator->method('calculateWithholdingTax')->willReturn(['withholding_per_month' => 0.0]);
+        $calculator->method('monthlyTaxableCompensationForWithholding')->willReturn(26000.00);
+        $calculator->method('mergeEmployeeTaxProfileIntoWithholdingParams')->willReturnArgument(1);
+
+        $schedule = $this->createMock(DeductionScheduleService::class);
+        $schedule->method('summarizeForPayrollComputation')->willReturn([
+            'government' => [],
+            'custom_lines' => [],
+            'earning_lines' => [
+                [
+                    'code' => 'BASIC_SALARY',
+                    'name' => 'Basic Pay',
+                    'is_basic_salary_line' => true,
+                    'scheduled_this_period' => 26000.00,
+                    'earning_schedule_type' => 'both',
+                ],
+            ],
+            'employee_statutory_this_period' => 0.0,
+            'withholding_this_period' => 0.0,
+            'custom_deductions_this_period' => 0.0,
+            'custom_deductions_full_monthly' => 0.0,
+        ]);
+        $schedule->method('buildPayslipEarningDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipDeductionDisplayLines')->willReturn([]);
+        $schedule->method('buildPayslipCustomDeductionDisplayLines')->willReturn([]);
+        $deductionApplication = $this->createMock(DeductionApplicationService::class);
+        $deductionApplication->method('enforcePriorityAndLegalLimitsForPayrollPeriod')->willReturn([
+            'custom_lines' => [],
+            'custom_deductions_this_period' => 0.0,
+            'legal_warnings' => [],
+            'minimum_take_home_floor' => 0.0,
+        ]);
+
+        $service = new ExecomPayrollComputationService($calculator, $schedule, $deductionApplication);
+        $employee = (new User)->forceFill(['id' => 1102, 'name' => 'EXECOM OT Holiday']);
+        $profile = (new ExecomEmployeeProfile)->forceFill([
+            'id' => 22,
+            'employee_id' => 1102,
+            'company_id' => 1,
+            'fixed_salary' => 26000.00,
+            'is_active' => true,
+        ]);
+        $extras = [
+            'overtime_amount' => 500.00,
+            'overtime_total_hours' => 2.0,
+            'overtime_breakdown' => [['amount' => 500.00, 'payable_hours' => 2.0]],
+            'overtime_earning_lines' => [[
+                'key' => 'daily:ot_pay',
+                'label' => 'Overtime',
+                'component' => 'ot_pay',
+                'amount' => 500.00,
+            ]],
+            'holiday_pay_amount' => 1000.00,
+            'holiday_premium_breakdown' => [['holiday_name' => 'Labor Day', 'amount' => 1000.00, 'eligible' => true, 'scope_match' => true]],
+            'holiday_earning_lines' => [[
+                'key' => 'daily:holiday_premium',
+                'label' => 'Holiday premium',
+                'component' => 'holiday_premium',
+                'amount' => 1000.00,
+                'metadata' => ['scope_match' => true],
+            ]],
+        ];
+
+        $disabled = $service->computeExecomPayroll(
+            $employee,
+            Carbon::parse('2026-05-01'),
+            Carbon::parse('2026-05-15'),
+            $profile,
+            new ExecomPayrollSetting([
+                ...ExecomPayrollSetting::defaults(1),
+                'apply_custom_deductions' => false,
+                'apply_allowances' => false,
+                'allow_overtime' => false,
+                'allow_holiday_pay' => false,
+            ]),
+            ['company_working_days' => 26, 'execom_daily_extras' => $extras]
+        );
+        $this->assertSame(0.0, $disabled['summary']['overtime_total_amount']);
+        $this->assertSame([], $disabled['summary']['holiday_premium_breakdown']);
+        $this->assertSame(26000.00, $disabled['summary']['gross_pay_this_period']);
+
+        $enabled = $service->computeExecomPayroll(
+            $employee,
+            Carbon::parse('2026-05-01'),
+            Carbon::parse('2026-05-15'),
+            $profile,
+            new ExecomPayrollSetting([
+                ...ExecomPayrollSetting::defaults(1),
+                'apply_custom_deductions' => false,
+                'apply_allowances' => false,
+                'allow_overtime' => true,
+                'allow_holiday_pay' => true,
+            ]),
+            ['company_working_days' => 26, 'execom_daily_extras' => $extras]
+        );
+        $this->assertSame(500.00, $enabled['summary']['overtime_total_amount']);
+        $this->assertCount(1, $enabled['summary']['holiday_premium_breakdown']);
+        $this->assertSame(27500.00, $enabled['summary']['gross_pay_this_period']);
+        $this->assertSame('Overtime', $enabled['summary']['payslip_earning_lines'][1]['label']);
+        $this->assertSame('Holiday premium', $enabled['summary']['payslip_earning_lines'][2]['label']);
+    }
+
+    public function test_execom_holiday_pay_requires_holiday_module_scope_match(): void
+    {
+        $service = new ExecomPayrollComputationService(
+            $this->createMock(PayrollCalculatorService::class),
+            $this->createMock(DeductionScheduleService::class),
+            $this->createMock(DeductionApplicationService::class),
+        );
+        $lineMethod = new \ReflectionMethod(ExecomPayrollComputationService::class, 'isExecomHolidayLineInHolidayScope');
+        $lineMethod->setAccessible(true);
+        $breakdownMethod = new \ReflectionMethod(ExecomPayrollComputationService::class, 'isExecomHolidayBreakdownInHolidayScope');
+        $breakdownMethod->setAccessible(true);
+
+        $this->assertFalse($lineMethod->invoke($service, [
+            'key' => 'holiday:2026-06-13:56:REGULAR_HOLIDAY_UNWORKED_PAY',
+            'label' => 'Regular Holiday — Unworked Pay: TEST',
+            'metadata' => ['scope_match' => false],
+        ]));
+        $this->assertTrue($lineMethod->invoke($service, [
+            'key' => 'holiday:2026-06-13:56:REGULAR_HOLIDAY_UNWORKED_PAY',
+            'label' => 'Regular Holiday — Unworked Pay: TEST',
+            'metadata' => ['scope_match' => true],
+        ]));
+        $this->assertTrue($lineMethod->invoke($service, [
+            'key' => 'daily:rest_day_worked_pay',
+            'label' => 'Rest Day Worked Pay',
+            'component' => 'rest_day_worked_pay',
+        ]));
+        $this->assertFalse($breakdownMethod->invoke($service, [
+            'eligible' => true,
+            'amount' => 769.23,
+            'scope_match' => false,
+        ]));
+        $this->assertTrue($breakdownMethod->invoke($service, [
+            'eligible' => true,
+            'amount' => 769.23,
+            'scope_match' => true,
+        ]));
     }
 
     public function test_execom_uses_regular_deduction_schedule_lines_with_fixed_salary_source(): void
@@ -300,7 +622,6 @@ class ExecomPayrollComputationServiceTest extends TestCase
             $profile,
             new ExecomPayrollSetting([
                 ...ExecomPayrollSetting::defaults(1),
-                'apply_government_deductions' => false,
                 'apply_custom_deductions' => false,
                 'apply_allowances' => false,
             ]),
@@ -476,7 +797,6 @@ class ExecomPayrollComputationServiceTest extends TestCase
             $profile,
             new ExecomPayrollSetting([
                 ...ExecomPayrollSetting::defaults(1),
-                'apply_government_deductions' => false,
                 'apply_custom_deductions' => false,
                 'apply_allowances' => false,
             ]),

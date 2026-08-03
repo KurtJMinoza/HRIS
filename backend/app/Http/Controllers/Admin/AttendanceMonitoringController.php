@@ -15,6 +15,7 @@ use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusService;
 use App\Services\DataScopeService;
+use App\Services\ExecomAttendancePresentationService;
 use App\Services\PayrollComputationService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
@@ -42,6 +43,7 @@ class AttendanceMonitoringController extends Controller
         private readonly PremiumReportService $premiumReport,
         private readonly AttendanceRollupService $attendanceRollup,
         private readonly LeaveCreditService $leaveCreditService,
+        private readonly ExecomAttendancePresentationService $execomAttendancePresentation,
     ) {}
 
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -960,7 +962,7 @@ class AttendanceMonitoringController extends Controller
                 $scheduleIn = is_array($todaySchedule) && ! empty($todaySchedule['in']) ? (string) $todaySchedule['in'] : null;
                 $scheduleOut = is_array($todaySchedule) && ! empty($todaySchedule['out']) ? (string) $todaySchedule['out'] : null;
 
-                $rows[] = [
+                $row = [
                     'employee_id' => $employee->id,
                     'employee_name' => $employee->display_name,
                     'employee_formatted_name' => $employee->formatted_name,
@@ -1044,7 +1046,14 @@ class AttendanceMonitoringController extends Controller
                     'presence_label' => $presenceLabel,
                     'presence_issue' => $presenceIssue,
                     'attendance_time_out_status' => $attendanceOtStatus,
+                    'has_leave' => is_array($leaveInfo) && ($leaveInfo['type'] ?? null) !== null,
+                    'has_holiday' => $holidayOnDate !== null,
+                    'has_punch' => (bool) ($effectiveTimeIn || $effectiveTimeOut),
+                    'is_future' => $dateKey > Carbon::now($tz)->toDateString(),
+                    'day_schedule' => is_array($todaySchedule) ? $todaySchedule : null,
                 ];
+
+                $rows[] = $this->execomAttendancePresentation->apply($employee, $dateKey, $row);
             }
 
             $cursor->addDay();

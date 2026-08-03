@@ -716,6 +716,74 @@ class HolidayPayPolicyServiceTest extends TestCase
         );
     }
 
+    public function test_execom_employee_matches_selected_regular_employment_types(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-11']);
+        $policy = $this->policyWithHolidayRules([
+            'regular_unworked' => [
+                'unworked_pay_policy' => 'selected_employment_types',
+                'employment_type_mode' => 'selected_employment_types',
+                'eligible_employment_types' => ['regular', 'full_time', 'probationary'],
+            ],
+        ]);
+        $holiday = $this->regularHoliday('2026-06-12');
+        $execom = $this->employee();
+        $execom->is_execom = true;
+
+        $result = $service->evaluate($execom, $holiday, '2026-06-12', false, $policy);
+
+        $this->assertTrue($result['employment_type_match']);
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('execom', $result['employment_type']);
+    }
+
+    public function test_clock_in_only_on_preceding_workday_does_not_qualify_unworked_holiday_pay(): void
+    {
+        $holidayService = Mockery::mock(HolidayService::class);
+        $holidayService->shouldReceive('resolveHolidayForPayroll')->andReturn(null);
+        $holidayService->shouldReceive('holidayCoversEmployee')->andReturn(true);
+
+        $policyResolver = Mockery::mock(PolicyResolverService::class);
+        $policyResolver->shouldReceive('getActivePolicy')->andReturn(null);
+        $policyResolver->shouldReceive('getMultipliersForRule')->andReturn([
+            'first_8' => 2.0, 'ot' => 2.6, 'nd_base' => 2.0, 'nd_addon' => 0.10,
+        ]);
+
+        $rulesEngine = Mockery::mock(PayrollRulesEngineService::class);
+        $rulesEngine->shouldReceive('holidayTypeFromHolidayRow')->andReturn('regular');
+        $rulesEngine->shouldReceive('resolveRuleCode')->andReturn('RH');
+
+        $attendance = Mockery::mock(AttendanceSessionService::class);
+        $attendance->shouldReceive('getTimesForDate')->andReturnUsing(function ($user, $dateKey) {
+            // Preceding workday: clock-in only (no clock-out).
+            if ($dateKey === '2026-06-11') {
+                return [Carbon::parse('2026-06-11 08:00:00', 'Asia/Manila'), null];
+            }
+
+            return [null, null];
+        });
+        // UI presence would still be true for a lone punch — holiday pay must ignore that.
+        $attendance->shouldReceive('hasPresenceForDate')->andReturn(true);
+
+        $service = new HolidayPayPolicyService(
+            $attendance,
+            $holidayService,
+            Mockery::mock(LeaveCreditService::class),
+            $policyResolver,
+            $rulesEngine,
+        );
+
+        $result = $service->computeHolidayPay($this->employee(), [
+            'date_key' => '2026-06-12',
+            'worked' => false,
+            'daily_rate' => 1000,
+        ], $this->regularHoliday('2026-06-12'));
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame(0.0, $result['holiday_premium_pay']);
+        $this->assertSame('unpaid_absence_previous_workday', $result['qualification']['rule']);
+    }
+
     private function service(array $workedDates = [], array $paidLeaveDates = [], array $holidays = []): FakeHolidayPayPolicyService
     {
         $holidayService = Mockery::mock(HolidayService::class);

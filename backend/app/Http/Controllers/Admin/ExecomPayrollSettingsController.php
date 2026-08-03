@@ -4,11 +4,28 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ExecomPayrollSetting;
+use App\Services\ExecomPayrollPolicyResolver;
+use App\Support\PayrollCacheInvalidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ExecomPayrollSettingsController extends Controller
 {
+    /** @var list<string> */
+    private const BOOLEAN_KEYS = [
+        'apply_custom_deductions',
+        'apply_allowances',
+        'allow_paid_leave',
+        'allow_overtime',
+        'allow_holiday_pay',
+        'auto_present_attendance_reports',
+    ];
+
+    public function __construct(
+        private readonly ExecomPayrollPolicyResolver $policyResolver,
+    ) {}
+
     public function show(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -17,48 +34,64 @@ class ExecomPayrollSettingsController extends Controller
         $companyId = isset($validated['company_id']) ? (int) $validated['company_id'] : null;
 
         return response()->json([
-            'settings' => $this->payload(ExecomPayrollSetting::forCompany($companyId)),
+            'settings' => $this->payload($companyId),
         ]);
     }
 
     public function update(Request $request): JsonResponse
     {
-        $validated = $request->validate([
+        $rules = [
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
-            'apply_government_deductions' => ['sometimes', 'boolean'],
-            'apply_custom_deductions' => ['sometimes', 'boolean'],
-            'apply_allowances' => ['sometimes', 'boolean'],
-            'allow_overtime' => ['sometimes', 'boolean'],
-            'allow_holiday_pay' => ['sometimes', 'boolean'],
-            'auto_present_attendance_reports' => ['sometimes', 'boolean'],
-        ]);
+        ];
+        foreach (self::BOOLEAN_KEYS as $key) {
+            $rules[$key] = ['required', 'boolean'];
+        }
+
+        $validated = $request->validate($rules);
         $companyId = isset($validated['company_id']) ? (int) $validated['company_id'] : null;
-        $settings = ExecomPayrollSetting::query()->updateOrCreate(
-            ['company_id' => $companyId],
-            [
-                ...ExecomPayrollSetting::defaults($companyId),
-                ...$validated,
-                'company_id' => $companyId,
-                'updated_by' => $request->user()?->id,
-            ]
-        );
+
+        $booleans = [];
+        foreach (self::BOOLEAN_KEYS as $key) {
+            $booleans[$key] = (bool) $validated[$key];
+        }
+
+        $settings = DB::transaction(function () use ($companyId, $booleans, $request): ExecomPayrollSetting {
+            return ExecomPayrollSetting::query()->updateOrCreate(
+                ['company_id' => $companyId],
+                [
+                    ...ExecomPayrollSetting::defaults($companyId),
+                    ...$booleans,
+                    'company_id' => $companyId,
+                    'updated_by' => $request->user()?->id,
+                ]
+            );
+        });
+
+        PayrollCacheInvalidator::clearExecom('execom_payroll_settings_updated', [
+            'updated_by' => $request->user()?->id,
+        ], $companyId);
+        $this->policyResolver->forget($companyId);
 
         return response()->json([
             'message' => 'EXECOM payroll settings updated.',
-            'settings' => $this->payload($settings),
+            'settings' => $this->payload($companyId, $settings),
         ]);
     }
 
-    private function payload(ExecomPayrollSetting $settings): array
+    private function payload(?int $companyId, ?ExecomPayrollSetting $settings = null): array
     {
+        $policy = $settings instanceof ExecomPayrollSetting
+            ? array_merge(['company_id' => $companyId], $settings->toPolicyArray())
+            : $this->policyResolver->resolve($companyId);
+
         return [
-            'company_id' => $settings->company_id ? (int) $settings->company_id : null,
-            'apply_government_deductions' => (bool) $settings->apply_government_deductions,
-            'apply_custom_deductions' => (bool) $settings->apply_custom_deductions,
-            'apply_allowances' => (bool) $settings->apply_allowances,
-            'allow_overtime' => (bool) $settings->allow_overtime,
-            'allow_holiday_pay' => (bool) $settings->allow_holiday_pay,
-            'auto_present_attendance_reports' => (bool) $settings->auto_present_attendance_reports,
+            'company_id' => $policy['company_id'] ?? $companyId,
+            'apply_custom_deductions' => (bool) $policy['apply_custom_deductions'],
+            'apply_allowances' => (bool) $policy['apply_allowances'],
+            'allow_paid_leave' => (bool) $policy['allow_paid_leave'],
+            'allow_overtime' => (bool) $policy['allow_overtime'],
+            'allow_holiday_pay' => (bool) $policy['allow_holiday_pay'],
+            'auto_present_attendance_reports' => (bool) $policy['auto_present_attendance_reports'],
         ];
     }
 }

@@ -475,9 +475,17 @@ class ExecomPayrollController extends Controller
             $lineTotals = $this->payslipService->payslipLineTotalsFromSnapshot($snapshot);
             $row = $payslip->toArray();
             $row['snapshot'] = $snapshot;
-            $row['gross_pay'] = $lineTotals['gross_pay'];
-            $row['total_deductions'] = $lineTotals['total_deductions'];
-            $row['net_pay'] = $lineTotals['net_pay'];
+            // Keep list amounts on the persisted payslip columns for EXECOM so batch MetricCards
+            // and row values do not diverge when sanitize only reshapes display lines.
+            if ((string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM) {
+                $row['gross_pay'] = round((float) $payslip->gross_pay, 2);
+                $row['total_deductions'] = round((float) $payslip->total_deductions, 2);
+                $row['net_pay'] = round((float) $payslip->net_pay, 2);
+            } else {
+                $row['gross_pay'] = $lineTotals['gross_pay'];
+                $row['total_deductions'] = $lineTotals['total_deductions'];
+                $row['net_pay'] = $lineTotals['net_pay'];
+            }
 
             return $row;
         });

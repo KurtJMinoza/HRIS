@@ -283,15 +283,32 @@ class HolidayPayPolicyService
         $kind = in_array($normalizedType, ['regular', 'double'], true) ? 'regular' : 'special';
         $unworkedPolicy = $this->unworkedPayPolicy($resolved, $kind);
         $employmentType = $this->employmentTypeResolver()->resolveForEmployee($employee);
+        $laborEmploymentType = $employmentType === 'execom'
+            ? $this->employmentTypeResolver()->resolveLaborEmploymentType($employee)
+            : $employmentType;
         $allowedEmploymentTypes = $this->eligibleEmploymentTypes($resolved, $kind);
         $employmentTypeMode = $this->employmentTypeMode($resolved, $kind);
-        $employmentTypeMatch = $this->employmentTypeAllowed($employmentTypeMode, $employmentType, $allowedEmploymentTypes, $kind);
+        // EXECOM is a payroll module, not a DOLE class — still match selected regular/full_time/etc.
+        $employmentTypeMatch = $this->employmentTypeAllowed($employmentTypeMode, $employmentType, $allowedEmploymentTypes, $kind)
+            || (
+                $employmentType === 'execom'
+                && $laborEmploymentType !== ''
+                && $this->employmentTypeAllowed($employmentTypeMode, $laborEmploymentType, $allowedEmploymentTypes, $kind)
+            );
         $workedEmploymentRule = $this->workedEmploymentTypeRule($resolved, $kind);
         $workedAllowedEmploymentTypes = $this->eligibleEmploymentTypesForWorked($resolved, $kind);
         $workedEmploymentTypeMatch = $this->workedEmploymentTypeAllowed(
             $workedEmploymentRule,
             $employmentType,
             $workedAllowedEmploymentTypes
+        ) || (
+            $employmentType === 'execom'
+            && $laborEmploymentType !== ''
+            && $this->workedEmploymentTypeAllowed(
+                $workedEmploymentRule,
+                $laborEmploymentType,
+                $workedAllowedEmploymentTypes
+            )
         );
         // Employees inside Holiday-module coverage remain eligible under the
         // unworked-pay policy. A selected-holiday list only narrows an
@@ -881,15 +898,9 @@ class HolidayPayPolicyService
 
     protected function presentOn(User $employee, string $dateKey): bool
     {
-        if ($this->workedOn($employee, $dateKey)) {
-            return true;
-        }
-
-        return $this->attendanceSession->hasPresenceForDate(
-            $employee,
-            $dateKey,
-            config('attendance.timezone', config('app.timezone', 'Asia/Manila'))
-        );
+        // Holiday preceding/following workday presence requires a complete session
+        // (clock-in and clock-out). A lone punch must not unlock unworked holiday pay.
+        return $this->workedOn($employee, $dateKey);
     }
 
     public function hasWorkedOnDate(User $employee, string $dateKey): bool

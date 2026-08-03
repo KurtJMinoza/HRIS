@@ -158,10 +158,11 @@ class AttendanceSessionService
     /**
      * Attendance-policy presence for a local calendar day.
      *
-     * The attendance UI treats any verified punch or approved correction as
-     * present, even when the pair is incomplete. Holiday qualification must use
-     * that same presence meaning; worked-holiday computation still requires a
-     * complete session through {@see getTimesForDate}.
+     * Attendance UI / presence badges: any verified punch or approved correction
+     * counts as present, even when the in/out pair is incomplete.
+     *
+     * Holiday pay preceding-workday qualification does NOT use this — it requires
+     * a complete session via {@see HolidayPayPolicyService} / {@see getTimesForDate}.
      */
     public function hasPresenceForDate(User $user, string $dateKey, ?string $tz = null): bool
     {
