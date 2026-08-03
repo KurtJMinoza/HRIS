@@ -146,6 +146,7 @@ export default function AdminSectionUnits() {
   const [editDivisionId, setEditDivisionId] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editSubmitting, setEditSubmitting] = useState(false)
+  const leadershipRef = useRef(null)
 
   const [viewEmployeesOpen, setViewEmployeesOpen] = useState(false)
   const [viewEmployeesSection, setViewEmployeesSection] = useState(null)
@@ -547,6 +548,13 @@ export default function AdminSectionUnits() {
     setEditSubmitting(true)
     setError(null)
     try {
+      if (leadershipRef.current?.isDirty?.()) {
+        const leadershipSaved = await leadershipRef.current.save()
+        if (!leadershipSaved) {
+          return
+        }
+      }
+
       const payload = {
         name: editName.trim(),
         company_id: parseInt(editCompanyId, 10),
@@ -2245,6 +2253,7 @@ export default function AdminSectionUnits() {
 
               {editSection?.id ? (
                 <LeadershipPositionsSection
+                  ref={leadershipRef}
                   legacyType="section_unit"
                   legacyId={editSection.id}
                   canManage

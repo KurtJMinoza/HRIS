@@ -138,6 +138,7 @@ export default function AdminDepartments() {
   const [editOfficeLocation, setEditOfficeLocation] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editSubmitting, setEditSubmitting] = useState(false)
+  const leadershipRef = useRef(null)
 
   const [viewEmployeesOpen, setViewEmployeesOpen] = useState(false)
   const [viewEmployeesDept, setViewEmployeesDept] = useState(null)
@@ -415,6 +416,13 @@ export default function AdminDepartments() {
     setEditSubmitting(true)
     setError(null)
     try {
+      if (leadershipRef.current?.isDirty?.()) {
+        const leadershipSaved = await leadershipRef.current.save()
+        if (!leadershipSaved) {
+          return
+        }
+      }
+
       const data = await updateDepartment(editDepartment.id, {
         name: editName.trim(),
         branch_id: parseInt(editBranchId, 10),
@@ -1867,6 +1875,7 @@ export default function AdminDepartments() {
 
               {editDepartment?.id ? (
                 <LeadershipPositionsSection
+                  ref={leadershipRef}
                   legacyType="department"
                   legacyId={editDepartment.id}
                   canManage

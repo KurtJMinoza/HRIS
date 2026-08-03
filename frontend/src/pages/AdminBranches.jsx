@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Plus, MapPin, Loader2, MoreVertical, Pencil, Trash2, Building2, Layers, Users, ExternalLink, ChevronRight, ChevronLeft, Search, ChevronDown, Network, UserPlus } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -273,6 +273,7 @@ export default function AdminBranches() {
   const [editAddress, setEditAddress] = useState('')
   const [editManagerId, setEditManagerId] = useState('')
   const [editSubmitting, setEditSubmitting] = useState(false)
+  const leadershipRef = useRef(null)
 
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
@@ -474,6 +475,13 @@ export default function AdminBranches() {
     if (!editBranch || !editName.trim()) { toast({ title: 'Branch name is required', variant: 'error' }); return }
     setEditSubmitting(true)
     try {
+      if (leadershipRef.current?.isDirty?.()) {
+        const leadershipSaved = await leadershipRef.current.save()
+        if (!leadershipSaved) {
+          return
+        }
+      }
+
       const companyIdForList = editCompanyId ? parseInt(editCompanyId, 10) : editBranch.company_id
       await updateBranch(editBranch.id, {
         name: editName.trim(),
@@ -969,6 +977,7 @@ export default function AdminBranches() {
             {editBranch?.id ? (
               <div className="min-h-0 overflow-y-auto bg-muted/10 px-4 py-5 md:px-6">
                 <LeadershipPositionsSection
+                  ref={leadershipRef}
                   legacyType="branch"
                   legacyId={editBranch.id}
                   employeeOptions={allEmployees}
