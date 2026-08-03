@@ -99,7 +99,6 @@ class PayslipFrozenLineMetricsTest extends TestCase
                 'allow_paid_leave' => true,
                 'allow_overtime' => true,
                 'allow_holiday_pay' => true,
-                'auto_present_attendance_reports' => true,
             ],
             'basic_pay' => 25000.0,
             'basic_pay_this_period' => 25000.0,

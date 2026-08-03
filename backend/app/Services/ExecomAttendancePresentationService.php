@@ -61,47 +61,37 @@ class ExecomAttendancePresentationService
             }
         }
 
-        if (! (bool) $policy['auto_present_attendance_reports'] || (bool) ($context['is_future'] ?? false)) {
+        return $context;
+    }
+
+    /**
+     * Legacy rows written before auto-present was removed must not keep faking presence.
+     *
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    public function stripStaleAutoPresent(array $context): array
+    {
+        if (($context['presence_issue'] ?? '') !== 'execom_auto_present') {
             return $context;
         }
 
-        // Priority: leave/exception → holiday/rest → existing attendance/correction → auto-present → absent
-        $status = strtolower(trim((string) ($context['status'] ?? '')));
-        $daySchedule = $context['day_schedule'] ?? null;
-        $hasSchedule = is_array($daySchedule) && ! empty($daySchedule['in']);
-        $hasHoliday = (bool) ($context['has_holiday'] ?? false)
-            || $status === 'holiday'
-            || ! empty($context['holiday_name']);
-        $hasPunch = (bool) ($context['has_punch'] ?? false)
-            || ! empty($context['time_in'])
-            || ! empty($context['time_out']);
-        $hasCorrection = (bool) ($context['has_correction'] ?? false)
-            || (bool) ($context['correction_approved'] ?? false);
-        $isRest = (bool) ($context['is_rest_day'] ?? false)
-            || in_array($status, ['rest', 'rest_day', 'no_schedule_rest'], true);
+        $hasPunch = trim((string) ($context['time_in'] ?? '')) !== ''
+            || trim((string) ($context['time_out'] ?? '')) !== ''
+            || trim((string) ($context['formatted_time_in'] ?? '')) !== ''
+            || trim((string) ($context['formatted_time_out'] ?? '')) !== '';
 
-        if ($hasLeave || $hasHoliday || $isRest || $hasPunch || $hasCorrection || $status !== 'absent') {
+        if ($hasPunch) {
             return $context;
         }
 
-        if (! $hasSchedule) {
-            return $context;
-        }
-
-        $context['status'] = 'present';
-        $context['status_label'] = 'Auto Present';
-        $context['display_badge'] = 'Auto Present';
-        $context['presence_label'] = 'Auto Present';
-        $context['presence_issue'] = 'execom_auto_present';
-        $context['is_present'] = true;
-        $context['is_absent'] = false;
-
-        if (($context['payroll_impact_hours'] ?? null) === null && isset($context['scheduled_regular_hours'])) {
-            $context['payroll_impact_hours'] = (float) $context['scheduled_regular_hours'];
-        }
-        if (($context['payroll_impact_minutes'] ?? null) === null && isset($context['scheduled_regular_hours'])) {
-            $context['payroll_impact_minutes'] = (int) round(((float) $context['scheduled_regular_hours']) * 60);
-        }
+        $context['status'] = 'absent';
+        $context['status_label'] = 'Absent';
+        $context['display_badge'] = 'Absent';
+        $context['presence_label'] = null;
+        $context['presence_issue'] = null;
+        $context['payroll_impact_hours'] = 0.0;
+        $context['payroll_impact_minutes'] = 0;
 
         return $context;
     }

@@ -16,8 +16,7 @@ class ExecomPayrollPolicyResolver
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool,
-     *     auto_present_attendance_reports: bool
+     *     allow_holiday_pay: bool
      * }
      */
     public function resolve(?int $companyId = null): array
@@ -74,8 +73,7 @@ class ExecomPayrollPolicyResolver
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool,
-     *     auto_present_attendance_reports: bool
+     *     allow_holiday_pay: bool
      * }
      */
     private function loadPolicy(?int $companyId): array

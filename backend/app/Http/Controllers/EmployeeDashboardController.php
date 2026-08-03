@@ -335,7 +335,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 22) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 23) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -608,16 +608,9 @@ class EmployeeDashboardController extends Controller
         $monthSummary['absent_hours'] = round($totalAbsentExpectedMinutes / 60, 2);
 
         $isExecom = $this->employeeClassification->isExecom($user, $from, $to);
-        if ($isExecom) {
-            $monthSummary['payroll_impact_hours'] = round($totalExpectedMinutes / 60, 2);
-            $monthSummary['lost_hours'] = 0.0;
-            $monthSummary['absent_hours'] = 0.0;
-            $monthSummary['attendance_efficiency_percentage'] = 100.0;
-        } else {
-            $monthSummary['attendance_efficiency_percentage'] = $totalExpectedMinutes > 0
-                ? round(($totalPayrollImpactMinutes / $totalExpectedMinutes) * 100, 2)
-                : 0.0;
-        }
+        $monthSummary['attendance_efficiency_percentage'] = $totalExpectedMinutes > 0
+            ? round(($totalPayrollImpactMinutes / $totalExpectedMinutes) * 100, 2)
+            : 0.0;
         $monthSummary['is_execom'] = $isExecom;
         $monthSummary['classification'] = $this->employeeClassification->label($user, $from, $to);
         $monthSummary['execom_badge'] = $isExecom ? 'EXECom' : null;
@@ -628,7 +621,7 @@ class EmployeeDashboardController extends Controller
             'scheduled_days' => (int) ($monthSummary['scheduled_workdays'] ?? 0),
             'absent_days' => (int) ($monthSummary['absent_days'] ?? 0),
             'expected_minutes' => $totalExpectedMinutes,
-            'payroll_impact_minutes' => $isExecom ? $totalExpectedMinutes : $totalPayrollImpactMinutes,
+            'payroll_impact_minutes' => $totalPayrollImpactMinutes,
             'efficiency_percentage' => $monthSummary['attendance_efficiency_percentage'],
         ]);
 
@@ -664,7 +657,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 22,
+                'schema_version' => 23,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,

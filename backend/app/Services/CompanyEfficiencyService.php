@@ -28,6 +28,7 @@ class CompanyEfficiencyService
         private readonly EmployeeClassificationService $employeeClassificationService,
         private readonly EmployeeEvaluationResultService $employeeEvaluationResultService,
         private readonly EvaluationScoringService $evaluationScoringService,
+        private readonly ExecomAttendancePresentationService $execomAttendancePresentation,
         private readonly MergedKpiPerformanceService $mergedKpiPerformanceService,
         private readonly LeaveCreditService $leaveCreditService,
     ) {}
@@ -1316,7 +1317,7 @@ class CompanyEfficiencyService
             $statusLabel = $leavePayLabel;
         }
 
-        return [
+        return $this->stripStaleExecomAutoPresent([
             'status' => $status,
             'status_label' => $statusLabel,
             'schedule_in' => $stored->schedule_in,
@@ -1344,7 +1345,13 @@ class CompanyEfficiencyService
             'late_label' => $extra['late_label'] ?? null,
             'correction_remarks' => $extra['correction_remarks'] ?? null,
             'remarks' => null,
-        ];
+        ]);
+    }
+
+    /** @param array<string, mixed> $summary */
+    private function stripStaleExecomAutoPresent(array $summary): array
+    {
+        return $this->execomAttendancePresentation->stripStaleAutoPresent($summary);
     }
 
     private function applyApprovedLeaveOverride(array $summary, User $employee, ?LeaveRequest $leave, string $dateKey): array

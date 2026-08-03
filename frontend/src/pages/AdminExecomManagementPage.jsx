@@ -68,7 +68,6 @@ const DEFAULT_SETTINGS = {
   allow_paid_leave: true,
   allow_overtime: false,
   allow_holiday_pay: false,
-  auto_present_attendance_reports: true,
 }
 
 const SETTINGS_META = {
@@ -92,10 +91,6 @@ const SETTINGS_META = {
     label: 'Allow holiday pay',
     description: 'Include Holiday Module pay components (worked/unworked) only when the holiday covers the employee (scope/coverage), using Policy Settings multipliers. EXECOM staff match by their regular employment class (e.g. Regular / Full-time), not a separate EXECom type.',
   },
-  auto_present_attendance_reports: {
-    label: 'Auto present attendance reports',
-    description: 'For eligible scheduled workdays with no attendance, mark EXECOM employees Auto Present in attendance reports.',
-  },
 }
 
 const SETTINGS_ORDER = Object.keys(DEFAULT_SETTINGS)
@@ -108,7 +103,6 @@ function behaviorPreviewLines(settings) {
     `Paid leave: ${settings.allow_paid_leave ? 'Included when approved and paid' : 'Not included'}`,
     `Overtime: ${settings.allow_overtime ? 'Included' : 'Not included'}`,
     `Holiday pay: ${settings.allow_holiday_pay ? 'Included when in Holiday Module scope' : 'Not included'}`,
-    `Attendance: ${settings.auto_present_attendance_reports ? 'Auto-present when eligible' : 'Actual attendance'}`,
   ]
 }
 
@@ -602,7 +596,7 @@ export default function AdminExecomManagementPage() {
               <div>
                 <div className="text-sm font-extrabold">EXECOM Payroll Settings</div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  Default settings • Configure custom deductions, allowances, leave, overtime, holiday pay, and attendance behavior. Government deductions always apply and are controlled by Employee Exemptions.
+                  Default settings • Configure custom deductions, allowances, leave, overtime, and holiday pay. Government deductions always apply and are controlled by Employee Exemptions.
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">

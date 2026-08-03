@@ -29,7 +29,7 @@ class ExecomPayrollComputationService
 
     /**
      * Fixed-salary EXECOM computation with Quick Setup feature gates for allowances,
-     * deductions, paid leave, overtime, holiday pay, and auto-present attendance labels.
+     * deductions, paid leave, overtime, and holiday pay.
      *
      * @param  array<string, mixed>  $periodContext
      * @return array<string, mixed>
@@ -286,8 +286,7 @@ class ExecomPayrollComputationService
         $governmentDeductionAmount = round($employeeStatutory + $withholdingThisPeriod, 2);
         $totalDeductions = round($governmentDeductionAmount + $customDeductions + $leaveDeduction, 2);
         $netPay = round($grossPay - $totalDeductions, 2);
-        $days = $this->autoPresentDays($from, $to, (bool) $policy['auto_present_attendance_reports']);
-        $autoPresentCount = count($days);
+        $days = [];
 
         $this->logExecomPolicyDebug($employee, $profile, $periodContext, $policy, [
             'base_pay' => $fixedSalary,
@@ -330,7 +329,7 @@ class ExecomPayrollComputationService
                 'execom_fixed_salary' => (float) $salarySources['execom_fixed_salary'],
                 'employee_compensation_salary' => (float) $salarySources['employee_compensation_salary'],
                 'employee_monthly_salary' => (float) $salarySources['employee_monthly_salary'],
-                'attendance_status' => (bool) $policy['auto_present_attendance_reports'] ? 'Auto Present' : 'EXECOM Payroll',
+                'attendance_status' => 'EXECOM Payroll',
                 'absent_days' => 0,
                 'late_minutes' => 0,
                 'undertime_minutes' => 0,
@@ -340,7 +339,7 @@ class ExecomPayrollComputationService
                 'attendance_premium_pay_this_period' => round($overtimeAmount + $holidayPayAmount, 2),
                 'gross_pay_this_period' => $grossPay,
                 'total_deductions_this_period' => $totalDeductions,
-                'actual_days_worked' => (float) $autoPresentCount,
+                'actual_days_worked' => 0.0,
                 'daily_rate' => $dailyRate,
                 'daily_rate_divisor_days' => $workingDays,
                 'employee_statutory_total' => $employeeStatutoryMonthly,
@@ -386,11 +385,11 @@ class ExecomPayrollComputationService
                     (bool) $policy['allow_holiday_pay'] ? $dailyExtras['holiday_earning_lines'] : [],
                 )),
                 'attendance_display_summary' => [
-                    'attendance_status' => (bool) $policy['auto_present_attendance_reports'] ? 'Auto Present' : 'EXECOM Payroll',
-                    'status_label' => (bool) $policy['auto_present_attendance_reports'] ? 'Auto Present' : 'EXECOM Payroll',
-                    'working_days_count' => $autoPresentCount,
-                    'presence_days_count' => $autoPresentCount,
-                    'lines' => $this->autoPresentAttendanceDisplayLines($days),
+                    'attendance_status' => 'EXECOM Payroll',
+                    'status_label' => 'EXECOM Payroll',
+                    'working_days_count' => 0,
+                    'presence_days_count' => 0,
+                    'lines' => [],
                     'total_regular_hours' => 0.0,
                     'total_presence_regular_hours' => 0.0,
                     'absent_days' => 0,
@@ -401,9 +400,7 @@ class ExecomPayrollComputationService
                     'unpaid_leave_days_count' => $unpaidLeaveDayUnits,
                     'payroll_impact' => 0.0,
                     'payroll_impact_deduction' => $leaveDeduction,
-                    'payroll_note' => (bool) $policy['auto_present_attendance_reports']
-                        ? 'EXECOM auto-present when eligible; fixed Basic Pay with Quick Setup earning/deduction gates.'
-                        : 'EXECOM fixed Basic Pay with Quick Setup earning/deduction gates; attendance not auto-presented.',
+                    'payroll_note' => 'EXECOM fixed Basic Pay with Quick Setup earning/deduction gates; attendance reports use actual punches.',
                 ],
                 'holiday_premium_breakdown' => $holidayPremiumBreakdown,
                 'total_worked_minutes' => 0,
@@ -853,9 +850,6 @@ class ExecomPayrollComputationService
             'Holiday pay' => (bool) $policy['allow_holiday_pay']
                 ? 'Included when in Holiday Module scope'
                 : 'Not included',
-            'Attendance' => (bool) $policy['auto_present_attendance_reports']
-                ? 'Auto-present when eligible'
-                : 'Actual attendance',
         ];
     }
 
@@ -883,7 +877,6 @@ class ExecomPayrollComputationService
             'allow_paid_leave' => (bool) $policy['allow_paid_leave'],
             'allow_overtime' => (bool) $policy['allow_overtime'],
             'allow_holiday_pay' => (bool) $policy['allow_holiday_pay'],
-            'auto_present_attendance_reports' => (bool) $policy['auto_present_attendance_reports'],
             'base_pay' => $amounts['base_pay'],
             'paid_leave_amount' => $amounts['paid_leave_amount'],
             'leave_deduction' => $amounts['leave_deduction'],
@@ -1259,59 +1252,5 @@ class ExecomPayrollComputationService
             || $label === 'basic pay'
             || $label === 'regular pay / fixed salary'
             || $label === 'regular pay';
-    }
-
-    /**
-     * @return list<array<string, mixed>>
-     */
-    private function autoPresentAttendanceDisplayLines(array $days): array
-    {
-        return array_values(array_map(static function (array $day): array {
-            return [
-                'date' => (string) ($day['date'] ?? ''),
-                'attendance_status' => 'Auto Present',
-                'status' => 'auto_present',
-                'status_label' => 'Auto Present',
-                'source' => 'execom_auto_present',
-                'payroll_impact' => 0.0,
-                'payroll_impact_deduction' => 0.0,
-            ];
-        }, $days));
-    }
-
-    /**
-     * @return list<array<string, mixed>>
-     */
-    private function autoPresentDays(Carbon $from, Carbon $to, bool $enabled): array
-    {
-        if (! $enabled) {
-            return [];
-        }
-
-        $days = [];
-        $cursor = $from->copy()->startOfDay();
-        $end = $to->copy()->startOfDay();
-        while ($cursor->lte($end)) {
-            $days[] = [
-                'date' => $cursor->toDateString(),
-                'attendance_status' => 'Auto Present',
-                'status' => 'auto_present',
-                'status_label' => 'Auto Present',
-                'source' => 'execom_auto_present',
-                'regular_pay' => 0.0,
-                'late_deduction' => 0.0,
-                'undertime_deduction' => 0.0,
-                'absence_deduction' => 0.0,
-                'leave_deduction' => 0.0,
-                'payroll_impact' => 0.0,
-                'payroll_impact_deduction' => 0.0,
-                'overtime_pay' => 0.0,
-                'holiday_pay' => 0.0,
-                'night_differential' => 0.0,
-            ];
-            $cursor->addDay();
-        }
-
-        return $days;
     }
 }

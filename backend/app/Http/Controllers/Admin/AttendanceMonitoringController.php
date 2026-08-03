@@ -1053,7 +1053,9 @@ class AttendanceMonitoringController extends Controller
                     'day_schedule' => is_array($todaySchedule) ? $todaySchedule : null,
                 ];
 
-                $rows[] = $this->execomAttendancePresentation->apply($employee, $dateKey, $row);
+                $rows[] = $this->execomAttendancePresentation->stripStaleAutoPresent(
+                    $this->execomAttendancePresentation->apply($employee, $dateKey, $row)
+                );
             }
 
             $cursor->addDay();

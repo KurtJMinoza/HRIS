@@ -1195,13 +1195,13 @@ export default function EmployeeDashboard() {
       undertime: summary?.undertime_count ?? 0,
       scheduledDays,
       restDaysWorked,
-      efficiency: employeeIsExecom ? 100 : (summary?.attendance_efficiency_percentage ?? 0),
+      efficiency: summary?.attendance_efficiency_percentage ?? 0,
       expectedScheduledHours: rawExpectedHours,
       actualWorkedHours: summary?.actual_worked_hours ?? 0,
-      payrollImpactHours: employeeIsExecom ? rawExpectedHours : rawPayrollImpactHours,
+      payrollImpactHours: rawPayrollImpactHours,
       lateMinutes: summary?.late_minutes ?? 0,
       undertimeMinutes: summary?.undertime_minutes ?? 0,
-      absentHours: employeeIsExecom ? 0 : (summary?.absent_hours ?? 0),
+      absentHours: summary?.absent_hours ?? 0,
       presentDays: summary?.present_days ?? 0,
       absentDays: summary?.absent_days ?? 0,
       lateDays: summary?.late_days ?? 0,
@@ -1209,7 +1209,7 @@ export default function EmployeeDashboard() {
       restDays: summary?.rest_day_count ?? 0,
       leaveDays: summary?.leave_count ?? 0,
       holidayDays: summary?.holiday_count ?? 0,
-      lostHours: employeeIsExecom ? 0 : (summary?.lost_hours ?? Math.max(0, rawExpectedHours - rawPayrollImpactHours)),
+      lostHours: summary?.lost_hours ?? Math.max(0, rawExpectedHours - rawPayrollImpactHours),
       isExecom: employeeIsExecom,
       classification: employeeClassification,
     }
@@ -3308,8 +3308,8 @@ export default function EmployeeDashboard() {
                       const expectedHours = Number(monthAttendanceMetrics.expectedScheduledHours || 0)
                       const payrollImpactHours = Number(monthAttendanceMetrics.payrollImpactHours || 0)
                       const absenceLostHours = Number(monthAttendanceMetrics.absentHours || 0)
-                      const lateLostHours = monthAttendanceMetrics.isExecom ? 0 : Number(monthAttendanceMetrics.lateMinutes || 0) / 60
-                      const undertimeLostHours = monthAttendanceMetrics.isExecom ? 0 : Number(monthAttendanceMetrics.undertimeMinutes || 0) / 60
+                      const lateLostHours = Number(monthAttendanceMetrics.lateMinutes || 0) / 60
+                      const undertimeLostHours = Number(monthAttendanceMetrics.undertimeMinutes || 0) / 60
                       return (
                         <>
                           {[

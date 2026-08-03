@@ -1046,7 +1046,7 @@ export default function AdminGeneratePayslipsPage() {
               </h1>
               <p className="max-w-2xl text-[15px] font-medium leading-7 text-muted-foreground">
                 {isExecomModule
-                  ? 'Generate EXECOM payroll drafts using fixed Basic Pay (Auto Present). Allowances, deductions, schedules, and pay cycles follow the same rules as regular payroll.'
+                  ? 'Generate EXECOM payroll drafts using fixed Basic Pay. Allowances, deductions, schedules, and pay cycles follow the same rules as regular payroll.'
                   : 'Generate official PDF payslips for active employees in the selected scope using the same payroll engine as your previews — pay components, statutory deductions, loans, pay cycles, and daily computation.'}
               </p>
               {(canManageRegularPayslips || canManageExecomPayroll) && (
@@ -1411,7 +1411,7 @@ export default function AdminGeneratePayslipsPage() {
                     </p>
                     {isExecomModule ? (
                       <p className="text-sm font-normal text-muted-foreground">
-                        All active EXECOM profiles will be included. Fixed Basic Pay is used with Auto Present attendance.
+                        All active EXECOM profiles will be included. Fixed Basic Pay is used for EXECOM payroll.
                       </p>
                     ) : scopeReady ? (
                       recentListNetTotal != null && companyRows.length > 0 ? (

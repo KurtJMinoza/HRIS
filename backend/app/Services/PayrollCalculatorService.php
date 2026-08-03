@@ -1515,7 +1515,7 @@ class PayrollCalculatorService
                 ]);
             }
 
-            $computed = $this->buildEmployeeCompensationSummary($user->id, array_merge($options, [
+            $computed = $this->buildEmployeeCompensationSummary($user, array_merge($options, [
                 'as_of_date' => $asOfDate,
                 'proration_factor' => $prorationFactor,
                 'hours_worked' => $hoursWorked,
@@ -2062,8 +2062,12 @@ class PayrollCalculatorService
                 ->where('user_id', $employee->id)
                 ->where('is_active', true)
                 ->where(function ($query) {
-                    $query->whereHas('payComponent')
-                        ->orWhere('is_custom', true);
+                    // Exists-join is cheaper than correlated whereHas on every list/detail open.
+                    $query->whereExists(function ($sub): void {
+                        $sub->selectRaw('1')
+                            ->from('pay_components')
+                            ->whereColumn('pay_components.id', 'employee_compensation_components.pay_component_id');
+                    })->orWhere('is_custom', true);
                 })
                 ->where(function ($query) use ($asOfDate) {
                     $query->whereNull('effective_from')

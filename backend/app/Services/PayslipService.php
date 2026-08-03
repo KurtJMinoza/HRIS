@@ -3681,8 +3681,7 @@ class PayslipService
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool,
-     *     auto_present_attendance_reports: bool
+     *     allow_holiday_pay: bool
      * }
      */
     private function resolveExecomSettingsForSanitize(array $summary, array $snapshot): array

@@ -14,7 +14,6 @@ class ExecomPayrollSetting extends Model
         'allow_paid_leave',
         'allow_overtime',
         'allow_holiday_pay',
-        'auto_present_attendance_reports',
         'updated_by',
     ];
 
@@ -26,7 +25,6 @@ class ExecomPayrollSetting extends Model
             'allow_paid_leave' => 'boolean',
             'allow_overtime' => 'boolean',
             'allow_holiday_pay' => 'boolean',
-            'auto_present_attendance_reports' => 'boolean',
         ];
     }
 
@@ -44,7 +42,6 @@ class ExecomPayrollSetting extends Model
             'allow_paid_leave' => true,
             'allow_overtime' => false,
             'allow_holiday_pay' => false,
-            'auto_present_attendance_reports' => true,
         ];
     }
 
@@ -79,8 +76,7 @@ class ExecomPayrollSetting extends Model
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool,
-     *     auto_present_attendance_reports: bool
+     *     allow_holiday_pay: bool
      * }
      */
     public function toPolicyArray(): array
@@ -91,7 +87,6 @@ class ExecomPayrollSetting extends Model
             'allow_paid_leave' => (bool) ($this->allow_paid_leave ?? true),
             'allow_overtime' => (bool) $this->allow_overtime,
             'allow_holiday_pay' => (bool) $this->allow_holiday_pay,
-            'auto_present_attendance_reports' => (bool) $this->auto_present_attendance_reports,
         ];
     }
 }

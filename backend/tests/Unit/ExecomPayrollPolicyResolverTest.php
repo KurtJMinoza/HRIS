@@ -17,19 +17,19 @@ class ExecomPayrollPolicyResolverTest extends TestCase
         $this->assertFalse($defaults['allow_overtime']);
         $this->assertFalse($defaults['allow_holiday_pay']);
         $this->assertTrue($defaults['apply_custom_deductions']);
-        $this->assertTrue($defaults['auto_present_attendance_reports']);
+        $this->assertArrayNotHasKey('auto_present_attendance_reports', $defaults);
 
         $setting = new ExecomPayrollSetting($defaults);
         $policy = $setting->toPolicyArray();
 
         $this->assertArrayNotHasKey('apply_government_deductions', $policy);
+        $this->assertArrayNotHasKey('auto_present_attendance_reports', $policy);
         foreach ([
             'apply_custom_deductions',
             'apply_allowances',
             'allow_paid_leave',
             'allow_overtime',
             'allow_holiday_pay',
-            'auto_present_attendance_reports',
         ] as $key) {
             $this->assertIsBool($policy[$key], $key.' must be boolean');
         }

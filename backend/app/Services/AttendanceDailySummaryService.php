@@ -324,7 +324,9 @@ class AttendanceDailySummaryService
                 : null,
         ];
 
-        return $this->execomAttendancePresentation->apply($user, $dateKey, $summary);
+        return $this->execomAttendancePresentation->stripStaleAutoPresent(
+            $this->execomAttendancePresentation->apply($user, $dateKey, $summary)
+        );
     }
 
     /**

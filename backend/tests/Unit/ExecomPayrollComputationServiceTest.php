@@ -97,15 +97,14 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $this->assertSame(4807.69, $computed['daily_rate']);
         $this->assertSame(26, $computed['daily_rate_divisor_days']);
         $this->assertSame(4807.69, $summary['daily_rate']);
-        $this->assertSame(15.0, $summary['actual_days_worked']);
+        $this->assertSame(0.0, $summary['actual_days_worked']);
         $this->assertSame(0, $summary['total_worked_minutes']);
         $this->assertSame(0.0, $summary['overtime_total_amount']);
         $this->assertSame([], $summary['holiday_premium_breakdown']);
-        $this->assertSame('Auto Present', $computed['days'][0]['attendance_status']);
-        $this->assertSame('Auto Present', $computed['days'][0]['status_label']);
-        $this->assertSame('Auto Present', $summary['attendance_display_summary']['attendance_status']);
-        $this->assertSame('Auto Present', $summary['attendance_display_summary']['status_label']);
-        $this->assertSame(15, $summary['attendance_display_summary']['presence_days_count']);
+        $this->assertSame([], $computed['days']);
+        $this->assertSame('EXECOM Payroll', $summary['attendance_display_summary']['attendance_status']);
+        $this->assertSame('EXECOM Payroll', $summary['attendance_display_summary']['status_label']);
+        $this->assertSame(0, $summary['attendance_display_summary']['presence_days_count']);
         $this->assertSame(0, $summary['attendance_display_summary']['absent_days']);
         $this->assertSame(0, $summary['absent_days']);
         $this->assertSame(0, $summary['late_minutes']);
@@ -117,6 +116,7 @@ class ExecomPayrollComputationServiceTest extends TestCase
         $this->assertFalse($summary['execom_settings']['allow_holiday_pay']);
         $this->assertTrue($summary['execom_settings']['allow_paid_leave']);
         $this->assertSame('Not included', $summary['execom_payroll_policy']['Overtime']);
+        $this->assertArrayNotHasKey('auto_present_attendance_reports', $summary['execom_settings']);
     }
 
     public function test_execom_applies_leave_deduction_when_paid_leave_disabled(): void

@@ -19,7 +19,6 @@ class ExecomPayrollSettingsController extends Controller
         'allow_paid_leave',
         'allow_overtime',
         'allow_holiday_pay',
-        'auto_present_attendance_reports',
     ];
 
     public function __construct(
@@ -91,7 +90,6 @@ class ExecomPayrollSettingsController extends Controller
             'allow_paid_leave' => (bool) $policy['allow_paid_leave'],
             'allow_overtime' => (bool) $policy['allow_overtime'],
             'allow_holiday_pay' => (bool) $policy['allow_holiday_pay'],
-            'auto_present_attendance_reports' => (bool) $policy['auto_present_attendance_reports'],
         ];
     }
 }

@@ -3518,7 +3518,10 @@ class EmployeeController extends Controller
         $managedDivision = is_array($managedDivisions) ? ($managedDivisions[$uid] ?? null) : null;
         $managedSections = $orgMaps['managed_section_unit_by_user'] ?? [];
         $managedSection = is_array($managedSections) ? ($managedSections[$uid] ?? null) : null;
-        $employeeLevel = $this->employeeLevelFields($user);
+        // ponytail: list rows must not call resolveEmployeeLevel / leave-credit recharge (N×DB).
+        // Use cached users.employee_level* columns; profile/leave endpoints still run the full pipeline.
+        $employeeLevel = $this->employeeLevelFieldsFromCache($user);
+        $profileImageUrl = $user->profile_image_url;
 
         return [
             'id' => $user->id,
@@ -3587,12 +3590,28 @@ class EmployeeController extends Controller
             'deactivated_at' => $user->deactivated_at?->toIso8601String(),
             'created_at' => $user->created_at?->toIso8601String(),
             'updated_at' => $user->updated_at?->toIso8601String(),
-            'profile_image' => $user->profile_image_url,
-            'profile_image_url' => $user->profile_image_url,
-            'profile_picture_url' => $user->profile_image_url,
-            'avatar_url' => $user->profile_image_url,
-            'photo_url' => $user->profile_image_url,
-            ...$this->leaveCreditsSnapshotFields($user),
+            'profile_image' => $profileImageUrl,
+            'profile_image_url' => $profileImageUrl,
+            'profile_picture_url' => $profileImageUrl,
+            'avatar_url' => $profileImageUrl,
+            'photo_url' => $profileImageUrl,
+            // Leave-credit recharge belongs on profile/leave endpoints, not roster list transforms.
+            'leave_credits' => null,
+            'leave_credits_annual_allocation' => null,
+            'leave_credits_reset_date' => null,
+            'leave_credits_last_recharged_display' => null,
+            'leave_credits_recharge_policy' => null,
+            'leave_credits_eligible_for_paid_pool' => null,
+            'leave_credits_probationary' => null,
+            'leave_credits_has_one_year_service' => null,
+            'leave_credits_display' => null,
+            'leave_credits_status_summary' => null,
+            'leave_credits_unpaid_notice' => null,
+            'leave_credits_warning' => null,
+            'leave_credits_effective_available' => null,
+            'leave_credits_pending_reserved_days' => null,
+            'leave_credits_is_regular_employment' => null,
+            'leave_credits_service_anchor_date' => null,
         ];
     }
 
@@ -3617,6 +3636,32 @@ class EmployeeController extends Controller
             'employee_level_organization_path' => $resolved['organization_path'],
             'employee_level_effective_from' => $resolved['effective_from'],
             'employee_level_effective_to' => $resolved['effective_to'],
+            'employee_level_resolved_at' => $user->employee_level_resolved_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Roster/list path: prefer already-synced `users.employee_level*` columns (no per-row resolve queries).
+     *
+     * @return array<string, mixed>
+     */
+    private function employeeLevelFieldsFromCache(User $user): array
+    {
+        $level = (int) ($user->employee_level ?? 0);
+        $name = EmployeeLevelResolver::LEVEL_NAMES[$level] ?? EmployeeLevelResolver::LEVEL_NAMES[0];
+        $label = is_string($user->employee_level_label) && trim($user->employee_level_label) !== ''
+            ? $user->employee_level_label
+            : ('Level '.$level.' - '.$name);
+
+        return [
+            'employee_level' => $level,
+            'employee_level_name' => $name,
+            'employee_level_label' => $label,
+            'employee_level_source_module' => 'cached_user_level',
+            'employee_level_source_assignment_id' => null,
+            'employee_level_organization_path' => null,
+            'employee_level_effective_from' => null,
+            'employee_level_effective_to' => null,
             'employee_level_resolved_at' => $user->employee_level_resolved_at?->toIso8601String(),
         ];
     }
