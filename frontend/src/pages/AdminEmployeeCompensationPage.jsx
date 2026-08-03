@@ -46,6 +46,8 @@ import { cn } from '@/lib/utils'
 import {
   assignEmployeeCompensation,
   deleteEmployeeCompensation,
+  getBranches,
+  getCompanies,
   getEmployeeCompensation,
   getEmployees,
   getPayComponents,
@@ -215,6 +217,10 @@ export default function AdminEmployeeCompensationPage() {
   const hrBase = useHrBasePath()
   const [employees, setEmployees] = useState([])
   const [components, setComponents] = useState([])
+  const [companies, setCompanies] = useState([])
+  const [branches, setBranches] = useState([])
+  const [filterCompany, setFilterCompany] = useState('')
+  const [filterBranch, setFilterBranch] = useState('')
   /** Single selected employee payload from GET /admin/employee-compensation (cached per id in compensationCacheRef). */
   const [detailEntry, setDetailEntry] = useState(null)
   const [employeeSearch, setEmployeeSearch] = useState('')
@@ -271,7 +277,9 @@ export default function AdminEmployeeCompensationPage() {
       const employeeRes = await getEmployees({
         q: searchTerm,
         per_page: 100,
-        ...(trimmed ? { fresh: true } : {}),
+        ...(filterCompany ? { company_id: filterCompany } : {}),
+        ...(filterBranch ? { branch_id: filterBranch } : {}),
+        ...(trimmed || filterCompany || filterBranch ? { fresh: true } : {}),
       })
       const employeeRows = Array.isArray(employeeRes?.employees) ? employeeRes.employees : []
       setEmployees(employeeRows)
@@ -291,10 +299,10 @@ export default function AdminEmployeeCompensationPage() {
         if (prev != null && employeeRows.some((row) => Number(row.id) === Number(prev))) {
           return prev
         }
-        if (prev == null && employeeRows.length > 0) {
+        if (employeeRows.length > 0) {
           return employeeRows[0].id
         }
-        return prev
+        return null
       })
     } catch (error) {
       toast({
@@ -306,7 +314,7 @@ export default function AdminEmployeeCompensationPage() {
       setListLoading(false)
       setListRefreshing(false)
     }
-  }, [toast, urlEmployeeIdOnMount])
+  }, [filterBranch, filterCompany, toast, urlEmployeeIdOnMount])
 
   const loadCompensationDetail = useCallback(
     async (rawEmployeeId, options = {}) => {
@@ -408,9 +416,13 @@ export default function AdminEmployeeCompensationPage() {
     let cancelled = false
     ;(async () => {
       try {
-        const componentRes = await getPayComponents({ all: true })
+        const [componentRes, companyRes] = await Promise.all([
+          getPayComponents({ all: true }),
+          getCompanies(),
+        ])
         if (!cancelled) {
           setComponents(Array.isArray(componentRes?.components) ? componentRes.components : [])
+          setCompanies(Array.isArray(companyRes?.companies) ? companyRes.companies : [])
         }
       } catch (error) {
         if (!cancelled) {
@@ -426,6 +438,27 @@ export default function AdminEmployeeCompensationPage() {
       cancelled = true
     }
   }, [toast])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const branchRes = await getBranches(filterCompany ? { company_id: filterCompany } : {})
+        if (cancelled) return
+        const rows = Array.isArray(branchRes?.branches) ? branchRes.branches : []
+        setBranches(rows)
+        setFilterBranch((prev) => {
+          if (!prev) return ''
+          return rows.some((branch) => String(branch.id) === String(prev)) ? prev : ''
+        })
+      } catch {
+        if (!cancelled) setBranches([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [filterCompany])
 
   useEffect(() => {
     if (employeeSearchMountRef.current) {
@@ -960,6 +993,46 @@ export default function AdminEmployeeCompensationPage() {
             ) : null}
           </label>
 
+          <div className="mt-3 grid gap-2">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Company</span>
+              <select
+                value={filterCompany}
+                onChange={(event) => {
+                  setFilterCompany(event.target.value)
+                  setFilterBranch('')
+                }}
+                className={inputClass}
+                aria-label="Filter employees by company"
+              >
+                <option value="">All Companies</option>
+                {companies.map((company) => (
+                  <option key={company.id} value={String(company.id)}>
+                    {company.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Branch</span>
+              <select
+                value={filterBranch}
+                onChange={(event) => setFilterBranch(event.target.value)}
+                disabled={branches.length === 0}
+                className={`${inputClass} disabled:cursor-not-allowed disabled:opacity-60`}
+                aria-label="Filter employees by branch"
+              >
+                <option value="">All Branches</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={String(branch.id)}>
+                    {branch.name}
+                    {!filterCompany && branch.company_name ? ` (${branch.company_name})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
           <div ref={employeeListScrollRef} className={cn('mt-4 max-h-[720px] space-y-2 overflow-y-auto pr-1', listRefreshing && 'opacity-90')}>
             {listLoading && employees.length === 0 ? (
               Array.from({ length: 8 }).map((_, index) => (
@@ -967,7 +1040,9 @@ export default function AdminEmployeeCompensationPage() {
               ))
             ) : employees.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-                No employees matched your search.
+                {filterCompany || filterBranch || String(employeeSearch || '').trim()
+                  ? 'No employees matched your filters.'
+                  : 'No employees matched your search.'}
               </div>
             ) : (
               employees.map((employee) => {
@@ -998,7 +1073,12 @@ export default function AdminEmployeeCompensationPage() {
                           {[employee.position || 'No position', employee.department].filter(Boolean).join(' · ') || 'No position'}
                         </p>
                         <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                          {[employee.employee_code, employee.employment_status_label || employee.employment_status]
+                          {[
+                            employee.company_name,
+                            employee.branch_name,
+                            employee.employee_code,
+                            employee.employment_status_label || employee.employment_status,
+                          ]
                             .filter(Boolean)
                             .join(' · ') || '—'}
                         </p>
