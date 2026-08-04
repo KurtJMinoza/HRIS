@@ -8,6 +8,7 @@ use App\Models\DeductionScheduleSetting;
 use App\Models\EmployeeCompensationComponent;
 use App\Models\EmployeeDeduction;
 use App\Models\EmployeeOrganizationAssignment;
+use App\Models\EmploymentPayrollSetting;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\PayrollBatchRun;
@@ -1673,6 +1674,12 @@ class PayrollComputationService
 
         $tz = $this->getTimezone();
         $isConsultant = $this->isConsultantEmployee($user);
+        $employmentPolicy = $this->resolveEmploymentPayrollPolicyForComputation($user);
+        $consultantPolicy = is_array($employmentPolicy) ? $employmentPolicy : EmploymentPayrollSetting::defaults('consultant');
+        $consultantAttendanceEarnings = $isConsultant
+            && EmploymentPayrollPolicyApplicator::consultantAttendanceEarningsEnabled($consultantPolicy);
+        $consultantPolicyApplicator = $this->employmentPayrollPolicyApplicator
+            ?? (function_exists('app') ? app(EmploymentPayrollPolicyApplicator::class) : null);
         $precomputedCompensationSummary = null;
         $consultantSalarySources = null;
         if ($isConsultant) {
@@ -1763,7 +1770,7 @@ class PayrollComputationService
         $__segStart = microtime(true);
 
         $days = [];
-        if ($isConsultant) {
+        if ($isConsultant && ! $consultantAttendanceEarnings) {
             $days = $this->consultantAutoPresentDays($from, $to);
         } else {
             $cursor = $from->copy();
@@ -1789,7 +1796,10 @@ class PayrollComputationService
                 $cursor->addDay();
             }
 
-            $this->evaluateHolidayPayForPeriod($user, $days, $from, $to, $effectiveSchedule, $dailyRate, $tz);
+            $evaluateHolidayPay = ! $isConsultant || (bool) ($consultantPolicy['allow_holiday_pay'] ?? false);
+            if ($evaluateHolidayPay) {
+                $this->evaluateHolidayPayForPeriod($user, $days, $from, $to, $effectiveSchedule, $dailyRate, $tz);
+            }
         }
 
         if (is_object($timingSink)) {
@@ -2153,7 +2163,11 @@ class PayrollComputationService
             ])
         );
         if ($isConsultant) {
-            $deductionSchedule = $this->deductionScheduleWithoutConsultantSuppressedEarnings($deductionSchedule);
+            $deductionSchedule = $this->deductionScheduleWithoutConsultantSuppressedEarnings(
+                $deductionSchedule,
+                $consultantPolicy,
+                $consultantPolicyApplicator
+            );
         }
 
         if ($isConsultant) {
@@ -2175,7 +2189,7 @@ class PayrollComputationService
             $totalOtNight = 0;
             $basicScheduleType = (string) $consultantPeriodBasic['schedule_type'];
             $basicFactor = (float) $consultantPeriodBasic['factor'];
-            $dailyComputationEarningLines = [[
+            $fixedBasicLine = [
                 'key' => 'consultant:basic_pay',
                 'label' => 'Basic Pay',
                 'name' => 'Basic Pay',
@@ -2196,7 +2210,34 @@ class PayrollComputationService
                     'source' => (string) ($consultantSalarySources['salary_source_used'] ?? 'consultant_fixed_salary'),
                     'salary_source_used' => (string) ($consultantSalarySources['salary_source_used'] ?? 'consultant_fixed_salary'),
                 ],
-            ]];
+            ];
+            if ($consultantAttendanceEarnings) {
+                $attendanceLines = [];
+                foreach ($dailyComputationEarningLines as $line) {
+                    if (! is_array($line)) {
+                        continue;
+                    }
+                    if (
+                        $consultantPolicyApplicator instanceof EmploymentPayrollPolicyApplicator
+                        && $consultantPolicyApplicator->shouldSuppressConsultantEarningLine($line, $consultantPolicy)
+                    ) {
+                        continue;
+                    }
+                    $attendanceLines[] = $line;
+                    $attendancePremiumPayThisPeriod += round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+                }
+                $attendancePremiumPayThisPeriod = round($attendancePremiumPayThisPeriod, 2);
+                foreach ($days as $d) {
+                    $totalWorkedMinutes += (int) ($d['worked_minutes'] ?? 0);
+                    $totalRegularDay += (int) ($d['regular_day_minutes'] ?? 0);
+                    $totalRegularNight += (int) ($d['regular_night_minutes'] ?? 0);
+                    $totalOtDay += (int) ($d['ot_day_minutes'] ?? 0);
+                    $totalOtNight += (int) ($d['ot_night_minutes'] ?? 0);
+                }
+                $dailyComputationEarningLines = array_values(array_merge([$fixedBasicLine], $attendanceLines));
+            } else {
+                $dailyComputationEarningLines = [$fixedBasicLine];
+            }
         }
 
         $employeeStatutoryThisPeriod = (float) ($deductionSchedule['employee_statutory_this_period'] ?? $employeeStatutoryFullMonthly);
@@ -2208,7 +2249,6 @@ class PayrollComputationService
             : max(0.0, round($grossEarnings - $basicSalary, 2));
         $grossThisPeriod = round($basicPayThisPeriod + $attendancePremiumPayThisPeriod + $nonBasicEarningsThisPeriod, 2);
 
-        $employmentPolicy = $this->resolveEmploymentPayrollPolicyForComputation($user);
         $applyCustomDeductions = $employmentPolicy === null
             || (bool) ($employmentPolicy['apply_custom_deductions'] ?? true);
 
@@ -2867,12 +2907,18 @@ class PayrollComputationService
      * @param  array<string, mixed>  $deductionSchedule
      * @return array<string, mixed>
      */
-    private function deductionScheduleWithoutConsultantSuppressedEarnings(array $deductionSchedule): array
-    {
+    private function deductionScheduleWithoutConsultantSuppressedEarnings(
+        array $deductionSchedule,
+        ?array $policy = null,
+        ?EmploymentPayrollPolicyApplicator $applicator = null,
+    ): array {
         $lines = [];
         $nonBasicThisPeriod = 0.0;
         foreach ((array) ($deductionSchedule['earning_lines'] ?? []) as $line) {
-            if (! is_array($line) || $this->isConsultantSuppressedEarningLine($line)) {
+            if (! is_array($line)) {
+                continue;
+            }
+            if ($this->isConsultantSuppressedEarningLine($line, $policy, $applicator)) {
                 continue;
             }
 
@@ -2890,9 +2936,17 @@ class PayrollComputationService
 
     /**
      * @param  array<string, mixed>  $line
+     * @param  array<string, mixed>|null  $policy
      */
-    private function isConsultantSuppressedEarningLine(array $line): bool
-    {
+    private function isConsultantSuppressedEarningLine(
+        array $line,
+        ?array $policy = null,
+        ?EmploymentPayrollPolicyApplicator $applicator = null,
+    ): bool {
+        if ($applicator instanceof EmploymentPayrollPolicyApplicator && is_array($policy)) {
+            return $applicator->shouldSuppressConsultantEarningLine($line, $policy);
+        }
+
         if (! empty($line['is_basic_salary_line'])) {
             return false;
         }

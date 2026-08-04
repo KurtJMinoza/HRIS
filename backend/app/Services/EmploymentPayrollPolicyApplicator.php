@@ -13,6 +13,9 @@ class EmploymentPayrollPolicyApplicator
     private const OT_COMPONENTS = ['ot_pay', 'overtime_premium', 'nd_pay', 'night_diff'];
 
     /** @var list<string> */
+    private const CONSULTANT_FIXED_PAY_REPLACEMENT_COMPONENTS = ['regular_pay', 'undertime_deduction', 'unpaid_leave'];
+
+    /** @var list<string> */
     private const HOLIDAY_COMPONENTS = ['holiday_premium', 'rest_day_worked_pay'];
 
     /** @var list<string> */
@@ -21,6 +24,44 @@ class EmploymentPayrollPolicyApplicator
     public function __construct(
         private readonly EmploymentPayrollPolicyResolver $policyResolver,
     ) {}
+
+    /**
+     * Consultants need real attendance/day payroll when any attendance-driven earning is enabled.
+     *
+     * @param  array<string, mixed>  $policy
+     */
+    public static function consultantAttendanceEarningsEnabled(array $policy): bool
+    {
+        return (bool) ($policy['allow_overtime'] ?? false)
+            || (bool) ($policy['allow_holiday_pay'] ?? false)
+            || (bool) ($policy['allow_paid_leave'] ?? false);
+    }
+
+    /**
+     * Gate consultant fixed-pay sanitization: suppress attendance lines only when policy disables them.
+     *
+     * @param  array<string, mixed>  $line
+     * @param  array<string, mixed>  $policy
+     */
+    public function shouldSuppressConsultantEarningLine(array $line, array $policy): bool
+    {
+        if ($this->isConsultantFixedPayReplacementLine($line)) {
+            return true;
+        }
+
+        $haystack = $this->consultantLineHaystack($line);
+        if ($this->lineLooksLikeHoliday($line, $haystack)) {
+            return ! (bool) ($policy['allow_holiday_pay'] ?? false);
+        }
+        if ($this->lineLooksLikeOvertime($line, $haystack)) {
+            return ! (bool) ($policy['allow_overtime'] ?? false);
+        }
+        if ($this->lineLooksLikePaidLeave($line, $haystack)) {
+            return ! (bool) ($policy['allow_paid_leave'] ?? false);
+        }
+
+        return false;
+    }
 
     /**
      * @param  array<string, mixed>  $computed
@@ -452,5 +493,74 @@ class EmploymentPayrollPolicyApplicator
         }
 
         return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isConsultantFixedPayReplacementLine(array $line): bool
+    {
+        $component = strtolower(trim((string) ($line['component'] ?? $line['component_code'] ?? '')));
+        if (in_array($component, self::CONSULTANT_FIXED_PAY_REPLACEMENT_COMPONENTS, true)) {
+            return true;
+        }
+
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? $line['name'] ?? '')));
+        $category = strtolower(trim((string) ($line['category'] ?? '')));
+        $haystack = $key.' '.$label.' '.$category;
+
+        return str_contains($key, 'regular_pay')
+            || $label === 'regular pay'
+            || $category === 'regular_pay'
+            || str_contains($key, 'attendance_premium')
+            || str_contains($haystack, 'unpaid_leave');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function consultantLineHaystack(array $line): string
+    {
+        return strtolower(implode(' ', [
+            (string) ($line['key'] ?? ''),
+            (string) ($line['component'] ?? ''),
+            (string) ($line['component_code'] ?? ''),
+            (string) ($line['code'] ?? ''),
+            (string) ($line['category'] ?? ''),
+            (string) ($line['label'] ?? ''),
+            (string) ($line['name'] ?? ''),
+        ]));
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function lineLooksLikeHoliday(array $line, string $haystack): bool
+    {
+        $component = strtolower(trim((string) ($line['component'] ?? $line['component_code'] ?? '')));
+
+        return in_array($component, self::HOLIDAY_COMPONENTS, true)
+            || str_contains($haystack, 'holiday')
+            || str_contains($haystack, 'rest_day_worked');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function lineLooksLikeOvertime(array $line, string $haystack): bool
+    {
+        return $this->isOvertimeLine($line)
+            || str_contains($haystack, 'night_diff')
+            || str_contains($haystack, 'night differential');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function lineLooksLikePaidLeave(array $line, string $haystack): bool
+    {
+        return $this->isPaidLeaveLine($line)
+            || str_contains($haystack, 'leave adjustment');
     }
 }

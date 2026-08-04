@@ -36,6 +36,7 @@ class EmploymentTypeResolverTest extends TestCase
             'regular status' => [['employment_type' => 'full_time', 'employment_status' => 'regular'], 'regular'],
             'probationary status' => [['employment_type' => 'full_time', 'employment_status' => 'probationary'], 'probationary'],
             'consultant type' => [['employment_type' => 'consultant', 'employment_status' => 'regular'], 'consultant'],
+            'consultant status' => [['employment_type' => 'full_time', 'employment_status' => 'consultant'], 'consultant'],
             'contractual type' => [['employment_type' => 'contract', 'employment_status' => 'active'], 'contractual'],
             'execom flag' => [['employment_type' => 'full_time', 'employment_status' => 'regular', 'is_execom' => true], 'execom'],
         ];

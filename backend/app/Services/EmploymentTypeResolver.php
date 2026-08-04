@@ -59,7 +59,10 @@ class EmploymentTypeResolver
         $type = $this->normalize($employee->employment_type);
         $status = $this->normalize($employee->employment_status);
 
-        if (in_array($type, ['consultant', 'consultancy'], true)) {
+        if (
+            in_array($type, ['consultant', 'consultancy'], true)
+            || in_array($status, ['consultant', 'consultancy'], true)
+        ) {
             return 'consultant';
         }
         if (str_contains($type, 'contract') || str_contains($status, 'contract')) {

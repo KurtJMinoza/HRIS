@@ -83,8 +83,7 @@ class EmployeeStatusService
             }
         }
 
-        $isRegular = EmploymentStatus::tryFromStored((string) $employee->employment_status) === EmploymentStatus::Regular;
-        if ($initializeLeaveCredits && $isRegular) {
+        if ($initializeLeaveCredits) {
             $this->leaveCreditService->initializeLeaveCreditsForRegularEmployeeIfEligible(
                 $employee->fresh() ?? $employee,
                 $actor,

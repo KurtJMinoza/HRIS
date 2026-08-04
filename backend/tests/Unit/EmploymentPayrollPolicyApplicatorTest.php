@@ -140,4 +140,61 @@ class EmploymentPayrollPolicyApplicatorTest extends TestCase
         $this->assertSame(150.0, $result['daily_computation_earning_lines'][0]['amount']);
         $this->assertCount(1, $result['holiday_premium_breakdown']);
     }
+
+    public function test_consultant_suppression_respects_enabled_policy_toggles(): void
+    {
+        $resolver = $this->createMock(EmploymentPayrollPolicyResolver::class);
+        $applicator = new EmploymentPayrollPolicyApplicator($resolver);
+
+        $enabledPolicy = [
+            'employment_type' => 'consultant',
+            'apply_custom_deductions' => true,
+            'apply_allowances' => true,
+            'allow_paid_leave' => true,
+            'allow_overtime' => true,
+            'allow_holiday_pay' => true,
+        ];
+
+        $this->assertFalse($applicator->shouldSuppressConsultantEarningLine([
+            'component' => 'ot_pay',
+            'amount' => 100.0,
+        ], $enabledPolicy));
+        $this->assertFalse($applicator->shouldSuppressConsultantEarningLine([
+            'component' => 'holiday_premium',
+            'amount' => 150.0,
+        ], $enabledPolicy));
+        $this->assertFalse($applicator->shouldSuppressConsultantEarningLine([
+            'component' => 'paid_leave',
+            'amount' => 80.0,
+        ], $enabledPolicy));
+        $this->assertTrue($applicator->shouldSuppressConsultantEarningLine([
+            'component' => 'regular_pay',
+            'amount' => 1000.0,
+        ], $enabledPolicy));
+
+        $disabledPolicy = array_merge($enabledPolicy, [
+            'allow_overtime' => false,
+            'allow_holiday_pay' => false,
+            'allow_paid_leave' => false,
+        ]);
+
+        $this->assertTrue($applicator->shouldSuppressConsultantEarningLine([
+            'component' => 'ot_pay',
+            'amount' => 100.0,
+        ], $disabledPolicy));
+    }
+
+    public function test_consultant_attendance_earnings_enabled_when_any_toggle_on(): void
+    {
+        $this->assertFalse(EmploymentPayrollPolicyApplicator::consultantAttendanceEarningsEnabled([
+            'allow_overtime' => false,
+            'allow_holiday_pay' => false,
+            'allow_paid_leave' => false,
+        ]));
+        $this->assertTrue(EmploymentPayrollPolicyApplicator::consultantAttendanceEarningsEnabled([
+            'allow_overtime' => true,
+            'allow_holiday_pay' => false,
+            'allow_paid_leave' => false,
+        ]));
+    }
 }

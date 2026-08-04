@@ -2468,9 +2468,10 @@ class PayslipService
         $summary = is_array($out['summary'] ?? null) ? $out['summary'] : [];
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
         if ($this->isExecomSnapshot($out, $summary)) {
-            $summary = $this->sanitizeExecomPayslipSummary($summary, $out);
+            $summary = $this->sanitizeExecomPayslipSummary($summary);
         } elseif ($this->isConsultantSnapshot($out, $summary)) {
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
+            $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
@@ -2722,6 +2723,7 @@ class PayslipService
             $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
         } elseif ($isConsultant) {
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $snapshot);
+            $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $snapshot);
         }
 
         $earningLines = ($isExecom || $isConsultant)
@@ -2979,6 +2981,7 @@ class PayslipService
             $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
         } elseif ($isConsultant) {
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $snapshot);
+            $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $snapshot);
         }
 
         $earningLines = ($isExecom || $isConsultant)
@@ -3390,6 +3393,10 @@ class PayslipService
      */
     private function resolveEmploymentPayrollTypeForSummary(array $summary, array $fromSummary, array $snapshot = []): string
     {
+        if ($this->isConsultantSnapshot($snapshot, $summary) || ! empty($summary['consultant_fixed_payroll'])) {
+            return 'consultant';
+        }
+
         $fromPolicy = EmploymentPayrollSetting::normalizeEmploymentType(
             (string) ($fromSummary['employment_type'] ?? '')
         );
@@ -3901,8 +3908,14 @@ class PayslipService
      */
     private function sanitizeConsultantPayslipSummary(array $summary, array $snapshot = []): array
     {
+        $policy = $this->resolveConsultantEmploymentPolicy($summary, $snapshot);
+        $applicator = $this->employmentPayrollPolicyApplicator
+            ?? (function_exists('app') ? app(EmploymentPayrollPolicyApplicator::class) : null);
+        $attendanceEarningsEnabled = EmploymentPayrollPolicyApplicator::consultantAttendanceEarningsEnabled($policy);
+
         $lines = [];
         $basicAmount = $this->resolveConsultantBasicPayDisplayAmount($summary);
+        $attendancePremium = 0.0;
 
         if ($basicAmount > 0.0) {
             $lines[] = [
@@ -3926,11 +3939,22 @@ class PayslipService
             ];
         }
 
-        foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
+        $sourceLines = array_merge(
+            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
+            $attendanceEarningsEnabled
+                ? (is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [])
+                : []
+        );
+        foreach ($sourceLines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
             if (
-                ! is_array($line)
-                || $this->isExecomBasicPayLine($line)
-                || $this->isConsultantSuppressedEarningLine($line)
+                $this->isExecomBasicPayLine($line)
+                || ($applicator instanceof EmploymentPayrollPolicyApplicator
+                    && $applicator->shouldSuppressConsultantEarningLine($line, $policy))
+                || (! ($applicator instanceof EmploymentPayrollPolicyApplicator)
+                    && $this->isConsultantSuppressedEarningLine($line))
             ) {
                 continue;
             }
@@ -3942,35 +3966,95 @@ class PayslipService
 
             $line['amount'] = $amount;
             $lines[] = $line;
+            $attendancePremium += $amount;
         }
 
         $lines = $this->deduplicatePayslipLines($lines);
-        $summary['daily_computation_earning_lines'] = [];
-        $summary['daily_computation_days'] = [];
-        $summary['holiday_premium_breakdown'] = [];
+        $attendancePremium = round($attendancePremium, 2);
         $summary['payslip_earning_lines'] = array_values($lines);
+        $summary['daily_computation_earning_lines'] = $attendanceEarningsEnabled
+            ? array_values(array_filter(
+                is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [],
+                fn ($line): bool => is_array($line)
+                    && ! ($applicator instanceof EmploymentPayrollPolicyApplicator
+                        && $applicator->shouldSuppressConsultantEarningLine($line, $policy))
+            ))
+            : [];
+        if (! $attendanceEarningsEnabled) {
+            $summary['daily_computation_days'] = [];
+            $summary['holiday_premium_breakdown'] = [];
+            $summary['overtime_total_hours'] = 0.0;
+            $summary['overtime_total_amount'] = 0.0;
+            $summary['total_ot_day_minutes'] = 0;
+            $summary['total_ot_night_minutes'] = 0;
+        }
         $summary['basic_pay'] = $basicAmount;
         $summary['basic_pay_this_period'] = $basicAmount;
         $summary['basic_salary_period'] = $basicAmount;
         $summary['basic_salary'] = $basicAmount;
-        $summary['total_pay'] = $basicAmount;
-        $summary['attendance_premium_pay_this_period'] = 0.0;
-        $summary['attendance_status'] = 'Auto Present';
+        $summary['total_pay'] = round($basicAmount + $attendancePremium, 2);
+        $summary['attendance_premium_pay_this_period'] = $attendancePremium;
+        $summary['gross_pay_this_period'] = round($basicAmount + $attendancePremium, 2);
+        $summary['attendance_status'] = $attendanceEarningsEnabled
+            ? (string) ($summary['attendance_status'] ?? 'Present')
+            : 'Auto Present';
         $summary['attendance_deduction'] = 0.0;
         $summary['attendance_salary_deduction'] = 0.0;
         $summary['leave_deduction'] = 0.0;
-        $summary['late_minutes'] = 0;
-        $summary['undertime_minutes'] = 0;
-        $summary['absent_days'] = 0;
-        $summary['total_worked_minutes'] = 0;
-        $summary['total_regular_day_minutes'] = 0;
-        $summary['total_regular_night_minutes'] = 0;
-        $summary['total_ot_day_minutes'] = 0;
-        $summary['total_ot_night_minutes'] = 0;
-        $summary['overtime_total_hours'] = 0.0;
-        $summary['overtime_total_amount'] = 0.0;
+        if (! $attendanceEarningsEnabled) {
+            $summary['late_minutes'] = 0;
+            $summary['undertime_minutes'] = 0;
+            $summary['absent_days'] = 0;
+            $summary['total_worked_minutes'] = 0;
+            $summary['total_regular_day_minutes'] = 0;
+            $summary['total_regular_night_minutes'] = 0;
+        }
+        $summary['employment_payroll_settings'] = array_merge(
+            EmploymentPayrollSetting::defaults('consultant'),
+            is_array($summary['employment_payroll_settings'] ?? null) ? $summary['employment_payroll_settings'] : [],
+            [
+                'employment_type' => 'consultant',
+                'apply_custom_deductions' => (bool) ($policy['apply_custom_deductions'] ?? true),
+                'apply_allowances' => (bool) ($policy['apply_allowances'] ?? true),
+                'allow_paid_leave' => (bool) ($policy['allow_paid_leave'] ?? true),
+                'allow_overtime' => (bool) ($policy['allow_overtime'] ?? false),
+                'allow_holiday_pay' => (bool) ($policy['allow_holiday_pay'] ?? false),
+            ]
+        );
 
         return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    private function resolveConsultantEmploymentPolicy(array $summary, array $snapshot = []): array
+    {
+        $defaults = EmploymentPayrollSetting::defaults('consultant');
+        $fromSummary = is_array($summary['employment_payroll_settings'] ?? null)
+            ? $summary['employment_payroll_settings']
+            : [];
+
+        try {
+            $resolver = app(EmploymentPayrollPolicyResolver::class);
+            $companyId = isset($summary['company_id']) && is_numeric($summary['company_id'])
+                ? (int) $summary['company_id']
+                : (isset($snapshot['company_id']) && is_numeric($snapshot['company_id'])
+                    ? (int) $snapshot['company_id']
+                    : null);
+            $live = $resolver->resolve($companyId, 'consultant');
+            unset($live['company_id']);
+
+            return array_merge($defaults, array_intersect_key($live, $defaults), [
+                'employment_type' => 'consultant',
+            ], array_intersect_key($fromSummary, $defaults));
+        } catch (\Throwable) {
+            return array_merge($defaults, array_intersect_key($fromSummary, $defaults), [
+                'employment_type' => 'consultant',
+            ]);
+        }
     }
 
     /**

@@ -26,8 +26,11 @@ use Illuminate\Validation\ValidationException;
  * types are **unpaid** (no deduction from pool; payroll excludes pay for those days).
  *
  * **Probationary** employees: **0** credits (not eligible). **Project-based** employees: **0**
- * credits even after one year of service. **Regular** employees with **less than one full year of
- * service**: **0** credits (not eligible yet). Only **Regular + ≥1 year** receive the annual pool.
+ * credits even after one year of service. **Consultants** receive the pool only when Policy Settings
+ * → Employment → Consultant has **Allow paid leave** enabled, plus one full year from the status
+ * effective date (or hire date). **Regular** employees with **less than one full year of
+ * service**: **0** credits (not eligible yet). Only **Regular + ≥1 year** (or eligible consultant)
+ * receive the annual pool.
  *
  * **Annual pool:** configurable via leave.annual_allocation (default 14). **January 1** full reset
  * for eligible employees; unused credits do not carry over (not cumulative).
@@ -41,7 +44,10 @@ class LeaveCreditService
     /** Keep aligned with {@see config('cache.profile_ttl_minutes')} (max 5m) to limit cache churn. */
     private const SUMMARY_CACHE_TTL_MINUTES = 5;
 
-    public function __construct(private readonly HolidayService $holidayService) {}
+    public function __construct(
+        private readonly HolidayService $holidayService,
+        private readonly ?EmploymentPayrollPolicyResolver $employmentPayrollPolicyResolver = null,
+    ) {}
 
     private static function summaryCacheKey(int $userId, bool $includePendingReservedDays = false): string
     {
@@ -97,16 +103,29 @@ class LeaveCreditService
     }
 
     /**
-     * Paid annual pool: **Regular** status **and** one full year from the regular-status anchor date.
-     * Others get 0 pool credits.
+     * Paid annual pool:
+     * - **Regular** + one full year from the regular-status anchor date, or
+     * - **Consultant** with Employment policy **Allow paid leave** + one full year from anchor.
      */
     public function eligibleForPaidLeavePool(User $user): bool
     {
-        if (! $this->isRegularEmployment($user)) {
+        if (! $this->hasLeaveCreditPoolEmployment($user)) {
             return false;
         }
 
         return $this->hasCompletedOneYearOfService($user);
+    }
+
+    /**
+     * Employment classes that may ever receive a paid leave-credit pool (before the 1-year gate).
+     */
+    public function hasLeaveCreditPoolEmployment(User $user): bool
+    {
+        if ($this->isRegularEmployment($user)) {
+            return true;
+        }
+
+        return $this->isConsultantEmployment($user) && $this->consultantPaidLeaveAllowedByPolicy($user);
     }
 
     /**
@@ -117,6 +136,32 @@ class LeaveCreditService
         return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::Regular;
     }
 
+    public function isConsultantEmployment(User $user): bool
+    {
+        if (EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::Consultant) {
+            return true;
+        }
+
+        $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($user->employment_type ?? ''))));
+
+        return in_array($type, ['consultant', 'consultancy'], true);
+    }
+
+    public function consultantPaidLeaveAllowedByPolicy(User $user): bool
+    {
+        if (! $this->isConsultantEmployment($user)) {
+            return false;
+        }
+
+        try {
+            $resolver = $this->employmentPayrollPolicyResolver ?? app(EmploymentPayrollPolicyResolver::class);
+
+            return (bool) ($resolver->resolveForEmployee($user)['allow_paid_leave'] ?? false);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
     /**
      * Date from which "one year of regular service" is measured for leave-credit eligibility.
      * Uses Status Effective Date first so admin and employee views resolve the same balance.
@@ -125,7 +170,7 @@ class LeaveCreditService
     {
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
 
-        if (! $this->isRegularEmployment($user)) {
+        if (! $this->hasLeaveCreditPoolEmployment($user)) {
             return null;
         }
 
@@ -246,6 +291,8 @@ class LeaveCreditService
         if ($recharged) {
             $this->forgetSummaryCacheForUser((int) $user->id);
         }
+
+        $this->initializeLeaveCreditsForRegularEmployeeIfEligible($user->fresh() ?? $user, null, 'lazy_recharge');
 
         return $recharged;
     }
@@ -604,7 +651,11 @@ class LeaveCreditService
             $messageDetail = 'Undertime and non-credit types are not paid from the annual leave pool.';
         } elseif (! $eligible) {
             $message = 'This leave will be unpaid (not eligible for paid leave credits).';
-            $messageDetail = 'Paid leave credits apply only to Regular employees with one full year of regular service from the Status Effective Date.';
+            if ($this->isConsultantEmployment($user) && ! $this->consultantPaidLeaveAllowedByPolicy($user)) {
+                $messageDetail = 'Paid leave credits for consultants require Allow paid leave to be enabled in Policy Settings → Employment → Consultant.';
+            } else {
+                $messageDetail = 'Paid leave credits apply to Regular employees with one full year of service, or eligible consultants when paid leave is enabled in Employment policy.';
+            }
         } elseif ($paidDays >= $billable && $billable > 0) {
             $message = 'This leave will be paid using your leave credits.';
             $messageDetail =
@@ -1170,6 +1221,8 @@ class LeaveCreditService
                 $probationary = $this->isProbationaryEmployment($user);
                 $projectBased = $this->isProjectBasedEmployment($user);
                 $regular = $this->isRegularEmployment($user);
+                $consultant = $this->isConsultantEmployment($user);
+                $consultantPaidLeavePolicy = $consultant && $this->consultantPaidLeaveAllowedByPolicy($user);
                 $oneYear = $this->hasCompletedOneYearOfService($user);
                 $remaining = $eligible ? (int) ($user->leave_credits ?? 0) : 0;
                 // Keep profile card hot-path lightweight by default: pending-reserved
@@ -1185,13 +1238,21 @@ class LeaveCreditService
                 // Profile / My Leave: primary line (fraction) + status_summary (detail).
                 if ($eligible) {
                     $display = "{$remaining}/{$annual} credits (Eligible)";
-                    $statusSummary = 'Eligible for paid leave credits (Regular + 1 year service)';
+                    $statusSummary = $consultant
+                        ? 'Eligible for paid leave credits (Consultant + paid leave enabled + 1 year service)'
+                        : 'Eligible for paid leave credits (Regular + 1 year service)';
                 } else {
                     // Single line for any ineligible employee (probationary, project-based, Regular <1 year, or non-Regular).
                     $display = "0/{$annual} - Not yet eligible (under 1 year regular service)";
                     if ($projectBased) {
                         $display = "0/{$annual} - Not eligible (project-based)";
                         $statusSummary = 'Not eligible: project-based employees do not receive paid leave credits.';
+                    } elseif ($consultant && ! $consultantPaidLeavePolicy) {
+                        $display = "0/{$annual} - Not eligible (consultant paid leave disabled)";
+                        $statusSummary = 'Not eligible: enable Allow paid leave for Consultant in Policy Settings → Employment.';
+                    } elseif ($consultant && ! $oneYear) {
+                        $display = "0/{$annual} - Not yet eligible (under 1 year service)";
+                        $statusSummary = 'Complete 1 full year of service to unlock paid leave credits.';
                     } elseif ($probationary) {
                         $statusSummary = 'Not yet eligible: probationary employees do not receive paid leave credits';
                     } elseif ($regular && ! $oneYear) {
