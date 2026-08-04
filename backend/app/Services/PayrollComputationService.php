@@ -1039,20 +1039,30 @@ class PayrollComputationService
         $baseRegularPay = ($paidReg / 60.0) * $hourlyRate;
         $holidayIncrementMultiplier = $qualifiesStatutoryHolidayPremium ? max(0.0, $first8 - 1.0) : 0.0;
         $isWorkedSpecialNonWorking = $qualifiesStatutoryHolidayPremium
-            && $resolvedHolidayType === 'special';
+            && $resolvedHolidayType === 'special'
+            && ! $isRestDay;
         $isRestDayWorked = $isRestDay && $paidReg > 0;
+        $isRestDayHolidayWorked = $isRestDayWorked && $qualifiesStatutoryHolidayPremium;
+        $restDayMultiplier = (float) ($this->rulesEngine->getMultipliersForRule('RD', $policy)['first_8']
+            ?? config('payroll.rules.RD.first_8', 1.30));
         $restDayWorkedPay = 0.0;
 
         // RH: 1.00× stays in regular pay, premium increment on holiday line.
         // SH (special non-working): full 1.30× on holiday line; that day is excluded from regular pay.
-        // RD (rest day worked): full multiplier on a single rest_day_worked_pay line; excluded from regular pay.
+        // RD (rest day worked): full RD multiplier on rest_day_worked_pay; excluded from regular pay.
+        // RHRD/SHRD/DHRD: full statutory rate on one holiday line (no separate rest_day_worked_pay).
         if ($isWorkedSpecialNonWorking) {
             $regularBasePayOnly = 0.0;
+            $holidayPremiumPay = round($baseRegularPay * $first8, 2);
+        } elseif ($isRestDayHolidayWorked) {
+            $regularBasePayOnly = 0.0;
+            $restDayWorkedPay = 0.0;
+            $holidayIncrementMultiplier = $first8;
             $holidayPremiumPay = round($baseRegularPay * $first8, 2);
         } elseif ($isRestDayWorked) {
             $regularBasePayOnly = 0.0;
             $holidayPremiumPay = 0.0;
-            $restDayWorkedPay = round($baseRegularPay * $first8, 2);
+            $restDayWorkedPay = round($baseRegularPay * $restDayMultiplier, 2);
         } else {
             $regularBasePayOnly = round($baseRegularPay, 2);
             $holidayPremiumPay = $qualifiesStatutoryHolidayPremium
@@ -1069,8 +1079,8 @@ class PayrollComputationService
         $ndPay = $allowNdPremium ? ($ndPayRegular + $ndPayOt) : 0.0;
 
         $totalPay = $first8Pay + $otPay + $ndPay;
-        // RH worked: base in regular_pay + premium on holiday line. SH worked: full rate on holiday line only.
-        // RD worked: full multiplier on a single rest_day_worked_pay line; excluded from regular pay.
+        // RH worked: base in regular_pay + premium on holiday line. SH worked (non-RD): full rate on holiday line only.
+        // RD worked (no holiday): RD multiplier on rest_day_worked_pay. RHRD/SHRD/DHRD: full statutory rate on holiday line.
         // Unworked entitlement remains a single holiday_premium line in the no-punch branch.
         $isHolidayDay = $qualifiesStatutoryHolidayPremium;
 
@@ -1081,7 +1091,7 @@ class PayrollComputationService
                 'component' => 'rest_day_worked_pay',
                 'minutes' => $paidReg,
                 'rate' => $hourlyRate,
-                'multiplier' => $first8,
+                'multiplier' => $restDayMultiplier,
                 'amount' => $restDayWorkedPay,
             ];
         }
@@ -4907,12 +4917,17 @@ class PayrollComputationService
                 : ($worked ? 0 : ($dailyRate > 0 ? 480 : 0));
             $multiplier = round((float) ($item['multiplier'] ?? 1.0), 2);
             $baseHourly = $dailyRate > 0 ? $dailyRate / 8.0 : null;
-            // RH worked: premium increment only. SH worked: full statutory rate on holiday line.
+            // RH worked (non-RD): premium increment only. SH worked (non-RD): full statutory rate.
+            // RHRD/SHRD/DHRD worked: full statutory rate on the holiday line.
             $lineHourly = $baseHourly;
             if ($worked && $baseHourly !== null && $multiplier > 1.00001) {
-                $lineHourly = $normalizedType === 'special'
-                    ? round($baseHourly * $multiplier, 4)
-                    : round($baseHourly * max(0.0, $multiplier - 1.0), 4);
+                if ($normalizedType === 'special' && ! (bool) ($item['is_rest_day'] ?? false)) {
+                    $lineHourly = round($baseHourly * $multiplier, 4);
+                } elseif ((bool) ($item['is_rest_day'] ?? false)) {
+                    $lineHourly = round($baseHourly * $multiplier, 4);
+                } else {
+                    $lineHourly = round($baseHourly * max(0.0, $multiplier - 1.0), 4);
+                }
             } elseif (! $worked && $baseHourly !== null && $multiplier > 0) {
                 $lineHourly = round($baseHourly * $multiplier, 4);
             }

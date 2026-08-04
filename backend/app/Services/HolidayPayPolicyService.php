@@ -150,8 +150,11 @@ class HolidayPayPolicyService
             $componentCode = $this->holidayPayComponentCode($normalizedType, false);
             $holidayName = (string) ($holiday['name'] ?? 'Holiday');
             $basePay = round(($paidRegularMinutes / 60.0) * $hourlyRate, 2);
-            $premiumIncrement = max(0.0, $workedFirst8 - 1.0);
-            $useFullRateOnHolidayLine = $normalizedType === 'special';
+            // SH on a workday and any worked holiday on a rest day (RHRD/SHRD/DHRD) use the full statutory rate on one line.
+            $useFullRateOnHolidayLine = ($normalizedType === 'special' && ! $isRestDay) || $isRestDay;
+            $premiumIncrement = $useFullRateOnHolidayLine
+                ? $workedFirst8
+                : max(0.0, $workedFirst8 - 1.0);
             $holidayPremiumPay = round($basePay * ($useFullRateOnHolidayLine ? $workedFirst8 : $premiumIncrement), 2);
             $breakdown = [
                 'component' => 'holiday_premium',
