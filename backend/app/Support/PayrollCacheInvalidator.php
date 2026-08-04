@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Services\ExecomPayrollPolicyResolver;
+use App\Services\EmploymentPayrollPolicyResolver;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -50,6 +51,16 @@ class PayrollCacheInvalidator
     {
         foreach (self::keys() as $key) {
             Cache::forget($key);
+        }
+
+        $companyId = isset($context['company_id']) && is_numeric($context['company_id'])
+            ? (int) $context['company_id']
+            : null;
+
+        try {
+            app(EmploymentPayrollPolicyResolver::class)->forget($companyId);
+        } catch (\Throwable) {
+            // Resolver unavailable in some test contexts.
         }
 
         Log::info('Payroll cache invalidated', [

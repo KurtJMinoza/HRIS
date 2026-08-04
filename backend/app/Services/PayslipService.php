@@ -7,6 +7,7 @@ use App\Models\Company;
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\ExecomEmployeeProfile;
 use App\Models\ExecomPayrollSetting;
+use App\Models\EmploymentPayrollSetting;
 use App\Models\PayCycle;
 use App\Models\PayrollBatchRun;
 use App\Models\PayrollEmployee;
@@ -60,6 +61,7 @@ class PayslipService
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollEmployeeEligibilityService $payrollEligibility,
         private readonly ThirteenthMonthPayComputationService $thirteenthMonthPay,
+        private readonly ?EmploymentPayrollPolicyApplicator $employmentPayrollPolicyApplicator = null,
     ) {}
 
     /**
@@ -3279,6 +3281,9 @@ class PayslipService
             $summary = $this->sanitizeExecomPayslipSummary($summary);
         } elseif ($isConsultantSnapshot) {
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
+            $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
+        } else {
+            $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
         $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_deduction_lines'] ?? [],
@@ -3337,6 +3342,77 @@ class PayslipService
         $out['summary'] = $summary;
 
         return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    private function applyEmploymentPayrollPolicyToSummary(array $summary, array $snapshot = []): array
+    {
+        $defaults = EmploymentPayrollSetting::defaults();
+        $fromSummary = is_array($summary['employment_payroll_settings'] ?? null)
+            ? $summary['employment_payroll_settings']
+            : [];
+        $merged = array_merge($defaults, array_intersect_key($fromSummary, $defaults));
+
+        try {
+            $applicator = $this->employmentPayrollPolicyApplicator
+                ?? app(EmploymentPayrollPolicyApplicator::class);
+            $resolver = app(EmploymentPayrollPolicyResolver::class);
+            $companyId = isset($summary['company_id']) && is_numeric($summary['company_id'])
+                ? (int) $summary['company_id']
+                : (isset($snapshot['company_id']) && is_numeric($snapshot['company_id'])
+                    ? (int) $snapshot['company_id']
+                    : null);
+            $employmentType = $this->resolveEmploymentPayrollTypeForSummary($summary, $fromSummary, $snapshot);
+            $live = $resolver->resolve($companyId, $employmentType);
+            unset($live['company_id']);
+
+            return $applicator->applyToSummary(
+                $summary,
+                array_merge($merged, array_intersect_key($live, $defaults), [
+                    'employment_type' => $employmentType,
+                ])
+            );
+        } catch (\Throwable) {
+            return $summary;
+        }
+    }
+
+    /**
+     * Map payslip summary fields onto labor employment-class keys used by Policy Settings.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $fromSummary
+     * @param  array<string, mixed>  $snapshot
+     */
+    private function resolveEmploymentPayrollTypeForSummary(array $summary, array $fromSummary, array $snapshot = []): string
+    {
+        $fromPolicy = EmploymentPayrollSetting::normalizeEmploymentType(
+            (string) ($fromSummary['employment_type'] ?? '')
+        );
+        if (in_array($fromPolicy, EmploymentPayrollSetting::EMPLOYMENT_TYPES, true)) {
+            return $fromPolicy;
+        }
+
+        $employee = new User([
+            'employment_type' => (string) ($summary['employment_type']
+                ?? $snapshot['employment_type']
+                ?? ''),
+            'employment_status' => (string) ($summary['employment_status']
+                ?? $snapshot['employment_status']
+                ?? ''),
+            'is_execom' => false,
+        ]);
+
+        $resolved = app(EmploymentTypeResolver::class)->resolveLaborEmploymentType($employee);
+        $normalized = EmploymentPayrollSetting::normalizeEmploymentType($resolved);
+
+        return in_array($normalized, EmploymentPayrollSetting::EMPLOYMENT_TYPES, true)
+            ? $normalized
+            : 'regular';
     }
 
     /**
@@ -4432,6 +4508,8 @@ class PayslipService
             $componentCode = strtoupper(trim((string) ($row['component_code'] ?? '')));
             $isHolidayPayLine = str_starts_with($lineKey, 'holiday:')
                 || str_contains($componentCode, 'HOLIDAY');
+            $isWorkedHolidayLine = $isHolidayPayLine
+                && (bool) (is_array($row['metadata'] ?? null) ? ($row['metadata']['worked'] ?? false) : false);
             $unitsRaw = $row['units'] ?? null;
             $unitsStr = $unitsRaw === null || $unitsRaw === '' ? null : trim((string) $unitsRaw);
 
@@ -4460,7 +4538,8 @@ class PayslipService
             // Explicit day-unit strings (leave / holiday "1 day") must stay day-based.
             $usesDaySplitUnits = str_contains($lineKey, 'regular_pay');
             $hasExplicitDayUnits = $unitsStr !== null
-                && preg_match('/^\d+(?:\.\d+)?\s*days?$/i', $unitsStr) === 1;
+                && preg_match('/^\d+(?:\.\d+)?\s*days?$/i', $unitsStr) === 1
+                && ! $isWorkedHolidayLine;
             $formatted = $this->formatUnitsAndAmount($minutesWorked, $hourlyRate);
             $unitsFromMinutes = $usesDaySplitUnits
                 ? ($this->formatPayslipUnitsFromMinutes($minutesWorked) ?? $formatted['units'])

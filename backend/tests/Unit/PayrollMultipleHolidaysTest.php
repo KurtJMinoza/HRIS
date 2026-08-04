@@ -248,6 +248,44 @@ class PayrollMultipleHolidaysTest extends TestCase
         $this->assertEqualsWithDelta(71.58625, $lines[0]['hourly_rate'], 0.001);
     }
 
+    public function test_worked_holiday_line_uses_actual_hours_not_full_day(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = (new ReflectionClass(PayrollComputationService::class))
+            ->getMethod('buildPerHolidayEarningLines');
+        $method->setAccessible(true);
+
+        $lines = $method->invoke($service, [[
+            'date' => '2026-06-12',
+            'holiday_id' => 12,
+            'holiday_name' => 'TEST HOLIDAY',
+            'holiday_type' => 'regular',
+            'eligible' => true,
+            'amount' => 605.77,
+            'hours' => 7,
+            'worked' => true,
+            'multiplier' => 2.0,
+            'component_code' => 'REGULAR_HOLIDAY_WORKED_PAY',
+        ]], 692.31);
+
+        $this->assertCount(1, $lines);
+        $this->assertNull($lines[0]['units']);
+        $this->assertSame(420, $lines[0]['minutes_worked']);
+
+        $payslipService = app(PayslipService::class);
+        $normalize = (new ReflectionClass(PayslipService::class))
+            ->getMethod('normalizePayslipLineList');
+        $normalize->setAccessible(true);
+
+        $normalized = $normalize->invoke($payslipService, [[
+            ...$lines[0],
+            'units' => '1 day',
+        ]], 'Earning', false, false, 86.53875);
+
+        $this->assertSame('7 hrs', $normalized[0]['units']);
+        $this->assertSame(605.77, $normalized[0]['amount']);
+    }
+
     public function test_payslip_normalization_preserves_worked_holiday_premium_amount(): void
     {
         $service = app(PayslipService::class);

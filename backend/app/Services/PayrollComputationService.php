@@ -71,6 +71,7 @@ class PayrollComputationService
         private readonly DeductionApplicationService $deductionApplicationService,
         private readonly LoanAmortizationService $loanAmortizationService,
         private readonly GovernmentDeductionExemptionResolver $governmentExemptionResolver,
+        private readonly ?EmploymentPayrollPolicyApplicator $employmentPayrollPolicyApplicator = null,
     ) {}
 
     public function flushRuntimeCaches(): void
@@ -2207,10 +2208,17 @@ class PayrollComputationService
             : max(0.0, round($grossEarnings - $basicSalary, 2));
         $grossThisPeriod = round($basicPayThisPeriod + $attendancePremiumPayThisPeriod + $nonBasicEarningsThisPeriod, 2);
 
+        $employmentPolicy = $this->resolveEmploymentPayrollPolicyForComputation($user);
+        $applyCustomDeductions = $employmentPolicy === null
+            || (bool) ($employmentPolicy['apply_custom_deductions'] ?? true);
+
         // Phase 3 compliance: enforce custom deduction priority + legal minimum take-home + garnishment caps.
+        $customLinesForPeriod = $applyCustomDeductions && is_array($deductionSchedule['custom_lines'] ?? null)
+            ? $deductionSchedule['custom_lines']
+            : [];
         $phase3Deduction = $this->deductionApplicationService->enforcePriorityAndLegalLimitsForPayrollPeriod(
             $user,
-            is_array($deductionSchedule['custom_lines'] ?? null) ? $deductionSchedule['custom_lines'] : [],
+            $customLinesForPeriod,
             $grossThisPeriod,
             $employeeStatutoryThisPeriod,
             $withholdingThisPeriod,
@@ -2218,11 +2226,18 @@ class PayrollComputationService
             $to,
             $actualWorkedDayUnits > 0 ? $actualWorkedDayUnits : null
         );
+        if (! $applyCustomDeductions) {
+            $phase3Deduction['custom_lines'] = [];
+            $phase3Deduction['custom_deductions_this_period'] = 0.0;
+        }
         $deductionSchedule['custom_lines'] = $phase3Deduction['custom_lines'];
         $deductionSchedule['custom_deductions_this_period'] = $phase3Deduction['custom_deductions_this_period'];
         $deductionSchedule['legal_warnings'] = $phase3Deduction['legal_warnings'];
         $deductionSchedule['minimum_take_home_floor'] = $phase3Deduction['minimum_take_home_floor'];
         $customDeductionsThisPeriod = (float) $phase3Deduction['custom_deductions_this_period'];
+        if (! $applyCustomDeductions) {
+            $customDeductionsFullMonthly = 0.0;
+        }
 
         // Statutory (SSS/PhilHealth/Pag-IBIG) before loan/custom deductions — aligns with {@see PayrollCalculatorService::buildEmployeeCompensationSummary} net ordering.
         $netPay = round(
@@ -2347,6 +2362,53 @@ class PayrollComputationService
                 'attendance_proration' => $deductionSchedule['attendance_proration'] ?? $attendanceProration,
             ],
         ];
+
+        return $this->applyEmploymentPayrollPolicy($user, $result);
+    }
+
+    /**
+     * @param  array<string, mixed>  $computed
+     * @return array<string, mixed>
+     */
+    private function applyEmploymentPayrollPolicy(User $user, array $computed): array
+    {
+        if ((bool) ($user->is_execom ?? false)) {
+            return $computed;
+        }
+
+        $applicator = $this->employmentPayrollPolicyApplicator
+            ?? (function_exists('app') ? app(EmploymentPayrollPolicyApplicator::class) : null);
+
+        if (! $applicator instanceof EmploymentPayrollPolicyApplicator) {
+            return $computed;
+        }
+
+        return $applicator->applyToComputation(
+            $user,
+            $computed,
+            $this->activePayrollCompanyId
+        );
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function resolveEmploymentPayrollPolicyForComputation(User $user): ?array
+    {
+        if ((bool) ($user->is_execom ?? false)) {
+            return null;
+        }
+
+        try {
+            $resolver = function_exists('app') ? app(EmploymentPayrollPolicyResolver::class) : null;
+            if (! $resolver instanceof EmploymentPayrollPolicyResolver) {
+                return null;
+            }
+
+            return $resolver->resolveForEmployee($user, $this->activePayrollCompanyId);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -4648,6 +4710,7 @@ class PayrollComputationService
             }
 
             $breakdown[] = [
+                'date' => $dateKey,
                 'holiday_id' => $holidayId,
                 'holiday_name' => (string) ($holidayEvaluation['holiday_name'] ?? $holiday['name'] ?? 'Holiday'),
                 'holiday_type' => (string) ($holidayEvaluation['holiday_type'] ?? $holiday['type'] ?? ''),
@@ -4783,9 +4846,11 @@ class PayrollComputationService
                 (bool) ($item['is_rest_day'] ?? false)
             ));
             $description = $this->holidayEligibility->holidayPayDescription($componentCode, $holidayName);
-            $hours = (float) ($item['hours'] ?? 0);
-            $minutes = $hours > 0 ? (int) round($hours * 60) : ($dailyRate > 0 ? 480 : 0);
             $worked = (bool) ($item['worked'] ?? false);
+            $hours = (float) ($item['hours'] ?? 0);
+            $minutes = $hours > 0
+                ? (int) round($hours * 60)
+                : ($worked ? 0 : ($dailyRate > 0 ? 480 : 0));
             $multiplier = round((float) ($item['multiplier'] ?? 1.0), 2);
             $baseHourly = $dailyRate > 0 ? $dailyRate / 8.0 : null;
             // RH worked: premium increment only. SH worked: full statutory rate on holiday line.
@@ -4804,7 +4869,7 @@ class PayrollComputationService
                 'label' => $description,
                 'description' => $description,
                 'amount' => $amount,
-                'units' => '1 day',
+                'units' => $worked ? null : '1 day',
                 'minutes_worked' => $minutes,
                 'hourly_rate' => $lineHourly,
                 'metadata' => [

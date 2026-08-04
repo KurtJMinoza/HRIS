@@ -23,6 +23,7 @@ import {
   CalendarHeart,
   Layers2,
   Scale,
+  Users,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -67,6 +68,7 @@ import {
 import { useToast } from '@/components/ui/use-toast'
 import { PayrollLogisticsPolicyShell } from '@/components/payroll/PayrollLogisticsPolicyShell'
 import { HolidayPayPolicyCard } from '@/components/payroll/HolidayPayPolicyCard'
+import { EmploymentPayrollPolicyTab } from '@/components/payroll/EmploymentPayrollPolicyTab'
 import { normalizeHolidayPayPolicy, serializeHolidayPayPolicyForSave } from '@/lib/holidayPayPolicy'
 
 const CONDITION_LABELS = {
@@ -200,7 +202,7 @@ const GROUP_MATRIX_META = {
  */
 /** Grid layout avoids horizontal scroll; 2×2 on small screens, single row from sm+. */
 const POLICY_CONFIG_TAB_LIST_CLASS =
-  'grid w-full grid-cols-2 gap-1.5 rounded-xl border border-border/35 bg-muted/45 p-2 shadow-inner dark:border-border/40 dark:bg-muted/20 @sm:grid-cols-3 @sm:gap-2 @lg:grid-cols-5'
+  'grid w-full grid-cols-2 gap-1.5 rounded-xl border border-border/35 bg-muted/45 p-2 shadow-inner dark:border-border/40 dark:bg-muted/20 @sm:grid-cols-3 @sm:gap-2 @lg:grid-cols-6'
 
 const POLICY_CONFIG_TAB_TRIGGER_CLASS = cn(
   'relative flex h-auto min-h-0 w-full min-w-0 items-center justify-center gap-2 rounded-lg border-0 px-3 py-2.5 text-sm font-medium transition-all @sm:px-5 @sm:py-3 @md:px-6',
@@ -1245,6 +1247,10 @@ export default function AdminPolicySettings() {
                       <Calculator className="size-4 shrink-0" />
                       Preview
                     </TabsTrigger>
+                    <TabsTrigger value="employment" className={POLICY_CONFIG_TAB_TRIGGER_CLASS}>
+                      <Users className="size-4 shrink-0" />
+                      Employment
+                    </TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="multipliers" className="mt-0 outline-none">
@@ -2071,6 +2077,10 @@ export default function AdminPolicySettings() {
                         </Button>
                       </CardContent>
                     </Card>
+                  </TabsContent>
+
+                  <TabsContent value="employment" className="mt-0 outline-none">
+                    <EmploymentPayrollPolicyTab companies={companies} companyFilter={companyFilter} />
                   </TabsContent>
                 </Tabs>
               </>

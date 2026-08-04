@@ -3527,6 +3527,27 @@ export async function getPayPolicyEmploymentTypes(companyId = null) {
   return Array.isArray(data) ? data : []
 }
 
+export async function getEmploymentPayrollSettings(params = {}) {
+  const query = new URLSearchParams()
+  if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/payroll/employment-payroll-settings${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load employment payroll settings')
+  return data
+}
+
+export async function updateEmploymentPayrollSettings(payload) {
+  const res = await authenticatedFetch('/admin/payroll/employment-payroll-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update employment payroll settings')
+  return data
+}
+
 // —— Admin: Government Contributions (SSS/PhilHealth/Pag-IBIG/EC) ——
 
 export async function getStatutoryRates(params = {}) {

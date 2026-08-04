@@ -25,6 +25,7 @@ use App\Http\Controllers\Admin\EmployeeStatusController;
 use App\Http\Controllers\Admin\ExecomManagementController;
 use App\Http\Controllers\Admin\ExecomPayrollController;
 use App\Http\Controllers\Admin\ExecomPayrollSettingsController;
+use App\Http\Controllers\Admin\EmploymentPayrollSettingsController;
 use App\Http\Controllers\Admin\GeofenceController;
 use App\Http\Controllers\Admin\GovernmentContributionController;
 use App\Http\Controllers\Admin\HolidayController;
@@ -706,6 +707,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::put('/admin/approval-workflow-settings', [ApprovalWorkflowSettingsController::class, 'update']);
         });
         Route::middleware('permission:payroll.policies')->group(function () {
+            Route::get('/admin/payroll/employment-payroll-settings', [EmploymentPayrollSettingsController::class, 'show']);
+            Route::put('/admin/payroll/employment-payroll-settings', [EmploymentPayrollSettingsController::class, 'update']);
             Route::get('/admin/payroll/policies', [PayPolicyController::class, 'index']);
             Route::get('/admin/payroll/policies/companies', [PayPolicyController::class, 'companies']);
             Route::get('/admin/payroll/policies/condition-keys', [PayPolicyController::class, 'conditionKeys']);
