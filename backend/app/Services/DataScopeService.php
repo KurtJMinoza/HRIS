@@ -4,11 +4,13 @@ namespace App\Services;
 
 use App\Enums\HrRole;
 use App\Models\Area;
+use App\Models\AttendanceCorrection;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Department;
 use App\Models\Division;
 use App\Models\EmployeeOrganizationAssignment;
+use App\Models\OrgApprovalRecord;
 use App\Models\SectionUnit;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -1360,7 +1362,60 @@ class DataScopeService
             return;
         }
 
+        // Workflow-assigned approvers must still act when the subject is outside the actor's
+        // current org scope (e.g. head's leadership branches differ from the employee's branch).
+        if ($this->actorIsPendingCorrectionApproverForSubject($actor, $subject)) {
+            return;
+        }
+
         $this->ensureEmployeeAccessible($actor, $subject);
+    }
+
+    /**
+     * True when the actor is the current pending org-approval assignee for any of the subject's
+     * open attendance corrections.
+     */
+    public function actorIsPendingCorrectionApproverForSubject(User $actor, User $subject): bool
+    {
+        if (! Schema::hasTable('org_approval_records') || ! Schema::hasTable('attendance_corrections')) {
+            return false;
+        }
+
+        $actorId = (int) $actor->id;
+        $subjectId = (int) $subject->id;
+        if ($actorId <= 0 || $subjectId <= 0) {
+            return false;
+        }
+
+        $pendingRequestIds = AttendanceCorrection::query()
+            ->where('user_id', $subjectId)
+            ->where('pending_approval', true)
+            ->where('approved', false)
+            ->whereNull('rejected_at')
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn (int $id): bool => $id > 0)
+            ->values()
+            ->all();
+
+        if ($pendingRequestIds === []) {
+            return false;
+        }
+
+        $pending = OrgApprovalRecord::query()
+            ->where('module_type', OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->whereIn('request_id', $pendingRequestIds)
+            ->where(function ($query) use ($actorId): void {
+                $query->where('approver_id', $actorId);
+                if (Schema::hasColumn('org_approval_records', 'eligible_approver_ids')) {
+                    // ponytail: JSON_CONTAINS is MySQL; eligible list is small so exact match is enough.
+                    $query->orWhereJsonContains('eligible_approver_ids', $actorId);
+                }
+            })
+            ->exists();
+
+        return $pending;
     }
 
     /**
