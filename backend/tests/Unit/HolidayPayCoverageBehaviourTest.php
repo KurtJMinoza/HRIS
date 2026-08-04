@@ -30,6 +30,16 @@ class HolidayPayCoverageBehaviourTest extends TestCase
         $this->assertSame('REGULAR_HOLIDAY_WORKED_PAY', $service->holidayPayComponentCode('regular', false));
         $this->assertSame('SPECIAL_HOLIDAY_WORKED_PAY', $service->holidayPayComponentCode('special', false));
         $this->assertStringContainsString('Worked Pay', $service->holidayPayDescription('REGULAR_HOLIDAY_WORKED_PAY', 'Test Day'));
+        $this->assertSame('RESTDAY_REGULAR_HOLIDAY_UNWORKED_PAY', $service->holidayPayComponentCode('regular', true, true));
+        $this->assertSame(
+            'Regular Holiday — Rest Day Unworked Pay: TEST',
+            $service->holidayPayDescription('RESTDAY_REGULAR_HOLIDAY_UNWORKED_PAY', 'TEST')
+        );
+        $this->assertSame('RESTDAY_REGULAR_HOLIDAY_PAY', $service->holidayPayComponentCode('regular', false, true));
+        $this->assertSame(
+            'Regular Holiday — Rest Day Worked Pay: TEST',
+            $service->holidayPayDescription('RESTDAY_REGULAR_HOLIDAY_PAY', 'TEST')
+        );
     }
 
     public function test_normalize_defaults_worked_employment_type_rule(): void

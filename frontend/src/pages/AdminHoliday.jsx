@@ -702,15 +702,6 @@ export default function AdminHoliday({ mode = 'admin' }) {
     refetchHolidays()
   }, [refetchHolidays])
 
-  // Keep impact cards fresh as roster, rates, or payroll daily records change elsewhere.
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      refetchHolidays({ silent: true })
-    }, 60000)
-
-    return () => window.clearInterval(interval)
-  }, [refetchHolidays])
-
   // Holidays from API (Time and Date API + custom DB)
   const allHolidays = useMemo(() => {
     const base = holidays.map((h) => ({ ...h, scope: h.scope || 'nationwide' }))

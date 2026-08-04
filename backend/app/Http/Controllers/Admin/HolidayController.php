@@ -37,23 +37,34 @@ class HolidayController extends Controller
 
     /**
      * Get yearly holidays, preserving multiple scoped holidays on the same date.
+     *
+     * Heavy fields (`impact`, `holiday_policy`) are opt-in via `include=impact,holiday_policy`
+     * so the Admin Holiday calendar stays fast by default.
      */
     public function index(Request $request): JsonResponse
     {
         $year = (int) $request->get('year', now()->year);
         $year = max(2020, min(2030, $year));
         $companyId = $request->filled('company_id') ? max(1, (int) $request->input('company_id')) : null;
+        $include = $this->parseHolidayInclude($request);
+        $includeImpact = in_array('impact', $include, true);
+        $includePolicy = in_array('holiday_policy', $include, true) || in_array('policy', $include, true);
 
         $holidays = $this->holidayCalendar->holidaysForYear($year)
-            ->map(function (array $row) use ($companyId) {
-            $type = strtolower((string) ($row['type'] ?? 'special'));
+            ->map(function (array $row) use ($companyId, $includeImpact, $includePolicy) {
+                $type = strtolower((string) ($row['type'] ?? 'special'));
+                $payload = array_merge($row, [
+                    'payroll_hints' => PhPayrollReference::hintsForHolidayType($type),
+                ]);
+                if ($includeImpact) {
+                    $payload['impact'] = $this->holidayImpact($row);
+                }
+                if ($includePolicy) {
+                    $payload['holiday_policy'] = $this->holidayPolicySnapshot($row, $companyId);
+                }
 
-            return array_merge($row, [
-                'payroll_hints' => PhPayrollReference::hintsForHolidayType($type),
-                'impact' => $this->holidayImpact($row),
-                'holiday_policy' => $this->holidayPolicySnapshot($row, $companyId),
-            ]);
-        })
+                return $payload;
+            })
             ->values()
             ->all();
 
@@ -72,6 +83,9 @@ class HolidayController extends Controller
         $year = (int) $request->get('year', now()->year);
         $year = max(2020, min(2030, $year));
         $employee = $request->user();
+        $include = $this->parseHolidayInclude($request);
+        $includeImpact = in_array('impact', $include, true);
+        $includePolicy = in_array('holiday_policy', $include, true) || in_array('policy', $include, true);
 
         $rows = $this->holidayCalendar->holidaysForYear($year)
             ->filter(fn (array $row) => $this->holidayAppliesToEmployee($row, $employee))
@@ -100,19 +114,43 @@ class HolidayController extends Controller
             }
         }
 
+        $companyId = $employee->getEffectiveCompanyId();
+        $branchId = $employee->branch_id !== null ? (int) $employee->branch_id : null;
+
         return response()->json([
             'year' => $year,
-            'holidays' => array_map(fn (array $row) => array_merge($row, [
-                'payroll_hints' => PhPayrollReference::hintsForHolidayType(strtolower((string) ($row['type'] ?? 'special'))),
-                'impact' => $this->holidayImpact($row),
-                'holiday_policy' => $this->holidayPolicySnapshot(
-                    $row,
-                    $employee->getEffectiveCompanyId(),
-                    $employee->branch_id !== null ? (int) $employee->branch_id : null
-                ),
-            ]), $rows),
+            'holidays' => array_map(function (array $row) use ($includeImpact, $includePolicy, $companyId, $branchId) {
+                $payload = array_merge($row, [
+                    'payroll_hints' => PhPayrollReference::hintsForHolidayType(strtolower((string) ($row['type'] ?? 'special'))),
+                ]);
+                if ($includeImpact) {
+                    $payload['impact'] = $this->holidayImpact($row);
+                }
+                if ($includePolicy) {
+                    $payload['holiday_policy'] = $this->holidayPolicySnapshot($row, $companyId, $branchId);
+                }
+
+                return $payload;
+            }, $rows),
             'summary' => $summary,
         ]);
+    }
+
+    /** @return list<string> */
+    private function parseHolidayInclude(Request $request): array
+    {
+        $raw = $request->input('include', []);
+        if (is_string($raw)) {
+            $raw = preg_split('/\s*,\s*/', $raw) ?: [];
+        }
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map(
+            static fn ($value): string => strtolower(trim((string) $value)),
+            $raw
+        ))));
     }
 
     /** @return array<string, mixed> */
@@ -1454,13 +1492,53 @@ class HolidayController extends Controller
     private function employeesForHolidayScope(array $holiday): \Illuminate\Database\Eloquent\Builder
     {
         $query = User::query()->activeRoster();
+        $scope = strtolower((string) ($holiday['scope'] ?? 'nationwide'));
+        $companyId = isset($holiday['company_id']) ? (int) $holiday['company_id'] : null;
+        $branchId = isset($holiday['branch_id']) ? (int) $holiday['branch_id'] : null;
+        $divisionId = isset($holiday['division_id']) ? (int) $holiday['division_id'] : null;
+        $departmentId = isset($holiday['department_id']) ? (int) $holiday['department_id'] : null;
+        $sectionUnitId = isset($holiday['section_unit_id']) ? (int) $holiday['section_unit_id'] : null;
+        $employeeId = isset($holiday['employee_id']) ? (int) $holiday['employee_id'] : null;
+
+        // Fast SQL paths for the common admin scopes; fall back to resolver only when needed.
+        return match ($scope) {
+            'nationwide', 'regional', '' => $query,
+            'company' => $companyId > 0
+                ? $query->where('company_id', $companyId)
+                : $query->whereRaw('1 = 0'),
+            'branch' => $branchId > 0
+                ? $query->where('branch_id', $branchId)
+                : $query->whereRaw('1 = 0'),
+            'division' => $divisionId > 0
+                ? $query->where('division_id', $divisionId)
+                : $query->whereRaw('1 = 0'),
+            'department' => $departmentId > 0
+                ? $query->where('department_id', $departmentId)
+                : $query->whereRaw('1 = 0'),
+            'section', 'section_unit' => $sectionUnitId > 0
+                ? $query->where('section_unit_id', $sectionUnitId)
+                : $query->whereRaw('1 = 0'),
+            'employee' => $employeeId > 0
+                ? $query->where('id', $employeeId)
+                : $query->whereRaw('1 = 0'),
+            default => $this->employeesForHolidayScopeViaResolver($query, $holiday),
+        };
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Models\User>  $query
+     * @param  array<string, mixed>  $holiday
+     * @return \Illuminate\Database\Eloquent\Builder<\App\Models\User>
+     */
+    private function employeesForHolidayScopeViaResolver(\Illuminate\Database\Eloquent\Builder $query, array $holiday): \Illuminate\Database\Eloquent\Builder
+    {
         $date = Carbon::parse((string) ($holiday['date'] ?? now()->toDateString()));
+        $employeeIds = (clone $query)->get(['id', 'company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'])
+            ->filter(fn (User $employee): bool => $this->holidayScopeResolver->appliesRowToEmployee($holiday, $employee, $date))
+            ->pluck('id')
+            ->all();
 
-        $employeeIds = (clone $query)->get()->filter(
-            fn (User $employee): bool => $this->holidayScopeResolver->appliesRowToEmployee($holiday, $employee, $date)
-        )->pluck('id')->all();
-
-        return $query->whereIn('id', $employeeIds);
+        return $query->whereIn('id', $employeeIds !== [] ? $employeeIds : [0]);
     }
 
     private function holidayPremiumMultiplier(string $type): float

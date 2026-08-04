@@ -2014,6 +2014,8 @@ class PayrollComputationService
                     'SPECIAL_WORKING_DAY_PAY' => 30,
                     'RESTDAY_REGULAR_HOLIDAY_PAY' => 30,
                     'RESTDAY_SPECIAL_HOLIDAY_PAY' => 30,
+                    'RESTDAY_REGULAR_HOLIDAY_UNWORKED_PAY' => 30,
+                    'RESTDAY_SPECIAL_HOLIDAY_UNWORKED_PAY' => 30,
                 ];
                 $aCode = (string) ($a['component_code'] ?? '');
                 $bCode = (string) ($b['component_code'] ?? '');

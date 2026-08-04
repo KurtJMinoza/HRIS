@@ -125,7 +125,7 @@ class HolidayPayPolicyService
         if (! $worked && $qualification['eligible'] && $unworkedMultiplier > 0) {
             $holidayPremiumPay = round($dailyRate * $unworkedMultiplier, 2);
             $normalizedType = $this->normalizeHolidayType($holiday['type'] ?? null) ?? 'regular';
-            $componentCode = $this->holidayPayComponentCode($normalizedType);
+            $componentCode = $this->holidayPayComponentCode($normalizedType, true, $isRestDay);
             $holidayName = (string) ($holiday['name'] ?? 'Holiday');
             $breakdown = [
                 'component' => 'holiday_premium',
@@ -147,7 +147,7 @@ class HolidayPayPolicyService
             ];
         } elseif ($worked && $qualification['eligible'] && $paidRegularMinutes > 0 && $workedFirst8 > 1.00001) {
             $normalizedType = $this->normalizeHolidayType($holiday['type'] ?? null) ?? 'regular';
-            $componentCode = $this->holidayPayComponentCode($normalizedType, false);
+            $componentCode = $this->holidayPayComponentCode($normalizedType, false, $isRestDay);
             $holidayName = (string) ($holiday['name'] ?? 'Holiday');
             $basePay = round(($paidRegularMinutes / 60.0) * $hourlyRate, 2);
             // SH on a workday and any worked holiday on a rest day (RHRD/SHRD/DHRD) use the full statutory rate on one line.
@@ -510,8 +510,14 @@ class HolidayPayPolicyService
         }
 
         if ($isRestDay) {
-            return in_array($normalizedHolidayType, ['regular', 'double'], true)
-                ? 'RESTDAY_REGULAR_HOLIDAY_PAY'
+            if (in_array($normalizedHolidayType, ['regular', 'double'], true)) {
+                return $unworked
+                    ? 'RESTDAY_REGULAR_HOLIDAY_UNWORKED_PAY'
+                    : 'RESTDAY_REGULAR_HOLIDAY_PAY';
+            }
+
+            return $unworked
+                ? 'RESTDAY_SPECIAL_HOLIDAY_UNWORKED_PAY'
                 : 'RESTDAY_SPECIAL_HOLIDAY_PAY';
         }
 
@@ -534,8 +540,10 @@ class HolidayPayPolicyService
             'REGULAR_HOLIDAY_WORKED_PAY', 'REGULAR_HOLIDAY_PAY' => 'Regular Holiday — Worked Pay',
             'SPECIAL_HOLIDAY_WORKED_PAY', 'SPECIAL_HOLIDAY_PAY' => 'Special Holiday — Worked Pay',
             'SPECIAL_WORKING_DAY_PAY' => 'Special Working Day Pay',
-            'RESTDAY_REGULAR_HOLIDAY_PAY' => 'Regular Holiday — Rest Day Pay',
-            'RESTDAY_SPECIAL_HOLIDAY_PAY' => 'Special Holiday — Rest Day Pay',
+            'RESTDAY_REGULAR_HOLIDAY_PAY' => 'Regular Holiday — Rest Day Worked Pay',
+            'RESTDAY_SPECIAL_HOLIDAY_PAY' => 'Special Holiday — Rest Day Worked Pay',
+            'RESTDAY_REGULAR_HOLIDAY_UNWORKED_PAY' => 'Regular Holiday — Rest Day Unworked Pay',
+            'RESTDAY_SPECIAL_HOLIDAY_UNWORKED_PAY' => 'Special Holiday — Rest Day Unworked Pay',
             default => 'Holiday Pay',
         };
 

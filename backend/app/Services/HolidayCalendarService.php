@@ -20,6 +20,8 @@ class HolidayCalendarService
 {
     private const CACHE_KEY_PREFIX = 'holiday_calendar:merged_year:';
 
+    private const LIST_CACHE_KEY_PREFIX = 'holiday_calendar:list_year:';
+
     private const CACHE_TTL_SECONDS = 86400;
 
     /** @var array<int, array<string, array<string, mixed>>> */
@@ -38,6 +40,7 @@ class HolidayCalendarService
         $this->holidaysListByYear = [];
         foreach (range(2020, 2035) as $year) {
             Cache::forget(self::CACHE_KEY_PREFIX.$year);
+            Cache::forget(self::LIST_CACHE_KEY_PREFIX.$year);
         }
     }
 
@@ -102,42 +105,36 @@ class HolidayCalendarService
             return collect($this->holidaysListByYear[$year]);
         }
 
+        $rows = Cache::remember(
+            self::LIST_CACHE_KEY_PREFIX.$year,
+            self::CACHE_TTL_SECONDS,
+            fn (): array => $this->buildHolidaysForYear($year)
+        );
+
+        $this->holidaysListByYear[$year] = $rows;
+
+        return collect($rows);
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function buildHolidaysForYear(int $year): array
+    {
         $rows = [];
         $explicitKeys = [];
+        $yearStart = sprintf('%04d-01-01', $year);
+        $yearEnd = sprintf('%04d-12-31', $year);
 
         $holidays = Holiday::query()
-            ->with([
-                'company:id,name,logo',
-                'branch:id,name,company_id',
-                'branch.company:id,name,logo',
-                'division:id,name,company_id,branch_id',
-                'division.branch:id,name,company_id',
-                'division.company:id,name,logo',
-                'department:id,name,branch_id,division_id',
-                'department.division:id,name,company_id,branch_id',
-                'department.branch:id,name,company_id',
-                'department.branch.company:id,name,logo',
-                'sectionUnit:id,name,company_id,branch_id,division_id,department_id',
-                'sectionUnit.company:id,name,logo',
-                'sectionUnit.branch:id,name,company_id',
-                'sectionUnit.division:id,name,company_id,branch_id',
-                'sectionUnit.department:id,name,branch_id,division_id',
-                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,division_id,department_id,section_unit_id',
-                'employee.companyHeadships:id,name,logo,company_head_id',
-                'employee.company:id,name,logo',
-                'employee.branch:id,name,company_id',
-                'employee.branch.company:id,name,logo',
-                'employee.departmentRelation:id,name,branch_id',
-                'employee.departmentRelation.branch:id,name,company_id',
-                'employee.departmentRelation.branch.company:id,name,logo',
-            ])
-            ->whereYear('date', $year)
+            ->with($this->holidayListRelations())
+            ->whereBetween('date', [$yearStart, $yearEnd])
             ->orderBy('date')
             ->orderBy('id')
             ->get();
 
         $customRows = [];
-        $activeDatesByName = $this->activeHolidayDatesByNameForYear($year);
+        $activeDatesByName = $this->activeHolidayDatesByNameForYear($year, $holidays);
         foreach ($holidays as $holiday) {
             $row = $this->serializeHolidayRow($holiday);
             if ($this->shouldSuppressRelocatedHolidayRow($row, $activeDatesByName)) {
@@ -150,7 +147,7 @@ class HolidayCalendarService
             $customRows[] = $row;
         }
 
-        foreach (array_values($this->seededFallbackForYear($year)) as $row) {
+        foreach (array_values($this->seededFallbackForYear($year, $activeDatesByName)) as $row) {
             if (! in_array($this->overrideKey($row), $explicitKeys, true)) {
                 $rows[] = $row;
             }
@@ -178,9 +175,31 @@ class HolidayCalendarService
             return $this->scopePrecedence($b) <=> $this->scopePrecedence($a);
         });
 
-        $this->holidaysListByYear[$year] = $rows;
+        return $rows;
+    }
 
-        return collect($rows);
+    /** @return list<string> */
+    private function holidayListRelations(): array
+    {
+        // Slim graph: enough for scope labels + company logos without deep employee org trees.
+        return [
+            'company:id,name,logo',
+            'branch:id,name,company_id',
+            'branch.company:id,name,logo',
+            'division:id,name,company_id,branch_id',
+            'division.company:id,name,logo',
+            'department:id,name,branch_id,division_id',
+            'department.branch:id,name,company_id',
+            'department.branch.company:id,name,logo',
+            'sectionUnit:id,name,company_id,branch_id,division_id,department_id',
+            'sectionUnit.company:id,name,logo',
+            'sectionUnit.division:id,name',
+            'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,division_id,department_id,section_unit_id',
+            'employee.company:id,name,logo',
+            'employee.branch:id,name,company_id',
+            'employee.departmentRelation:id,name,branch_id',
+            'employee.sectionUnit:id,name',
+        ];
     }
 
     /**
@@ -208,9 +227,10 @@ class HolidayCalendarService
     /**
      * Local seeded fallback holidays (PH nationwide baseline).
      *
+     * @param  array<string, list<string>>|null  $activeDatesByName
      * @return array<string, array<string, mixed>>
      */
-    private function seededFallbackForYear(int $year): array
+    private function seededFallbackForYear(int $year, ?array $activeDatesByName = null): array
     {
         $rows = [
             ['md' => '01-01', 'name' => "New Year's Day", 'type' => 'regular'],
@@ -229,7 +249,7 @@ class HolidayCalendarService
         ];
 
         $out = [];
-        $activeDatesByName = $this->activeHolidayDatesByNameForYear($year);
+        $activeDatesByName ??= $this->activeHolidayDatesByNameForYear($year);
 
         foreach ($rows as $r) {
             $date = sprintf('%04d-%s', $year, $r['md']);
@@ -264,14 +284,22 @@ class HolidayCalendarService
         return $out;
     }
 
-    /** @return array<string, list<string>> */
-    private function activeHolidayDatesByNameForYear(int $year): array
+    /**
+     * @param  \Illuminate\Support\Collection<int, Holiday>|null  $yearHolidays
+     * @return array<string, list<string>>
+     */
+    private function activeHolidayDatesByNameForYear(int $year, $yearHolidays = null): array
     {
         $map = [];
-        foreach (Holiday::query()
+        $source = $yearHolidays ?? Holiday::query()
             ->where('status', 'active')
-            ->whereYear('date', $year)
-            ->get(['name', 'date']) as $holiday) {
+            ->whereBetween('date', [sprintf('%04d-01-01', $year), sprintf('%04d-12-31', $year)])
+            ->get(['name', 'date', 'status']);
+
+        foreach ($source as $holiday) {
+            if (strtolower((string) ($holiday->status ?? 'active')) !== 'active') {
+                continue;
+            }
             $name = trim((string) $holiday->name);
             if ($name === '') {
                 continue;
@@ -360,32 +388,9 @@ class HolidayCalendarService
     {
         $out = [];
         $templates = Holiday::query()
-            ->with([
-                'company:id,name,logo',
-                'branch:id,name,company_id',
-                'branch.company:id,name,logo',
-                'division:id,name,company_id,branch_id',
-                'division.branch:id,name,company_id',
-                'division.company:id,name,logo',
-                'department:id,name,branch_id,division_id',
-                'department.division:id,name,company_id,branch_id',
-                'department.branch:id,name,company_id',
-                'department.branch.company:id,name,logo',
-                'sectionUnit:id,name,company_id,branch_id,division_id,department_id',
-                'sectionUnit.company:id,name,logo',
-                'sectionUnit.branch:id,name,company_id',
-                'sectionUnit.division:id,name,company_id,branch_id',
-                'sectionUnit.department:id,name,branch_id,division_id',
-                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,division_id,department_id,section_unit_id',
-                'employee.companyHeadships:id,name,logo,company_head_id',
-                'employee.company:id,name,logo',
-                'employee.branch:id,name,company_id',
-                'employee.branch.company:id,name,logo',
-                'employee.departmentRelation:id,name,branch_id',
-                'employee.departmentRelation.branch:id,name,company_id',
-                'employee.departmentRelation.branch.company:id,name,logo',
-            ])
+            ->with($this->holidayListRelations())
             ->where('is_recurring', true)
+            ->where('status', 'active')
             ->orderBy('date')
             ->get();
 
@@ -428,14 +433,9 @@ class HolidayCalendarService
         $company = $h->company
             ?? $h->branch?->company
             ?? $h->division?->company
-            ?? $h->division?->branch?->company
             ?? $h->department?->branch?->company
             ?? $h->sectionUnit?->company
-            ?? $h->sectionUnit?->branch?->company
-            ?? $h->employee?->companyHeadships?->first()
-            ?? $h->employee?->company
-            ?? $h->employee?->branch?->company
-            ?? $h->employee?->departmentRelation?->branch?->company;
+            ?? $h->employee?->company;
 
         $row = [
             'id' => $h->id,
