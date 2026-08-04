@@ -368,7 +368,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->post('/admin/holidays/{id}/swap', [HolidayController::class, 'swap']);
         Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->patch('/admin/holidays/{id}/swap', [HolidayController::class, 'updateSwap']);
         Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->patch('/admin/holidays/{id}', [HolidayController::class, 'update']);
-        Route::middleware('permission:holidays.delete|holidays.manage|holiday.manage')->delete('/admin/holidays/{id}', [HolidayController::class, 'destroy']);
+        Route::middleware('permission:holidays.delete|holidays.manage|holiday.manage')->post('/admin/holidays/seeded/delete', [HolidayController::class, 'destroySeeded']);
+        Route::middleware('permission:holidays.delete|holidays.manage|holiday.manage')->delete('/admin/holidays/{id}', [HolidayController::class, 'destroy'])->whereNumber('id');
         Route::middleware('permission:holidays.update|holidays.manage|holiday.manage')->post('/admin/holidays/{id}/deactivate', [HolidayController::class, 'deactivate']);
 
         Route::middleware('permission:can_access_reports_module|can_view_own_reports|can_view_subordinate_reports|can_view_all_reports|reports.view')->group(function () {

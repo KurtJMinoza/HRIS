@@ -557,52 +557,46 @@ class HolidayController extends Controller
         ]);
     }
 
-    public function destroy(int $id): JsonResponse
+    public function destroy(int|string $id): JsonResponse
     {
+        if (! is_numeric($id)) {
+            return response()->json(['message' => 'Invalid holiday id'], 404);
+        }
+        $id = (int) $id;
+
         $holiday = $this->holiday->newQuery()->findOrFail($id);
         $dateKey = $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date;
-        $isInactive = strtolower((string) ($holiday->status ?? 'active')) === 'inactive';
 
-        if ($isInactive && $this->holidayCalendar->wouldSeededHolidayResurfaceOnDelete($holiday)) {
+        try {
+            $this->assertHolidayDatesMutable(
+                [$holiday->date?->toDateString()],
+                $this->scopeTargetsFromHoliday($holiday)
+            );
+        } catch (\RuntimeException $e) {
             return response()->json([
-                'message' => 'Holiday is already removed from the calendar. Add it again to restore.',
-                'removed' => true,
-            ]);
+                'message' => $e->getMessage() !== ''
+                    ? $e->getMessage()
+                    : 'Cannot delete this holiday because payroll for this date has already been finalized.',
+            ], 422);
         }
 
-        if (! $isInactive) {
-            try {
-                $this->assertHolidayDatesMutable([$holiday->date?->toDateString()], $this->scopeTargetsFromHoliday($holiday));
-            } catch (\RuntimeException $e) {
-                $holiday->update(['status' => 'inactive']);
-                $this->holidayCalendar->flushMergedYearCaches();
-                $this->holidayService->flushCoverageForDate($dateKey);
-                $this->holidayService->flushRuntimeCaches();
+        // Built-in PH holidays must stay suppressed after delete or the seeded calendar resurfaces.
+        if ($this->holidayCalendar->wouldSeededHolidayResurfaceOnDelete($holiday)) {
+            $holiday->update([
+                'status' => 'inactive',
+                'is_swap' => false,
+                'original_date' => null,
+                'is_recurring' => false,
+            ]);
+            $this->holidayCalendar->flushMergedYearCaches();
+            $this->holidayService->flushCoverageForDate($dateKey);
+            $this->holidayService->flushRuntimeCaches();
 
-                return response()->json([
-                    'message' => 'Holiday removed from calendar',
-                    'removed' => true,
-                    'deactivated' => true,
-                    'holiday' => $this->holidayPayload($holiday->refresh()),
-                ]);
-            }
-
-            if ($this->holidayCalendar->wouldSeededHolidayResurfaceOnDelete($holiday)) {
-                $holiday->update([
-                    'status' => 'inactive',
-                    'is_swap' => false,
-                    'original_date' => null,
-                ]);
-                $this->holidayCalendar->flushMergedYearCaches();
-                $this->holidayService->flushCoverageForDate($dateKey);
-                $this->holidayService->flushRuntimeCaches();
-
-                return response()->json([
-                    'message' => 'Holiday removed from calendar',
-                    'removed' => true,
-                    'holiday' => $this->holidayPayload($holiday->refresh()),
-                ]);
-            }
+            return response()->json([
+                'message' => 'Holiday deleted',
+                'deleted' => true,
+                'removed' => true,
+            ]);
         }
 
         $holiday->delete();
@@ -610,13 +604,104 @@ class HolidayController extends Controller
         $this->holidayService->flushCoverageForDate($dateKey);
         $this->holidayService->flushRuntimeCaches();
 
-        return response()->json(['message' => 'Holiday deleted']);
+        return response()->json([
+            'message' => 'Holiday deleted',
+            'deleted' => true,
+        ]);
+    }
+
+    /**
+     * Delete a built-in (seeded) Philippine holiday that has no DB id yet.
+     * Creates a hidden suppression stub so the national baseline does not reappear.
+     */
+    public function destroySeeded(Request $request): JsonResponse
+    {
+        $valid = $request->validate([
+            'date' => ['required', 'date_format:Y-m-d'],
+            'name' => ['required', 'string', 'max:255'],
+            'type' => ['nullable', Rule::in(['regular', 'special', 'special_non_working', 'company'])],
+        ]);
+
+        $dateKey = (string) $valid['date'];
+        $name = TextSanitizer::clean((string) $valid['name'], (string) $valid['name']) ?? (string) $valid['name'];
+        $type = (string) ($valid['type'] ?? 'regular');
+
+        try {
+            $this->assertHolidayDatesMutable([$dateKey], [
+                'scope' => 'nationwide',
+                'company_id' => null,
+                'branch_id' => null,
+                'department_id' => null,
+                'employee_id' => null,
+            ]);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'message' => $e->getMessage() !== ''
+                    ? $e->getMessage()
+                    : 'Cannot delete this holiday because payroll for this date has already been finalized.',
+            ], 422);
+        }
+
+        $existing = $this->holiday->newQuery()
+            ->whereDate('date', $dateKey)
+            ->where('scope', 'nationwide')
+            ->whereNull('company_id')
+            ->whereNull('branch_id')
+            ->whereNull('department_id')
+            ->whereNull('employee_id')
+            ->whereRaw('LOWER(TRIM(name)) = ?', [strtolower(trim($name))])
+            ->first();
+
+        if ($existing) {
+            return $this->destroy((int) $existing->id);
+        }
+
+        $this->holiday->newQuery()->create([
+            'name' => $name,
+            'date' => $dateKey,
+            'type' => $type,
+            'scope' => 'nationwide',
+            'company_id' => null,
+            'branch_id' => null,
+            'division_id' => null,
+            'department_id' => null,
+            'section_unit_id' => null,
+            'employee_id' => null,
+            'is_recurring' => false,
+            'status' => 'inactive',
+            'is_swap' => false,
+            'original_date' => null,
+        ]);
+
+        $this->holidayCalendar->flushMergedYearCaches();
+        $this->holidayService->flushCoverageForDate($dateKey);
+        $this->holidayService->flushRuntimeCaches();
+
+        return response()->json([
+            'message' => 'Holiday deleted',
+            'deleted' => true,
+            'removed' => true,
+        ]);
     }
 
     public function deactivate(int $id): JsonResponse
     {
         $holiday = $this->holiday->newQuery()->findOrFail($id);
         $dateKey = $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date;
+
+        try {
+            $this->assertHolidayDatesMutable(
+                [$holiday->date?->toDateString()],
+                $this->scopeTargetsFromHoliday($holiday)
+            );
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'message' => $e->getMessage() !== ''
+                    ? $e->getMessage()
+                    : 'Cannot change this holiday because payroll for this date has already been finalized.',
+            ], 422);
+        }
+
         $holiday->update(['status' => 'inactive']);
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushCoverageForDate($dateKey);

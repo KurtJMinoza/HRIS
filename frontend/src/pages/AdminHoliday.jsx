@@ -34,6 +34,7 @@ import {
   getAdminHolidays,
   getMyHolidays,
   deleteAdminHoliday,
+  deleteAdminSeededHoliday,
   swapAdminHoliday,
   swapSeededAdminHoliday,
   companyLogoUrl,
@@ -817,31 +818,41 @@ export default function AdminHoliday({ mode = 'admin' }) {
       toast.error('Permission denied', { description: 'You do not have permission to delete holidays.' })
       return
     }
-    let removed = false
     try {
-      if (typeof holidayOrId === 'number') {
-        const result = await deleteAdminHoliday(holidayOrId)
-        removed = Boolean(result?.removed || result?.deactivated)
-      } else if (Array.isArray(holidayOrId?.holidays) && holidayOrId.holidays.length > 1) {
-        await Promise.all(holidayOrId.holidays.map(async (entry) => {
-          if (entry?.id) {
-            const result = await deleteAdminHoliday(entry.id)
-            if (result?.removed || result?.deactivated) removed = true
-            return
-          }
-          removed = true
-          return createAdminHoliday(holidayOverridePayload(entry, { status: 'inactive' }))
+      const deletes = []
+      const pushDelete = (entry, fallbackDate) => {
+        if (!entry) return
+        if (entry.id) {
+          deletes.push(deleteAdminHoliday(entry.id))
+          return
+        }
+        const date = entry.date || fallbackDate
+        const name = entry.name
+        if (!date || !name) return
+        deletes.push(deleteAdminSeededHoliday({
+          date,
+          name,
+          type: entry.type || undefined,
         }))
-      } else if (holidayOrId?.id) {
-        const result = await deleteAdminHoliday(holidayOrId.id)
-        removed = Boolean(result?.removed || result?.deactivated)
-      } else if (holidayOrId) {
-        removed = true
-        await createAdminHoliday(holidayOverridePayload(holidayOrId, { status: 'inactive' }))
       }
+
+      if (typeof holidayOrId === 'number') {
+        deletes.push(deleteAdminHoliday(holidayOrId))
+      } else if (Array.isArray(holidayOrId?.holidays) && holidayOrId.holidays.length > 0) {
+        holidayOrId.holidays.forEach((entry) => pushDelete(entry, holidayOrId.date))
+      } else {
+        pushDelete(holidayOrId, holidayOrId?.date)
+      }
+
+      if (deletes.length === 0) {
+        toast.error('Cannot delete holiday', { description: 'Holiday date or name is missing.' })
+        return
+      }
+
+      await Promise.all(deletes)
       await refetchHolidays({ silent: true })
       setSelectedCell(null)
-      toast.success(removed ? 'Holiday removed from calendar' : 'Holiday deleted successfully')
+      toast.success('Holiday deleted successfully')
     } catch (err) {
       const msg = err.message || 'Failed to delete holiday'
       toast.error('Failed to delete holiday', { description: msg })

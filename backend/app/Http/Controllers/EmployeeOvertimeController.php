@@ -14,6 +14,7 @@ use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
 use App\Services\PayrollPeriodMutationGuard;
+use App\Services\PayrollRulesEngineService;
 use App\Support\EmployeeScheduleResolver;
 use App\Support\OvertimeModuleCache;
 use App\Support\PhPayrollReference;
@@ -38,6 +39,7 @@ class EmployeeOvertimeController extends Controller
         private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
         private readonly NotificationService $notificationService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
+        private readonly PayrollRulesEngineService $payrollRulesEngine,
         private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
@@ -377,23 +379,26 @@ class EmployeeOvertimeController extends Controller
         $daySchedule = $schedule[$dayKey] ?? null;
         $isRestDay = $daySchedule === null;
 
-        $holiday = \App\Models\Holiday::query()
-            ->whereDate('date', $dateYmd)
-            ->first();
-
-        $holidayType = $holiday?->type ?? null;
+        // Scope-aware: only holidays that cover this employee (same as payroll).
+        $holidayType = $this->payrollRulesEngine->getHolidayTypeForUser($user, $dateYmd);
 
         if ($isRestDay && $holidayType === 'regular') {
             return 'RHRD';
         }
-        if ($isRestDay && in_array($holidayType, ['special', 'company', 'special_working'], true)) {
+        if ($isRestDay && $holidayType === 'special') {
             return 'SHRD';
+        }
+        if ($isRestDay && $holidayType === 'double') {
+            return 'DHRD';
         }
         if ($holidayType === 'regular') {
             return 'RH';
         }
-        if (in_array($holidayType, ['special', 'company', 'special_working'], true)) {
+        if ($holidayType === 'special') {
             return 'SH';
+        }
+        if ($holidayType === 'double') {
+            return 'DH';
         }
         if ($isRestDay) {
             return 'RD';

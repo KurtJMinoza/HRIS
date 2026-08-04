@@ -5291,6 +5291,20 @@ export async function deleteAdminHoliday(id) {
   return data
 }
 
+/**
+ * Delete a built-in (seeded) Philippine holiday that has no DB id.
+ * @param {{ date: string, name: string, type?: string }} payload
+ */
+export async function deleteAdminSeededHoliday(payload) {
+  const res = await authenticatedFetch('/admin/holidays/seeded/delete', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to delete holiday')
+  return data
+}
+
 export async function deactivateAdminHoliday(id) {
   const res = await authenticatedFetch(`/admin/holidays/${id}/deactivate`, { method: 'POST' })
   const data = await res.json().catch(() => ({}))
