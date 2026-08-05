@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Calendar, Loader2, Plus, Trash2, Info } from 'lucide-react'
+import { AlarmClock, Calendar, CalendarDays, ChevronDown, Clock3, ExternalLink, Loader2, Plus, Trash2, Info } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -53,6 +53,23 @@ function toggleRestDay(restDays, dayKey) {
   if (current.has(dayKey)) current.delete(dayKey)
   else current.add(dayKey)
   return Array.from(current)
+}
+
+function formatSummaryHours(hours) {
+  const minutes = Math.round((Number(hours) || 0) * 60)
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `${h}h ${String(m).padStart(2, '0')}m`
+}
+
+function formatClockPadded(value) {
+  const hhmm = toHhMm(value)
+  if (!hhmm) return ''
+  const [hRaw, m] = hhmm.split(':')
+  const hour24 = Number(hRaw)
+  const period = hour24 >= 12 ? 'PM' : 'AM'
+  const hour12 = hour24 % 12 || 12
+  return `${String(hour12).padStart(2, '0')}:${m} ${period}`
 }
 
 export function ScheduleEditorDialog({
@@ -126,6 +143,9 @@ export function ScheduleEditorDialog({
   const risk = otRiskLevel(preview)
   const restOk = hasWeeklyRestDay(preview)
   const crossesMidnight = detectCrossesMidnight(editForm.time_in, editForm.time_out) || isOvernight
+  const flexibleWorkingDayCount = isFlexible
+    ? (editForm.days || []).filter((day) => day.is_working_day).length
+    : 0
 
   function addBreak() {
     setEditForm((f) => ({
@@ -189,10 +209,15 @@ export function ScheduleEditorDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className={cn(
-          'flex max-h-[min(96dvh,980px)] min-h-0 w-full max-w-full flex-col gap-0 overflow-hidden border-border/60 bg-card p-0 shadow-xl dark:border-border/50',
-          isFlexible ? 'sm:max-w-[min(96vw,1400px)]' : 'sm:max-w-5xl'
+          'flex min-h-0 w-full max-w-full flex-col gap-0 overflow-hidden p-0 shadow-xl',
+          isFlexible
+            ? 'max-h-[min(94dvh,1060px)] rounded-lg border-[#d9dde5] bg-[#f8f9fb] sm:max-w-[min(89vw,1340px)]'
+            : 'max-h-[min(96dvh,980px)] border-border/60 bg-card dark:border-border/50 sm:max-w-5xl'
         )}
         innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0!"
+        closeButtonClassName={cn(
+          isFlexible && 'right-6 top-6 size-10 rounded-md border-[#d9dde5] bg-white text-[#111827] shadow-sm hover:bg-[#f6f7f9]'
+        )}
       >
         <form
           className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden"
@@ -201,72 +226,127 @@ export function ScheduleEditorDialog({
             onSubmit(e)
           }}
         >
-          <DialogHeader className="shrink-0 border-b border-border/60 bg-muted/30 px-4 py-4 pr-12 text-left @sm:px-6 @sm:py-5 @sm:pr-14">
-            <DialogTitle className="flex items-start gap-2.5 text-lg font-semibold tracking-tight @sm:items-center @sm:text-xl">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Calendar className="size-5" aria-hidden />
+          <DialogHeader className={cn(
+            'shrink-0 border-b text-left',
+            isFlexible
+              ? 'border-[#e0e3e8] bg-white px-7 py-5 pr-20 @sm:px-8 @sm:py-6'
+              : 'border-border/60 bg-muted/30 px-4 py-4 pr-12 @sm:px-6 @sm:py-5 @sm:pr-14'
+          )}>
+            <DialogTitle className={cn(
+              'flex items-start gap-2.5 font-semibold tracking-tight @sm:items-center',
+              isFlexible ? 'text-[22px] text-[#0f1115]' : 'text-lg @sm:text-xl'
+            )}>
+              <span className={cn(
+                'flex shrink-0 items-center justify-center',
+                isFlexible ? 'size-14 rounded-xl bg-[#fff1eb] text-[#f45113]' : 'size-9 rounded-lg bg-primary/10 text-primary'
+              )}>
+                <Calendar className={cn(isFlexible ? 'size-7' : 'size-5')} aria-hidden />
               </span>
               <span className="min-w-0 leading-snug">
                 {title ?? (editingSchedule ? 'Edit work schedule' : 'New work schedule')}
               </span>
             </DialogTitle>
-            <DialogDescription className="max-w-3xl text-xs leading-relaxed text-muted-foreground @sm:text-sm">
+            <DialogDescription className={cn(
+              'max-w-3xl leading-relaxed',
+              isFlexible ? 'ml-[4.5rem] -mt-4 text-[14px] text-[#5f6673]' : 'text-xs text-muted-foreground @sm:text-sm'
+            )}>
               {description ?? (
                 <>
-                  Flexible schedule template. Supports fixed and flexible shifts with multiple breaks and custom paid hours.
+                  Create a new schedule template to standardize shifts and working hours.
                 </>
               )}
             </DialogDescription>
             {headerExtra}
           </DialogHeader>
 
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6">
+          <div className={cn(
+            'min-h-0 flex-1 overflow-y-auto overscroll-contain',
+            isFlexible ? 'px-0 py-0' : 'px-6 py-6'
+          )}>
           {isFlexible ? (
-            <div className="space-y-5">
-              <div className="grid gap-4 rounded-xl border border-border/60 bg-muted/25 p-4 dark:bg-muted/15 md:grid-cols-3">
-                <div className="space-y-1.5 md:col-span-1">
-                  <Label htmlFor="schedule-name">Schedule name</Label>
+            <div>
+              <div className="grid gap-8 border-b border-[#e0e3e8] bg-white px-10 py-8 lg:grid-cols-[1fr_330px_1px_1.12fr]">
+                <div className="space-y-3">
+                  <Label htmlFor="schedule-name" className="text-[14px] font-semibold text-[#111827]">Schedule name <span className="text-[#f45113]">*</span></Label>
                   <Input
                     id="schedule-name"
                     value={editForm.name}
                     onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
                     placeholder="e.g. Flexible Office Schedule"
-                    className="h-11 min-h-11"
+                    className="h-12 rounded-md border-[#d7dce4] bg-white px-4 text-[14px] shadow-none placeholder:text-[#8a92a1]"
                     required
                     readOnly={readOnly}
                     disabled={readOnly}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="shift-type">Shift type</Label>
-                  <select
-                    id="shift-type"
-                    value={shiftType}
-                    onChange={(e) => handleShiftTypeChange(e.target.value)}
-                    className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    disabled={readOnly}
-                  >
-                    {SCHEDULE_EDITOR_SHIFT_TYPES.map((st) => (
-                      <option key={st.value} value={st.value}>{st.label}</option>
-                    ))}
-                  </select>
+                <div className="space-y-3">
+                  <Label className="text-[14px] font-semibold text-[#111827]">Shift type <span className="text-[#f45113]">*</span></Label>
+                  <div className="grid h-12 grid-cols-2 overflow-hidden rounded-md border border-[#d7dce4] bg-white">
+                    <button
+                      type="button"
+                      onClick={() => handleShiftTypeChange('flexible')}
+                      disabled={readOnly}
+                      className={cn(
+                        'flex items-center justify-center gap-3 border-r border-[#e0e3e8] text-[14px] font-semibold transition-colors',
+                        shiftType === 'flexible'
+                          ? 'border-[#ffb38c] bg-[#fff2ea] text-[#111827] shadow-[inset_0_0_0_1px_#ffb38c]'
+                          : 'text-[#555e6d] hover:bg-[#fafafa]'
+                      )}
+                    >
+                      <Calendar className={cn('size-4', shiftType === 'flexible' ? 'text-[#f45113]' : 'text-[#8a92a1]')} />
+                      Flexible Shift
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleShiftTypeChange('fixed')}
+                      disabled={readOnly}
+                      className={cn(
+                        'flex items-center justify-center gap-3 text-[14px] font-semibold transition-colors',
+                        shiftType === 'fixed'
+                          ? 'border-[#ffb38c] bg-[#fff2ea] text-[#111827] shadow-[inset_0_0_0_1px_#ffb38c]'
+                          : 'text-[#555e6d] hover:bg-[#fafafa]'
+                      )}
+                    >
+                      <Clock3 className={cn('size-4', shiftType === 'fixed' ? 'text-[#f45113]' : 'text-[#8a92a1]')} />
+                      Fixed Shift
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="schedule-code">Schedule code <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <div className="hidden bg-[#dfe3e8] lg:block" />
+                <div className="space-y-3">
+                  <Label htmlFor="schedule-code" className="text-[14px] font-semibold text-[#111827]">
+                    Schedule code <span className="font-normal text-[#6b7280]">(optional)</span>
+                  </Label>
                   <Input
                     id="schedule-code"
                     value={editForm.schedule_code || ''}
                     onChange={(e) => setEditForm((f) => ({ ...f, schedule_code: e.target.value }))}
                     placeholder="e.g. FX-01"
-                    className="h-11 min-h-11"
+                    className="h-12 rounded-md border-[#d7dce4] bg-white px-4 text-[14px] shadow-none placeholder:text-[#8a92a1]"
                     maxLength={32}
                     readOnly={readOnly}
                     disabled={readOnly}
                   />
+                  <p className="text-[13px] text-[#6b7280]">A unique code to easily identify this schedule</p>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-border/60 bg-muted/15 p-4 dark:bg-muted/10">
+              <div className="bg-[#f8f9fb] px-10 py-6">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-[16px] font-semibold text-[#111827]">Weekly schedule</h3>
+                    <p className="mt-1 text-[13px] text-[#596273]">Set up each day of the week. You can customize shift times, breaks, and other settings.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 gap-3 rounded-md border-[#d7dce4] bg-white px-5 text-[13px] font-semibold text-[#1f2329] shadow-sm"
+                  >
+                    Apply template
+                    <ChevronDown className="size-4" />
+                  </Button>
+                </div>
+                <div className="mb-3 h-px bg-[#dfe3e8]" />
                 <FlexibleScheduleTable
                   days={editForm.days || []}
                   setDays={(updater) => setEditForm((f) => ({
@@ -275,88 +355,6 @@ export function ScheduleEditorDialog({
                   }))}
                   readOnly={readOnly}
                 />
-              </div>
-
-              <div className="grid gap-4 @xl:grid-cols-2">
-                <ScheduleWeeklyGrid
-                  timeIn={preview.time_in}
-                  timeOut={preview.time_out}
-                  restDays={flexibleRestDays}
-                  breakStart={preview.break_start}
-                  breakEnd={preview.break_end}
-                  daySchedules={flexibleDaySchedules}
-                />
-                <div className="space-y-4">
-                  <ScheduleComplianceBar
-                    weeklyHours={wh}
-                    ndHoursPerWeek={ndh}
-                    otRisk={risk}
-                    restOk={restOk}
-                    onValidate={() => {
-                      toast.message('Preview OK', {
-                        description: restOk
-                          ? 'Weekly rest rule and hours look reasonable.'
-                          : 'Add at least one rest day per week (DOLE practice).',
-                      })
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="text-xs text-primary underline decoration-primary/30 hover:decoration-primary"
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                  >
-                    {showAdvanced ? 'Hide advanced settings' : 'Show advanced settings'}
-                  </button>
-                  {showAdvanced && (
-                    <div className="space-y-3 rounded-lg border border-dashed border-border/60 bg-muted/10 p-3">
-                      <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label htmlFor="late-allowance-flex">Late allowance (min)</Label>
-                          <Input
-                            id="late-allowance-flex"
-                            type="number"
-                            min={0}
-                            max={240}
-                            placeholder="Optional"
-                            value={editForm.late_allowance_minutes}
-                            onChange={(e) => setEditForm((f) => ({ ...f, late_allowance_minutes: e.target.value }))}
-                            className="h-11 min-h-11"
-                            readOnly={readOnly}
-                            disabled={readOnly}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="early-timeout-flex">Early time-out (min)</Label>
-                          <Input
-                            id="early-timeout-flex"
-                            type="number"
-                            min={0}
-                            max={240}
-                            placeholder="Optional"
-                            value={editForm.early_timeout_minutes}
-                            onChange={(e) => setEditForm((f) => ({ ...f, early_timeout_minutes: e.target.value }))}
-                            className="h-11 min-h-11"
-                            readOnly={readOnly}
-                            disabled={readOnly}
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="description-flex">Description</Label>
-                        <textarea
-                          id="description-flex"
-                          value={editForm.description || ''}
-                          onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                          placeholder="Optional notes about this schedule template"
-                          className="flex min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                          maxLength={1000}
-                          readOnly={readOnly}
-                          disabled={readOnly}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           ) : (
@@ -827,11 +825,54 @@ export function ScheduleEditorDialog({
           )}
           </div>
 
-          <div className="flex w-full min-w-0 shrink-0 flex-col gap-2 border-t border-border/60 bg-muted/30 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] @sm:px-6 md:flex-row md:flex-wrap md:justify-end md:gap-3">
+          {isFlexible && (
+            <div className="grid shrink-0 border-t border-[#e0e3e8] bg-white px-10 py-5 lg:grid-cols-3">
+              <div className="flex items-center gap-4">
+                <span className="flex size-12 items-center justify-center rounded-xl bg-[#fff1eb] text-[#f45113]">
+                  <Clock3 className="size-6" />
+                </span>
+                <div>
+                  <p className="text-[14px] font-semibold text-[#1f2329]">Weekly summary</p>
+                  <p className="mt-1 text-[13px] text-[#596273]">{flexibleWorkingDayCount} working days</p>
+                  <p className="text-[13px] text-[#596273]">{formatSummaryHours(wh)} expected hours</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 border-t border-[#e0e3e8] pt-4 lg:border-l lg:border-t-0 lg:px-8 lg:pt-0">
+                <span className="flex size-12 items-center justify-center rounded-full bg-[#fff4dc] text-[#f59e0b]">
+                  <AlarmClock className="size-6" />
+                </span>
+                <div>
+                  <p className="text-[14px] font-semibold text-[#1f2329]">Overtime settings</p>
+                  <p className="mt-1 text-[13px] text-[#596273]">OT after: {formatClockPadded(preview.time_out) || '05:00 PM'}</p>
+                  <p className="text-[13px] text-[#596273]">OT buffer: {editForm.overtime_buffer_minutes || 15} minutes</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 border-t border-[#e0e3e8] pt-4 lg:border-l lg:border-t-0 lg:px-8 lg:pt-0">
+                <span className="flex size-12 items-center justify-center rounded-full bg-[#eef0ff] text-[#5b5ff0]">
+                  <CalendarDays className="size-6" />
+                </span>
+                <div>
+                  <p className="text-[14px] font-semibold text-[#1f2329]">Schedule preview</p>
+                  <button type="button" className="mt-1 inline-flex items-center gap-2 text-[13px] font-semibold text-[#f45113]">
+                    View full weekly calendar
+                    <ExternalLink className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className={cn(
+            'flex w-full min-w-0 shrink-0 flex-col gap-2 border-t px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] @sm:px-6 md:flex-row md:flex-wrap md:justify-end md:gap-3',
+            isFlexible ? 'border-[#e0e3e8] bg-white px-10' : 'border-border/60 bg-muted/30'
+          )}>
             <Button
               type="button"
               variant="outline"
-              className="h-11 w-full min-w-0 md:w-auto"
+              className={cn(
+                'h-11 w-full min-w-0 md:w-auto',
+                isFlexible && 'rounded-md border-[#d7dce4] bg-white px-6 text-[14px] font-semibold text-[#111827] shadow-sm hover:bg-[#f6f7f9]'
+              )}
               onClick={() => onOpenChange(false)}
             >
               Cancel
@@ -849,7 +890,10 @@ export function ScheduleEditorDialog({
             ) : null}
             <Button
               type="submit"
-              className="h-11 w-full min-w-0 md:w-auto"
+              className={cn(
+                'h-11 w-full min-w-0 md:w-auto',
+                isFlexible && 'rounded-md bg-[#f45113] px-7 text-[14px] font-semibold text-white shadow-sm hover:bg-[#df440d]'
+              )}
               disabled={submitting}
             >
               {submitting ? (

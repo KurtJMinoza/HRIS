@@ -26,6 +26,7 @@ use App\Services\OvertimePayrollService;
 use App\Services\PayrollComputationService;
 use App\Services\PremiumReportService;
 use App\Services\ReportsCacheService;
+use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -214,52 +215,7 @@ class ReportsController extends Controller
      */
     private function buildScheduleFromWorkingSchedule(?WorkingSchedule $workingSchedule): ?array
     {
-        if (! $workingSchedule) {
-            return null;
-        }
-
-        $restDays = is_array($workingSchedule->rest_days) ? $workingSchedule->rest_days : [];
-
-        $breaks = [];
-        foreach ($workingSchedule->getAllBreaks() as $b) {
-            $breaks[] = [
-                'start' => $b['start'],
-                'end' => $b['end'],
-                'is_paid' => $b['is_paid'] ?? false,
-            ];
-        }
-
-        $dayConfig = [];
-
-        foreach (self::DAY_KEYS as $key) {
-            if (in_array($key, $restDays, true)) {
-                $dayConfig[$key] = null;
-
-                continue;
-            }
-
-            $dayConfig[$key] = [
-                'in' => $workingSchedule->time_in,
-                'out' => $workingSchedule->time_out,
-                'break_start' => $workingSchedule->break_start,
-                'break_end' => $workingSchedule->break_end,
-                'breaks' => $breaks,
-                'work_blocks' => $workingSchedule->getWorkBlocks(),
-                'shift_type' => $workingSchedule->shift_type ?? 'fixed',
-                'crosses_midnight' => (bool) ($workingSchedule->crosses_midnight ?? false),
-                'expected_paid_minutes' => $workingSchedule->expected_paid_minutes,
-                'half_day_threshold_minutes' => $workingSchedule->effective_half_day_threshold,
-                'grace_period_minutes' => $workingSchedule->grace_period_minutes,
-                'early_timein_minutes' => $workingSchedule->early_timein_minutes ?? 60,
-                'late_allowance_minutes' => $workingSchedule->late_allowance_minutes,
-                'early_timeout_minutes' => $workingSchedule->early_timeout_minutes,
-                'overtime_buffer_minutes' => $workingSchedule->overtime_buffer_minutes ?? 15,
-                'rest_days' => $restDays,
-                'flexible_required_minutes' => $workingSchedule->flexible_required_minutes,
-            ];
-        }
-
-        return $dayConfig;
+        return EmployeeScheduleResolver::buildFromWorkingSchedule($workingSchedule);
     }
 
     /**

@@ -1,21 +1,17 @@
 import { useMemo, useState } from 'react'
-import { Copy, ChevronDown } from 'lucide-react'
+import { ChevronDown, Clock3, Copy, GripVertical, Plus, Trash2, Utensils } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import {
   detectCrossesMidnight,
   formatPaidHours,
   halfDayThresholdMinutes,
   netShiftMinutes,
 } from '@/lib/scheduleLib'
-import { toHhMm } from '@/lib/timeFormat'
+import { createDefaultFlexibleOption } from '@/lib/workScheduleForm'
+import { formatShiftRange12h, toHhMm } from '@/lib/timeFormat'
+import { cn } from '@/lib/utils'
 
 const DAY_ROWS = [
   { key: 'mon', label: 'Monday' },
@@ -27,37 +23,62 @@ const DAY_ROWS = [
   { key: 'sun', label: 'Sunday' },
 ]
 
-const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri']
-
 const DEFAULTS = {
   grace_period_minutes: 5,
   early_timein_minutes: 60,
   overtime_buffer_minutes: 15,
-  expected_paid_minutes: '',
-  half_day_threshold_minutes: '',
 }
 
-function dayPaidMinutes(row) {
-  if (!row?.is_working_day || !row.time_in || !row.time_out) return 0
-  if (row.expected_paid_minutes !== '' && row.expected_paid_minutes != null && Number(row.expected_paid_minutes) > 0) {
-    return Number(row.expected_paid_minutes)
+function optionPaidMinutes(option) {
+  if (!option?.time_in || !option.time_out) return 0
+  if (option.expected_paid_minutes !== '' && option.expected_paid_minutes != null && Number(option.expected_paid_minutes) > 0) {
+    return Number(option.expected_paid_minutes)
   }
-  return netShiftMinutes(row.time_in, row.time_out, row.break_start, row.break_end, [])
+  return netShiftMinutes(option.time_in, option.time_out, option.break_start, option.break_end, [])
 }
 
-function cloneDay(source) {
+function normalizeOptions(row) {
+  if (!row?.is_working_day) return []
+  const options = Array.isArray(row.options) && row.options.length > 0
+    ? row.options
+    : [createDefaultFlexibleOption(1, row.grace_period_minutes ?? DEFAULTS.grace_period_minutes, {
+      time_in: row.time_in || '08:00',
+      time_out: row.time_out || '17:00',
+      break_start: row.break_start || '12:00',
+      break_end: row.break_end || '13:00',
+      expected_paid_minutes: row.expected_paid_minutes ?? '',
+      half_day_threshold_minutes: row.half_day_threshold_minutes ?? '',
+      grace_period_minutes: row.grace_period_minutes ?? DEFAULTS.grace_period_minutes,
+      early_timein_minutes: row.early_timein_minutes ?? DEFAULTS.early_timein_minutes,
+      overtime_buffer_minutes: row.overtime_buffer_minutes ?? DEFAULTS.overtime_buffer_minutes,
+      crosses_midnight: !!row.crosses_midnight,
+      is_default: true,
+    })]
+
+  if (options.some((option) => option.is_default)) return options
+  return options.map((option, index) => ({ ...option, is_default: index === 0 }))
+}
+
+function defaultOptionFor(row) {
+  const options = normalizeOptions(row)
+  return options.find((option) => option.is_default) || options[0] || null
+}
+
+function syncDayFromOptions(row, options) {
+  const defaultOption = options.find((option) => option.is_default) || options[0]
   return {
-    ...source,
-    time_in: source.time_in || '',
-    time_out: source.time_out || '',
-    break_start: source.break_start || '',
-    break_end: source.break_end || '',
-    expected_paid_minutes: source.expected_paid_minutes ?? '',
-    half_day_threshold_minutes: source.half_day_threshold_minutes ?? '',
-    grace_period_minutes: source.grace_period_minutes ?? DEFAULTS.grace_period_minutes,
-    early_timein_minutes: source.early_timein_minutes ?? DEFAULTS.early_timein_minutes,
-    overtime_buffer_minutes: source.overtime_buffer_minutes ?? DEFAULTS.overtime_buffer_minutes,
-    crosses_midnight: !!source.crosses_midnight,
+    ...row,
+    options,
+    time_in: defaultOption?.time_in || '',
+    time_out: defaultOption?.time_out || '',
+    break_start: defaultOption?.break_start || '',
+    break_end: defaultOption?.break_end || '',
+    expected_paid_minutes: defaultOption?.expected_paid_minutes ?? '',
+    half_day_threshold_minutes: defaultOption?.half_day_threshold_minutes ?? '',
+    grace_period_minutes: defaultOption?.grace_period_minutes ?? DEFAULTS.grace_period_minutes,
+    early_timein_minutes: defaultOption?.early_timein_minutes ?? DEFAULTS.early_timein_minutes,
+    overtime_buffer_minutes: defaultOption?.overtime_buffer_minutes ?? DEFAULTS.overtime_buffer_minutes,
+    crosses_midnight: detectCrossesMidnight(defaultOption?.time_in, defaultOption?.time_out),
   }
 }
 
@@ -73,323 +94,321 @@ function blankWorkingFields() {
     early_timein_minutes: DEFAULTS.early_timein_minutes,
     overtime_buffer_minutes: DEFAULTS.overtime_buffer_minutes,
     crosses_midnight: false,
+    options: [],
   }
 }
 
-function numOrEmpty(value) {
-  return value === '' || value == null ? '' : Number(value)
+function formatTimeBox(value) {
+  const hhmm = toHhMm(value)
+  if (!hhmm) return '--:--'
+  const [hRaw, m] = hhmm.split(':')
+  const hour24 = Number(hRaw)
+  const period = hour24 >= 12 ? 'PM' : 'AM'
+  const hour12 = hour24 % 12 || 12
+  return `${String(hour12).padStart(2, '0')}:${m} ${period}`
+}
+
+function displayHours(minutes) {
+  const h = Math.floor((Number(minutes) || 0) / 60)
+  const m = (Number(minutes) || 0) % 60
+  return `${h}h ${String(m).padStart(2, '0')}m`
+}
+
+function TimeField({ label, value, onChange, readOnly }) {
+  return (
+    <label className="min-w-0 space-y-2">
+      <span className="flex items-center gap-1 text-[12px] font-medium text-[#596273]">
+        {label}
+        <span className="text-[10px] text-[#b07870]">?</span>
+      </span>
+      <div className="relative">
+        <Input
+          type="time"
+          value={toHhMm(value) || ''}
+          onChange={onChange}
+          className="h-10 rounded-md border-[#d9dde5] bg-white pl-3 pr-9 text-[13px] font-medium text-[#252a31] shadow-none [color-scheme:light]"
+          readOnly={readOnly}
+          disabled={readOnly}
+        />
+        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-[#69707d]" />
+      </div>
+    </label>
+  )
+}
+
+function ValueField({ label, value }) {
+  return (
+    <label className="min-w-0 space-y-2">
+      <span className="flex items-center gap-1 text-[12px] font-medium text-[#596273]">
+        {label}
+        <span className="text-[10px] text-[#b07870]">?</span>
+      </span>
+      <div className="flex h-10 items-center rounded-md border border-[#d9dde5] bg-white px-3 text-[13px] font-medium text-[#596273]">
+        {value}
+      </div>
+    </label>
+  )
+}
+
+function EditableMinuteField({ label, value, onChange, readOnly }) {
+  return (
+    <label className="min-w-0 space-y-2">
+      <span className="flex items-center gap-1 text-[12px] font-medium text-[#596273]">
+        {label}
+        <span className="text-[10px] text-[#b07870]">?</span>
+      </span>
+      <Input
+        value={`${value ?? 0}m`}
+        onChange={(e) => onChange(Number(String(e.target.value).replace(/\D/g, '')) || 0)}
+        className="h-10 rounded-md border-[#d9dde5] bg-white px-3 text-[13px] font-medium text-[#252a31] shadow-none"
+        readOnly={readOnly}
+        disabled={readOnly}
+      />
+    </label>
+  )
+}
+
+function OptionEditor({ option, readOnly, onChange }) {
+  const paid = optionPaidMinutes(option)
+  const halfDay = halfDayThresholdMinutes({
+    expected_paid_minutes: option.expected_paid_minutes,
+    half_day_threshold_minutes: option.half_day_threshold_minutes,
+    time_in: option.time_in,
+    time_out: option.time_out,
+    break_start: option.break_start,
+    break_end: option.break_end,
+  })
+
+  return (
+    <div className="space-y-4 pb-0 pt-5">
+      <div className="grid gap-4 xl:grid-cols-[1.05fr_1.05fr_1.05fr_1.05fr_.72fr_.72fr_.9fr_.9fr]">
+        <TimeField
+          label="Time in"
+          value={option.time_in}
+          readOnly={readOnly}
+          onChange={(e) => onChange({ time_in: e.target.value, crosses_midnight: detectCrossesMidnight(e.target.value, option.time_out) })}
+        />
+        <TimeField
+          label="Break start"
+          value={option.break_start}
+          readOnly={readOnly}
+          onChange={(e) => onChange({ break_start: e.target.value })}
+        />
+        <TimeField
+          label="Break end"
+          value={option.break_end}
+          readOnly={readOnly}
+          onChange={(e) => onChange({ break_end: e.target.value })}
+        />
+        <TimeField
+          label="Time out"
+          value={option.time_out}
+          readOnly={readOnly}
+          onChange={(e) => onChange({ time_out: e.target.value, crosses_midnight: detectCrossesMidnight(option.time_in, e.target.value) })}
+        />
+        <ValueField label="Expected hrs" value={displayHours(paid)} />
+        <ValueField label="Half-day hrs" value={displayHours(halfDay)} />
+        <EditableMinuteField
+          label="Grace period"
+          value={option.grace_period_minutes ?? DEFAULTS.grace_period_minutes}
+          readOnly={readOnly}
+          onChange={(value) => onChange({ grace_period_minutes: value })}
+        />
+        <EditableMinuteField
+          label="OT buffer"
+          value={option.overtime_buffer_minutes ?? DEFAULTS.overtime_buffer_minutes}
+          readOnly={readOnly}
+          onChange={(value) => onChange({ overtime_buffer_minutes: value })}
+        />
+      </div>
+
+      <div className="grid gap-6 border-t border-[#edf0f3] pt-4 lg:grid-cols-[360px_1fr]">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-[12px] font-medium text-[#515966]">
+            <Utensils className="size-4" />
+            Breaks
+          </div>
+          <div className="flex h-10 items-center justify-between rounded-md border border-[#d9dde5] bg-white px-3 text-[13px]">
+            <span className="font-medium text-[#6b7280]">Lunch Break</span>
+            <span className="text-[#6b7280]">{formatShiftRange12h(option.break_start, option.break_end, ' - ')}</span>
+            <span className="rounded-full bg-[#d8f7e8] px-3 py-1 text-[11px] font-semibold text-[#1a9a61]">Paid</span>
+          </div>
+        </div>
+        <label className="space-y-2">
+          <span className="text-[12px] font-medium text-[#5f6673]">Notes <span className="font-normal">(optional)</span></span>
+          <div className="relative">
+            <Input
+              className="h-10 rounded-md border-[#d9dde5] bg-white pr-14 text-[13px] shadow-none"
+              placeholder="Add note for this day"
+              maxLength={150}
+              readOnly={readOnly}
+              disabled={readOnly}
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#7a828e]">0/150</span>
+          </div>
+        </label>
+      </div>
+    </div>
+  )
 }
 
 export function FlexibleScheduleTable({ days, setDays, readOnly = false }) {
-  const [copyTargets, setCopyTargets] = useState(() => new Set())
-
+  const [expandedDay, setExpandedDay] = useState('mon')
   const dayMap = useMemo(() => {
     const map = new Map()
-    for (const row of days || []) {
-      map.set(row.day_of_week, row)
-    }
+    for (const row of days || []) map.set(row.day_of_week, row)
     return map
   }, [days])
 
-  function updateDay(dayKey, patch) {
+  function updateDay(dayKey, updater) {
     setDays((current) => current.map((row) => {
       if (row.day_of_week !== dayKey) return row
-      const next = { ...row, ...patch }
-      if ('time_in' in patch || 'time_out' in patch) {
-        next.crosses_midnight = detectCrossesMidnight(next.time_in, next.time_out)
-      }
-      if (patch.is_working_day === false) {
-        return { ...next, ...blankWorkingFields() }
-      }
-      if (patch.is_working_day === true && !row.is_working_day) {
-        return {
-          ...next,
-          time_in: next.time_in || '08:00',
-          time_out: next.time_out || '17:00',
-          break_start: next.break_start || '12:00',
-          break_end: next.break_end || '13:00',
-          grace_period_minutes: next.grace_period_minutes ?? DEFAULTS.grace_period_minutes,
-          early_timein_minutes: next.early_timein_minutes ?? DEFAULTS.early_timein_minutes,
-          overtime_buffer_minutes: next.overtime_buffer_minutes ?? DEFAULTS.overtime_buffer_minutes,
-        }
-      }
-      return next
+      return typeof updater === 'function' ? updater(row) : { ...row, ...updater }
     }))
   }
 
-  function applyCopy(sourceKey, targetKeys) {
-    const source = dayMap.get(sourceKey)
-    if (!source?.is_working_day) return
-    const payload = cloneDay(source)
-    setDays((current) => current.map((row) => (
-      targetKeys.includes(row.day_of_week)
-        ? { ...row, ...payload, day_of_week: row.day_of_week, is_working_day: true }
-        : row
-    )))
+  function setWorking(dayKey, checked) {
+    updateDay(dayKey, (row) => {
+      if (!checked) return { ...row, is_working_day: false, ...blankWorkingFields() }
+      const option = createDefaultFlexibleOption(1, row.grace_period_minutes ?? DEFAULTS.grace_period_minutes)
+      return syncDayFromOptions({ ...row, is_working_day: true }, [option])
+    })
   }
 
-  function toggleCopyTarget(dayKey) {
-    setCopyTargets((prev) => {
-      const next = new Set(prev)
-      if (next.has(dayKey)) next.delete(dayKey)
-      else next.add(dayKey)
-      return next
+  function updateOption(dayKey, index, patch) {
+    updateDay(dayKey, (row) => {
+      const options = normalizeOptions(row).map((option, optionIndex) => (
+        optionIndex === index ? { ...option, ...patch } : option
+      ))
+      return syncDayFromOptions(row, options)
+    })
+  }
+
+  function duplicateOption(dayKey, index) {
+    updateDay(dayKey, (row) => {
+      const options = normalizeOptions(row)
+      const source = options[index]
+      if (!source) return row
+      const copy = {
+        ...source,
+        id: undefined,
+        option_name: `${source.option_name || `Option ${index + 1}`} Copy`,
+        is_default: false,
+        sequence: options.length + 1,
+      }
+      return syncDayFromOptions(row, [...options, copy])
+    })
+  }
+
+  function removeOption(dayKey, index) {
+    updateDay(dayKey, (row) => {
+      const options = normalizeOptions(row)
+      if (options.length <= 1) return row
+      const wasDefault = !!options[index]?.is_default
+      let next = options.filter((_, optionIndex) => optionIndex !== index)
+      if (wasDefault && next.length > 0) {
+        next = next.map((option, optionIndex) => ({ ...option, is_default: optionIndex === 0 }))
+      }
+      return syncDayFromOptions(row, next)
     })
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-sm font-medium">Weekly schedule</p>
-          <p className="text-xs text-muted-foreground">
-            Each weekday uses its own fixed-style shift pattern (paid hours, half-day, grace, early time-in, OT buffer).
-          </p>
-        </div>
-        {!readOnly && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="sm" className="h-9 gap-1.5">
-                <Copy className="size-3.5" />
-                Copy actions
-                <ChevronDown className="size-3.5 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => applyCopy('mon', Array.from(copyTargets).filter((k) => k !== 'mon'))}
-                disabled={copyTargets.size === 0}
-              >
-                Copy Monday to selected days
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  setDays((current) => current.map((row, index) => {
-                    if (index === 0 || !row.is_working_day) return row
-                    const prev = current[index - 1]
-                    if (!prev?.is_working_day) return row
-                    return { ...row, ...cloneDay(prev), day_of_week: row.day_of_week, is_working_day: true }
-                  }))
-                }}
-              >
-                Copy previous day
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => applyCopy('mon', WEEKDAY_KEYS.filter((k) => k !== 'mon'))}
-              >
-                Apply Monday to weekdays
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
+    <div className="space-y-2.5">
+      {DAY_ROWS.map(({ key, label }) => {
+        const row = dayMap.get(key) || { day_of_week: key, is_working_day: false, options: [] }
+        const working = !!row.is_working_day
+        const options = normalizeOptions(row)
+        const defaultOption = defaultOptionFor(row)
+        const expanded = expandedDay === key
 
-      <div className="overflow-x-auto rounded-lg border border-border/60">
-        <table className="min-w-[1180px] w-full text-sm">
-          <thead className="bg-muted/40 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-            <tr>
-              {!readOnly && <th className="px-2 py-2.5 w-10">Copy</th>}
-              <th className="px-3 py-2.5">Day</th>
-              <th className="px-3 py-2.5">Workday</th>
-              <th className="px-3 py-2.5">Time In</th>
-              <th className="px-3 py-2.5">Time Out</th>
-              <th className="px-3 py-2.5">Break</th>
-              <th className="px-3 py-2.5">Paid</th>
-              <th className="px-3 py-2.5">Expected (hrs)</th>
-              <th className="px-3 py-2.5">Half-day (hrs)</th>
-              <th className="px-3 py-2.5">Grace</th>
-              <th className="px-3 py-2.5">Early in</th>
-              <th className="px-3 py-2.5">OT buffer</th>
-            </tr>
-          </thead>
-          <tbody>
-            {DAY_ROWS.map(({ key, label }) => {
-              const row = dayMap.get(key) || { day_of_week: key, is_working_day: false }
-              const working = !!row.is_working_day
-              const paid = dayPaidMinutes(row)
-              const halfDay = working
-                ? halfDayThresholdMinutes({
-                  expected_paid_minutes: row.expected_paid_minutes,
-                  half_day_threshold_minutes: row.half_day_threshold_minutes,
-                  time_in: row.time_in,
-                  time_out: row.time_out,
-                  break_start: row.break_start,
-                  break_end: row.break_end,
-                })
-                : 0
-              const overnight = working && detectCrossesMidnight(row.time_in, row.time_out)
+        return (
+          <section
+            key={key}
+            className={cn(
+              'rounded-lg border border-[#e2e5ea] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]',
+              expanded && 'shadow-[0_2px_8px_rgba(16,24,40,0.06)]'
+            )}
+          >
+            <div className="flex min-h-[54px] items-center justify-between gap-3 px-5">
+              <div className="flex min-w-0 items-center gap-4">
+                <GripVertical className="size-4 shrink-0 text-[#111827]" />
+                <Checkbox
+                  checked={working}
+                  onCheckedChange={(checked) => setWorking(key, checked === true)}
+                  disabled={readOnly}
+                  aria-label={`${label} workday`}
+                  className="size-5 rounded-[4px] border-[#cbd2dc] data-[state=checked]:border-[#f45113] data-[state=checked]:bg-[#f45113]"
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[14px] font-semibold leading-tight text-[#1f2329]">{label}</p>
+                    <span
+                      className={cn(
+                        'rounded-full px-3 py-1 text-[11px] font-semibold',
+                        working ? 'bg-[#dff7eb] text-[#14945b]' : 'bg-[#eff1f4] text-[#656d78]'
+                      )}
+                    >
+                      {working ? 'Working day' : 'Day off'}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[12px] text-[#505866]">
+                    {working && defaultOption
+                      ? `Default: ${formatTimeBox(defaultOption.time_in)} - ${formatTimeBox(defaultOption.time_out)}`
+                      : 'Default: --'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {expanded && working && !readOnly && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9 gap-2 rounded-md border-[#dfe3e8] bg-white px-4 text-[13px] font-semibold text-[#1f2329] shadow-sm hover:bg-[#fafafa]"
+                  >
+                    <Plus className="size-4" />
+                    Add break
+                  </Button>
+                )}
+                {working && !readOnly && (
+                  <>
+                    <Button type="button" variant="ghost" size="icon" className="size-8 text-[#1f2329]" onClick={() => duplicateOption(key, 0)} title="Duplicate">
+                      <Copy className="size-4" />
+                    </Button>
+                    <Button type="button" variant="ghost" size="icon" className="size-8 text-[#ff4d5e]" onClick={() => removeOption(key, 0)} title="Remove">
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 text-[#111827]"
+                  onClick={() => setExpandedDay(expanded ? '' : key)}
+                  title={expanded ? 'Collapse' : 'Expand'}
+                >
+                  <ChevronDown className={cn('size-4 transition-transform', expanded && 'rotate-180')} />
+                </Button>
+              </div>
+            </div>
 
-              return (
-                <tr key={key} className="border-t border-border/50 align-middle">
-                  {!readOnly && (
-                    <td className="px-2 py-2">
-                      <Checkbox
-                        checked={copyTargets.has(key)}
-                        onCheckedChange={() => toggleCopyTarget(key)}
-                        aria-label={`Select ${label} for copy`}
-                        disabled={!working}
-                      />
-                    </td>
-                  )}
-                  <td className="px-3 py-2 font-medium whitespace-nowrap">
-                    {label}
-                    {overnight && (
-                      <span className="ml-1.5 text-[10px] font-normal text-amber-700 dark:text-amber-300">Overnight</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Checkbox
-                      checked={working}
-                      onCheckedChange={(checked) => updateDay(key, { is_working_day: checked === true })}
-                      disabled={readOnly}
-                      aria-label={`${label} workday`}
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <Input
-                        type="time"
-                        value={toHhMm(row.time_in) || ''}
-                        onChange={(e) => updateDay(key, { time_in: e.target.value })}
-                        className="h-9 min-w-[7.25rem]"
-                        required
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <Input
-                        type="time"
-                        value={toHhMm(row.time_out) || ''}
-                        onChange={(e) => updateDay(key, { time_out: e.target.value })}
-                        className="h-9 min-w-[7.25rem]"
-                        required
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <div className="flex min-w-[10.5rem] items-center gap-1">
-                        <Input
-                          type="time"
-                          value={toHhMm(row.break_start) || ''}
-                          onChange={(e) => updateDay(key, { break_start: e.target.value })}
-                          className="h-9"
-                          readOnly={readOnly}
-                          disabled={readOnly}
-                        />
-                        <span className="text-muted-foreground">–</span>
-                        <Input
-                          type="time"
-                          value={toHhMm(row.break_end) || ''}
-                          onChange={(e) => updateDay(key, { break_end: e.target.value })}
-                          className="h-9"
-                          readOnly={readOnly}
-                          disabled={readOnly}
-                        />
-                      </div>
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-xs font-medium text-primary">
-                    {working ? formatPaidHours(paid) : '—'}
-                    {working && (
-                      <div className="font-normal text-muted-foreground">HD {formatPaidHours(halfDay)}</div>
-                    )}
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <Input
-                        type="number"
-                        min={0}
-                        max={24}
-                        step={0.5}
-                        value={row.expected_paid_minutes ? Number(row.expected_paid_minutes) / 60 : ''}
-                        onChange={(e) => updateDay(key, {
-                          expected_paid_minutes: e.target.value === '' ? '' : Math.round(Number(e.target.value) * 60),
-                        })}
-                        placeholder="Auto"
-                        className="h-9 w-[5.5rem]"
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <Input
-                        type="number"
-                        min={0}
-                        max={12}
-                        step={0.25}
-                        value={row.half_day_threshold_minutes ? Number(row.half_day_threshold_minutes) / 60 : ''}
-                        onChange={(e) => updateDay(key, {
-                          half_day_threshold_minutes: e.target.value === '' ? '' : Math.round(Number(e.target.value) * 60),
-                        })}
-                        placeholder="Auto (50%)"
-                        className="h-9 w-[6.25rem]"
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <Input
-                        type="number"
-                        min={0}
-                        max={240}
-                        value={row.grace_period_minutes ?? DEFAULTS.grace_period_minutes}
-                        onChange={(e) => updateDay(key, { grace_period_minutes: numOrEmpty(e.target.value) })}
-                        className="h-9 w-[4.5rem]"
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <Input
-                        type="number"
-                        min={0}
-                        max={480}
-                        value={row.early_timein_minutes ?? DEFAULTS.early_timein_minutes}
-                        onChange={(e) => updateDay(key, { early_timein_minutes: numOrEmpty(e.target.value) })}
-                        className="h-9 w-[4.5rem]"
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-2 py-2">
-                    {working ? (
-                      <Input
-                        type="number"
-                        min={0}
-                        max={480}
-                        value={row.overtime_buffer_minutes ?? DEFAULTS.overtime_buffer_minutes}
-                        onChange={(e) => updateDay(key, { overtime_buffer_minutes: numOrEmpty(e.target.value) })}
-                        className="h-9 w-[4.5rem]"
-                        readOnly={readOnly}
-                        disabled={readOnly}
-                      />
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {!readOnly && copyTargets.size > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {copyTargets.size} day(s) selected for &ldquo;Copy Monday to selected days&rdquo;.
-        </p>
-      )}
+            {expanded && working && (
+              <div className="px-16 pb-5 pr-20">
+                {options.slice(0, 1).map((option, index) => (
+                  <OptionEditor
+                    key={`${option.id || 'new'}-${index}`}
+                    option={option}
+                    readOnly={readOnly}
+                    onChange={(patch) => updateOption(key, index, patch)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -404,18 +423,19 @@ export function flexiblePreviewSchedule(days, shared = {}) {
   if (!first) {
     return { ...shared, shift_type: 'flexible', rest_days: flexibleDaysToRestDays(days) }
   }
+  const option = defaultOptionFor(first) || first
   return {
     ...shared,
     shift_type: 'flexible',
-    time_in: first.time_in,
-    time_out: first.time_out,
-    break_start: first.break_start,
-    break_end: first.break_end,
-    expected_paid_minutes: first.expected_paid_minutes || shared.expected_paid_minutes,
-    half_day_threshold_minutes: first.half_day_threshold_minutes || shared.half_day_threshold_minutes,
-    grace_period_minutes: first.grace_period_minutes ?? shared.grace_period_minutes ?? 5,
-    early_timein_minutes: first.early_timein_minutes ?? shared.early_timein_minutes ?? 60,
-    overtime_buffer_minutes: first.overtime_buffer_minutes ?? shared.overtime_buffer_minutes ?? 15,
+    time_in: option.time_in,
+    time_out: option.time_out,
+    break_start: option.break_start,
+    break_end: option.break_end,
+    expected_paid_minutes: option.expected_paid_minutes || shared.expected_paid_minutes,
+    half_day_threshold_minutes: option.half_day_threshold_minutes || shared.half_day_threshold_minutes,
+    grace_period_minutes: option.grace_period_minutes ?? shared.grace_period_minutes ?? 5,
+    early_timein_minutes: option.early_timein_minutes ?? shared.early_timein_minutes ?? 60,
+    overtime_buffer_minutes: option.overtime_buffer_minutes ?? shared.overtime_buffer_minutes ?? 15,
     rest_days: flexibleDaysToRestDays(days),
   }
 }

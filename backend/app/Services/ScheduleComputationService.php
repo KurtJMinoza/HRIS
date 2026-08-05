@@ -36,6 +36,14 @@ class ScheduleComputationService
         ?string $tz = null,
     ): array {
         $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $matchMetadata = null;
+        if (($daySchedule['shift_type'] ?? 'fixed') === 'flexible'
+            && ! empty($daySchedule['flexible_shift_options'])
+            && is_array($daySchedule['flexible_shift_options'])) {
+            $matched = $this->resolveFlexibleShiftOption($dateKey, $daySchedule, $actualTimeIn, $actualTimeOut, $tz);
+            $daySchedule = $matched['schedule'];
+            $matchMetadata = $matched['metadata'];
+        }
         $shiftType = $daySchedule['shift_type'] ?? 'fixed';
 
         $summary = $this->summarize($dateKey, $daySchedule, $tz);
@@ -63,6 +71,9 @@ class ScheduleComputationService
             'shift_type' => $shiftType,
             'is_rest_day' => false,
         ];
+        if ($matchMetadata !== null) {
+            $result = array_merge($result, $matchMetadata);
+        }
 
         $dayName = strtolower(Carbon::parse($dateKey)->format('D'));
         $restDays = $daySchedule['rest_days'] ?? [];
@@ -82,7 +93,10 @@ class ScheduleComputationService
 
         if ($shiftType === 'flexible') {
             // Per-weekday flexible schedules reuse fixed-style times after resolution.
-            if (! empty($daySchedule['in']) && ! empty($daySchedule['out'])) {
+            $fixedStyleFlexible = ! empty($daySchedule['matched_schedule_option_id'])
+                || ! empty($daySchedule['flexible_shift_options'])
+                || empty($daySchedule['flexible_required_minutes']);
+            if (! empty($daySchedule['in']) && ! empty($daySchedule['out']) && $fixedStyleFlexible) {
                 return $this->computeFixed($result, $daySchedule, $dateKey, $timeIn, $timeOut, $tz);
             }
 
@@ -94,6 +108,73 @@ class ScheduleComputationService
         }
 
         return $this->computeFixed($result, $daySchedule, $dateKey, $timeIn, $timeOut, $tz);
+    }
+
+    /**
+     * @return array{schedule: array<string, mixed>, metadata: array<string, mixed>}
+     */
+    private function resolveFlexibleShiftOption(
+        string $dateKey,
+        array $daySchedule,
+        ?Carbon $actualTimeIn,
+        ?Carbon $actualTimeOut,
+        string $tz
+    ): array {
+        $segments = [[
+            'time_in' => $actualTimeIn,
+            'time_out' => $actualTimeOut,
+        ]];
+        $match = app(FlexibleShiftMatcher::class)->matchForAttendance(
+            isset($daySchedule['employee_id']) ? (int) $daySchedule['employee_id'] : null,
+            $dateKey,
+            $segments,
+            $daySchedule['flexible_shift_options'],
+            $tz,
+            isset($daySchedule['explicit_schedule_option_id']) ? (int) $daySchedule['explicit_schedule_option_id'] : null,
+        );
+
+        $option = $match['option'] ?? null;
+        if (! is_array($option)) {
+            return [
+                'schedule' => $daySchedule,
+                'metadata' => [
+                    'matched_schedule_option_id' => null,
+                    'matched_schedule_option_name' => null,
+                    'match_source' => 'none',
+                    'match_score' => null,
+                    'resolved_schedule_snapshot' => $daySchedule,
+                ],
+            ];
+        }
+
+        $resolved = array_merge($daySchedule, $option, [
+            'shift_type' => 'flexible',
+            'schedule_type' => 'flexible',
+            'flexible_shift_options' => $daySchedule['flexible_shift_options'],
+            'match_source' => $match['source'],
+            'match_score' => $match['score'],
+        ]);
+
+        return [
+            'schedule' => $resolved,
+            'metadata' => [
+                'matched_schedule_option_id' => $option['matched_schedule_option_id'] ?? $option['id'] ?? null,
+                'matched_schedule_option_name' => $option['matched_schedule_option_name'] ?? $option['option_name'] ?? null,
+                'match_source' => $match['source'],
+                'match_score' => $match['score'],
+                'resolved_schedule_snapshot' => $this->snapshotSchedule($resolved),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function snapshotSchedule(array $schedule): array
+    {
+        return collect($schedule)
+            ->except(['flexible_shift_options'])
+            ->all();
     }
 
     /**

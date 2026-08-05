@@ -53,9 +53,9 @@ class WorkingSchedule extends Model
 
     public function days(): HasMany
     {
-        return $this->hasMany(WorkingScheduleDay::class)->orderByRaw(
-            "FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')"
-        );
+        return $this->hasMany(WorkingScheduleDay::class)
+            ->with('options')
+            ->orderByRaw("FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')");
     }
 
     public function isFlexiblePerDay(): bool

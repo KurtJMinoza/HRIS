@@ -17,20 +17,43 @@ const FLEXIBLE_DAY_LABELS = {
   sun: 'Sunday',
 }
 
-export function createDefaultFlexibleDay(dayKey, isWorking = true, gracePeriod = 5) {
+export function createDefaultFlexibleOption(sequence = 1, gracePeriod = 5, overrides = {}) {
   return {
-    day_of_week: dayKey,
-    is_working_day: isWorking,
-    time_in: isWorking ? '08:00' : '',
-    time_out: isWorking ? '17:00' : '',
-    break_start: isWorking ? '12:00' : '',
-    break_end: isWorking ? '13:00' : '',
+    option_name: sequence === 1 ? 'Default' : `Option ${sequence}`,
+    time_in: '08:00',
+    time_out: '17:00',
+    break_start: '12:00',
+    break_end: '13:00',
     expected_paid_minutes: '',
     half_day_threshold_minutes: '',
     grace_period_minutes: gracePeriod,
     early_timein_minutes: 60,
     overtime_buffer_minutes: 15,
     crosses_midnight: false,
+    is_default: sequence === 1,
+    matching_start_tolerance_minutes: '',
+    matching_end_tolerance_minutes: '',
+    sequence,
+    ...overrides,
+  }
+}
+
+export function createDefaultFlexibleDay(dayKey, isWorking = true, gracePeriod = 5) {
+  const option = createDefaultFlexibleOption(1, gracePeriod)
+  return {
+    day_of_week: dayKey,
+    is_working_day: isWorking,
+    time_in: isWorking ? option.time_in : '',
+    time_out: isWorking ? option.time_out : '',
+    break_start: isWorking ? option.break_start : '',
+    break_end: isWorking ? option.break_end : '',
+    expected_paid_minutes: '',
+    half_day_threshold_minutes: '',
+    grace_period_minutes: gracePeriod,
+    early_timein_minutes: 60,
+    overtime_buffer_minutes: 15,
+    crosses_midnight: false,
+    options: isWorking ? [option] : [],
   }
 }
 
@@ -76,20 +99,64 @@ export function scheduleRecordToForm(schedule) {
 
   const grace = schedule.grace_period_minutes ?? 5
   const days = Array.isArray(schedule.days) && schedule.days.length > 0
-    ? schedule.days.map((day) => ({
-      day_of_week: day.day_of_week,
-      is_working_day: !!day.is_working_day,
-      time_in: toHhMm(day.time_in) || '',
-      time_out: toHhMm(day.time_out) || '',
-      break_start: toHhMm(day.break_start) || '',
-      break_end: toHhMm(day.break_end) || '',
-      expected_paid_minutes: day.expected_paid_minutes ?? '',
-      half_day_threshold_minutes: day.half_day_threshold_minutes ?? '',
-      grace_period_minutes: day.grace_period_minutes ?? grace,
-      early_timein_minutes: day.early_timein_minutes ?? schedule.early_timein_minutes ?? 60,
-      overtime_buffer_minutes: day.overtime_buffer_minutes ?? schedule.overtime_buffer_minutes ?? 15,
-      crosses_midnight: !!day.crosses_midnight,
-    }))
+    ? FLEXIBLE_DAY_KEYS.map((key) => {
+      const day = schedule.days.find((row) => row.day_of_week === key)
+      if (!day) return createDefaultFlexibleDay(key, !['sat', 'sun'].includes(key), grace)
+      const fallbackOption = createDefaultFlexibleOption(1, grace, {
+        option_name: 'Default',
+        time_in: toHhMm(day.time_in) || '08:00',
+        time_out: toHhMm(day.time_out) || '17:00',
+        break_start: toHhMm(day.break_start) || '',
+        break_end: toHhMm(day.break_end) || '',
+        expected_paid_minutes: day.expected_paid_minutes ?? '',
+        half_day_threshold_minutes: day.half_day_threshold_minutes ?? '',
+        grace_period_minutes: day.grace_period_minutes ?? grace,
+        early_timein_minutes: day.early_timein_minutes ?? schedule.early_timein_minutes ?? 60,
+        overtime_buffer_minutes: day.overtime_buffer_minutes ?? schedule.overtime_buffer_minutes ?? 15,
+        crosses_midnight: !!day.crosses_midnight,
+        is_default: true,
+      })
+      const options = Array.isArray(day.options) && day.options.length > 0
+        ? day.options.map((option, index) => ({
+          id: option.id,
+          option_name: option.option_name || (index === 0 ? 'Default' : `Option ${index + 1}`),
+          time_in: toHhMm(option.time_in) || '',
+          time_out: toHhMm(option.time_out) || '',
+          break_start: toHhMm(option.break_start) || '',
+          break_end: toHhMm(option.break_end) || '',
+          expected_paid_minutes: option.expected_paid_minutes ?? '',
+          half_day_threshold_minutes: option.half_day_threshold_minutes ?? '',
+          grace_period_minutes: option.grace_period_minutes ?? grace,
+          early_timein_minutes: option.early_timein_minutes ?? schedule.early_timein_minutes ?? 60,
+          overtime_buffer_minutes: option.overtime_buffer_minutes ?? schedule.overtime_buffer_minutes ?? 15,
+          crosses_midnight: !!option.crosses_midnight,
+          is_default: !!option.is_default,
+          matching_start_tolerance_minutes: option.matching_start_tolerance_minutes ?? '',
+          matching_end_tolerance_minutes: option.matching_end_tolerance_minutes ?? '',
+          sequence: option.sequence ?? index + 1,
+        }))
+        : [fallbackOption]
+      if (options.length > 0 && !options.some((option) => option.is_default)) {
+        options[0] = { ...options[0], is_default: true }
+      }
+      const defaultOption = options.find((option) => option.is_default) || options[0] || fallbackOption
+
+      return {
+        day_of_week: day.day_of_week,
+        is_working_day: !!day.is_working_day,
+        time_in: defaultOption?.time_in || '',
+        time_out: defaultOption?.time_out || '',
+        break_start: defaultOption?.break_start || '',
+        break_end: defaultOption?.break_end || '',
+        expected_paid_minutes: defaultOption?.expected_paid_minutes ?? '',
+        half_day_threshold_minutes: defaultOption?.half_day_threshold_minutes ?? '',
+        grace_period_minutes: defaultOption?.grace_period_minutes ?? grace,
+        early_timein_minutes: defaultOption?.early_timein_minutes ?? schedule.early_timein_minutes ?? 60,
+        overtime_buffer_minutes: defaultOption?.overtime_buffer_minutes ?? schedule.overtime_buffer_minutes ?? 15,
+        crosses_midnight: !!defaultOption?.crosses_midnight,
+        options: day.is_working_day ? options : [],
+      }
+    })
     : createDefaultFlexibleDays(grace)
 
   return {
@@ -150,24 +217,48 @@ export function validateFlexibleDays(days) {
     const label = FLEXIBLE_DAY_LABELS[day.day_of_week] || day.day_of_week
     if (!day.is_working_day) continue
 
-    const timeIn = toHhMm(day.time_in)
-    const timeOut = toHhMm(day.time_out)
-    const breakStart = day.break_start ? toHhMm(day.break_start) : ''
-    const breakEnd = day.break_end ? toHhMm(day.break_end) : ''
-    const crossesMidnight = detectCrossesMidnight(timeIn, timeOut)
+    const options = Array.isArray(day.options) && day.options.length > 0
+      ? day.options
+      : [day]
+    if (options.length === 0) {
+      errors.push(`${label} requires at least one shift option.`)
+      continue
+    }
 
-    if (!timeIn) errors.push(`${label} Time In is required.`)
-    if (!timeOut) errors.push(`${label} Time Out is required.`)
-    if (timeIn && timeOut && !crossesMidnight && timeOut <= timeIn) {
-      errors.push(`${label} Time Out must be later than Time In.`)
-    }
-    if ((breakStart && !breakEnd) || (!breakStart && breakEnd)) {
-      errors.push(`${label} break must include both start and end.`)
-    }
-    if (timeIn && timeOut && breakStart && breakEnd) {
-      if (!breakWithinShift(timeIn, timeOut, breakStart, breakEnd, crossesMidnight)) {
-        errors.push(`${label} break period is outside the scheduled shift.`)
+    const defaultCount = options.filter((option) => !!option.is_default).length
+    if (defaultCount !== 1) errors.push(`${label} must have exactly one default shift option.`)
+
+    const names = new Set()
+    const signatures = new Set()
+    for (const [index, option] of options.entries()) {
+      const optionLabel = option.option_name || `Option ${index + 1}`
+      const nameKey = String(optionLabel).trim().toLowerCase()
+      const timeIn = toHhMm(option.time_in)
+      const timeOut = toHhMm(option.time_out)
+      const breakStart = option.break_start ? toHhMm(option.break_start) : ''
+      const breakEnd = option.break_end ? toHhMm(option.break_end) : ''
+      const crossesMidnight = detectCrossesMidnight(timeIn, timeOut)
+
+      if (!nameKey) errors.push(`${label} option ${index + 1} needs a name.`)
+      if (nameKey && names.has(nameKey)) errors.push(`${label} shift option names must be unique.`)
+      names.add(nameKey)
+
+      if (!timeIn) errors.push(`${label} ${optionLabel} Start Time is required.`)
+      if (!timeOut) errors.push(`${label} ${optionLabel} End Time is required.`)
+      if (timeIn && timeOut && !crossesMidnight && timeOut <= timeIn) {
+        errors.push(`${label} ${optionLabel} End Time must be later than Start Time.`)
       }
+      if ((breakStart && !breakEnd) || (!breakStart && breakEnd)) {
+        errors.push(`${label} ${optionLabel} break must include both start and end.`)
+      }
+      if (timeIn && timeOut && breakStart && breakEnd) {
+        if (!breakWithinShift(timeIn, timeOut, breakStart, breakEnd, crossesMidnight)) {
+          errors.push(`${label} ${optionLabel} break period is outside the scheduled shift.`)
+        }
+      }
+      const signature = [timeIn, timeOut, breakStart, breakEnd, option.expected_paid_minutes || '', option.grace_period_minutes || '', option.half_day_threshold_minutes || ''].join('|')
+      if (signatures.has(signature)) errors.push(`${label} has duplicate identical shift options.`)
+      signatures.add(signature)
     }
   }
   return errors
@@ -275,19 +366,61 @@ export function buildWorkingSchedulePayload(editForm) {
           ? 15
           : Number(day.overtime_buffer_minutes),
       crosses_midnight: day.is_working_day ? detectCrossesMidnight(day.time_in, day.time_out) : false,
+      options: day.is_working_day
+        ? (Array.isArray(day.options) && day.options.length > 0 ? day.options : [day]).map((option, index) => ({
+          id: option.id,
+          option_name: option.option_name || (index === 0 ? 'Default' : `Option ${index + 1}`),
+          time_in: toHhMm(option.time_in) || null,
+          time_out: toHhMm(option.time_out) || null,
+          break_start: option.break_start ? toHhMm(option.break_start) : null,
+          break_end: option.break_end ? toHhMm(option.break_end) : null,
+          expected_paid_minutes:
+            option.expected_paid_minutes === '' || option.expected_paid_minutes == null
+              ? null
+              : Number(option.expected_paid_minutes),
+          half_day_threshold_minutes:
+            option.half_day_threshold_minutes === '' || option.half_day_threshold_minutes == null
+              ? null
+              : Number(option.half_day_threshold_minutes),
+          grace_period_minutes:
+            option.grace_period_minutes === '' || option.grace_period_minutes == null
+              ? 5
+              : Number(option.grace_period_minutes),
+          early_timein_minutes:
+            option.early_timein_minutes === '' || option.early_timein_minutes == null
+              ? 60
+              : Number(option.early_timein_minutes),
+          overtime_buffer_minutes:
+            option.overtime_buffer_minutes === '' || option.overtime_buffer_minutes == null
+              ? 15
+              : Number(option.overtime_buffer_minutes),
+          crosses_midnight: detectCrossesMidnight(option.time_in, option.time_out),
+          is_default: !!option.is_default,
+          matching_start_tolerance_minutes:
+            option.matching_start_tolerance_minutes === '' || option.matching_start_tolerance_minutes == null
+              ? null
+              : Number(option.matching_start_tolerance_minutes),
+          matching_end_tolerance_minutes:
+            option.matching_end_tolerance_minutes === '' || option.matching_end_tolerance_minutes == null
+              ? null
+              : Number(option.matching_end_tolerance_minutes),
+          sequence: option.sequence ?? index + 1,
+        }))
+        : [],
     }))
     payload.rest_days = payload.days.filter((d) => !d.is_working_day).map((d) => d.day_of_week)
     const firstWorking = payload.days.find((d) => d.is_working_day)
     if (firstWorking) {
-      payload.time_in = firstWorking.time_in
-      payload.time_out = firstWorking.time_out
-      payload.break_start = firstWorking.break_start
-      payload.break_end = firstWorking.break_end
-      payload.grace_period_minutes = firstWorking.grace_period_minutes
-      payload.early_timein_minutes = firstWorking.early_timein_minutes
-      payload.overtime_buffer_minutes = firstWorking.overtime_buffer_minutes
-      payload.expected_paid_minutes = firstWorking.expected_paid_minutes
-      payload.half_day_threshold_minutes = firstWorking.half_day_threshold_minutes
+      const defaultOption = firstWorking.options.find((option) => option.is_default) || firstWorking.options[0] || firstWorking
+      payload.time_in = defaultOption.time_in
+      payload.time_out = defaultOption.time_out
+      payload.break_start = defaultOption.break_start
+      payload.break_end = defaultOption.break_end
+      payload.grace_period_minutes = defaultOption.grace_period_minutes
+      payload.early_timein_minutes = defaultOption.early_timein_minutes
+      payload.overtime_buffer_minutes = defaultOption.overtime_buffer_minutes
+      payload.expected_paid_minutes = defaultOption.expected_paid_minutes
+      payload.half_day_threshold_minutes = defaultOption.half_day_threshold_minutes
     }
   }
 

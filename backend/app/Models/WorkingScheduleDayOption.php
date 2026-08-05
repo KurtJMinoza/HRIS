@@ -4,16 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class WorkingScheduleDay extends Model
+class WorkingScheduleDayOption extends Model
 {
-    public const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-
     protected $fillable = [
-        'working_schedule_id',
-        'day_of_week',
-        'is_working_day',
+        'working_schedule_day_id',
+        'option_name',
         'time_in',
         'time_out',
         'break_start',
@@ -25,64 +21,41 @@ class WorkingScheduleDay extends Model
         'overtime_buffer_minutes',
         'half_day_threshold_minutes',
         'crosses_midnight',
+        'is_default',
+        'matching_start_tolerance_minutes',
+        'matching_end_tolerance_minutes',
+        'sequence',
     ];
 
     protected function casts(): array
     {
         return [
-            'is_working_day' => 'boolean',
-            'crosses_midnight' => 'boolean',
             'break_minutes' => 'integer',
             'expected_paid_minutes' => 'integer',
             'grace_period_minutes' => 'integer',
             'early_timein_minutes' => 'integer',
             'overtime_buffer_minutes' => 'integer',
             'half_day_threshold_minutes' => 'integer',
+            'crosses_midnight' => 'boolean',
+            'is_default' => 'boolean',
+            'matching_start_tolerance_minutes' => 'integer',
+            'matching_end_tolerance_minutes' => 'integer',
+            'sequence' => 'integer',
         ];
     }
 
-    public function workingSchedule(): BelongsTo
+    public function day(): BelongsTo
     {
-        return $this->belongsTo(WorkingSchedule::class);
-    }
-
-    public function options(): HasMany
-    {
-        return $this->hasMany(WorkingScheduleDayOption::class, 'working_schedule_day_id')
-            ->orderBy('sequence')
-            ->orderBy('id');
+        return $this->belongsTo(WorkingScheduleDay::class, 'working_schedule_day_id');
     }
 
     /**
-     * Per-day config for attendance/payroll (same shape as fixed schedule days).
+     * Fixed-style config consumed by ScheduleComputationService.
      *
      * @return array<string, mixed>
      */
     public function toDayConfig(WorkingSchedule $parent, array $restDays): array
     {
-        if ($this->relationLoaded('options') && $this->options->isNotEmpty()) {
-            $options = $this->options
-                ->map(fn (WorkingScheduleDayOption $option) => $option->toDayConfig($parent, $restDays) + [
-                    'is_default' => (bool) $option->is_default,
-                    'sequence' => (int) ($option->sequence ?? 0),
-                    'matching_start_tolerance_minutes' => $option->matching_start_tolerance_minutes,
-                    'matching_end_tolerance_minutes' => $option->matching_end_tolerance_minutes,
-                ])
-                ->values()
-                ->all();
-
-            $default = collect($options)->first(fn (array $option) => (bool) ($option['is_default'] ?? false))
-                ?? $options[0];
-
-            return array_merge($default, [
-                'shift_type' => WorkingSchedule::SHIFT_FLEXIBLE,
-                'schedule_type' => WorkingSchedule::SHIFT_FLEXIBLE,
-                'flexible_shift_options' => $options,
-                'match_source' => 'default',
-                'rest_days' => $restDays,
-            ]);
-        }
-
         $breaks = [];
         if (! empty($this->break_start) && ! empty($this->break_end)) {
             $breaks[] = [
@@ -93,6 +66,9 @@ class WorkingScheduleDay extends Model
         }
 
         return [
+            'matched_schedule_option_id' => $this->id,
+            'matched_schedule_option_name' => $this->option_name,
+            'match_source' => $this->is_default ? 'default' : null,
             'in' => $this->time_in,
             'out' => $this->time_out,
             'break_start' => $this->break_start,
@@ -104,9 +80,7 @@ class WorkingScheduleDay extends Model
             'crosses_midnight' => (bool) $this->crosses_midnight,
             'expected_paid_minutes' => ($this->expected_paid_minutes !== null && (int) $this->expected_paid_minutes > 0)
                 ? (int) $this->expected_paid_minutes
-                : (($parent->expected_paid_minutes !== null && (int) $parent->expected_paid_minutes > 0)
-                    ? (int) $parent->expected_paid_minutes
-                    : $this->expectedPaidMinutes()),
+                : $this->expectedPaidMinutes(),
             'half_day_threshold_minutes' => $this->half_day_threshold_minutes
                 ?? (($parent->half_day_threshold_minutes !== null && (int) $parent->half_day_threshold_minutes > 0)
                     ? (int) $parent->half_day_threshold_minutes
@@ -147,18 +121,5 @@ class WorkingScheduleDay extends Model
         }
 
         return max(0, $span - $unpaidBreak);
-    }
-
-    public static function normalizeTime(?string $value): ?string
-    {
-        if ($value === null || trim($value) === '') {
-            return null;
-        }
-        $v = trim($value);
-        if (strlen($v) >= 5 && preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $v)) {
-            return substr($v, 0, 5);
-        }
-
-        return $v;
     }
 }

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\WorkingSchedule;
 use App\Models\WorkingScheduleDay;
+use App\Models\WorkingScheduleDayOption;
 use App\Services\ScheduleComputationService;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
@@ -47,6 +48,57 @@ class FlexibleSchedulePerDayTest extends TestCase
         $this->assertNull($payload['sat']);
     }
 
+    public function test_flexible_resolver_returns_multiple_options_for_a_weekday(): void
+    {
+        $schedule = new WorkingSchedule([
+            'name' => 'Flexible Multi Option',
+            'shift_type' => WorkingSchedule::SHIFT_FLEXIBLE,
+            'grace_period_minutes' => 5,
+            'rest_days' => ['sat', 'sun'],
+        ]);
+
+        $mon = new WorkingScheduleDay([
+            'day_of_week' => 'mon',
+            'is_working_day' => true,
+            'time_in' => '08:00',
+            'time_out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+        ]);
+        $mon->setRelation('options', collect([
+            new WorkingScheduleDayOption([
+                'id' => 11,
+                'option_name' => 'Morning',
+                'time_in' => '08:00',
+                'time_out' => '17:00',
+                'break_start' => '12:00',
+                'break_end' => '13:00',
+                'grace_period_minutes' => 5,
+                'is_default' => true,
+                'sequence' => 1,
+            ]),
+            new WorkingScheduleDayOption([
+                'id' => 12,
+                'option_name' => 'Afternoon',
+                'time_in' => '12:00',
+                'time_out' => '21:00',
+                'break_start' => '17:00',
+                'break_end' => '18:00',
+                'grace_period_minutes' => 5,
+                'is_default' => false,
+                'sequence' => 2,
+            ]),
+        ]));
+
+        $schedule->setRelation('days', collect([$mon]));
+
+        $payload = EmployeeScheduleResolver::buildFromWorkingSchedule($schedule);
+
+        $this->assertCount(2, $payload['mon']['flexible_shift_options']);
+        $this->assertSame('Morning', $payload['mon']['matched_schedule_option_name']);
+        $this->assertSame('12:00', substr((string) $payload['mon']['flexible_shift_options'][1]['in'], 0, 5));
+    }
+
     public function test_tuesday_late_uses_that_days_grace_period(): void
     {
         $service = new ScheduleComputationService;
@@ -79,5 +131,136 @@ class FlexibleSchedulePerDayTest extends TestCase
         );
         $this->assertSame(0, $withinGrace['late_minutes']);
         $this->assertSame('present', $withinGrace['status']);
+    }
+
+    public function test_multiple_option_flexible_day_matches_afternoon_shift(): void
+    {
+        $service = new ScheduleComputationService;
+        $tz = 'Asia/Manila';
+        $daySchedule = $this->multiOptionMonday();
+
+        $result = $service->compute(
+            '2026-08-10',
+            $daySchedule,
+            Carbon::parse('2026-08-10 12:00:00', $tz),
+            Carbon::parse('2026-08-10 21:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(102, $result['matched_schedule_option_id']);
+        $this->assertSame('Afternoon', $result['matched_schedule_option_name']);
+        $this->assertSame('present', $result['status']);
+        $this->assertSame(0, $result['late_minutes']);
+        $this->assertSame(0, $result['undertime_minutes']);
+        $this->assertSame(480, $result['payable_minutes']);
+    }
+
+    public function test_multiple_option_flexible_day_still_matches_morning_shift(): void
+    {
+        $service = new ScheduleComputationService;
+        $tz = 'Asia/Manila';
+
+        $result = $service->compute(
+            '2026-08-10',
+            $this->multiOptionMonday(),
+            Carbon::parse('2026-08-10 08:00:00', $tz),
+            Carbon::parse('2026-08-10 17:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(101, $result['matched_schedule_option_id']);
+        $this->assertSame('Morning', $result['matched_schedule_option_name']);
+        $this->assertSame('present', $result['status']);
+    }
+
+    public function test_late_afternoon_shift_is_not_late_against_morning_option(): void
+    {
+        $service = new ScheduleComputationService;
+        $tz = 'Asia/Manila';
+
+        $result = $service->compute(
+            '2026-08-10',
+            $this->multiOptionMonday(),
+            Carbon::parse('2026-08-10 12:20:00', $tz),
+            Carbon::parse('2026-08-10 21:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(102, $result['matched_schedule_option_id']);
+        $this->assertSame(20, $result['late_minutes']);
+        $this->assertSame('late', $result['status']);
+    }
+
+    public function test_undertime_afternoon_shift_uses_afternoon_end(): void
+    {
+        $service = new ScheduleComputationService;
+        $tz = 'Asia/Manila';
+
+        $result = $service->compute(
+            '2026-08-10',
+            $this->multiOptionMonday(),
+            Carbon::parse('2026-08-10 12:00:00', $tz),
+            Carbon::parse('2026-08-10 20:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(102, $result['matched_schedule_option_id']);
+        $this->assertSame(60, $result['undertime_minutes']);
+        $this->assertSame('undertime', $result['status']);
+    }
+
+    public function test_no_attendance_uses_default_option_for_absence(): void
+    {
+        $service = new ScheduleComputationService;
+
+        $result = $service->compute('2026-08-10', $this->multiOptionMonday(), null, null, 'Asia/Manila');
+
+        $this->assertSame(101, $result['matched_schedule_option_id']);
+        $this->assertSame('Morning', $result['matched_schedule_option_name']);
+        $this->assertSame('default', $result['match_source']);
+        $this->assertSame('absent', $result['status']);
+        $this->assertSame(480, $result['scheduled_paid_minutes']);
+    }
+
+    private function multiOptionMonday(): array
+    {
+        return [
+            'shift_type' => 'flexible',
+            'schedule_type' => 'flexible',
+            'rest_days' => ['sat', 'sun'],
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_period_minutes' => 5,
+            'flexible_shift_options' => [
+                [
+                    'matched_schedule_option_id' => 101,
+                    'matched_schedule_option_name' => 'Morning',
+                    'in' => '08:00',
+                    'out' => '17:00',
+                    'break_start' => '12:00',
+                    'break_end' => '13:00',
+                    'breaks' => [['start' => '12:00', 'end' => '13:00', 'is_paid' => false]],
+                    'expected_paid_minutes' => 480,
+                    'grace_period_minutes' => 5,
+                    'is_default' => true,
+                    'sequence' => 1,
+                ],
+                [
+                    'matched_schedule_option_id' => 102,
+                    'matched_schedule_option_name' => 'Afternoon',
+                    'in' => '12:00',
+                    'out' => '21:00',
+                    'break_start' => '17:00',
+                    'break_end' => '18:00',
+                    'breaks' => [['start' => '17:00', 'end' => '18:00', 'is_paid' => false]],
+                    'expected_paid_minutes' => 480,
+                    'grace_period_minutes' => 5,
+                    'is_default' => false,
+                    'sequence' => 2,
+                ],
+            ],
+        ];
     }
 }
