@@ -34,7 +34,13 @@ function optionPaidMinutes(option) {
   if (option.expected_paid_minutes !== '' && option.expected_paid_minutes != null && Number(option.expected_paid_minutes) > 0) {
     return Number(option.expected_paid_minutes)
   }
-  return netShiftMinutes(option.time_in, option.time_out, option.break_start, option.break_end, [])
+  return netShiftMinutes(
+    option.time_in,
+    option.time_out,
+    option.break_is_paid ? null : option.break_start,
+    option.break_is_paid ? null : option.break_end,
+    []
+  )
 }
 
 function normalizeOptions(row) {
@@ -46,6 +52,7 @@ function normalizeOptions(row) {
       time_out: row.time_out || '17:00',
       break_start: row.break_start || '12:00',
       break_end: row.break_end || '13:00',
+      break_is_paid: !!row.break_is_paid,
       expected_paid_minutes: row.expected_paid_minutes ?? '',
       half_day_threshold_minutes: row.half_day_threshold_minutes ?? '',
       grace_period_minutes: row.grace_period_minutes ?? DEFAULTS.grace_period_minutes,
@@ -64,15 +71,33 @@ function defaultOptionFor(row) {
   return options.find((option) => option.is_default) || options[0] || null
 }
 
+function uniqueOptionName(options, baseName) {
+  const names = new Set((options || []).map((option) => String(option.option_name || '').trim().toLowerCase()))
+  const base = String(baseName || 'Option').trim() || 'Option'
+  let name = base
+  let counter = 2
+  while (names.has(name.toLowerCase())) {
+    name = `${base} ${counter}`
+    counter += 1
+  }
+  return name
+}
+
+function renumberOptions(options) {
+  return (options || []).map((option, index) => ({ ...option, sequence: index + 1 }))
+}
+
 function syncDayFromOptions(row, options) {
-  const defaultOption = options.find((option) => option.is_default) || options[0]
+  const orderedOptions = renumberOptions(options)
+  const defaultOption = orderedOptions.find((option) => option.is_default) || orderedOptions[0]
   return {
     ...row,
-    options,
+    options: orderedOptions,
     time_in: defaultOption?.time_in || '',
     time_out: defaultOption?.time_out || '',
     break_start: defaultOption?.break_start || '',
     break_end: defaultOption?.break_end || '',
+    break_is_paid: !!defaultOption?.break_is_paid,
     expected_paid_minutes: defaultOption?.expected_paid_minutes ?? '',
     half_day_threshold_minutes: defaultOption?.half_day_threshold_minutes ?? '',
     grace_period_minutes: defaultOption?.grace_period_minutes ?? DEFAULTS.grace_period_minutes,
@@ -88,6 +113,7 @@ function blankWorkingFields() {
     time_out: '',
     break_start: '',
     break_end: '',
+    break_is_paid: false,
     expected_paid_minutes: '',
     half_day_threshold_minutes: '',
     grace_period_minutes: DEFAULTS.grace_period_minutes,
@@ -175,8 +201,8 @@ function OptionEditor({ option, readOnly, onChange }) {
     half_day_threshold_minutes: option.half_day_threshold_minutes,
     time_in: option.time_in,
     time_out: option.time_out,
-    break_start: option.break_start,
-    break_end: option.break_end,
+    break_start: option.break_is_paid ? null : option.break_start,
+    break_end: option.break_is_paid ? null : option.break_end,
   })
 
   return (
@@ -228,10 +254,33 @@ function OptionEditor({ option, readOnly, onChange }) {
             <Utensils className="size-4" />
             Breaks
           </div>
-          <div className="flex h-10 items-center justify-between rounded-md border border-[#d9dde5] bg-white px-3 text-[13px]">
+          <div className="grid min-h-10 grid-cols-[1fr_auto_auto] items-center gap-3 rounded-md border border-[#d9dde5] bg-white px-3 py-1.5 text-[13px]">
             <span className="font-medium text-[#6b7280]">Lunch Break</span>
             <span className="text-[#6b7280]">{formatShiftRange12h(option.break_start, option.break_end, ' - ')}</span>
-            <span className="rounded-full bg-[#d8f7e8] px-3 py-1 text-[11px] font-semibold text-[#1a9a61]">Paid</span>
+            <div className="flex rounded-md border border-[#d9dde5] bg-[#f8fafc] p-0.5">
+              {[
+                { label: 'Unpaid', value: false },
+                { label: 'Paid', value: true },
+              ].map((choice) => (
+                <button
+                  key={choice.label}
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() => onChange({ break_is_paid: choice.value })}
+                  className={cn(
+                    'h-7 rounded-[5px] px-2.5 text-[11px] font-semibold transition',
+                    !!option.break_is_paid === choice.value
+                      ? choice.value
+                        ? 'bg-[#d8f7e8] text-[#168855]'
+                        : 'bg-[#fff1e9] text-[#f45113]'
+                      : 'text-[#667085] hover:bg-white',
+                    readOnly && 'cursor-not-allowed opacity-70'
+                  )}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <label className="space-y-2">
@@ -284,6 +333,17 @@ export function FlexibleScheduleTable({ days, setDays, readOnly = false }) {
     })
   }
 
+  function addOption(dayKey) {
+    updateDay(dayKey, (row) => {
+      const options = normalizeOptions(row)
+      const option = createDefaultFlexibleOption(options.length + 1, row.grace_period_minutes ?? DEFAULTS.grace_period_minutes, {
+        option_name: uniqueOptionName(options, `Option ${options.length + 1}`),
+        is_default: false,
+      })
+      return syncDayFromOptions(row, [...options, option])
+    })
+  }
+
   function duplicateOption(dayKey, index) {
     updateDay(dayKey, (row) => {
       const options = normalizeOptions(row)
@@ -292,9 +352,8 @@ export function FlexibleScheduleTable({ days, setDays, readOnly = false }) {
       const copy = {
         ...source,
         id: undefined,
-        option_name: `${source.option_name || `Option ${index + 1}`} Copy`,
+        option_name: uniqueOptionName(options, `${source.option_name || `Option ${index + 1}`} Copy`),
         is_default: false,
-        sequence: options.length + 1,
       }
       return syncDayFromOptions(row, [...options, copy])
     })
@@ -310,6 +369,16 @@ export function FlexibleScheduleTable({ days, setDays, readOnly = false }) {
         next = next.map((option, optionIndex) => ({ ...option, is_default: optionIndex === 0 }))
       }
       return syncDayFromOptions(row, next)
+    })
+  }
+
+  function setDefaultOption(dayKey, index) {
+    updateDay(dayKey, (row) => {
+      const options = normalizeOptions(row).map((option, optionIndex) => ({
+        ...option,
+        is_default: optionIndex === index,
+      }))
+      return syncDayFromOptions(row, options)
     })
   }
 
@@ -365,21 +434,12 @@ export function FlexibleScheduleTable({ days, setDays, readOnly = false }) {
                     type="button"
                     variant="outline"
                     size="sm"
+                    onClick={() => addOption(key)}
                     className="h-9 gap-2 rounded-md border-[#dfe3e8] bg-white px-4 text-[13px] font-semibold text-[#1f2329] shadow-sm hover:bg-[#fafafa]"
                   >
                     <Plus className="size-4" />
-                    Add break
+                    Add shift option
                   </Button>
-                )}
-                {working && !readOnly && (
-                  <>
-                    <Button type="button" variant="ghost" size="icon" className="size-8 text-[#1f2329]" onClick={() => duplicateOption(key, 0)} title="Duplicate">
-                      <Copy className="size-4" />
-                    </Button>
-                    <Button type="button" variant="ghost" size="icon" className="size-8 text-[#ff4d5e]" onClick={() => removeOption(key, 0)} title="Remove">
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </>
                 )}
                 <Button
                   type="button"
@@ -395,14 +455,66 @@ export function FlexibleScheduleTable({ days, setDays, readOnly = false }) {
             </div>
 
             {expanded && working && (
-              <div className="px-16 pb-5 pr-20">
-                {options.slice(0, 1).map((option, index) => (
-                  <OptionEditor
+              <div className="space-y-3 px-16 pb-5 pr-20">
+                {options.map((option, index) => (
+                  <div
                     key={`${option.id || 'new'}-${index}`}
-                    option={option}
-                    readOnly={readOnly}
-                    onChange={(patch) => updateOption(key, index, patch)}
-                  />
+                    className={cn(
+                      'rounded-lg border px-4 pb-4',
+                      option.is_default ? 'border-[#ffd8c6] bg-[#fffaf7]' : 'border-[#e7ebf0] bg-white'
+                    )}
+                  >
+                    <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#edf0f3]">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Input
+                          value={option.option_name || ''}
+                          onChange={(e) => updateOption(key, index, { option_name: e.target.value })}
+                          className="h-8 w-[210px] rounded-md border-[#d9dde5] bg-white text-[13px] font-semibold text-[#1f2329] shadow-none"
+                          readOnly={readOnly}
+                          disabled={readOnly}
+                          aria-label={`${label} shift option name`}
+                        />
+                        {option.is_default ? (
+                          <span className="rounded-full bg-[#fff1e9] px-2.5 py-1 text-[11px] font-semibold text-[#f45113]">Default</span>
+                        ) : (
+                          !readOnly && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDefaultOption(key, index)}
+                              className="h-8 rounded-md px-2 text-[12px] font-semibold text-[#596273] hover:bg-white"
+                            >
+                              Set default
+                            </Button>
+                          )
+                        )}
+                      </div>
+                      {working && !readOnly && (
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button type="button" variant="ghost" size="icon" className="size-8 text-[#1f2329]" onClick={() => duplicateOption(key, index)} title="Duplicate shift option">
+                            <Copy className="size-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-[#ff4d5e] disabled:opacity-35"
+                            onClick={() => removeOption(key, index)}
+                            disabled={options.length <= 1}
+                            title="Remove shift option"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <OptionEditor
+                      option={option}
+                      readOnly={readOnly}
+                      onChange={(patch) => updateOption(key, index, patch)}
+                    />
+                  </div>
                 ))}
               </div>
             )}
@@ -431,6 +543,10 @@ export function flexiblePreviewSchedule(days, shared = {}) {
     time_out: option.time_out,
     break_start: option.break_start,
     break_end: option.break_end,
+    break_is_paid: !!option.break_is_paid,
+    breaks: option.break_start && option.break_end
+      ? [{ start: option.break_start, end: option.break_end, is_paid: !!option.break_is_paid }]
+      : [],
     expected_paid_minutes: option.expected_paid_minutes || shared.expected_paid_minutes,
     half_day_threshold_minutes: option.half_day_threshold_minutes || shared.half_day_threshold_minutes,
     grace_period_minutes: option.grace_period_minutes ?? shared.grace_period_minutes ?? 5,

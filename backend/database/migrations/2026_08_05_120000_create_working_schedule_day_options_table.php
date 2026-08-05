@@ -18,6 +18,7 @@ return new class extends Migration
                 $table->time('time_out');
                 $table->time('break_start')->nullable();
                 $table->time('break_end')->nullable();
+                $table->boolean('break_is_paid')->default(false);
                 $table->unsignedSmallInteger('break_minutes')->nullable();
                 $table->unsignedInteger('expected_paid_minutes')->nullable();
                 $table->unsignedSmallInteger('grace_period_minutes')->nullable();
@@ -61,6 +62,7 @@ return new class extends Migration
                     'time_out' => $day->time_out,
                     'break_start' => $day->break_start,
                     'break_end' => $day->break_end,
+                    'break_is_paid' => false,
                     'break_minutes' => $day->break_minutes,
                     'expected_paid_minutes' => $day->expected_paid_minutes ?? null,
                     'grace_period_minutes' => $day->grace_period_minutes ?? null,

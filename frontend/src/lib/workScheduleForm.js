@@ -24,6 +24,7 @@ export function createDefaultFlexibleOption(sequence = 1, gracePeriod = 5, overr
     time_out: '17:00',
     break_start: '12:00',
     break_end: '13:00',
+    break_is_paid: false,
     expected_paid_minutes: '',
     half_day_threshold_minutes: '',
     grace_period_minutes: gracePeriod,
@@ -47,6 +48,7 @@ export function createDefaultFlexibleDay(dayKey, isWorking = true, gracePeriod =
     time_out: isWorking ? option.time_out : '',
     break_start: isWorking ? option.break_start : '',
     break_end: isWorking ? option.break_end : '',
+    break_is_paid: false,
     expected_paid_minutes: '',
     half_day_threshold_minutes: '',
     grace_period_minutes: gracePeriod,
@@ -108,6 +110,7 @@ export function scheduleRecordToForm(schedule) {
         time_out: toHhMm(day.time_out) || '17:00',
         break_start: toHhMm(day.break_start) || '',
         break_end: toHhMm(day.break_end) || '',
+        break_is_paid: !!day.break_is_paid,
         expected_paid_minutes: day.expected_paid_minutes ?? '',
         half_day_threshold_minutes: day.half_day_threshold_minutes ?? '',
         grace_period_minutes: day.grace_period_minutes ?? grace,
@@ -124,6 +127,7 @@ export function scheduleRecordToForm(schedule) {
           time_out: toHhMm(option.time_out) || '',
           break_start: toHhMm(option.break_start) || '',
           break_end: toHhMm(option.break_end) || '',
+          break_is_paid: !!option.break_is_paid,
           expected_paid_minutes: option.expected_paid_minutes ?? '',
           half_day_threshold_minutes: option.half_day_threshold_minutes ?? '',
           grace_period_minutes: option.grace_period_minutes ?? grace,
@@ -148,6 +152,7 @@ export function scheduleRecordToForm(schedule) {
         time_out: defaultOption?.time_out || '',
         break_start: defaultOption?.break_start || '',
         break_end: defaultOption?.break_end || '',
+        break_is_paid: !!defaultOption?.break_is_paid,
         expected_paid_minutes: defaultOption?.expected_paid_minutes ?? '',
         half_day_threshold_minutes: defaultOption?.half_day_threshold_minutes ?? '',
         grace_period_minutes: defaultOption?.grace_period_minutes ?? grace,
@@ -256,7 +261,7 @@ export function validateFlexibleDays(days) {
           errors.push(`${label} ${optionLabel} break period is outside the scheduled shift.`)
         }
       }
-      const signature = [timeIn, timeOut, breakStart, breakEnd, option.expected_paid_minutes || '', option.grace_period_minutes || '', option.half_day_threshold_minutes || ''].join('|')
+      const signature = [timeIn, timeOut, breakStart, breakEnd, !!option.break_is_paid, option.expected_paid_minutes || '', option.grace_period_minutes || '', option.half_day_threshold_minutes || ''].join('|')
       if (signatures.has(signature)) errors.push(`${label} has duplicate identical shift options.`)
       signatures.add(signature)
     }
@@ -374,6 +379,7 @@ export function buildWorkingSchedulePayload(editForm) {
           time_out: toHhMm(option.time_out) || null,
           break_start: option.break_start ? toHhMm(option.break_start) : null,
           break_end: option.break_end ? toHhMm(option.break_end) : null,
+          break_is_paid: !!option.break_is_paid,
           expected_paid_minutes:
             option.expected_paid_minutes === '' || option.expected_paid_minutes == null
               ? null

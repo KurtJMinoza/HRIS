@@ -14,6 +14,7 @@ class WorkingScheduleDayOption extends Model
         'time_out',
         'break_start',
         'break_end',
+        'break_is_paid',
         'break_minutes',
         'expected_paid_minutes',
         'grace_period_minutes',
@@ -31,6 +32,7 @@ class WorkingScheduleDayOption extends Model
     {
         return [
             'break_minutes' => 'integer',
+            'break_is_paid' => 'boolean',
             'expected_paid_minutes' => 'integer',
             'grace_period_minutes' => 'integer',
             'early_timein_minutes' => 'integer',
@@ -61,7 +63,7 @@ class WorkingScheduleDayOption extends Model
             $breaks[] = [
                 'start' => $this->break_start,
                 'end' => $this->break_end,
-                'is_paid' => false,
+                'is_paid' => (bool) $this->break_is_paid,
             ];
         }
 
@@ -73,6 +75,7 @@ class WorkingScheduleDayOption extends Model
             'out' => $this->time_out,
             'break_start' => $this->break_start,
             'break_end' => $this->break_end,
+            'break_is_paid' => (bool) $this->break_is_paid,
             'breaks' => $breaks,
             'work_blocks' => [],
             'shift_type' => WorkingSchedule::SHIFT_FLEXIBLE,
@@ -108,7 +111,7 @@ class WorkingScheduleDayOption extends Model
         }
 
         $unpaidBreak = 0;
-        if (! empty($this->break_start) && ! empty($this->break_end)) {
+        if (! $this->break_is_paid && ! empty($this->break_start) && ! empty($this->break_end)) {
             $bs = WorkingSchedule::timeToMinutes($this->break_start);
             $be = WorkingSchedule::timeToMinutes($this->break_end);
             $dur = $be - $bs;
@@ -116,7 +119,7 @@ class WorkingScheduleDayOption extends Model
                 $dur += 1440;
             }
             $unpaidBreak = $dur;
-        } elseif ($this->break_minutes !== null && $this->break_minutes > 0) {
+        } elseif (! $this->break_is_paid && $this->break_minutes !== null && $this->break_minutes > 0) {
             $unpaidBreak = (int) $this->break_minutes;
         }
 
