@@ -234,7 +234,6 @@ export function validateFlexibleDays(days) {
     if (defaultCount !== 1) errors.push(`${label} must have exactly one default shift option.`)
 
     const names = new Set()
-    const signatures = new Set()
     for (const [index, option] of options.entries()) {
       const optionLabel = option.option_name || `Option ${index + 1}`
       const nameKey = String(optionLabel).trim().toLowerCase()
@@ -261,9 +260,6 @@ export function validateFlexibleDays(days) {
           errors.push(`${label} ${optionLabel} break period is outside the scheduled shift.`)
         }
       }
-      const signature = [timeIn, timeOut, breakStart, breakEnd, !!option.break_is_paid, option.expected_paid_minutes || '', option.grace_period_minutes || '', option.half_day_threshold_minutes || ''].join('|')
-      if (signatures.has(signature)) errors.push(`${label} has duplicate identical shift options.`)
-      signatures.add(signature)
     }
   }
   return errors

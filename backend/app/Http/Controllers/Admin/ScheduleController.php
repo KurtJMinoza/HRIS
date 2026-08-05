@@ -746,7 +746,6 @@ class ScheduleController extends Controller
 
             $defaultCount = 0;
             $names = [];
-            $signatures = [];
 
             foreach ($rawOptions as $optionIndex => $option) {
                 if (! is_array($option)) {
@@ -797,20 +796,6 @@ class ScheduleController extends Controller
                     }
                 }
 
-                $signature = implode('|', [
-                    $timeIn,
-                    $timeOut,
-                    $breakStart,
-                    $breakEnd,
-                    (bool) ($option['break_is_paid'] ?? false) ? 'paid' : 'unpaid',
-                    (string) ($option['expected_paid_minutes'] ?? ''),
-                    (string) ($option['grace_period_minutes'] ?? ''),
-                    (string) ($option['half_day_threshold_minutes'] ?? ''),
-                ]);
-                if (isset($signatures[$signature])) {
-                    $errors["{$fieldPrefix}.time_in"] = ["{$label} has duplicate identical shift options."];
-                }
-                $signatures[$signature] = true;
             }
 
             if ($defaultCount !== 1) {
