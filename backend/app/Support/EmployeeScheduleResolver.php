@@ -28,7 +28,7 @@ final class EmployeeScheduleResolver
 
         // ponytail: login/auth payloads resolve schedule; missing days table must not 500 the session.
         if (Schema::hasTable('working_schedule_days')) {
-            $workingSchedule->loadMissing('days');
+            $workingSchedule->loadMissing('days.options');
             if ($workingSchedule->isFlexiblePerDay()) {
                 return self::buildFlexibleFromDays($workingSchedule);
             }

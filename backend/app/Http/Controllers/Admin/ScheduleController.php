@@ -43,8 +43,29 @@ class ScheduleController extends Controller
             return $value;
         }
         $v = trim($value);
+        if (preg_match('/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i', $v, $m)) {
+            $hour = (int) $m[1];
+            $minute = (int) $m[2];
+            if ($hour < 1 || $hour > 12 || $minute < 0 || $minute > 59) {
+                return $v;
+            }
+            $period = strtoupper($m[3]);
+            if ($period === 'PM' && $hour !== 12) {
+                $hour += 12;
+            }
+            if ($period === 'AM' && $hour === 12) {
+                $hour = 0;
+            }
+
+            return sprintf('%02d:%02d', $hour, $minute);
+        }
         if (strlen($v) >= 5 && preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $v)) {
-            return substr($v, 0, 5);
+            [$hour, $minute] = array_map('intval', explode(':', substr($v, 0, 5)));
+            if ($hour < 0 || $hour > 23 || $minute < 0 || $minute > 59) {
+                return $v;
+            }
+
+            return sprintf('%02d:%02d', $hour, $minute);
         }
 
         return $v;
@@ -63,7 +84,7 @@ class ScheduleController extends Controller
     {
         $query = WorkingSchedule::query()->orderBy('name');
         if ($this->hasScheduleDaysTable()) {
-            $query->with('days');
+            $query->with('days.options');
         }
         $schedules = $query->get();
 
@@ -219,29 +240,7 @@ class ScheduleController extends Controller
         }
         $days = $request->input('days');
         if (is_array($days)) {
-            foreach ($days as $i => $day) {
-                if (! is_array($day)) {
-                    continue;
-                }
-                foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
-                    if (! empty($day[$timeKey])) {
-                        $days[$i][$timeKey] = $this->normalizeTimeToHi((string) $day[$timeKey]);
-                    }
-                }
-                if (isset($day['options']) && is_array($day['options'])) {
-                    foreach ($day['options'] as $optionIndex => $option) {
-                        if (! is_array($option)) {
-                            continue;
-                        }
-                        foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
-                            if (! empty($option[$timeKey])) {
-                                $days[$i]['options'][$optionIndex][$timeKey] = $this->normalizeTimeToHi((string) $option[$timeKey]);
-                            }
-                        }
-                    }
-                }
-            }
-            $toMerge['days'] = $days;
+            $toMerge['days'] = $this->normalizeFlexibleDaysInput($days);
         }
         if ($toMerge !== []) {
             $request->merge($toMerge);
@@ -254,7 +253,7 @@ class ScheduleController extends Controller
         if (($validated['shift_type'] ?? 'fixed') === WorkingSchedule::SHIFT_FLEXIBLE) {
             $this->syncFlexibleDays($schedule, $validated['days'] ?? []);
             if ($this->hasScheduleDaysTable()) {
-                $schedule->load('days');
+                $schedule->load('days.options');
             }
         }
 
@@ -280,29 +279,7 @@ class ScheduleController extends Controller
         }
         $days = $request->input('days');
         if (is_array($days)) {
-            foreach ($days as $i => $day) {
-                if (! is_array($day)) {
-                    continue;
-                }
-                foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
-                    if (! empty($day[$timeKey])) {
-                        $days[$i][$timeKey] = $this->normalizeTimeToHi((string) $day[$timeKey]);
-                    }
-                }
-                if (isset($day['options']) && is_array($day['options'])) {
-                    foreach ($day['options'] as $optionIndex => $option) {
-                        if (! is_array($option)) {
-                            continue;
-                        }
-                        foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
-                            if (! empty($option[$timeKey])) {
-                                $days[$i]['options'][$optionIndex][$timeKey] = $this->normalizeTimeToHi((string) $option[$timeKey]);
-                            }
-                        }
-                    }
-                }
-            }
-            $toMerge['days'] = $days;
+            $toMerge['days'] = $this->normalizeFlexibleDaysInput($days);
         }
         if ($toMerge !== []) {
             $request->merge($toMerge);
@@ -318,7 +295,7 @@ class ScheduleController extends Controller
             && array_key_exists('days', $validated)) {
             $this->syncFlexibleDays($schedule, $validated['days'] ?? []);
             if ($this->hasScheduleDaysTable()) {
-                $schedule->load('days');
+                $schedule->load('days.options');
             }
         }
 
@@ -328,14 +305,63 @@ class ScheduleController extends Controller
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
+        $snapshotAffectedIds = $this->scheduleAdjustments->refreshTemplateAssignmentsFromToday($schedule, $affectedIds);
+        $affectedIds = array_values(array_unique(array_merge($affectedIds, $snapshotAffectedIds)));
         if ($affectedIds !== []) {
-            ScheduleUpdated::dispatch($schedule->fresh(), $affectedIds, 'updated');
+            ScheduleUpdated::dispatch($schedule->fresh()->loadMissing('days.options'), $affectedIds, 'updated');
         }
 
         return response()->json([
             'message' => 'Schedule updated.',
             'schedule' => $this->scheduleResponse($schedule->fresh()),
         ]);
+    }
+
+    /**
+     * Normalize flexible day payloads before validation. This accepts the canonical
+     * `options` key and older/alternate client keys that describe the same rows.
+     *
+     * @param  array<int, mixed>  $days
+     * @return array<int, mixed>
+     */
+    private function normalizeFlexibleDaysInput(array $days): array
+    {
+        foreach ($days as $i => $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+
+            foreach (['shift_options', 'flexible_shift_options'] as $alias) {
+                if ((! isset($day['options']) || ! is_array($day['options']) || $day['options'] === [])
+                    && isset($day[$alias]) && is_array($day[$alias])) {
+                    $day['options'] = $day[$alias];
+                }
+            }
+
+            foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
+                if (! empty($day[$timeKey])) {
+                    $day[$timeKey] = $this->normalizeTimeToHi((string) $day[$timeKey]);
+                }
+            }
+
+            if (isset($day['options']) && is_array($day['options'])) {
+                foreach ($day['options'] as $optionIndex => $option) {
+                    if (! is_array($option)) {
+                        continue;
+                    }
+                    foreach (['time_in', 'time_out', 'break_start', 'break_end'] as $timeKey) {
+                        if (! empty($option[$timeKey])) {
+                            $option[$timeKey] = $this->normalizeTimeToHi((string) $option[$timeKey]);
+                        }
+                    }
+                    $day['options'][$optionIndex] = $option;
+                }
+            }
+
+            $days[$i] = $day;
+        }
+
+        return $days;
     }
 
     public function destroy(int $id): JsonResponse
@@ -434,7 +460,7 @@ class ScheduleController extends Controller
     {
         $query = WorkingSchedule::query();
         if ($this->hasScheduleDaysTable()) {
-            $query->with('days');
+            $query->with('days.options');
         }
         $schedule = $query->findOrFail($id);
 
@@ -1034,7 +1060,7 @@ class ScheduleController extends Controller
     {
         $hasScheduleDays = $this->hasScheduleDaysTable();
         if ($hasScheduleDays) {
-            $schedule->loadMissing('days');
+            $schedule->loadMissing('days.options');
         }
         $daySchedule = $this->scheduleComputation->buildDayScheduleFromModel($schedule);
         $summary = $this->scheduleComputation->summarize(now()->toDateString(), $daySchedule);

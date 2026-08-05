@@ -40,7 +40,7 @@ class ScheduleComputationService
         if (($daySchedule['shift_type'] ?? 'fixed') === 'flexible'
             && ! empty($daySchedule['flexible_shift_options'])
             && is_array($daySchedule['flexible_shift_options'])) {
-            $matched = $this->resolveFlexibleShiftOption($dateKey, $daySchedule, $actualTimeIn, $actualTimeOut, $tz);
+            $matched = $this->resolveFlexibleShiftForAttendance($dateKey, $daySchedule, $actualTimeIn, $actualTimeOut, $tz);
             $daySchedule = $matched['schedule'];
             $matchMetadata = $matched['metadata'];
         }
@@ -113,13 +113,28 @@ class ScheduleComputationService
     /**
      * @return array{schedule: array<string, mixed>, metadata: array<string, mixed>}
      */
-    private function resolveFlexibleShiftOption(
+    public function resolveFlexibleShiftForAttendance(
         string $dateKey,
         array $daySchedule,
         ?Carbon $actualTimeIn,
         ?Carbon $actualTimeOut,
         string $tz
     ): array {
+        if (($daySchedule['shift_type'] ?? 'fixed') !== 'flexible'
+            || empty($daySchedule['flexible_shift_options'])
+            || ! is_array($daySchedule['flexible_shift_options'])) {
+            return [
+                'schedule' => $daySchedule,
+                'metadata' => [
+                    'matched_schedule_option_id' => $daySchedule['matched_schedule_option_id'] ?? null,
+                    'matched_schedule_option_name' => $daySchedule['matched_schedule_option_name'] ?? null,
+                    'match_source' => $daySchedule['match_source'] ?? null,
+                    'match_score' => $daySchedule['match_score'] ?? null,
+                    'resolved_schedule_snapshot' => $this->snapshotSchedule($daySchedule),
+                ],
+            ];
+        }
+
         $segments = [[
             'time_in' => $actualTimeIn,
             'time_out' => $actualTimeOut,
@@ -442,7 +457,7 @@ class ScheduleComputationService
     public function buildDayScheduleFromModel(WorkingSchedule $model, ?string $dateKey = null): array
     {
         if (Schema::hasTable('working_schedule_days')) {
-            $model->loadMissing('days');
+            $model->loadMissing('days.options');
         }
 
         if ($model->isFlexiblePerDay()) {

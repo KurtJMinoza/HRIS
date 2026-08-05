@@ -242,6 +242,93 @@ class EmployeeScheduleAdjustmentService
         return $query->pluck('id')->map(fn ($id) => (int) $id)->all();
     }
 
+    /**
+     * Refresh current/future assignment snapshots after a template edit.
+     *
+     * Closed historical assignments are left intact. If a current assignment began before
+     * today, it is closed yesterday and a new assignment begins today with the edited template.
+     *
+     * @param  list<int>  $employeeIds
+     * @return list<int>
+     */
+    public function refreshTemplateAssignmentsFromToday(WorkingSchedule $template, array $employeeIds = []): array
+    {
+        $today = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfDay();
+        $affectedIds = [];
+        $employeeIds = array_values(array_unique(array_filter(array_map('intval', $employeeIds))));
+
+        if (Schema::hasTable('working_schedule_days')) {
+            $template->loadMissing('days.options');
+        }
+
+        DB::transaction(function () use ($template, $employeeIds, $today, &$affectedIds): void {
+            $query = EmployeeScheduleAssignment::query()
+                ->active()
+                ->where('schedule_template_id', (int) $template->id)
+                ->where(function (Builder $q) use ($today): void {
+                    $q->whereNull('effective_end_date')
+                        ->orWhereDate('effective_end_date', '>=', $today->toDateString());
+                })
+                ->orderBy('employee_id')
+                ->orderBy('effective_start_date')
+                ->lockForUpdate();
+
+            if ($employeeIds !== []) {
+                $query->whereIn('employee_id', $employeeIds);
+            }
+
+            /** @var Collection<int, EmployeeScheduleAssignment> $assignments */
+            $assignments = $query->get();
+
+            foreach ($assignments as $assignment) {
+                $start = $assignment->effective_start_date instanceof Carbon
+                    ? $assignment->effective_start_date->copy()->startOfDay()
+                    : Carbon::parse($assignment->effective_start_date)->startOfDay();
+                $end = $assignment->effective_end_date instanceof Carbon
+                    ? $assignment->effective_end_date->copy()->startOfDay()
+                    : ($assignment->effective_end_date ? Carbon::parse($assignment->effective_end_date)->startOfDay() : null);
+
+                if ($end !== null && $end->lt($today)) {
+                    continue;
+                }
+
+                if ($start->lt($today)) {
+                    $assignment->forceFill([
+                        'effective_end_date' => $today->copy()->subDay()->toDateString(),
+                    ])->save();
+
+                    $newAssignment = EmployeeScheduleAssignment::create([
+                        'employee_id' => (int) $assignment->employee_id,
+                        'schedule_template_id' => (int) $template->id,
+                        'effective_start_date' => $today->toDateString(),
+                        'effective_end_date' => $end?->toDateString(),
+                        'assignment_type' => $assignment->assignment_type,
+                        'source_scope_type' => $assignment->source_scope_type,
+                        'source_scope_id' => $assignment->source_scope_id,
+                        'assignment_status' => EmployeeScheduleAssignment::STATUS_ACTIVE,
+                        'is_adjustment' => (bool) $assignment->is_adjustment,
+                        'adjustment_reason' => $assignment->adjustment_reason ?: 'Template updated',
+                        'created_by' => $assignment->created_by,
+                    ]);
+
+                    $snapshot = $this->createSnapshot($newAssignment, $template, null);
+                    $newAssignment->forceFill(['assignment_snapshot_id' => $snapshot->id])->save();
+                } else {
+                    ScheduleAssignmentSnapshot::query()
+                        ->where('employee_schedule_assignment_id', (int) $assignment->id)
+                        ->delete();
+                    $snapshot = $this->createSnapshot($assignment, $template, null);
+                    $assignment->forceFill(['assignment_snapshot_id' => $snapshot->id])->save();
+                }
+
+                $affectedIds[] = (int) $assignment->employee_id;
+                $this->forgetEmployeeScheduleCaches((int) $assignment->employee_id);
+            }
+        });
+
+        return array_values(array_unique($affectedIds));
+    }
+
     private function createSnapshot(
         EmployeeScheduleAssignment $assignment,
         ?WorkingSchedule $template,
@@ -249,7 +336,7 @@ class EmployeeScheduleAdjustmentService
     ): ScheduleAssignmentSnapshot {
         $source = $template ?? new WorkingSchedule($customSchedule ?? []);
         if ($template && Schema::hasTable('working_schedule_days')) {
-            $template->loadMissing('days');
+            $template->loadMissing('days.options');
         }
         $schedulePayload = $template
             ? EmployeeScheduleResolver::buildFromWorkingSchedule($template)

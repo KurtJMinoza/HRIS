@@ -50,6 +50,9 @@ class AttendanceComputationService
             $out->addDay();
         }
 
+        $daySchedule = $this->scheduleComputation
+            ->resolveFlexibleShiftForAttendance($dateKey, $daySchedule, $in, $out, $tz)['schedule'];
+
         $summary = $this->scheduleComputation->summarize($dateKey, $daySchedule, $tz);
         $scheduleStart = $summary['start'];
         $scheduleEnd = $summary['end'];

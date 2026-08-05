@@ -120,6 +120,16 @@ class AttendanceStatusResolver
             }
         }
 
+        if (is_array($daySchedule)) {
+            $daySchedule = $this->resolveFlexibleDaySchedule(
+                $dateKey,
+                $daySchedule,
+                $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : ($effectiveTimeIn ? Carbon::parse($effectiveTimeIn) : null),
+                $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : ($effectiveTimeOut ? Carbon::parse($effectiveTimeOut) : null),
+                $nowTz->getTimezone()->getName(),
+            );
+        }
+
         if ($hasTimeIn && $hasTimeOut && $effectiveTimeIn && $effectiveTimeOut) {
             $in = $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : Carbon::parse($effectiveTimeIn);
             $out = $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : Carbon::parse($effectiveTimeOut);
@@ -488,6 +498,23 @@ class AttendanceStatusResolver
             'overtime_minutes' => 0,
             'clock_in_status' => 'present',
         ];
+    }
+
+    private function resolveFlexibleDaySchedule(
+        string $dateKey,
+        array $daySchedule,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        string $tz,
+    ): array {
+        if (($daySchedule['shift_type'] ?? 'fixed') !== 'flexible'
+            || empty($daySchedule['flexible_shift_options'])
+            || ! is_array($daySchedule['flexible_shift_options'])) {
+            return $daySchedule;
+        }
+
+        return app(ScheduleComputationService::class)
+            ->resolveFlexibleShiftForAttendance($dateKey, $daySchedule, $timeIn, $timeOut, $tz)['schedule'];
     }
 
     public static function statusLabel(string $status): string

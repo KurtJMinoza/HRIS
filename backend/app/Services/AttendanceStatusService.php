@@ -159,6 +159,7 @@ class AttendanceStatusService
         $tz = config('attendance.timezone', config('app.timezone', 'UTC'));
         $actualTimeIn = $actualTimeIn->copy()->timezone($tz);
         $dateKey = $actualTimeIn->format('Y-m-d');
+        $daySchedule = self::resolveFlexibleShiftForActualTimes($dateKey, $daySchedule, $actualTimeIn, null, $tz);
 
         $graceMinutes = self::getGraceMinutes($daySchedule);
         $scheduleIn = trim((string) ($daySchedule['in'] ?? '08:00'));
@@ -286,6 +287,8 @@ class AttendanceStatusService
         string $dateKey,
         ?string $tz = null
     ): int {
+        $daySchedule = self::resolveFlexibleShiftForActualTimes($dateKey, $daySchedule, $timeIn, $timeOut, $tz);
+
         return app(ScheduleComputationService::class)->netWorkedMinutes(
             $timeIn,
             $timeOut,
@@ -308,6 +311,8 @@ class AttendanceStatusService
         string $dateKey,
         ?string $tz = null
     ): int {
+        $daySchedule = self::resolveFlexibleShiftForActualTimes($dateKey, $daySchedule, $timeIn, $timeOut, $tz);
+
         return app(ScheduleComputationService::class)->netWorkedMinutes(
             $timeIn,
             $timeOut,
@@ -390,6 +395,7 @@ class AttendanceStatusService
             return 0;
         }
 
+        $daySchedule = self::resolveFlexibleShiftForActualTimes($dateKey, $daySchedule, $timeIn, $timeOut, $tz);
         $scheduledEnd = self::getScheduledEndForDate($dateKey, $daySchedule, $tz);
         if (! $scheduledEnd) {
             return 0;
@@ -431,6 +437,7 @@ class AttendanceStatusService
         Carbon $timeOut,
         ?string $tz = null,
     ): array {
+        $daySchedule = self::resolveFlexibleShiftForActualTimes($dateKey, $daySchedule, $timeIn, $timeOut, $tz);
         $preMinutes = 0;
         $postMinutes = 0;
 
@@ -459,6 +466,29 @@ class AttendanceStatusService
             'pre_minutes' => $preMinutes,
             'post_minutes' => $postMinutes,
         ];
+    }
+
+    private static function resolveFlexibleShiftForActualTimes(
+        string $dateKey,
+        array $daySchedule,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        ?string $tz = null,
+    ): array {
+        if (($daySchedule['shift_type'] ?? 'fixed') !== 'flexible'
+            || empty($daySchedule['flexible_shift_options'])
+            || ! is_array($daySchedule['flexible_shift_options'])) {
+            return $daySchedule;
+        }
+
+        if (in_array(($daySchedule['match_source'] ?? null), ['automatic', 'schedule_adjustment'], true)) {
+            return $daySchedule;
+        }
+
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
+
+        return app(ScheduleComputationService::class)
+            ->resolveFlexibleShiftForAttendance($dateKey, $daySchedule, $timeIn, $timeOut, $tz)['schedule'];
     }
 
     /**

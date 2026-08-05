@@ -80,6 +80,9 @@ class AttendanceDailySummaryService
             $correction,
             $tz
         );
+        if (is_array($daySchedule)) {
+            $daySchedule = $this->resolveFlexibleDaySchedule($dateKey, $daySchedule, $effectiveTimeIn, $effectiveTimeOut, $tz);
+        }
 
         // OT computation
         $otRecords = $otRecords ?? [];
@@ -410,6 +413,23 @@ class AttendanceDailySummaryService
     private function attendanceTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'UTC'));
+    }
+
+    private function resolveFlexibleDaySchedule(
+        string $dateKey,
+        array $daySchedule,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        string $tz,
+    ): array {
+        if (($daySchedule['shift_type'] ?? 'fixed') !== 'flexible'
+            || empty($daySchedule['flexible_shift_options'])
+            || ! is_array($daySchedule['flexible_shift_options'])) {
+            return $daySchedule;
+        }
+
+        return app(ScheduleComputationService::class)
+            ->resolveFlexibleShiftForAttendance($dateKey, $daySchedule, $timeIn, $timeOut, $tz)['schedule'];
     }
 
     private function formatTimeInTz(mixed $carbon, string $tz): ?string

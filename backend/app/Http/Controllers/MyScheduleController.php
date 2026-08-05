@@ -8,6 +8,7 @@ use App\Models\ScheduleRequestApprovalAudit;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Models\WorkingScheduleDay;
+use App\Models\WorkingScheduleDayOption;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
@@ -334,7 +335,7 @@ class MyScheduleController extends Controller
     {
         $hasScheduleDays = Schema::hasTable('working_schedule_days');
         if ($hasScheduleDays) {
-            $schedule->loadMissing('days');
+            $schedule->loadMissing('days.options');
         }
 
         $restDays = collect($schedule->rest_days ?? [])
@@ -411,6 +412,7 @@ class MyScheduleController extends Controller
                     'early_timein_minutes' => $day->early_timein_minutes ?? $schedule->early_timein_minutes ?? 60,
                     'overtime_buffer_minutes' => $day->overtime_buffer_minutes ?? $schedule->overtime_buffer_minutes ?? 15,
                     'crosses_midnight' => (bool) $day->crosses_midnight,
+                    'options' => $this->flexibleDayOptionsSummary($day, $schedule, $paid, $halfDay),
                 ];
 
                 continue;
@@ -431,10 +433,70 @@ class MyScheduleController extends Controller
                 'early_timein_minutes' => null,
                 'overtime_buffer_minutes' => null,
                 'crosses_midnight' => false,
+                'options' => [],
             ];
         }
 
         return $rows;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function flexibleDayOptionsSummary(
+        WorkingScheduleDay $day,
+        WorkingSchedule $schedule,
+        int $fallbackPaid,
+        int $fallbackHalfDay
+    ): array {
+        if (! $day->relationLoaded('options') || $day->options->isEmpty()) {
+            return [[
+                'option_name' => 'Default',
+                'time_in' => $day->time_in ? substr((string) $day->time_in, 0, 5) : null,
+                'time_out' => $day->time_out ? substr((string) $day->time_out, 0, 5) : null,
+                'break_start' => $day->break_start ? substr((string) $day->break_start, 0, 5) : null,
+                'break_end' => $day->break_end ? substr((string) $day->break_end, 0, 5) : null,
+                'break_is_paid' => false,
+                'paid_minutes' => $fallbackPaid,
+                'half_day_minutes' => $fallbackHalfDay,
+                'grace_period_minutes' => $day->grace_period_minutes ?? $schedule->grace_period_minutes ?? 5,
+                'early_timein_minutes' => $day->early_timein_minutes ?? $schedule->early_timein_minutes ?? 60,
+                'overtime_buffer_minutes' => $day->overtime_buffer_minutes ?? $schedule->overtime_buffer_minutes ?? 15,
+                'crosses_midnight' => (bool) $day->crosses_midnight,
+                'is_default' => true,
+                'sequence' => 1,
+            ]];
+        }
+
+        return $day->options
+            ->map(function (WorkingScheduleDayOption $option) use ($schedule): array {
+                $paid = ($option->expected_paid_minutes !== null && (int) $option->expected_paid_minutes > 0)
+                    ? (int) $option->expected_paid_minutes
+                    : $option->expectedPaidMinutes();
+                $halfDay = $option->half_day_threshold_minutes !== null && (int) $option->half_day_threshold_minutes > 0
+                    ? (int) $option->half_day_threshold_minutes
+                    : (int) floor($paid / 2);
+
+                return [
+                    'id' => $option->id,
+                    'option_name' => $option->option_name ?: 'Option '.($option->sequence ?? ''),
+                    'time_in' => $option->time_in ? substr((string) $option->time_in, 0, 5) : null,
+                    'time_out' => $option->time_out ? substr((string) $option->time_out, 0, 5) : null,
+                    'break_start' => $option->break_start ? substr((string) $option->break_start, 0, 5) : null,
+                    'break_end' => $option->break_end ? substr((string) $option->break_end, 0, 5) : null,
+                    'break_is_paid' => (bool) $option->break_is_paid,
+                    'paid_minutes' => $paid,
+                    'half_day_minutes' => $halfDay,
+                    'grace_period_minutes' => $option->grace_period_minutes ?? $schedule->grace_period_minutes ?? 5,
+                    'early_timein_minutes' => $option->early_timein_minutes ?? $schedule->early_timein_minutes ?? 60,
+                    'overtime_buffer_minutes' => $option->overtime_buffer_minutes ?? $schedule->overtime_buffer_minutes ?? 15,
+                    'crosses_midnight' => (bool) $option->crosses_midnight,
+                    'is_default' => (bool) $option->is_default,
+                    'sequence' => $option->sequence,
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /**
@@ -546,6 +608,7 @@ class MyScheduleController extends Controller
                     'early_timein_minutes' => null,
                     'overtime_buffer_minutes' => null,
                     'crosses_midnight' => false,
+                    'options' => [],
                 ];
 
                 continue;
@@ -569,6 +632,7 @@ class MyScheduleController extends Controller
             $paid = isset($dayConfig['expected_paid_minutes']) && (int) $dayConfig['expected_paid_minutes'] > 0
                 ? (int) $dayConfig['expected_paid_minutes']
                 : null;
+            $options = $this->resolvedFlexibleOptionsSummary($dayConfig);
 
             $dayRows[] = [
                 'day_of_week' => $day,
@@ -587,6 +651,7 @@ class MyScheduleController extends Controller
                 'early_timein_minutes' => (int) ($dayConfig['early_timein_minutes'] ?? 60),
                 'overtime_buffer_minutes' => (int) ($dayConfig['overtime_buffer_minutes'] ?? 15),
                 'crosses_midnight' => (bool) ($dayConfig['crosses_midnight'] ?? false),
+                'options' => $options,
             ];
         }
 
@@ -616,6 +681,47 @@ class MyScheduleController extends Controller
             'work_days_label' => implode(', ', $workLabels),
             'days' => $shiftType === WorkingSchedule::SHIFT_FLEXIBLE ? $dayRows : [],
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $dayConfig
+     * @return list<array<string, mixed>>
+     */
+    private function resolvedFlexibleOptionsSummary(array $dayConfig): array
+    {
+        $rawOptions = isset($dayConfig['flexible_shift_options']) && is_array($dayConfig['flexible_shift_options'])
+            ? array_values($dayConfig['flexible_shift_options'])
+            : [$dayConfig];
+
+        return collect($rawOptions)
+            ->filter(fn ($option) => is_array($option))
+            ->map(function (array $option, int $index): array {
+                $paid = isset($option['expected_paid_minutes']) && (int) $option['expected_paid_minutes'] > 0
+                    ? (int) $option['expected_paid_minutes']
+                    : null;
+
+                return [
+                    'id' => $option['matched_schedule_option_id'] ?? $option['id'] ?? null,
+                    'option_name' => $option['matched_schedule_option_name'] ?? $option['option_name'] ?? ($index === 0 ? 'Default' : 'Option '.($index + 1)),
+                    'time_in' => ! empty($option['in']) ? substr((string) $option['in'], 0, 5) : (! empty($option['time_in']) ? substr((string) $option['time_in'], 0, 5) : null),
+                    'time_out' => ! empty($option['out']) ? substr((string) $option['out'], 0, 5) : (! empty($option['time_out']) ? substr((string) $option['time_out'], 0, 5) : null),
+                    'break_start' => ! empty($option['break_start']) ? substr((string) $option['break_start'], 0, 5) : null,
+                    'break_end' => ! empty($option['break_end']) ? substr((string) $option['break_end'], 0, 5) : null,
+                    'break_is_paid' => (bool) ($option['break_is_paid'] ?? false),
+                    'paid_minutes' => $paid,
+                    'half_day_minutes' => isset($option['half_day_threshold_minutes']) && (int) $option['half_day_threshold_minutes'] > 0
+                        ? (int) $option['half_day_threshold_minutes']
+                        : ($paid !== null ? (int) floor($paid / 2) : null),
+                    'grace_period_minutes' => (int) ($option['grace_period_minutes'] ?? $option['grace_minutes'] ?? 5),
+                    'early_timein_minutes' => (int) ($option['early_timein_minutes'] ?? 60),
+                    'overtime_buffer_minutes' => (int) ($option['overtime_buffer_minutes'] ?? 15),
+                    'crosses_midnight' => (bool) ($option['crosses_midnight'] ?? false),
+                    'is_default' => (bool) ($option['is_default'] ?? $index === 0),
+                    'sequence' => $option['sequence'] ?? $index + 1,
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /**

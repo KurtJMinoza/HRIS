@@ -5,13 +5,17 @@ namespace Tests\Feature;
 use App\Models\WorkingSchedule;
 use App\Models\WorkingScheduleDay;
 use App\Models\WorkingScheduleDayOption;
+use App\Services\AttendanceStatusService;
 use App\Services\ScheduleComputationService;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class FlexibleSchedulePerDayTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_flexible_resolver_returns_per_weekday_times(): void
     {
         $schedule = new WorkingSchedule([
@@ -153,6 +157,108 @@ class FlexibleSchedulePerDayTest extends TestCase
         $this->assertSame(0, $result['late_minutes']);
         $this->assertSame(0, $result['undertime_minutes']);
         $this->assertSame(480, $result['payable_minutes']);
+    }
+
+    public function test_persisted_flexible_schedule_options_are_loaded_for_attendance_matching(): void
+    {
+        $schedule = WorkingSchedule::query()->create([
+            'name' => 'Persisted Flexible Multi Option',
+            'shift_type' => WorkingSchedule::SHIFT_FLEXIBLE,
+            'time_in' => '08:00',
+            'time_out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_period_minutes' => 5,
+            'rest_days' => ['sat', 'sun'],
+        ]);
+        $monday = $schedule->days()->create([
+            'day_of_week' => 'mon',
+            'is_working_day' => true,
+            'time_in' => '08:00',
+            'time_out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+        ]);
+        $morning = $monday->options()->create([
+            'option_name' => 'Morning',
+            'time_in' => '08:00',
+            'time_out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'break_is_paid' => false,
+            'grace_period_minutes' => 5,
+            'is_default' => true,
+            'sequence' => 1,
+        ]);
+        $afternoon = $monday->options()->create([
+            'option_name' => 'Afternoon',
+            'time_in' => '12:00',
+            'time_out' => '21:00',
+            'break_start' => '17:00',
+            'break_end' => '18:00',
+            'break_is_paid' => false,
+            'grace_period_minutes' => 5,
+            'is_default' => false,
+            'sequence' => 2,
+        ]);
+
+        $payload = EmployeeScheduleResolver::buildFromWorkingSchedule(
+            WorkingSchedule::query()->findOrFail($schedule->id)
+        );
+        $daySchedule = $payload['mon'];
+
+        $this->assertCount(2, $daySchedule['flexible_shift_options']);
+
+        $result = (new ScheduleComputationService)->compute(
+            '2026-08-10',
+            $daySchedule,
+            Carbon::parse('2026-08-10 12:00:00', 'Asia/Manila'),
+            Carbon::parse('2026-08-10 21:00:00', 'Asia/Manila'),
+            'Asia/Manila',
+        );
+
+        $this->assertSame($afternoon->id, $result['matched_schedule_option_id']);
+        $this->assertNotSame($morning->id, $result['matched_schedule_option_id']);
+        $this->assertSame('present', $result['status']);
+    }
+
+    public function test_clock_in_status_uses_matching_flexible_shift_option(): void
+    {
+        $result = AttendanceStatusService::getClockInStatus(
+            $this->multiOptionMonday(),
+            '2026-08-10',
+            Carbon::parse('2026-08-10 12:00:00', 'Asia/Manila'),
+        );
+
+        $this->assertSame('on_time', $result['status']);
+        $this->assertSame(0, $result['late_minutes']);
+        $this->assertSame('Present', $result['late_label']);
+    }
+
+    public function test_undertime_and_overtime_helpers_use_matching_flexible_shift_option(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = $this->multiOptionMonday();
+        $timeIn = Carbon::parse('2026-08-10 12:00:00', $tz);
+        $fullShiftOut = Carbon::parse('2026-08-10 21:00:00', $tz);
+
+        $overtime = AttendanceStatusService::computeRawOvertimeBreakdown(
+            '2026-08-10',
+            $daySchedule,
+            $timeIn,
+            $fullShiftOut,
+            $tz,
+        );
+        $this->assertSame(0, $overtime['total_minutes']);
+
+        $undertime = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+            '2026-08-10',
+            $daySchedule,
+            $timeIn,
+            Carbon::parse('2026-08-10 20:00:00', $tz),
+            $tz,
+        );
+        $this->assertSame(60, $undertime);
     }
 
     public function test_multiple_option_flexible_day_still_matches_morning_shift(): void

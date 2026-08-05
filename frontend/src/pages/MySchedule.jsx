@@ -1345,12 +1345,40 @@ function FlexibleScheduleDetailTable({ days }) {
           <tbody>
             {rows.map((row) => {
               const working = !!row.is_working_day
+              const options = Array.isArray(row.options)
+                ? row.options.filter((option) => option && (option.time_in || option.time_out))
+                : []
+              const showOptions = working && options.length > 1
               return (
                 <tr key={row.day_of_week} className="border-t border-border/60">
                   <td className="px-3 py-2.5 font-medium whitespace-nowrap">
                     {FLEX_DAY_LABELS[row.day_of_week] || row.day_of_week}
                     {row.crosses_midnight ? (
                       <span className="ml-1.5 text-[10px] font-normal text-amber-700 dark:text-amber-300">Overnight</span>
+                    ) : null}
+                    {showOptions ? (
+                      <div className="mt-2 space-y-1.5">
+                        {options.map((option, index) => (
+                          <div key={`${row.day_of_week}-${option.id || index}`} className="rounded-md border border-border bg-card px-2 py-1.5 shadow-sm">
+                            <div className="flex items-center gap-1.5">
+                              <span className="min-w-0 truncate text-xs font-semibold text-foreground">
+                                {option.option_name || (index === 0 ? 'Default' : `Option ${index + 1}`)}
+                              </span>
+                              {option.is_default ? (
+                                <Badge className="shrink-0 rounded-full border-transparent bg-brand/15 px-1.5 py-0 text-[9px] font-bold text-brand hover:bg-brand/15">
+                                  Default
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-0.5 whitespace-nowrap text-[11px] font-medium tabular-nums text-muted-foreground">
+                              {formatShiftRange12h(option.time_in, option.time_out, ' - ')}
+                            </p>
+                            <p className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground">
+                              Paid {formatPaidMinutesLabel(option.paid_minutes)} / Grace {option.grace_period_minutes ?? 5} mins
+                            </p>
+                          </div>
+                        ))}
+                      </div>
                     ) : null}
                   </td>
                   <td className="px-3 py-2.5">{working ? 'Yes' : 'Rest'}</td>
