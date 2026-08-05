@@ -99,7 +99,7 @@ function optionLabel(item, scope) {
   return item.name || item.label || `#${item.id}`
 }
 
-export function ScheduleAdjustmentDialog({ open, onOpenChange, schedules = [], onApplied }) {
+export function ScheduleAdjustmentDialog({ open, onOpenChange, schedules = [], initialEmployeeIds = [], onApplied }) {
   const [scopeType, setScopeType] = useState('employee')
   const [scopeIds, setScopeIds] = useState([])
   const [employees, setEmployees] = useState([])
@@ -121,14 +121,19 @@ export function ScheduleAdjustmentDialog({ open, onOpenChange, schedules = [], o
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const previewRequestRef = useRef(0)
+  const initialEmployeeIdsKey = (initialEmployeeIds || []).map(Number).filter(Boolean).join(',')
 
   useEffect(() => {
     if (!open) return
     setError(null)
     setPreview(null)
     setExcludedEmployeeIds([])
+    if (initialEmployeeIdsKey) {
+      setScopeType('employee')
+      setSelectedEmployeeIds(initialEmployeeIdsKey.split(',').map(Number))
+    }
     if (!scheduleTemplateId && schedules[0]?.id) setScheduleTemplateId(String(schedules[0].id))
-  }, [open, scheduleTemplateId, schedules])
+  }, [open, scheduleTemplateId, schedules, initialEmployeeIdsKey])
 
   useEffect(() => {
     if (!open) return

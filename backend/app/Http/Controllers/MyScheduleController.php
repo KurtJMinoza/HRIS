@@ -44,7 +44,7 @@ class MyScheduleController extends Controller
             ->values();
 
         return response()->json([
-            'current_schedule' => $this->currentScheduleSummary($user->fresh(['workingSchedule.days'])),
+            'current_schedule' => $this->currentScheduleSummary($user->fresh(['workingSchedule'])),
             'pending_schedule_change' => $this->pendingScheduleChangeSummary($user),
             'requests' => $requests,
         ]);
@@ -56,7 +56,7 @@ class MyScheduleController extends Controller
         $user->loadMissing('pendingWorkingSchedule');
 
         return response()->json([
-            'current_schedule' => $this->currentScheduleSummary($user->fresh(['workingSchedule.days'])),
+            'current_schedule' => $this->currentScheduleSummary($user->fresh(['workingSchedule'])),
             'pending_schedule_change' => $this->pendingScheduleChangeSummary($user),
             'available_schedules' => WorkingSchedule::query()
                 ->orderBy('name')

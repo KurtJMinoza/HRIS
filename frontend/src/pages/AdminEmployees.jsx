@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion' // eslint-disable-line n
 import {
   Plus,
   Calendar,
+  CalendarCheck,
   UserCheck,
   UserX,
   Loader2,
@@ -81,6 +82,7 @@ import {
 import { TableSkeleton } from '@/components/skeletons'
 import ImportEmployeesModal from '@/components/admin/ImportEmployeesModal'
 import { EmployeeScheduleAssignDialog } from '@/components/schedules/EmployeeScheduleAssignDialog'
+import { ScheduleAdjustmentDialog } from '@/components/schedules/ScheduleAdjustmentDialog'
 import { QRCodeCanvas } from 'qrcode.react'
 import { useToast } from '@/components/ui/use-toast'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
@@ -255,6 +257,8 @@ export default function AdminEmployees() {
 
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleEmployee, setScheduleEmployee] = useState(null)
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false)
+  const [adjustmentEmployeeIds, setAdjustmentEmployeeIds] = useState([])
 
   const [togglingId, setTogglingId] = useState(null)
   const [deactivateOpen, setDeactivateOpen] = useState(false)
@@ -1032,6 +1036,19 @@ export default function AdminEmployees() {
     setScheduleOpen(true)
   }
 
+  const openBulkScheduleAdjustment = () => {
+    if (selectedIds.length === 0) {
+      toast({
+        title: 'No employees selected',
+        description: 'Select at least one employee to add a schedule adjustment.',
+        variant: 'destructive',
+      })
+      return
+    }
+    setAdjustmentEmployeeIds([...selectedIds])
+    setAdjustmentOpen(true)
+  }
+
   const handleBulkDeactivate = async () => {
     if (selectedIds.length === 0) {
       toast({
@@ -1524,50 +1541,88 @@ export default function AdminEmployees() {
           </CardHeader>
           <CardContent className="p-0">
             {selectedIds.length > 0 && canMutateRows && (
-              <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-brand/8 px-5 py-3 dark:bg-brand/12">
-                <p className="text-sm font-medium text-foreground">
-                  {selectedIds.length} Employee{selectedIds.length !== 1 ? 's' : ''} Selected
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {canAssignSchedule && (
-                    <Button
+              <div
+                className="sticky top-0 z-10 border-b border-border/70 border-l-[3px] border-l-brand bg-muted/40 px-5 py-2.5 backdrop-blur-sm dark:bg-muted/25"
+                role="region"
+                aria-label="Bulk employee actions"
+              >
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md bg-foreground px-2 text-xs font-bold tabular-nums text-background">
+                      {selectedIds.length}
+                    </span>
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-semibold text-foreground">
+                        employee{selectedIds.length === 1 ? '' : 's'}
+                      </span>{' '}
+                      selected
+                    </p>
+                    <button
                       type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={openBulkSchedule}
-                      disabled={bulkSubmitting}
+                      className="text-xs font-medium text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+                      onClick={() => setSelectedIds([])}
                     >
-                      <Clock className="mr-1.5 size-3.5" />
-                      Assign Schedule
-                    </Button>
-                  )}
-                  {canScopedEditEmployees && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={handleBulkIssueQr}
-                      disabled={bulkSubmitting}
-                    >
-                      <QrCode className="mr-1.5 size-3.5" />
-                      Issue QR
-                    </Button>
-                  )}
-                  {canScopedEditEmployees && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={handleBulkDeactivate}
-                      disabled={bulkSubmitting}
-                    >
-                      <UserX className="mr-1.5 size-3.5" />
-                      Deactivate
-                    </Button>
-                  )}
+                      Clear
+                    </button>
+                  </div>
+
+                  <div className="ml-auto flex flex-wrap items-center gap-0.5">
+                    {canAssignSchedule && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1.5 px-2.5 text-xs font-semibold text-foreground hover:bg-background/80"
+                          onClick={openBulkSchedule}
+                          disabled={bulkSubmitting}
+                        >
+                          <Clock className="size-3.5 text-muted-foreground" />
+                          Assign schedule
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1.5 px-2.5 text-xs font-semibold text-foreground hover:bg-background/80"
+                          onClick={openBulkScheduleAdjustment}
+                          disabled={bulkSubmitting}
+                        >
+                          <CalendarCheck className="size-3.5 text-muted-foreground" />
+                          Adjust schedule
+                        </Button>
+                      </>
+                    )}
+                    {canScopedEditEmployees && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1.5 px-2.5 text-xs font-semibold text-foreground hover:bg-background/80"
+                        onClick={handleBulkIssueQr}
+                        disabled={bulkSubmitting}
+                      >
+                        <QrCode className="size-3.5 text-muted-foreground" />
+                        Issue QR
+                      </Button>
+                    )}
+                    {canScopedEditEmployees && (
+                      <>
+                        <span className="mx-1 hidden h-4 w-px bg-border sm:block" aria-hidden />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1.5 px-2.5 text-xs font-semibold text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={handleBulkDeactivate}
+                          disabled={bulkSubmitting}
+                        >
+                          <UserX className="size-3.5" />
+                          Deactivate
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -2879,6 +2934,21 @@ export default function AdminEmployees() {
         onSuccess={async () => {
           await queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })
           await fetchEmployees()
+        }}
+      />
+
+      <ScheduleAdjustmentDialog
+        open={adjustmentOpen}
+        onOpenChange={(open) => {
+          setAdjustmentOpen(open)
+          if (!open) setAdjustmentEmployeeIds([])
+        }}
+        schedules={workingSchedules}
+        initialEmployeeIds={adjustmentEmployeeIds}
+        onApplied={async () => {
+          await queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })
+          await fetchEmployees()
+          setSelectedIds([])
         }}
       />
 
