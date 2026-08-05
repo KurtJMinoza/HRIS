@@ -4,6 +4,11 @@ import {
   Calendar,
   CalendarCheck,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Clock,
   Copy,
   Download,
@@ -855,6 +860,11 @@ export default function AdminSchedules() {
   })
 
   const selectedTemplateIds = templateTable.getSelectedRowModel().rows.map((r) => r.original.id)
+  const templatePageRows = templateTable.getRowModel().rows
+  const templatePageSize = templateTable.getState().pagination.pageSize
+  const templatePageIndex = templateTable.getState().pagination.pageIndex
+  const templateRangeStart = filteredTemplates.length === 0 ? 0 : templatePageIndex * templatePageSize + 1
+  const templateRangeEnd = Math.min(filteredTemplates.length, templateRangeStart + templatePageRows.length - 1)
 
   return (
     <div className="min-h-0 min-w-0 max-w-full space-y-8 overflow-x-hidden px-1 py-4 @sm:px-0 @sm:py-6">
@@ -987,43 +997,6 @@ export default function AdminSchedules() {
             </div>
           </div>
 
-          {selectedTemplateIds.length > 0 && (
-            <div
-              className="flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/40 px-4 py-3 shadow-sm @sm:flex-row @sm:items-center @sm:justify-between"
-              role="status"
-              aria-live="polite"
-            >
-              <span className="text-sm font-medium text-foreground">
-                {selectedTemplateIds.length} selected
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  className="min-h-10"
-                  onClick={async () => {
-                    for (const id of selectedTemplateIds) {
-                      const s = schedules.find((x) => x.id === id)
-                      if (s) await duplicateSchedule(s)
-                    }
-                    setRowSelection({})
-                  }}
-                >
-                  <Copy className="size-4" />
-                  Duplicate
-                </Button>
-                <Button type="button" size="sm" variant="secondary" className="min-h-10" onClick={exportTemplatesCsv}>
-                  <Download className="size-4" />
-                  Export
-                </Button>
-                <Button type="button" size="sm" variant="outline" className="min-h-10" onClick={() => setRowSelection({})}>
-                  Clear
-                </Button>
-              </div>
-            </div>
-          )}
-
           {loading ? (
             <div className="overflow-x-auto rounded-xl border border-border/60 bg-muted/20 p-4">
               <table className="w-full text-sm">
@@ -1045,66 +1018,195 @@ export default function AdminSchedules() {
               </Button>
             </div>
           ) : (
-            <div className={cn(workScheduleCardClass, 'overflow-hidden')}>
-              <table className="w-full min-w-[900px] border-collapse text-sm">
-                <thead>
-                  {templateTable.getHeaderGroups().map((hg) => (
-                    <tr key={hg.id} className="border-b border-border/60 bg-card">
-                      {hg.headers.map((header) => (
-                        <th
-                          key={header.id}
-                          className="px-5 py-4 text-left text-xs font-bold tracking-tight text-muted-foreground"
-                          style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
-                        >
-                          {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                        </th>
-                      ))}
-                    </tr>
-                  ))}
-                </thead>
-                <tbody>
-                  {templateTable.getRowModel().rows.map((row, rowIdx) => (
-                    <tr
-                      key={row.id}
-                      className={cn(
-                        'border-b border-border/50 transition-colors hover:bg-muted/35',
-                        rowIdx % 2 === 1 && 'bg-muted/10'
-                      )}
+            <div className="overflow-hidden rounded-2xl border border-[#dfe3e8] bg-white shadow-[0_16px_36px_rgba(15,23,42,0.08)]">
+              <div className="overflow-x-auto">
+                <div className="min-w-[1320px]">
+                  <div className="grid grid-cols-[54px_2.05fr_1.45fr_1.95fr_.72fr_1.35fr_1.2fr] items-center border-b border-[#e5e7eb] px-8 py-8 text-[15px] font-semibold text-[#1f2329]">
+                    <Checkbox
+                      checked={
+                        templateTable.getIsAllPageRowsSelected()
+                          ? true
+                          : templateTable.getIsSomePageRowsSelected()
+                            ? 'indeterminate'
+                            : false
+                      }
+                      onCheckedChange={(v) => templateTable.toggleAllPageRowsSelected(!!v)}
+                      aria-label="Select all schedules"
+                      className="size-7 rounded-md border-[#d6dbe2] bg-white shadow-sm data-[state=checked]:border-[#ff5a10] data-[state=checked]:bg-[#ff5a10]"
+                    />
+                    <button
+                      type="button"
+                      className="flex w-fit items-center gap-1 text-left"
+                      onClick={() => templateTable.getColumn('name')?.toggleSorting()}
                     >
-                      {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-5 py-5 align-middle">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="flex flex-col items-center justify-between gap-3 border-t border-border/60 px-5 py-5 @sm:flex-row">
-                <p className="text-xs text-muted-foreground">
-                  Page {templateTable.getState().pagination.pageIndex + 1} of {templateTable.getPageCount() || 1}
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-12 rounded-lg px-5 text-base"
-                    disabled={!templateTable.getCanPreviousPage()}
-                    onClick={() => templateTable.previousPage()}
-                  >
-                    Previous
+                      Schedule
+                      <ChevronDown className="size-4 text-[#596273]" />
+                    </button>
+                    <span>Shift pattern</span>
+                    <span>Days off</span>
+                    <span>Status</span>
+                    <span>Last updated</span>
+                    <span className="text-center">Actions</span>
+                  </div>
+
+                  <div className="divide-y divide-[#e5e7eb]">
+                    {templatePageRows.map((row) => {
+                      const schedule = row.original
+                      const shiftTypeLabel = SHIFT_TYPES.find((t) => t.value === schedule.shift_type)?.label || 'Fixed shift'
+                      const paidMin = schedule.computed_paid_minutes || schedule.expected_paid_minutes || computePaidMinutes(schedule)
+                      const updatedAt = schedule.updated_at || schedule.created_at
+                      const updatedDate = updatedAt ? new Date(updatedAt) : null
+                      const validUpdated = updatedDate && isValid(updatedDate)
+                      const updatedRelative = validUpdated ? formatDistanceToNow(updatedDate, { addSuffix: true }) : '--'
+                      const updatedDay = validUpdated ? format(updatedDate, 'MMM d, yyyy') : '--'
+                      const updatedClock = validUpdated ? format(updatedDate, 'hh:mm a') : '--'
+
+                      return (
+                        <div key={row.id} className="grid min-h-[124px] grid-cols-[54px_2.05fr_1.45fr_1.95fr_.72fr_1.35fr_1.2fr] items-center px-8 text-[#111827] transition-colors hover:bg-[#fafafa]">
+                          <Checkbox
+                            checked={row.getIsSelected()}
+                            onCheckedChange={(v) => row.toggleSelected(!!v)}
+                            aria-label={`Select ${schedule.name}`}
+                            className="size-7 rounded-md border-[#d6dbe2] bg-white shadow-sm data-[state=checked]:border-[#ff5a10] data-[state=checked]:bg-[#ff5a10]"
+                          />
+
+                          <div className="flex min-w-0 items-center gap-4">
+                            <span className="flex size-13 shrink-0 items-center justify-center rounded-xl border border-[#ffd8c7] bg-[#fffaf7] text-[#ff5a10]">
+                              <Calendar className="size-6" />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-[18px] font-semibold leading-6 text-[#111827]">{schedule.name}</p>
+                              <p className="mt-1 flex items-center gap-2 text-[15px] text-[#596273]">
+                                <span>{shiftTypeLabel}</span>
+                                <span className="size-1 rounded-full bg-[#596273]" />
+                                <span>Template</span>
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-3 text-[18px] leading-6 text-[#111827]">
+                              <Clock className="size-4 shrink-0" />
+                              <span className="truncate">{formatShiftRange12h(schedule.time_in, schedule.time_out, ' - ')}</span>
+                            </p>
+                            <p className="mt-1 text-[15px] text-[#596273]">
+                              {formatPaidHours(paidMin)}
+                              <span className="px-1.5">-</span>
+                              {formatWorkingDaysAbbr(schedule.rest_days)}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            {DAY_ORDER.map((day) => {
+                              const isOff = schedule.rest_days?.includes(day)
+                              const dayOption = DAY_OPTIONS.find((item) => item.key === day)
+                              return (
+                                <span
+                                  key={day}
+                                  className={cn(
+                                    'flex size-8 items-center justify-center rounded-full text-[14px] font-medium text-[#111827]',
+                                    isOff
+                                      ? 'border border-[#c7cbd2] bg-[#d9d9d9] shadow-inner'
+                                      : 'bg-[#f5f6f8]'
+                                  )}
+                                  title={`${dayOption?.full || day}: ${isOff ? 'day off' : 'working day'}`}
+                                >
+                                  {dayOption?.label || day}
+                                </span>
+                              )
+                            })}
+                          </div>
+
+                          <div>
+                            <span className="inline-flex h-8 items-center gap-2 rounded-full bg-[#d6f3e4] px-3.5 text-[14px] font-medium text-[#087b45]">
+                              <span className="size-2.5 rounded-full bg-[#049751]" />
+                              Active
+                            </span>
+                          </div>
+
+                          <div className="min-w-0 text-[15px] text-[#344052]">
+                            <p className="truncate">{updatedRelative}</p>
+                            <p className="mt-1 flex items-center gap-2 text-[#596273]">
+                              <span>{updatedDay}</span>
+                              <span className="size-1 rounded-full bg-[#596273]" />
+                              <span>{updatedClock}</span>
+                            </p>
+                          </div>
+
+                          <div className="flex justify-center gap-3">
+                            <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#111827] shadow-sm hover:bg-[#f6f7f9]" title="Assign" onClick={() => openAssign(schedule)}>
+                              <Users className="size-5" />
+                            </Button>
+                            <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#111827] shadow-sm hover:bg-[#f6f7f9]" title="Edit" onClick={() => openEdit(schedule)}>
+                              <Clock className="size-5" />
+                            </Button>
+                            <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#111827] shadow-sm hover:bg-[#f6f7f9]" title="Duplicate" onClick={() => duplicateSchedule(schedule)}>
+                              <Copy className="size-5" />
+                            </Button>
+                            <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#ff1f2f] shadow-sm hover:bg-[#fff5f5] hover:text-[#ff1f2f]" title="Delete" onClick={() => setDeleteConfirmSchedule(schedule)}>
+                              <Trash2 className="size-5" />
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex min-h-[104px] flex-col gap-5 border-t border-[#e5e7eb] px-8 py-6 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-6">
+                  <Checkbox
+                    checked={
+                      templateTable.getIsAllPageRowsSelected()
+                        ? true
+                        : templateTable.getIsSomePageRowsSelected()
+                          ? 'indeterminate'
+                          : false
+                    }
+                    onCheckedChange={(v) => templateTable.toggleAllPageRowsSelected(!!v)}
+                    aria-label="Select all schedules on this page"
+                    className="size-7 rounded-md border-[#d6dbe2] bg-white shadow-sm data-[state=checked]:border-[#ff5a10] data-[state=checked]:bg-[#ff5a10]"
+                  />
+                  <span className="text-[15px] font-medium text-[#1f2329]">{selectedTemplateIds.length} selected</span>
+                  <span className="h-8 w-px bg-[#dfe3e8]" />
+                  <Button type="button" variant="ghost" className="h-11 gap-4 rounded-md px-4 text-[15px] font-medium text-[#1f2329] hover:bg-[#f6f7f9]">
+                    Bulk actions
+                    <ChevronDown className="size-4 text-[#ff5a10]" />
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-12 rounded-lg border-brand px-5 text-base text-brand hover:bg-brand/10"
-                    disabled={!templateTable.getCanNextPage()}
-                    onClick={() => templateTable.nextPage()}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-5">
+                  <span className="text-[15px] text-[#1f2329]">Rows per page</span>
+                  <select
+                    value={templatePageSize}
+                    onChange={(event) => templateTable.setPageSize(Number(event.target.value))}
+                    className="h-12 rounded-lg border border-[#dfe3e8] bg-white px-5 text-[15px] text-[#111827] shadow-sm outline-none focus:border-[#ff8a4a]"
+                    aria-label="Rows per page"
                   >
-                    Next
-                  </Button>
+                    {[5, 10, 20, 50].map((size) => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                  <span className="h-8 w-px bg-[#dfe3e8]" />
+                  <span className="min-w-[92px] text-[15px] text-[#1f2329]">{templateRangeStart}-{templateRangeEnd} of {filteredTemplates.length}</span>
+                  <div className="flex gap-3">
+                    <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#596273] shadow-sm" disabled={!templateTable.getCanPreviousPage()} onClick={() => templateTable.setPageIndex(0)} aria-label="First page">
+                      <ChevronsLeft className="size-5" />
+                    </Button>
+                    <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#596273] shadow-sm" disabled={!templateTable.getCanPreviousPage()} onClick={() => templateTable.previousPage()} aria-label="Previous page">
+                      <ChevronLeft className="size-5" />
+                    </Button>
+                    <span className="flex size-12 items-center justify-center rounded-lg bg-[#ff5a10] text-[16px] font-semibold text-white shadow-[0_8px_18px_rgba(255,90,16,0.28)]">
+                      {templatePageIndex + 1}
+                    </span>
+                    <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#596273] shadow-sm" disabled={!templateTable.getCanNextPage()} onClick={() => templateTable.nextPage()} aria-label="Next page">
+                      <ChevronRight className="size-5" />
+                    </Button>
+                    <Button type="button" variant="outline" size="icon" className="size-12 rounded-lg border-[#dfe3e8] bg-white text-[#596273] shadow-sm" disabled={!templateTable.getCanNextPage()} onClick={() => templateTable.setPageIndex(templateTable.getPageCount() - 1)} aria-label="Last page">
+                      <ChevronsRight className="size-5" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
