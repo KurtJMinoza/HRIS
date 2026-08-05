@@ -226,40 +226,8 @@ export function ScheduleEditorDialog({
   }
 
   const fixedWizardContent = (
-    <div className="grid min-h-full grid-cols-[294px_1fr] bg-[#f8f9fb]">
-      <aside className="border-r border-[#e0e3e8] bg-white px-6 py-8">
-        {[
-          ['1', 'Schedule details', 'Basic information', true],
-          ['2', 'Time settings', 'Shift and break time', false],
-          ['3', 'Weekly schedule', 'Set working days', false],
-          ['4', 'Advanced options', 'Overtime and more', false],
-          ['5', 'Review & summary', 'Confirm schedule', false],
-        ].map(([step, stepTitle, stepCaption, active], index, steps) => (
-          <div key={step} className="relative flex gap-4 pb-8 last:pb-0">
-            {index < steps.length - 1 && (
-              <span className="absolute left-[15px] top-8 h-[calc(100%-2rem)] w-px bg-[#d9dee7]" />
-            )}
-            <span
-              className={cn(
-                'relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full border text-[14px] font-semibold',
-                active
-                  ? 'border-[#ff5a10] bg-[#ff5a10] text-white shadow-[0_0_0_12px_rgba(255,90,16,0.08)]'
-                  : 'border-[#9aa3b2] bg-white text-[#344052]'
-              )}
-            >
-              {step}
-            </span>
-            <div className={cn('min-w-0 rounded-md px-3 py-1.5', active && 'bg-[#fff7f1]')}>
-              <p className={cn('text-[14px] font-semibold', active ? 'text-[#ff5a10]' : 'text-[#2f3746]')}>{stepTitle}</p>
-              <p className="mt-1 text-[13px] text-[#596273]">{stepCaption}</p>
-            </div>
-            {active && <span className="absolute -left-6 top-0 h-[74px] w-1 rounded-r bg-[#ff5a10]" />}
-            {active && <span className="absolute right-[-25px] top-0 h-[74px] w-1 rounded-l bg-[#ff5a10]" />}
-          </div>
-        ))}
-      </aside>
-
-      <main className="space-y-5 px-6 py-7">
+    <div className="min-h-full bg-[#f8f9fb] px-6 py-7">
+      <div className="space-y-5">
         <section className="rounded-lg border border-[#e0e3e8] bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.03)]">
           <h3 className="text-[20px] font-semibold text-[#111827]">Schedule details</h3>
           <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.1fr_1px_1fr]">
@@ -383,36 +351,8 @@ export function ScheduleEditorDialog({
                 <span>Paid/Unpaid</span>
                 <span>Actions</span>
               </div>
-              {(editForm.break_start || editForm.break_end || (editForm.breaks || []).length > 0) ? (
+              {(editForm.breaks || []).length > 0 ? (
                 <div className="divide-y divide-[#e6e9ef]">
-                  {(editForm.break_start || editForm.break_end) && (
-                    <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr_.8fr] items-center px-4 py-2 text-[14px] text-[#111827]">
-                      <span>Meal Break</span>
-                      <div className="relative w-[150px]">
-                        <Input type="time" value={editForm.break_start} onChange={(e) => setEditForm((f) => ({ ...f, break_start: e.target.value }))} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
-                        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
-                      </div>
-                      <div className="relative w-[150px]">
-                        <Input type="time" value={editForm.break_end} onChange={(e) => setEditForm((f) => ({ ...f, break_end: e.target.value }))} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
-                        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
-                      </div>
-                      <span>{formatMinutesPadded(breakDurationMinutes)}</span>
-                      <span className="w-fit rounded-full bg-[#f0f2f5] px-4 py-1 text-[12px] font-semibold text-[#596273]">Unpaid</span>
-                      <div className="flex items-center gap-5">
-                        <ChevronDown className="size-4 text-[#111827]" />
-                        {!readOnly && (
-                          <button
-                            type="button"
-                            className="text-[#ff2f45] transition-colors hover:text-[#d91f33]"
-                            onClick={() => setEditForm((f) => ({ ...f, break_start: '', break_end: '' }))}
-                            aria-label="Remove meal break"
-                          >
-                            <Trash2 className="size-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
                   {(editForm.breaks || []).map((br, index) => (
                     <div key={index} className="grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr_.8fr] items-center px-4 py-2 text-[14px] text-[#111827]">
                       <span>Break {index + 1}</span>
@@ -425,19 +365,32 @@ export function ScheduleEditorDialog({
                         <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
                       </div>
                       <span>{formatMinutesPadded(minutesBetween(br.start, br.end))}</span>
-                      <button
-                        type="button"
-                        disabled={readOnly}
-                        onClick={() => updateBreak(index, 'is_paid', !br.is_paid)}
-                        className={cn(
-                          'w-fit rounded-full px-4 py-1 text-[12px] font-semibold transition-colors',
-                          br.is_paid
-                            ? 'bg-[#dff7eb] text-[#14945b]'
-                            : 'bg-[#f0f2f5] text-[#596273]'
-                        )}
-                      >
-                        {br.is_paid ? 'Paid' : 'Unpaid'}
-                      </button>
+                      <div className="grid w-[128px] grid-cols-2 overflow-hidden rounded-full border border-[#d7dce4] bg-white text-[12px] font-semibold">
+                        <button
+                          type="button"
+                          disabled={readOnly}
+                          onClick={() => updateBreak(index, 'is_paid', true)}
+                          className={cn(
+                            'px-3 py-1 transition-colors',
+                            br.is_paid ? 'bg-[#dff7eb] text-[#14945b]' : 'text-[#667085] hover:bg-[#f6f7f9]'
+                          )}
+                          aria-pressed={!!br.is_paid}
+                        >
+                          Paid
+                        </button>
+                        <button
+                          type="button"
+                          disabled={readOnly}
+                          onClick={() => updateBreak(index, 'is_paid', false)}
+                          className={cn(
+                            'px-3 py-1 transition-colors',
+                            !br.is_paid ? 'bg-[#fff2ea] text-[#ff5a10]' : 'text-[#667085] hover:bg-[#f6f7f9]'
+                          )}
+                          aria-pressed={!br.is_paid}
+                        >
+                          Unpaid
+                        </button>
+                      </div>
                       <div className="flex items-center gap-5">
                         <ChevronDown className="size-4 text-[#111827]" />
                         {!readOnly && (
@@ -456,7 +409,7 @@ export function ScheduleEditorDialog({
                 </div>
               ) : (
                 <div className="border-t border-[#e6e9ef] px-4 py-6 text-center text-[13px] text-[#596273]">
-                  No breaks yet. Add break to include paid or unpaid break rules in the saved schedule.
+                  No additional breaks yet. Use the break start/end fields above for the main meal break, or add another break here.
                 </div>
               )}
             </div>
@@ -533,7 +486,7 @@ export function ScheduleEditorDialog({
             </div>
           </section>
         </div>
-      </main>
+      </div>
     </div>
   )
 
