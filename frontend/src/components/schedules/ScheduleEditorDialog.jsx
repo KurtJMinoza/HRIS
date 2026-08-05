@@ -496,7 +496,7 @@ export function ScheduleEditorDialog({
         className={cn(
           'flex min-h-0 w-full max-w-full flex-col gap-0 overflow-hidden p-0 shadow-xl',
           isFlexible
-            ? 'max-h-[min(94dvh,1060px)] rounded-lg border-[#d9dde5] bg-[#f8f9fb] sm:max-w-[min(89vw,1340px)]'
+            ? 'max-h-[min(96dvh,1120px)] rounded-lg border-[#d9dde5] bg-[#f8f9fb] sm:max-w-[min(99vw,1780px)]'
             : 'max-h-[min(94dvh,1080px)] rounded-lg border-[#d9dde5] bg-[#f8f9fb] sm:max-w-[min(97vw,1510px)]'
         )}
         innerClassName="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0!"

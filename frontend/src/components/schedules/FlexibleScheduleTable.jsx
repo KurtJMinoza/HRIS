@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ChevronDown, Clock3, Copy, GripVertical, Plus, Trash2, Utensils } from 'lucide-react'
+import { ChevronDown, Copy, GripVertical, Plus, Trash2, Utensils } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -142,22 +142,19 @@ function displayHours(minutes) {
 
 function TimeField({ label, value, onChange, readOnly }) {
   return (
-    <label className="min-w-0 space-y-2">
+    <label className="min-w-[148px] space-y-2">
       <span className="flex items-center gap-1 text-[12px] font-medium text-[#596273]">
         {label}
         <span className="text-[10px] text-[#b07870]">?</span>
       </span>
-      <div className="relative">
-        <Input
-          type="time"
-          value={toHhMm(value) || ''}
-          onChange={onChange}
-          className="h-10 rounded-md border-[#d9dde5] bg-white pl-3 pr-9 text-[13px] font-medium text-[#252a31] shadow-none [color-scheme:light]"
-          readOnly={readOnly}
-          disabled={readOnly}
-        />
-        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-[#69707d]" />
-      </div>
+      <Input
+        type="time"
+        value={toHhMm(value) || ''}
+        onChange={onChange}
+        className="h-10 rounded-md border-[#d9dde5] bg-white px-3 text-[13px] font-medium text-[#252a31] shadow-none [color-scheme:light]"
+        readOnly={readOnly}
+        disabled={readOnly}
+      />
     </label>
   )
 }
@@ -207,7 +204,7 @@ function OptionEditor({ option, readOnly, onChange }) {
 
   return (
     <div className="space-y-4 pb-0 pt-5">
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_1.05fr_1.05fr_1.05fr_.72fr_.72fr_.9fr_.9fr]">
+      <div className="grid gap-4 min-[1500px]:grid-cols-[minmax(150px,1.05fr)_minmax(150px,1.05fr)_minmax(150px,1.05fr)_minmax(150px,1.05fr)_minmax(112px,.72fr)_minmax(112px,.72fr)_minmax(130px,.9fr)_minmax(130px,.9fr)]">
         <TimeField
           label="Time in"
           value={option.time_in}
@@ -248,7 +245,7 @@ function OptionEditor({ option, readOnly, onChange }) {
         />
       </div>
 
-      <div className="grid gap-6 border-t border-[#edf0f3] pt-4 lg:grid-cols-[360px_1fr]">
+      <div className="grid gap-6 border-t border-[#edf0f3] pt-4 lg:grid-cols-[450px_1fr]">
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-[12px] font-medium text-[#515966]">
             <Utensils className="size-4" />
@@ -455,7 +452,7 @@ export function FlexibleScheduleTable({ days, setDays, readOnly = false }) {
             </div>
 
             {expanded && working && (
-              <div className="space-y-3 px-16 pb-5 pr-20">
+              <div className="space-y-3 px-6 pb-5 @2xl:px-10 @4xl:px-12">
                 {options.map((option, index) => (
                   <div
                     key={`${option.id || 'new'}-${index}`}
