@@ -31,6 +31,7 @@ class AttendanceDailySummaryService
         private readonly PayrollComputationService $payrollComputation,
         private readonly LeaveCreditService $leaveCreditService,
         private readonly ExecomAttendancePresentationService $execomAttendancePresentation,
+        private readonly ScheduleComputationService $scheduleComputation,
     ) {}
 
     /**
@@ -313,6 +314,11 @@ class AttendanceDailySummaryService
 
             'schedule_in' => is_array($daySchedule) ? ($daySchedule['in'] ?? null) : null,
             'schedule_out' => is_array($daySchedule) ? ($daySchedule['out'] ?? null) : null,
+            'schedule_label' => $this->scheduleComputation->scheduleLabelForDaySchedule(
+                is_array($daySchedule) ? $daySchedule : null,
+                $isRestDayStatus && ! $isRestDayWorked,
+                $isRestDayWorked,
+            ),
 
             // Context for EXECOM presentation gates
             'leave' => $leave,

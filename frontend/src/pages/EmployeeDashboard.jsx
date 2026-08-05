@@ -704,7 +704,7 @@ export default function EmployeeDashboard() {
       if (calendarCacheRef.current.has(mk)) continue
       try {
         const data = await getEmployeeDashboardAttendanceCalendar({ month: mk })
-        if (data?.meta?.schema_version === 22) {
+        if (data?.meta?.schema_version === 25) {
           calendarCacheRef.current.set(mk, data)
         }
       } catch {
@@ -717,7 +717,7 @@ export default function EmployeeDashboard() {
     const monthKey = calendarMonthSelectKey(year, month)
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    const cacheValid = cached && cached?.meta?.schema_version === 22
+    const cacheValid = cached && cached?.meta?.schema_version === 25
 
     if (cacheValid) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
@@ -3026,6 +3026,16 @@ export default function EmployeeDashboard() {
                             <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
                               <span className="font-medium text-muted-foreground">Schedule</span>
                               <span className="font-semibold text-foreground">Rest Day</span>
+                            </div>
+                          )
+                        }
+                        if (scheduleLabel) {
+                          return (
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+                              <span className="font-medium text-muted-foreground">Schedule</span>
+                              <span className="max-w-[16rem] text-right text-sm font-semibold tabular-nums text-foreground">
+                                {scheduleLabel}
+                              </span>
                             </div>
                           )
                         }

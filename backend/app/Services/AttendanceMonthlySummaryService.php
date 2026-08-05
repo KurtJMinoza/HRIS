@@ -125,6 +125,10 @@ class AttendanceMonthlySummaryService
     /** @param array<string, mixed> $day */
     private function scheduleLabel(array $day, bool $isRestDay): string
     {
+        if (is_string($day['schedule_label'] ?? null) && trim((string) $day['schedule_label']) !== '') {
+            return (string) $day['schedule_label'];
+        }
+
         if ($isRestDay) {
             return AttendanceStatusResolver::REST_DAY_LABEL;
         }

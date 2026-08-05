@@ -23,6 +23,7 @@ use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
 use App\Services\PayrollComputationService;
 use App\Services\PolicyResolverService;
+use App\Services\ScheduleComputationService;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -150,7 +151,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::summaryKey($employeeId, $todayDate);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 10) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 11) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             Log::debug('[EmployeeDashboard] summary cache HIT', [
@@ -167,13 +168,10 @@ class EmployeeDashboardController extends Controller
 
         // Preload user schedule
         $this->hydrateUserSchedule($user);
-        $effectiveSchedule = $user->schedule;
-        if ((! is_array($effectiveSchedule) || $effectiveSchedule === []) && $user->working_schedule_id !== null) {
-            $user->loadMissing('workingSchedule');
-            $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
-            if ($derived !== null) {
-                $effectiveSchedule = $derived;
-            }
+        $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($user, $todayDate)
+            ?? EmployeeScheduleResolver::resolve($user);
+        if (! is_array($effectiveSchedule) || $effectiveSchedule === []) {
+            $effectiveSchedule = is_array($user->schedule) ? $user->schedule : null;
         }
 
         $scheduleAssigned = is_array($effectiveSchedule) && $effectiveSchedule !== [];
@@ -277,7 +275,7 @@ class EmployeeDashboardController extends Controller
             'latest_payslip' => $latestPayslipSummary,
             'pending_schedule_change' => $this->pendingScheduleChangeSummary($user, $todayNow),
             'meta' => [
-                'schema_version' => 10,
+                'schema_version' => 11,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -335,7 +333,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 23) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 25) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -356,13 +354,10 @@ class EmployeeDashboardController extends Controller
 
         // Preload user schedule
         $this->hydrateUserSchedule($user);
-        $effectiveSchedule = $user->schedule;
-        if ((! is_array($effectiveSchedule) || $effectiveSchedule === []) && $user->working_schedule_id !== null) {
-            $user->loadMissing('workingSchedule');
-            $derived = $this->buildScheduleFromWorkingSchedule($user->workingSchedule);
-            if ($derived !== null) {
-                $effectiveSchedule = $derived;
-            }
+        $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($user, $todayDate)
+            ?? EmployeeScheduleResolver::resolve($user);
+        if (! is_array($effectiveSchedule) || $effectiveSchedule === []) {
+            $effectiveSchedule = is_array($user->schedule) ? $user->schedule : null;
         }
         $scheduleAssigned = is_array($effectiveSchedule) && $effectiveSchedule !== [];
 
@@ -583,7 +578,6 @@ class EmployeeDashboardController extends Controller
             }
 
             $days[] = array_merge($summary, [
-                'schedule_label' => ($summary['is_rest_day'] ?? false) ? AttendanceStatusResolver::REST_DAY_LABEL : null,
                 'holiday_name' => $holidayOnDate['name'] ?? null,
                 'holiday_type' => $holidayOnDate['type'] ?? null,
                 'holiday_pay_policy' => $holidayPayPolicy,
@@ -657,7 +651,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 23,
+                'schema_version' => 25,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -1067,6 +1061,17 @@ class EmployeeDashboardController extends Controller
             $hasTimeOut = false;
         }
 
+        if (is_array($daySchedule)) {
+            $daySchedule = app(ScheduleComputationService::class)
+                ->resolveFlexibleShiftForAttendance(
+                    $todayDate,
+                    $daySchedule,
+                    $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : null,
+                    $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : null,
+                    $attendanceTz,
+                )['schedule'];
+        }
+
         // Status label
         $isRestDayWorked = (bool) ($resolved['is_rest_day_worked'] ?? false);
         $labelMap = [
@@ -1100,6 +1105,11 @@ class EmployeeDashboardController extends Controller
             'undertime_minutes' => $undertimeMinutes,
             'schedule_in' => is_array($daySchedule) ? ($daySchedule['in'] ?? null) : null,
             'schedule_out' => is_array($daySchedule) ? ($daySchedule['out'] ?? null) : null,
+            'schedule_label' => app(ScheduleComputationService::class)->scheduleLabelForDaySchedule(
+                is_array($daySchedule) ? $daySchedule : null,
+                $isRestDay && ! ($resolved['is_rest_day_worked'] ?? false),
+                (bool) ($resolved['is_rest_day_worked'] ?? false),
+            ),
             'is_rest_day' => $isRestDay,
             'is_rest_day_worked' => $isRestDayWorked,
             'has_time_in' => $hasTimeIn,

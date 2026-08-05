@@ -647,11 +647,22 @@ class PayrollComputationService
         $holiday = $holidayContext['holiday'];
         $calendarScopeMatch = $holidayContext['calendar_scope_match'];
 
+        // Match multi-option flexible days from punches before required minutes / segmentation.
+        // Without this, Default 08:00–17:00 is used and a 12:00–21:00 Option 2 day only pays ~4h.
+        if (is_array($daySchedule) && ($timeIn !== null || $timeOut !== null)) {
+            $daySchedule = app(ScheduleComputationService::class)
+                ->resolveFlexibleShiftForAttendance($dateKey, $daySchedule, $timeIn, $timeOut, $tz)['schedule'];
+        }
+
         // For rest days with clock times, use a reference workday schedule so
         // late/undertime/break deduction runs identically to ordinary workdays.
         $computationSchedule = is_array($daySchedule) ? $daySchedule : null;
         if ($isRestDay && $worked && (! is_array($daySchedule) || empty($daySchedule['in']))) {
             $computationSchedule = AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule);
+            if (is_array($computationSchedule) && ($timeIn !== null || $timeOut !== null)) {
+                $computationSchedule = app(ScheduleComputationService::class)
+                    ->resolveFlexibleShiftForAttendance($dateKey, $computationSchedule, $timeIn, $timeOut, $tz)['schedule'];
+            }
         }
 
         // Phase 2: Rules Engine – resolve rule code and multipliers (policy-aware)
@@ -1628,18 +1639,11 @@ class PayrollComputationService
         $date = Carbon::parse($dateKey, $tz);
         $dayKey = $this->dayKeyForDate($date);
         $day = $effectiveSchedule[$dayKey] ?? null;
-        if ($day === null || ! is_array($day) || empty($day['in'])) {
+        if ($day === null || ! is_array($day)) {
             return 'Rest Day';
         }
-        $inRaw = $day['in'] ?? '';
-        $outRaw = $day['out'] ?? '';
-        $in = is_string($inRaw) ? substr(trim($inRaw), 0, 5) : '';
-        $out = is_string($outRaw) ? substr(trim($outRaw), 0, 5) : '';
-        if ($in !== '' && $out !== '') {
-            return "{$in} – {$out}";
-        }
 
-        return $in !== '' ? $in : '—';
+        return app(ScheduleComputationService::class)->scheduleLabelForDaySchedule($day, empty($day['in']));
     }
 
     /**

@@ -855,6 +855,13 @@ export default function AdminHoliday({ mode = 'admin' }) {
       toast.success('Holiday deleted successfully')
     } catch (err) {
       const msg = err.message || 'Failed to delete holiday'
+      const alreadyGone = /no query results for model|not found|already deleted/i.test(String(msg))
+      if (alreadyGone) {
+        await refetchHolidays({ silent: true })
+        setSelectedCell(null)
+        toast.success('Holiday deleted successfully')
+        return
+      }
       toast.error('Failed to delete holiday', { description: msg })
     }
   }

@@ -45,6 +45,21 @@ class HolidayDestroyHardDeleteTest extends TestCase
         $this->assertNull(Holiday::query()->find($holiday->id));
     }
 
+    public function test_destroy_is_idempotent_when_holiday_already_gone(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $missingId = ((int) Holiday::query()->max('id')) + 9999;
+        $response = app(HolidayController::class)->destroy($missingId);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $payload = $response->getData(true);
+        $this->assertTrue((bool) ($payload['deleted'] ?? false));
+        $this->assertTrue((bool) ($payload['already_gone'] ?? false));
+    }
+
     public function test_destroy_blocked_when_payroll_finalized(): void
     {
         if (! $this->tablesExist()) {

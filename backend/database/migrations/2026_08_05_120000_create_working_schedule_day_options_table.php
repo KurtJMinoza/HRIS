@@ -16,7 +16,7 @@ return new class extends Migration
         if (! Schema::hasTable('working_schedule_day_options')) {
             Schema::create('working_schedule_day_options', function (Blueprint $table): void {
                 $table->id();
-                $table->foreignId('working_schedule_day_id')->constrained('working_schedule_days')->cascadeOnDelete();
+                $table->unsignedBigInteger('working_schedule_day_id');
                 $table->string('option_name', 80);
                 $table->time('time_in');
                 $table->time('time_out');
@@ -39,6 +39,15 @@ return new class extends Migration
                 $table->unique(['working_schedule_day_id', 'option_name'], 'ws_day_option_name_unique');
                 $table->index(['working_schedule_day_id', 'is_default'], 'ws_day_option_default_idx');
             });
+
+            if (Schema::hasTable('working_schedule_days')) {
+                Schema::table('working_schedule_day_options', function (Blueprint $table): void {
+                    $table->foreign('working_schedule_day_id', 'ws_day_option_day_fk')
+                        ->references('id')
+                        ->on('working_schedule_days')
+                        ->cascadeOnDelete();
+                });
+            }
         }
 
         if (Schema::hasTable('working_schedule_days')) {

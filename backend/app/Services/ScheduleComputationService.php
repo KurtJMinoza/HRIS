@@ -791,4 +791,79 @@ class ScheduleComputationService
 
         return substr($time, 0, 5);
     }
+
+    /**
+     * Human-readable shift label for calendar, attendance, reports, and efficiency views.
+     */
+    public function scheduleLabelForDaySchedule(
+        ?array $daySchedule,
+        bool $isRestDay = false,
+        bool $isRestDayWorked = false,
+    ): ?string {
+        if ($isRestDayWorked) {
+            return 'Rest Day Worked';
+        }
+
+        if ($isRestDay || ! is_array($daySchedule)) {
+            return AttendanceStatusResolver::REST_DAY_LABEL;
+        }
+
+        $in = $this->normalizeTime($daySchedule['in'] ?? null);
+        $out = $this->normalizeTime($daySchedule['out'] ?? null);
+        $optionName = trim((string) ($daySchedule['matched_schedule_option_name'] ?? ''));
+        $options = $daySchedule['flexible_shift_options'] ?? null;
+        $matchSource = $daySchedule['match_source'] ?? null;
+        $hasMultipleOptions = is_array($options) && count($options) > 1;
+
+        if ($hasMultipleOptions && ! in_array($matchSource, ['automatic', 'schedule_adjustment'], true)) {
+            $parts = [];
+            foreach ($options as $option) {
+                if (! is_array($option)) {
+                    continue;
+                }
+                $optionIn = $this->normalizeTime($option['in'] ?? null);
+                $optionOut = $this->normalizeTime($option['out'] ?? null);
+                if ($optionIn === null || $optionOut === null) {
+                    continue;
+                }
+                $name = trim((string) ($option['matched_schedule_option_name'] ?? $option['option_name'] ?? ''));
+                $range = "{$optionIn} – {$optionOut}";
+                $parts[] = ($name !== '' && strcasecmp($name, 'Default') !== 0) ? "{$name}: {$range}" : $range;
+            }
+
+            if ($parts !== []) {
+                return implode(' / ', $parts);
+            }
+        }
+
+        if ($in !== null && $out !== null) {
+            $range = "{$in} – {$out}";
+            if ($optionName !== '' && strcasecmp($optionName, 'Default') !== 0) {
+                return "{$optionName}: {$range}";
+            }
+
+            return $range;
+        }
+
+        if (! is_array($options) || $options === []) {
+            return $in !== null ? $in : ($out !== null ? $out : null);
+        }
+
+        $parts = [];
+        foreach ($options as $option) {
+            if (! is_array($option)) {
+                continue;
+            }
+            $optionIn = $this->normalizeTime($option['in'] ?? null);
+            $optionOut = $this->normalizeTime($option['out'] ?? null);
+            if ($optionIn === null || $optionOut === null) {
+                continue;
+            }
+            $name = trim((string) ($option['matched_schedule_option_name'] ?? $option['option_name'] ?? ''));
+            $range = "{$optionIn} – {$optionOut}";
+            $parts[] = ($name !== '' && strcasecmp($name, 'Default') !== 0) ? "{$name}: {$range}" : $range;
+        }
+
+        return $parts !== [] ? implode(' / ', $parts) : null;
+    }
 }

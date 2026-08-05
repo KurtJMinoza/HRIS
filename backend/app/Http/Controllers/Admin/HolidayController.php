@@ -564,7 +564,18 @@ class HolidayController extends Controller
         }
         $id = (int) $id;
 
-        $holiday = $this->holiday->newQuery()->findOrFail($id);
+        $holiday = $this->holiday->newQuery()->find($id);
+        // Idempotent DELETE: stale UI may retry an id that was already removed.
+        if (! $holiday) {
+            $this->holidayCalendar->flushMergedYearCaches();
+            $this->holidayService->flushRuntimeCaches();
+
+            return response()->json([
+                'message' => 'Holiday already deleted',
+                'deleted' => true,
+                'already_gone' => true,
+            ]);
+        }
         $dateKey = $holiday->date instanceof Carbon ? $holiday->date->format('Y-m-d') : (string) $holiday->date;
 
         try {

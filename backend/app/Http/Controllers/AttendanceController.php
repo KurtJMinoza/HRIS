@@ -30,6 +30,7 @@ use App\Services\OvertimeService;
 use App\Services\PayrollComputationService;
 use App\Services\PremiumPayCalculatorService;
 use App\Services\PresenceFilingCorrectionFormatter;
+use App\Services\ScheduleComputationService;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -2850,6 +2851,24 @@ class AttendanceController extends Controller
                 ? (string) $daySchedule['out']
                 : null;
 
+            $displaySchedule = is_array($computationSchedule) ? $computationSchedule : null;
+            if (is_array($displaySchedule)) {
+                $displaySchedule = app(ScheduleComputationService::class)->resolveFlexibleShiftForAttendance(
+                    $dateKey,
+                    $displaySchedule,
+                    $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : ($effectiveTimeIn ? Carbon::parse($effectiveTimeIn, $attendanceTz) : null),
+                    $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : ($effectiveTimeOut ? Carbon::parse($effectiveTimeOut, $attendanceTz) : null),
+                    $attendanceTz,
+                )['schedule'];
+                $scheduleInDay = ! empty($displaySchedule['in']) ? (string) $displaySchedule['in'] : $scheduleInDay;
+                $scheduleOutDay = ! empty($displaySchedule['out']) ? (string) $displaySchedule['out'] : $scheduleOutDay;
+            }
+            $scheduleLabel = app(ScheduleComputationService::class)->scheduleLabelForDaySchedule(
+                $displaySchedule ?? (is_array($daySchedule) ? $daySchedule : null),
+                $isRestDayRow && ! ($hasTimeIn || $hasTimeOut),
+                $isRestDayRow && ($hasTimeIn || $hasTimeOut),
+            );
+
             $effectiveTimeOutDateForPayroll = $effectiveTimeOut
                 ? ($effectiveTimeOut instanceof Carbon
                     ? $effectiveTimeOut->copy()->timezone($attendanceTz)->toDateString()
@@ -2869,7 +2888,7 @@ class AttendanceController extends Controller
                 'is_rest_day_worked' => $isRestDayRow && ($hasTimeIn || $hasTimeOut),
                 'holiday_name' => $holidayOnDate['name'] ?? null,
                 'holiday_type' => $holidayOnDate['type'] ?? null,
-                'schedule_label' => ($isRestDayRow || $status === 'rest') ? 'Rest Day' : null,
+                'schedule_label' => $scheduleLabel,
                 'is_incomplete' => $isIncomplete,
                 'employee_status_label' => $employeeStatusLabel,
                 'schedule_in' => $scheduleInDay,

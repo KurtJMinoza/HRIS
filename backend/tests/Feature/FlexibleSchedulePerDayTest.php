@@ -7,6 +7,7 @@ use App\Models\WorkingScheduleDay;
 use App\Models\WorkingScheduleDayOption;
 use App\Services\AttendanceStatusService;
 use App\Services\ScheduleComputationService;
+use App\Services\TimeSegmentationService;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -326,6 +327,51 @@ class FlexibleSchedulePerDayTest extends TestCase
         $this->assertSame('default', $result['match_source']);
         $this->assertSame('absent', $result['status']);
         $this->assertSame(480, $result['scheduled_paid_minutes']);
+    }
+
+    public function test_schedule_label_shows_all_flexible_options_before_punch(): void
+    {
+        $service = new ScheduleComputationService;
+
+        $label = $service->scheduleLabelForDaySchedule($this->multiOptionMonday());
+
+        $this->assertStringContainsString('08:00 – 17:00', (string) $label);
+        $this->assertStringContainsString('12:00 – 21:00', (string) $label);
+        $this->assertStringContainsString('Afternoon', (string) $label);
+    }
+
+    public function test_schedule_label_shows_matched_option_after_punch(): void
+    {
+        $service = new ScheduleComputationService;
+        $matched = array_merge($this->multiOptionMonday(), [
+            'in' => '12:00',
+            'out' => '21:00',
+            'matched_schedule_option_name' => 'Afternoon',
+            'match_source' => 'automatic',
+        ]);
+
+        $label = $service->scheduleLabelForDaySchedule($matched);
+
+        $this->assertSame('Afternoon: 12:00 – 21:00', $label);
+    }
+
+    public function test_matched_afternoon_option_segments_full_eight_regular_hours(): void
+    {
+        $tz = 'Asia/Manila';
+        $date = '2026-08-10';
+        $in = Carbon::parse($date.' 12:00:00', $tz);
+        $out = Carbon::parse($date.' 21:00:00', $tz);
+
+        $matched = (new ScheduleComputationService)
+            ->resolveFlexibleShiftForAttendance($date, $this->multiOptionMonday(), $in, $out, $tz)['schedule'];
+
+        $this->assertSame('Afternoon', $matched['matched_schedule_option_name'] ?? null);
+        $this->assertSame('12:00', substr((string) ($matched['in'] ?? ''), 0, 5));
+
+        $seg = app(TimeSegmentationService::class)->segment($in, $out, $tz, $matched, $date);
+
+        $this->assertSame(480, (int) ($seg['regular_minutes'] ?? 0));
+        $this->assertSame(0, (int) ($seg['overtime_minutes'] ?? 0));
     }
 
     private function multiOptionMonday(): array

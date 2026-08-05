@@ -21,6 +21,7 @@ use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
 use App\Services\OvertimePayrollService;
 use App\Services\PremiumReportService;
+use App\Services\ScheduleComputationService;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -920,6 +921,24 @@ class AttendanceMonitoringController extends Controller
                 $scheduleIn = is_array($todaySchedule) && ! empty($todaySchedule['in']) ? (string) $todaySchedule['in'] : null;
                 $scheduleOut = is_array($todaySchedule) && ! empty($todaySchedule['out']) ? (string) $todaySchedule['out'] : null;
 
+                $displaySchedule = is_array($todaySchedule) ? $todaySchedule : null;
+                if (is_array($displaySchedule)) {
+                    $displaySchedule = app(ScheduleComputationService::class)->resolveFlexibleShiftForAttendance(
+                        $dateKey,
+                        $displaySchedule,
+                        $effectiveTimeIn instanceof Carbon ? $effectiveTimeIn : ($effectiveTimeIn ? Carbon::parse($effectiveTimeIn, $tz) : null),
+                        $effectiveTimeOut instanceof Carbon ? $effectiveTimeOut : ($effectiveTimeOut ? Carbon::parse($effectiveTimeOut, $tz) : null),
+                        $tz,
+                    )['schedule'];
+                    $scheduleIn = ! empty($displaySchedule['in']) ? (string) $displaySchedule['in'] : $scheduleIn;
+                    $scheduleOut = ! empty($displaySchedule['out']) ? (string) $displaySchedule['out'] : $scheduleOut;
+                }
+                $scheduleLabel = app(ScheduleComputationService::class)->scheduleLabelForDaySchedule(
+                    $displaySchedule ?? (is_array($todaySchedule) ? $todaySchedule : null),
+                    ($isRestDayRow || $status === 'rest') && ! ($effectiveTimeIn || $effectiveTimeOut),
+                    ($isRestDayRow || $status === 'rest') && ($effectiveTimeIn || $effectiveTimeOut),
+                );
+
                 $row = [
                     'employee_id' => $employee->id,
                     'employee_name' => $employee->display_name,
@@ -959,7 +978,7 @@ class AttendanceMonitoringController extends Controller
                     'is_rest_day_worked' => $isRestDayRow && ($effectiveTimeIn || $effectiveTimeOut),
                     'holiday_name' => $holidayOnDate['name'] ?? null,
                     'holiday_type' => $holidayOnDate['type'] ?? null,
-                    'schedule_label' => ($isRestDayRow || $status === 'rest') ? 'Rest Day' : null,
+                    'schedule_label' => $scheduleLabel,
                     'late_label' => $lateLabel,
                     'late_minutes' => $lateMinutes,
                     'undertime_minutes' => $undertimeMinutes,
