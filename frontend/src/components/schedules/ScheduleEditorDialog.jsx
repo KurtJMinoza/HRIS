@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlarmClock, ArrowRight, Calendar, CalendarDays, ChevronDown, Clock3, ExternalLink, Loader2, Plus, Trash2, Info } from 'lucide-react'
+import { AlarmClock, Calendar, CalendarDays, ChevronDown, Clock3, ExternalLink, Loader2, Plus, Trash2, Info } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -383,23 +383,82 @@ export function ScheduleEditorDialog({
                 <span>Paid/Unpaid</span>
                 <span>Actions</span>
               </div>
-              <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr_.8fr] items-center border-t border-[#e6e9ef] px-4 py-2 text-[14px] text-[#111827]">
-                <span>Meal Break</span>
-                <div className="relative w-[150px]">
-                  <Input type="time" value={editForm.break_start} onChange={(e) => setEditForm((f) => ({ ...f, break_start: e.target.value }))} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
-                  <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
+              {(editForm.break_start || editForm.break_end || (editForm.breaks || []).length > 0) ? (
+                <div className="divide-y divide-[#e6e9ef]">
+                  {(editForm.break_start || editForm.break_end) && (
+                    <div className="grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr_.8fr] items-center px-4 py-2 text-[14px] text-[#111827]">
+                      <span>Meal Break</span>
+                      <div className="relative w-[150px]">
+                        <Input type="time" value={editForm.break_start} onChange={(e) => setEditForm((f) => ({ ...f, break_start: e.target.value }))} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
+                        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
+                      </div>
+                      <div className="relative w-[150px]">
+                        <Input type="time" value={editForm.break_end} onChange={(e) => setEditForm((f) => ({ ...f, break_end: e.target.value }))} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
+                        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
+                      </div>
+                      <span>{formatMinutesPadded(breakDurationMinutes)}</span>
+                      <span className="w-fit rounded-full bg-[#f0f2f5] px-4 py-1 text-[12px] font-semibold text-[#596273]">Unpaid</span>
+                      <div className="flex items-center gap-5">
+                        <ChevronDown className="size-4 text-[#111827]" />
+                        {!readOnly && (
+                          <button
+                            type="button"
+                            className="text-[#ff2f45] transition-colors hover:text-[#d91f33]"
+                            onClick={() => setEditForm((f) => ({ ...f, break_start: '', break_end: '' }))}
+                            aria-label="Remove meal break"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {(editForm.breaks || []).map((br, index) => (
+                    <div key={index} className="grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr_.8fr] items-center px-4 py-2 text-[14px] text-[#111827]">
+                      <span>Break {index + 1}</span>
+                      <div className="relative w-[150px]">
+                        <Input type="time" value={br.start || ''} onChange={(e) => updateBreak(index, 'start', e.target.value)} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
+                        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
+                      </div>
+                      <div className="relative w-[150px]">
+                        <Input type="time" value={br.end || ''} onChange={(e) => updateBreak(index, 'end', e.target.value)} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
+                        <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
+                      </div>
+                      <span>{formatMinutesPadded(minutesBetween(br.start, br.end))}</span>
+                      <button
+                        type="button"
+                        disabled={readOnly}
+                        onClick={() => updateBreak(index, 'is_paid', !br.is_paid)}
+                        className={cn(
+                          'w-fit rounded-full px-4 py-1 text-[12px] font-semibold transition-colors',
+                          br.is_paid
+                            ? 'bg-[#dff7eb] text-[#14945b]'
+                            : 'bg-[#f0f2f5] text-[#596273]'
+                        )}
+                      >
+                        {br.is_paid ? 'Paid' : 'Unpaid'}
+                      </button>
+                      <div className="flex items-center gap-5">
+                        <ChevronDown className="size-4 text-[#111827]" />
+                        {!readOnly && (
+                          <button
+                            type="button"
+                            className="text-[#ff2f45] transition-colors hover:text-[#d91f33]"
+                            onClick={() => removeBreak(index)}
+                            aria-label={`Remove break ${index + 1}`}
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="relative w-[150px]">
-                  <Input type="time" value={editForm.break_end} onChange={(e) => setEditForm((f) => ({ ...f, break_end: e.target.value }))} className="h-9 rounded-md border-[#d7dce4] bg-white pr-8 text-[13px] shadow-none [color-scheme:light]" readOnly={readOnly} disabled={readOnly} />
-                  <Clock3 className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2" />
+              ) : (
+                <div className="border-t border-[#e6e9ef] px-4 py-6 text-center text-[13px] text-[#596273]">
+                  No breaks yet. Add break to include paid or unpaid break rules in the saved schedule.
                 </div>
-                <span>{formatMinutesPadded(breakDurationMinutes)}</span>
-                <span className="w-fit rounded-full bg-[#dff7eb] px-4 py-1 text-[12px] font-semibold text-[#14945b]">Paid</span>
-                <div className="flex items-center gap-5">
-                  <ChevronDown className="size-4 text-[#111827]" />
-                  <Trash2 className="size-4 text-[#ff2f45]" />
-                </div>
-              </div>
+              )}
             </div>
           </div>
         </section>
@@ -1146,7 +1205,7 @@ export function ScheduleEditorDialog({
                 </span>
                 <div>
                   <p className="text-[14px] font-semibold text-[#111827]">Note</p>
-                  <p className="mt-1 text-[13px] text-[#596273]">You can review all settings in the next step before creating the schedule.</p>
+                  <p className="mt-1 text-[13px] text-[#596273]">Saving creates this schedule template and refreshes the admin schedule list.</p>
                 </div>
               </div>
             )}
@@ -1183,11 +1242,6 @@ export function ScheduleEditorDialog({
               >
                 {submitting ? (
                   <Loader2 className="size-4 shrink-0 animate-spin" />
-                ) : isFixedWizard ? (
-                  <>
-                    Next
-                    <ArrowRight className="size-5" />
-                  </>
                 ) : (
                   submitLabel ?? (editingSchedule ? 'Save schedule' : 'Create schedule')
                 )}

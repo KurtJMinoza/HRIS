@@ -42,22 +42,33 @@ function netShiftMinutes(timeIn, timeOut, breakStart, breakEnd, breaks) {
   if (span <= 0) span += 24 * 60
 
   let totalBreak = 0
+  const mergedBreaks = []
+  const seen = new Set()
 
-  if (Array.isArray(breaks) && breaks.length > 0) {
+  function pushBreak(start, end, isPaid = false) {
+    if (!start || !end) return
+    const key = `${start}|${end}`
+    if (seen.has(key)) return
+    seen.add(key)
+    mergedBreaks.push({ start, end, is_paid: !!isPaid })
+  }
+
+  if (Array.isArray(breaks)) {
     for (const br of breaks) {
+      pushBreak(br.start || br.break_start, br.end || br.break_end, br.is_paid)
+    }
+  }
+  pushBreak(breakStart, breakEnd, false)
+
+  if (mergedBreaks.length > 0) {
+    for (const br of mergedBreaks) {
       if (br.is_paid) continue
-      const bs = minutesFromMidnight(br.start || br.break_start)
-      const be = minutesFromMidnight(br.end || br.break_end)
+      const bs = minutesFromMidnight(br.start)
+      const be = minutesFromMidnight(br.end)
       let bspan = be - bs
       if (bspan < 0) bspan += 24 * 60
       totalBreak += Math.max(0, Math.min(bspan, span))
     }
-  } else if (breakStart && breakEnd) {
-    const bs = minutesFromMidnight(breakStart)
-    const be = minutesFromMidnight(breakEnd)
-    let bspan = be - bs
-    if (bspan < 0) bspan += 24 * 60
-    totalBreak = Math.max(0, Math.min(bspan, span))
   }
 
   return Math.max(0, span - totalBreak)
