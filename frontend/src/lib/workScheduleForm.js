@@ -279,6 +279,47 @@ export function validateScheduleName(value) {
   return ''
 }
 
+function numberOrDefault(value, fallback) {
+  return value === '' || value == null ? fallback : Number(value)
+}
+
+function numberOrNull(value) {
+  return value === '' || value == null ? null : Number(value)
+}
+
+function normalizeFlexibleOptions(day, fallbackGrace = 5) {
+  const rawOptions = Array.isArray(day.options) && day.options.length > 0 ? day.options : [day]
+  let options = rawOptions.map((option, index) => ({
+    id: option.id,
+    option_name: String(option.option_name || (index === 0 ? 'Default' : `Option ${index + 1}`)).trim(),
+    time_in: toHhMm(option.time_in || day.time_in) || null,
+    time_out: toHhMm(option.time_out || day.time_out) || null,
+    break_start: option.break_start ? toHhMm(option.break_start) : (day.break_start ? toHhMm(day.break_start) : null),
+    break_end: option.break_end ? toHhMm(option.break_end) : (day.break_end ? toHhMm(day.break_end) : null),
+    break_is_paid: !!option.break_is_paid,
+    expected_paid_minutes: numberOrNull(option.expected_paid_minutes),
+    half_day_threshold_minutes: numberOrNull(option.half_day_threshold_minutes),
+    grace_period_minutes: numberOrDefault(option.grace_period_minutes, fallbackGrace),
+    early_timein_minutes: numberOrDefault(option.early_timein_minutes, 60),
+    overtime_buffer_minutes: numberOrDefault(option.overtime_buffer_minutes, 15),
+    crosses_midnight: detectCrossesMidnight(option.time_in || day.time_in, option.time_out || day.time_out),
+    is_default: !!option.is_default,
+    matching_start_tolerance_minutes: numberOrNull(option.matching_start_tolerance_minutes),
+    matching_end_tolerance_minutes: numberOrNull(option.matching_end_tolerance_minutes),
+    sequence: option.sequence ?? index + 1,
+  }))
+
+  if (options.length > 0 && !options.some((option) => option.is_default)) {
+    options = options.map((option, index) => ({ ...option, is_default: index === 0 }))
+  }
+
+  return options.map((option, index) => ({
+    ...option,
+    option_name: option.option_name || (index === 0 ? 'Default' : `Option ${index + 1}`),
+    sequence: index + 1,
+  }))
+}
+
 export function buildWorkingSchedulePayload(editForm) {
   const isFlexible = (editForm.shift_type || 'fixed') === 'flexible'
   const payload = {
@@ -339,77 +380,29 @@ export function buildWorkingSchedulePayload(editForm) {
   }
 
   if (isFlexible) {
-    payload.days = (editForm.days || []).map((day) => ({
-      day_of_week: day.day_of_week,
-      is_working_day: !!day.is_working_day,
-      time_in: day.is_working_day ? (toHhMm(day.time_in) || null) : null,
-      time_out: day.is_working_day ? (toHhMm(day.time_out) || null) : null,
-      break_start: day.is_working_day && day.break_start ? toHhMm(day.break_start) : null,
-      break_end: day.is_working_day && day.break_end ? toHhMm(day.break_end) : null,
-      expected_paid_minutes:
-        day.expected_paid_minutes === '' || day.expected_paid_minutes == null
-          ? null
-          : Number(day.expected_paid_minutes),
-      half_day_threshold_minutes:
-        day.half_day_threshold_minutes === '' || day.half_day_threshold_minutes == null
-          ? null
-          : Number(day.half_day_threshold_minutes),
-      grace_period_minutes:
-        day.grace_period_minutes === '' || day.grace_period_minutes == null
-          ? 5
-          : Number(day.grace_period_minutes),
-      early_timein_minutes:
-        day.early_timein_minutes === '' || day.early_timein_minutes == null
-          ? 60
-          : Number(day.early_timein_minutes),
-      overtime_buffer_minutes:
-        day.overtime_buffer_minutes === '' || day.overtime_buffer_minutes == null
-          ? 15
-          : Number(day.overtime_buffer_minutes),
-      crosses_midnight: day.is_working_day ? detectCrossesMidnight(day.time_in, day.time_out) : false,
-      options: day.is_working_day
-        ? (Array.isArray(day.options) && day.options.length > 0 ? day.options : [day]).map((option, index) => ({
-          id: option.id,
-          option_name: option.option_name || (index === 0 ? 'Default' : `Option ${index + 1}`),
-          time_in: toHhMm(option.time_in) || null,
-          time_out: toHhMm(option.time_out) || null,
-          break_start: option.break_start ? toHhMm(option.break_start) : null,
-          break_end: option.break_end ? toHhMm(option.break_end) : null,
-          break_is_paid: !!option.break_is_paid,
-          expected_paid_minutes:
-            option.expected_paid_minutes === '' || option.expected_paid_minutes == null
-              ? null
-              : Number(option.expected_paid_minutes),
-          half_day_threshold_minutes:
-            option.half_day_threshold_minutes === '' || option.half_day_threshold_minutes == null
-              ? null
-              : Number(option.half_day_threshold_minutes),
-          grace_period_minutes:
-            option.grace_period_minutes === '' || option.grace_period_minutes == null
-              ? 5
-              : Number(option.grace_period_minutes),
-          early_timein_minutes:
-            option.early_timein_minutes === '' || option.early_timein_minutes == null
-              ? 60
-              : Number(option.early_timein_minutes),
-          overtime_buffer_minutes:
-            option.overtime_buffer_minutes === '' || option.overtime_buffer_minutes == null
-              ? 15
-              : Number(option.overtime_buffer_minutes),
-          crosses_midnight: detectCrossesMidnight(option.time_in, option.time_out),
-          is_default: !!option.is_default,
-          matching_start_tolerance_minutes:
-            option.matching_start_tolerance_minutes === '' || option.matching_start_tolerance_minutes == null
-              ? null
-              : Number(option.matching_start_tolerance_minutes),
-          matching_end_tolerance_minutes:
-            option.matching_end_tolerance_minutes === '' || option.matching_end_tolerance_minutes == null
-              ? null
-              : Number(option.matching_end_tolerance_minutes),
-          sequence: option.sequence ?? index + 1,
-        }))
-        : [],
-    }))
+    payload.days = (editForm.days || []).map((day) => {
+      const options = day.is_working_day
+        ? normalizeFlexibleOptions(day, numberOrDefault(day.grace_period_minutes, 5))
+        : []
+      const defaultOption = options.find((option) => option.is_default) || options[0] || null
+
+      return {
+        day_of_week: day.day_of_week,
+        is_working_day: !!day.is_working_day,
+        time_in: defaultOption?.time_in || null,
+        time_out: defaultOption?.time_out || null,
+        break_start: defaultOption?.break_start || null,
+        break_end: defaultOption?.break_end || null,
+        break_is_paid: !!defaultOption?.break_is_paid,
+        expected_paid_minutes: defaultOption?.expected_paid_minutes ?? null,
+        half_day_threshold_minutes: defaultOption?.half_day_threshold_minutes ?? null,
+        grace_period_minutes: defaultOption?.grace_period_minutes ?? numberOrDefault(day.grace_period_minutes, 5),
+        early_timein_minutes: defaultOption?.early_timein_minutes ?? numberOrDefault(day.early_timein_minutes, 60),
+        overtime_buffer_minutes: defaultOption?.overtime_buffer_minutes ?? numberOrDefault(day.overtime_buffer_minutes, 15),
+        crosses_midnight: defaultOption ? detectCrossesMidnight(defaultOption.time_in, defaultOption.time_out) : false,
+        options,
+      }
+    })
     payload.rest_days = payload.days.filter((d) => !d.is_working_day).map((d) => d.day_of_week)
     const firstWorking = payload.days.find((d) => d.is_working_day)
     if (firstWorking) {

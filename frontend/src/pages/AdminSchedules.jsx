@@ -367,14 +367,26 @@ export default function AdminSchedules() {
     setError(null)
     try {
       const payload = buildWorkingSchedulePayload(editForm)
+      let savedSchedule = null
       if (editingSchedule) {
-        await updateWorkingSchedule(editingSchedule.id, payload)
+        const data = await updateWorkingSchedule(editingSchedule.id, payload)
+        savedSchedule = data.schedule || null
       } else {
-        await createWorkingSchedule(payload)
+        const data = await createWorkingSchedule(payload)
+        savedSchedule = data.schedule || null
+      }
+      if (savedSchedule) {
+        setSchedules((current) => {
+          const exists = current.some((schedule) => schedule.id === savedSchedule.id)
+          if (exists) {
+            return current.map((schedule) => (schedule.id === savedSchedule.id ? savedSchedule : schedule))
+          }
+          return [...current, savedSchedule]
+        })
       }
       setEditOpen(false)
       setEditingSchedule(null)
-      await loadSchedules()
+      await loadSchedules({ fresh: true })
       await loadScheduleActivity({ fresh: true })
       notifySchedulePropagation()
     } catch (err) {
