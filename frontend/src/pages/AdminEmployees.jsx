@@ -32,8 +32,8 @@ import {
   CheckCircle2,
   XCircle,
   CircleDashed,
-  Fingerprint,
   Funnel,
+  IdCard,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -74,6 +74,7 @@ import {
   getWorkingSchedules,
   deleteEmployee,
   updateEmployee,
+  checkEmployeeCodeAvailability,
   registerEmployeeFace,
   updateEmployeeFace,
   uploadEmployeePhoto,
@@ -90,7 +91,7 @@ import { hrPanelPath, isAdminHrUser } from '@/lib/hrRoutes'
 import { FaceVerificationLiveness } from '@/components/FaceVerificationLiveness'
 import { employmentStatusBadgeClassName, formatEmploymentStatusForViewer } from '@/lib/employmentStatus'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
-import { composeEmployeeCode, employeeCodeDigits, EMPLOYEE_CODE_PREFIX } from '@/lib/employeeCode'
+import { composeEmployeeCode, employeeCodeDigits, EMPLOYEE_CODE_PREFIX, isValidEmployeeCode } from '@/lib/employeeCode'
 import { useAuth } from '@/contexts/AuthContext'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -352,6 +353,11 @@ export default function AdminEmployees() {
 
   const [manageFaceOpen, setManageFaceOpen] = useState(false)
   const [manageFaceEmployee, setManageFaceEmployee] = useState(null)
+  const [editEmployeeCodesOpen, setEditEmployeeCodesOpen] = useState(false)
+  const [editEmployeeCodesDrafts, setEditEmployeeCodesDrafts] = useState({})
+  const [editEmployeeCodesErrors, setEditEmployeeCodesErrors] = useState({})
+  const [editEmployeeCodesChecking, setEditEmployeeCodesChecking] = useState({})
+  const [editEmployeeCodesSaving, setEditEmployeeCodesSaving] = useState(false)
   const listPerPage = 20
   const listPage = page
 
@@ -800,7 +806,7 @@ export default function AdminEmployees() {
   const filteredEmployees = useMemo(() => {
     let list = employees.filter((emp) => {
       if (normalizedSearchQuery) {
-        const haystack = `${emp.name || ''} ${emp.email || ''} ${emp.department || ''} ${emp.position || ''}`.toLowerCase()
+        const haystack = `${emp.name || ''} ${emp.email || ''} ${emp.employee_code || ''} ${emp.department || ''} ${emp.position || ''}`.toLowerCase()
         if (!haystack.includes(normalizedSearchQuery)) return false
       }
       if (filterStatus === 'active' && !emp.is_active) return false
@@ -821,6 +827,11 @@ export default function AdminEmployees() {
       switch (sortBy) {
         case 'name':
           return dir * compareEmployeesByLastName(a, b)
+        case 'employee_code': {
+          va = composeEmployeeCode(a.employee_code) || ''
+          vb = composeEmployeeCode(b.employee_code) || ''
+          return dir * va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' })
+        }
         case 'company_name':
           va = (a.company_name || '').toLowerCase()
           vb = (b.company_name || '').toLowerCase()
@@ -1024,6 +1035,199 @@ export default function AdminEmployees() {
       const merged = new Set([...prev, ...visibleIds])
       return Array.from(merged)
     })
+  }
+
+  const openBulkEditEmployeeCodes = () => {
+    if (selectedIds.length === 0) {
+      toast({
+        title: 'No employees selected',
+        description: 'Select at least one employee to edit Employee ID.',
+        variant: 'destructive',
+      })
+      return
+    }
+    const drafts = {}
+    selectedIds.forEach((id) => {
+      const emp = employees.find((e) => e.id === id)
+      drafts[id] = composeEmployeeCode(emp?.employee_code) || ''
+    })
+    setEditEmployeeCodesDrafts(drafts)
+    setEditEmployeeCodesErrors({})
+    setEditEmployeeCodesChecking({})
+    setEditEmployeeCodesOpen(true)
+  }
+
+  useEffect(() => {
+    if (!editEmployeeCodesOpen) return undefined
+
+    let cancelled = false
+    const timers = []
+
+    selectedIds.forEach((id) => {
+      const code = composeEmployeeCode(editEmployeeCodesDrafts[id])
+      const emp = employees.find((e) => e.id === id)
+      const original = composeEmployeeCode(emp?.employee_code)
+      const digits = employeeCodeDigits(code)
+
+      if (!digits) {
+        setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: false }))
+        setEditEmployeeCodesErrors((prev) => ({ ...prev, [id]: 'Enter the numeric part of the Employee ID.' }))
+        return
+      }
+
+      const duplicateInSelection = selectedIds.some((otherId) => {
+        if (otherId === id) return false
+        const other = composeEmployeeCode(editEmployeeCodesDrafts[otherId])
+        return Boolean(other) && other.toLowerCase() === code.toLowerCase()
+      })
+      if (duplicateInSelection) {
+        setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: false }))
+        setEditEmployeeCodesErrors((prev) => ({ ...prev, [id]: 'Duplicate Employee ID in this selection.' }))
+        return
+      }
+
+      if (original && code.toLowerCase() === original.toLowerCase()) {
+        setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: false }))
+        setEditEmployeeCodesErrors((prev) => {
+          if (!prev[id]) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        return
+      }
+
+      setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: true }))
+      setEditEmployeeCodesErrors((prev) => {
+        if (!prev[id]) return prev
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
+
+      const timer = setTimeout(() => {
+        checkEmployeeCodeAvailability(code, id)
+          .then((data) => {
+            if (cancelled) return
+            setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: false }))
+            if (data?.available) {
+              setEditEmployeeCodesErrors((prev) => {
+                if (!prev[id]) return prev
+                const next = { ...prev }
+                delete next[id]
+                return next
+              })
+              return
+            }
+            setEditEmployeeCodesErrors((prev) => ({
+              ...prev,
+              [id]: data?.message || 'This Employee ID is already used by another employee.',
+            }))
+          })
+          .catch((err) => {
+            if (cancelled) return
+            setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: false }))
+            setEditEmployeeCodesErrors((prev) => ({
+              ...prev,
+              [id]: err?.message || 'Unable to verify Employee ID. Try again.',
+            }))
+          })
+      }, 350)
+      timers.push(timer)
+    })
+
+    return () => {
+      cancelled = true
+      timers.forEach(clearTimeout)
+    }
+  }, [editEmployeeCodesOpen, editEmployeeCodesDrafts, selectedIds, employees])
+
+  const editEmployeeCodesBusy =
+    editEmployeeCodesSaving ||
+    Object.values(editEmployeeCodesChecking).some(Boolean) ||
+    Object.keys(editEmployeeCodesErrors).length > 0
+
+  const saveBulkEmployeeCodes = async () => {
+    const ids = selectedIds.filter((id) => editEmployeeCodesDrafts[id] !== undefined)
+    const errors = {}
+    const seen = new Map()
+
+    for (const id of ids) {
+      const code = composeEmployeeCode(editEmployeeCodesDrafts[id])
+      if (!isValidEmployeeCode(code)) {
+        errors[id] = 'Enter numbers only after EMP-.'
+        continue
+      }
+      const key = code.toLowerCase()
+      if (seen.has(key)) {
+        errors[id] = 'Duplicate Employee ID in this selection.'
+        errors[seen.get(key)] = 'Duplicate Employee ID in this selection.'
+        continue
+      }
+      seen.set(key, id)
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setEditEmployeeCodesErrors(errors)
+      return
+    }
+
+    setEditEmployeeCodesSaving(true)
+    setEditEmployeeCodesErrors({})
+    try {
+      const updates = []
+      for (const id of ids) {
+        const emp = employees.find((e) => e.id === id)
+        const nextCode = composeEmployeeCode(editEmployeeCodesDrafts[id])
+        const currentCode = composeEmployeeCode(emp?.employee_code)
+        if (nextCode.toLowerCase() === currentCode.toLowerCase()) continue
+
+        const availability = await checkEmployeeCodeAvailability(nextCode, id)
+        if (!availability?.available) {
+          errors[id] = availability?.message || 'This Employee ID is already used by another employee.'
+          continue
+        }
+        updates.push({ id, employee_code: nextCode, name: emp?.name })
+      }
+
+      if (Object.keys(errors).length > 0) {
+        setEditEmployeeCodesErrors(errors)
+        return
+      }
+
+      if (updates.length === 0) {
+        setEditEmployeeCodesOpen(false)
+        toast({ title: 'No changes', description: 'Employee IDs were already up to date.', variant: 'success' })
+        return
+      }
+
+      for (const row of updates) {
+        await updateEmployee(row.id, { employee_code: row.employee_code })
+      }
+
+      setEmployees((prev) =>
+        prev.map((emp) => {
+          const hit = updates.find((u) => u.id === emp.id)
+          return hit ? { ...emp, employee_code: hit.employee_code } : emp
+        })
+      )
+      setEditEmployeeCodesOpen(false)
+      setSelectedIds([])
+      await queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })
+      toast({
+        title: 'Employee IDs updated',
+        description: `Updated ${updates.length} employee${updates.length === 1 ? '' : 's'}.`,
+        variant: 'success',
+      })
+    } catch (e) {
+      toast({
+        title: 'Failed to update Employee IDs',
+        description: e.message || 'Unable to save Employee ID changes.',
+        variant: 'error',
+      })
+    } finally {
+      setEditEmployeeCodesSaving(false)
+    }
   }
 
   const openBulkSchedule = () => {
@@ -1603,6 +1807,19 @@ export default function AdminEmployees() {
                         variant="ghost"
                         size="sm"
                         className="h-8 gap-1.5 px-2.5 text-xs font-semibold text-foreground hover:bg-background/80"
+                        onClick={openBulkEditEmployeeCodes}
+                        disabled={bulkSubmitting || editEmployeeCodesSaving}
+                      >
+                        <IdCard className="size-3.5 text-muted-foreground" />
+                        Edit Employee ID
+                      </Button>
+                    )}
+                    {canScopedEditEmployees && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1.5 px-2.5 text-xs font-semibold text-foreground hover:bg-background/80"
                         onClick={handleBulkIssueQr}
                         disabled={bulkSubmitting}
                       >
@@ -1803,6 +2020,15 @@ export default function AdminEmployees() {
                           </th>
                         )}
                         <th
+                          className="w-[118px] cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+                          onClick={() => toggleSort('employee_code')}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            Employee ID
+                            {sortBy === 'employee_code' ? (sortDir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />) : <ArrowUp className="size-3 opacity-20" />}
+                          </span>
+                        </th>
+                        <th
                           className="cursor-pointer select-none px-4 py-4 text-left text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
                           onClick={() => toggleSort('name')}
                         >
@@ -1919,6 +2145,13 @@ export default function AdminEmployees() {
                               />
                             </td>
                           )}
+
+                          {/* Employee ID */}
+                          <td className="px-4 align-middle">
+                            <span className="font-mono text-[12.5px] font-semibold tabular-nums text-foreground">
+                              {composeEmployeeCode(emp.employee_code) || '—'}
+                            </span>
+                          </td>
 
                           {/* Employee cell — avatar + name hierarchy */}
                           <td className="px-4">
@@ -2093,7 +2326,7 @@ export default function AdminEmployees() {
                             <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                               {emp.has_face ? (
                                 <div className="flex items-center gap-1.5">
-                                  <Fingerprint className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                                  <ScanFace className="size-3.5 text-emerald-500 dark:text-emerald-400 shrink-0" />
                                   <span className="text-[12px] font-medium text-emerald-700 dark:text-emerald-400">Registered</span>
                                 </div>
                               ) : (
@@ -2529,6 +2762,118 @@ export default function AdminEmployees() {
       </Dialog>
 
       {/* Confirm clear QR */}
+      <Dialog
+        open={editEmployeeCodesOpen}
+        onOpenChange={(open) => {
+          if (editEmployeeCodesSaving) return
+          setEditEmployeeCodesOpen(open)
+          if (!open) {
+            setEditEmployeeCodesDrafts({})
+            setEditEmployeeCodesErrors({})
+            setEditEmployeeCodesChecking({})
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg gap-0 p-0 overflow-hidden">
+          <DialogHeader className="border-b border-border/60 px-5 py-4 text-left">
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <IdCard className="size-5 text-muted-foreground" />
+              Edit Employee ID
+            </DialogTitle>
+            <DialogDescription>
+              Update Employee ID for {selectedIds.length} selected employee{selectedIds.length === 1 ? '' : 's'}. Prefix EMP- is fixed; numbers only.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[min(60vh,28rem)] space-y-3 overflow-y-auto px-5 py-4">
+            {selectedIds.map((id) => {
+              const emp = employees.find((e) => e.id === id)
+              const err = editEmployeeCodesErrors[id]
+              const checking = Boolean(editEmployeeCodesChecking[id])
+              const draftCode = composeEmployeeCode(editEmployeeCodesDrafts[id])
+              const originalCode = composeEmployeeCode(emp?.employee_code)
+              const unchanged = Boolean(draftCode) && draftCode.toLowerCase() === originalCode.toLowerCase()
+              const available = !checking && !err && !unchanged && isValidEmployeeCode(draftCode)
+              return (
+                <div key={id} className="rounded-md border border-border/60 p-3">
+                  <p className="mb-2 truncate text-sm font-semibold text-foreground">{emp?.name || `Employee #${id}`}</p>
+                  <div
+                    className={[
+                      'flex h-9 items-stretch overflow-hidden rounded-md border bg-background',
+                      err ? 'border-destructive' : available ? 'border-emerald-500/70' : 'border-input',
+                    ].join(' ')}
+                  >
+                    <span className="inline-flex select-none items-center border-r border-input bg-muted/50 px-2.5 text-xs font-semibold tracking-wide text-muted-foreground">
+                      {EMPLOYEE_CODE_PREFIX}
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none"
+                      value={employeeCodeDigits(editEmployeeCodesDrafts[id])}
+                      onChange={(e) => {
+                        const next = composeEmployeeCode(e.target.value)
+                        setEditEmployeeCodesDrafts((prev) => ({ ...prev, [id]: next }))
+                        setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: true }))
+                        setEditEmployeeCodesErrors((prev) => {
+                          if (!prev[id]) return prev
+                          const copy = { ...prev }
+                          delete copy[id]
+                          return copy
+                        })
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey || e.metaKey || e.altKey) return
+                        const allowed = ['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight', 'Home', 'End']
+                        if (allowed.includes(e.key)) return
+                        if (!/^\d$/.test(e.key)) e.preventDefault()
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault()
+                        const next = composeEmployeeCode(e.clipboardData?.getData('text') || '')
+                        setEditEmployeeCodesDrafts((prev) => ({ ...prev, [id]: next }))
+                        setEditEmployeeCodesChecking((prev) => ({ ...prev, [id]: true }))
+                      }}
+                      placeholder="000123"
+                      disabled={editEmployeeCodesSaving}
+                      aria-invalid={Boolean(err)}
+                    />
+                  </div>
+                  {checking ? (
+                    <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Loader2 className="size-3 animate-spin" />
+                      Checking if Employee ID is available…
+                    </p>
+                  ) : err ? (
+                    <p className="mt-1.5 text-xs font-medium text-destructive">{err}</p>
+                  ) : available ? (
+                    <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="size-3.5 shrink-0" />
+                      Employee ID is available
+                    </p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+          <DialogFooter className="border-t border-border/60 px-5 py-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditEmployeeCodesOpen(false)}
+              disabled={editEmployeeCodesSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={saveBulkEmployeeCodes} disabled={editEmployeeCodesBusy}>
+              {editEmployeeCodesSaving ? <Loader2 className="size-4 animate-spin" /> : 'Save Employee IDs'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!clearQrConfirmEmployee} onOpenChange={(open) => !open && setClearQrConfirmEmployee(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
