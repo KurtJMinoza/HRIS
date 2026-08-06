@@ -36,6 +36,7 @@ import SignaturePadDialog from '@/components/SignaturePadDialog'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
 import { PasswordInput } from '@/components/ui/password-input'
 import { cn } from '@/lib/utils'
+import { composeEmployeeCode, employeeCodeDigits, EMPLOYEE_CODE_PREFIX } from '@/lib/employeeCode'
 
 function getAddEmployeeFriendlyError(error) {
   const raw = String(error?.message || '').toLowerCase()
@@ -51,6 +52,9 @@ function getAddEmployeeFriendlyError(error) {
   }
   if (raw.includes('users_username_unique') || (raw.includes('duplicate entry') && raw.includes('username'))) {
     return 'This username is already used by another employee.'
+  }
+  if (raw.includes('users_employee_code_unique') || (raw.includes('duplicate entry') && raw.includes('employee_code'))) {
+    return 'This Employee ID is already used by another employee.'
   }
   return error?.message || 'Failed to add employee. Please try again.'
 }
@@ -98,6 +102,7 @@ const INITIAL_ADD_FORM = {
   province: '',
   postal_code: '',
   username: '',
+  employee_code: '',
   email: '',
   phone_number: '',
   branch_id: '',
@@ -349,6 +354,7 @@ export function AdminAddEmployeeDialog({
         province: addForm.province?.trim() || undefined,
         postal_code: addForm.postal_code?.trim() || undefined,
         username: addForm.username.trim(),
+        employee_code: composeEmployeeCode(addForm.employee_code) || undefined,
         email: emailTrim || undefined,
         phone_number: phoneRaw || undefined,
         company_id: derivedCompanyId,
@@ -894,8 +900,35 @@ export function AdminAddEmployeeDialog({
                   </div>
                   <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
                     <div className="grid gap-1.5">
-                      <Label htmlFor="add-employee-id" className="text-[13px] font-medium text-muted-foreground">Employee ID</Label>
-                      <Input id="add-employee-id" value="Auto-generated on save" className="h-9 opacity-60" disabled />
+                      <Label htmlFor="add-employee-id" className="text-[13px] font-medium">Employee ID</Label>
+                      <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input bg-background shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+                        <span className="inline-flex select-none items-center border-r border-input bg-muted/50 px-2.5 text-xs font-semibold tracking-wide text-muted-foreground">
+                          {EMPLOYEE_CODE_PREFIX}
+                        </span>
+                        <input
+                          id="add-employee-id"
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground"
+                          value={employeeCodeDigits(addForm.employee_code)}
+                          onChange={(e) => setAddForm((f) => ({ ...f, employee_code: composeEmployeeCode(e.target.value) }))}
+                          onKeyDown={(e) => {
+                            if (e.ctrlKey || e.metaKey || e.altKey) return
+                            const allowed = ['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight', 'Home', 'End']
+                            if (allowed.includes(e.key)) return
+                            if (!/^\d$/.test(e.key)) e.preventDefault()
+                          }}
+                          onPaste={(e) => {
+                            e.preventDefault()
+                            setAddForm((f) => ({ ...f, employee_code: composeEmployeeCode(e.clipboardData?.getData('text') || '') }))
+                          }}
+                          placeholder="auto if blank"
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">EMP- is fixed. Numbers only. Leave blank to auto-generate.</p>
                     </div>
                     <div className="grid gap-1.5">
                       <Label htmlFor="add-branch_id" className="text-[13px] font-medium">Branch</Label>

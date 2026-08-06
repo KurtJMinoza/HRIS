@@ -4155,6 +4155,21 @@ export async function addEmployee(payload) {
 }
 
 /**
+ * Check whether an Employee ID (employee_code) is available.
+ * @param {string} employeeCode
+ * @param {number|string|null} [excludeId] current employee id to ignore
+ */
+export async function checkEmployeeCodeAvailability(employeeCode, excludeId = null) {
+  const query = new URLSearchParams()
+  query.set('employee_code', String(employeeCode ?? '').trim())
+  if (excludeId != null && excludeId !== '') query.set('exclude_id', String(excludeId))
+  const res = await authenticatedFetch(`/admin/employees/check-employee-code?${query.toString()}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to check Employee ID')
+  return data
+}
+
+/**
  * Permanently delete an employee (and cascade related data such as attendance logs).
  * @param {number} id
  */

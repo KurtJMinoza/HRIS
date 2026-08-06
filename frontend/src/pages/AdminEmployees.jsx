@@ -90,6 +90,7 @@ import { hrPanelPath, isAdminHrUser } from '@/lib/hrRoutes'
 import { FaceVerificationLiveness } from '@/components/FaceVerificationLiveness'
 import { employmentStatusBadgeClassName, formatEmploymentStatusForViewer } from '@/lib/employmentStatus'
 import { FIELD_SELECT_CLASS } from '@/lib/fieldClasses'
+import { composeEmployeeCode, employeeCodeDigits, EMPLOYEE_CODE_PREFIX } from '@/lib/employeeCode'
 import { useAuth } from '@/contexts/AuthContext'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -303,6 +304,7 @@ export default function AdminEmployees() {
     last_name: '',
     suffix: '',
     username: '',
+    employee_code: '',
     email: '',
     phone_number: '',
     date_of_birth: '',
@@ -572,6 +574,7 @@ export default function AdminEmployees() {
         last_name: personalInfoForm.last_name.trim(),
         suffix: personalInfoForm.suffix.trim() || null,
         username: personalInfoForm.username.trim(),
+        employee_code: composeEmployeeCode(personalInfoForm.employee_code) || null,
         email: personalInfoForm.email.trim(),
         phone_number: phoneRaw || null,
         date_of_birth: personalInfoForm.date_of_birth || null,
@@ -598,6 +601,7 @@ export default function AdminEmployees() {
         last_name: emp?.last_name || '',
         suffix: emp?.suffix || '',
         username: emp?.username || '',
+        employee_code: emp?.employee_code || emp?.employee_id || '',
         email: emp?.email || '',
         phone_number: emp?.phone_number || '',
         date_of_birth: emp?.date_of_birth || '',
@@ -3499,16 +3503,32 @@ export default function AdminEmployees() {
                     <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
                       <div>
                         <label className="mb-2 block text-xs font-medium text-muted-foreground">Employee ID</label>
-                        <Input
-                          type="text"
-                          className="h-9 text-sm"
-                          value={
-                            previewEmployee?.employee_code
-                            || previewEmployee?.employee_id
-                            || (previewEmployee?.id ? `ID-${previewEmployee.id}` : '')
-                          }
-                          disabled
-                        />
+                        <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input bg-background">
+                          <span className="inline-flex select-none items-center border-r border-input bg-muted/50 px-2.5 text-xs font-semibold tracking-wide text-muted-foreground">
+                            {EMPLOYEE_CODE_PREFIX}
+                          </span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="min-w-0 flex-1 bg-transparent px-2.5 text-sm outline-none"
+                            value={employeeCodeDigits(personalInfoForm.employee_code)}
+                            onChange={(e) => setPersonalInfoForm((f) => ({ ...f, employee_code: composeEmployeeCode(e.target.value) }))}
+                            onKeyDown={(e) => {
+                              if (e.ctrlKey || e.metaKey || e.altKey) return
+                              const allowed = ['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight', 'Home', 'End']
+                              if (allowed.includes(e.key)) return
+                              if (!/^\d$/.test(e.key)) e.preventDefault()
+                            }}
+                            onPaste={(e) => {
+                              e.preventDefault()
+                              setPersonalInfoForm((f) => ({ ...f, employee_code: composeEmployeeCode(e.clipboardData?.getData('text') || '') }))
+                            }}
+                            placeholder="000123"
+                          />
+                        </div>
                       </div>
                       <div>
                         <label className="mb-2 block text-xs font-medium text-muted-foreground">Branch</label>

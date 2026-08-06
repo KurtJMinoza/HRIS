@@ -13,7 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import ApprovalRoutePreviewSection from '@/components/organization/ApprovalRoutePreviewSection'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { addEmployeeSkill, adjustEmployeeLeaveCredits, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeOrganizationAssignments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
+import { addEmployeeSkill, adjustEmployeeLeaveCredits, checkEmployeeCodeAvailability, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeOrganizationAssignments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
+import { composeEmployeeCode, employeeCodeDigits, EMPLOYEE_CODE_PREFIX, isValidEmployeeCode } from '@/lib/employeeCode'
 import { motion as Motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -699,6 +700,8 @@ function buildProfileSnapshot(form, skills, certifications, govIds, secondaryIds
       middle_name: form.middle_name || '',
       last_name: form.last_name || '',
       suffix: form.suffix || '',
+      username: form.username || '',
+      employee_code: form.employee_code || '',
       email: form.email || '',
       phone_number: form.phone_number || '',
       date_of_birth: form.date_of_birth || '',
@@ -830,6 +833,8 @@ export default function AdminEmployeeProfile() {
   /** When editing, form schedule differs from saved — server preview (calendar month + holidays). */
   const [scheduleRatePreview, setScheduleRatePreview] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [employeeCodeChecking, setEmployeeCodeChecking] = useState(false)
+  const [employeeCodeError, setEmployeeCodeError] = useState('')
   const [saveStatus, setSaveStatus] = useState('idle')
   const saveStatusTimerRef = useRef(null)
   /** Snapshot for rollback if PATCH /admin/employees/{id} fails after optimistic UI update. */
@@ -1067,6 +1072,7 @@ export default function AdminEmployeeProfile() {
     last_name: '',
     suffix: '',
     username: '',
+    employee_code: '',
     email: '',
     phone_number: '',
     date_of_birth: '',
@@ -1179,6 +1185,54 @@ export default function AdminEmployeeProfile() {
       clearTimeout(t)
     }
   }, [employee?.id, employee?.working_schedule_id, form.working_schedule_id])
+
+  useEffect(() => {
+    if (!employee?.id) {
+      setEmployeeCodeChecking(false)
+      setEmployeeCodeError('')
+      return undefined
+    }
+
+    const code = composeEmployeeCode(form.employee_code)
+    const original = composeEmployeeCode(employee?.employee_code)
+    const digits = employeeCodeDigits(form.employee_code)
+
+    if (!digits) {
+      setEmployeeCodeChecking(false)
+      setEmployeeCodeError('Enter the numeric part of the Employee ID.')
+      return undefined
+    }
+    if (original !== '' && code.toLowerCase() === original.toLowerCase()) {
+      setEmployeeCodeChecking(false)
+      setEmployeeCodeError('')
+      return undefined
+    }
+
+    let cancelled = false
+    setEmployeeCodeChecking(true)
+    setEmployeeCodeError('')
+    const t = setTimeout(() => {
+      checkEmployeeCodeAvailability(code, employee?.id)
+        .then((data) => {
+          if (cancelled) return
+          setEmployeeCodeChecking(false)
+          if (data?.available) {
+            setEmployeeCodeError('')
+            return
+          }
+          setEmployeeCodeError(data?.message || 'This Employee ID is already used by another employee.')
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setEmployeeCodeChecking(false)
+          setEmployeeCodeError(err?.message || 'Unable to verify Employee ID. Try again.')
+        })
+    }, 350)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [form.employee_code, employee?.id, employee?.employee_code])
 
   /** Single source of truth for read-only salary rate fields (updates every render with monthly + schedule). */
   const liveDerivedSalary = useMemo(
@@ -1372,6 +1426,7 @@ export default function AdminEmployeeProfile() {
             last_name: found.last_name || restNames.join(' ') || '',
             suffix: found.suffix || '',
             username: found.username || '',
+            employee_code: composeEmployeeCode(found.employee_code) || '',
             email: found.email || '',
             phone_number: found.phone_number || '',
             date_of_birth: found.date_of_birth || '',
@@ -3928,6 +3983,18 @@ export default function AdminEmployeeProfile() {
 
   async function handleSave() {
     if (!canEditProfile || !employee?.id) return
+    if (employeeCodeError) {
+      toast.error(employeeCodeError)
+      return
+    }
+    if (employeeCodeChecking) {
+      toast.error('Still checking Employee ID. Please wait a moment.')
+      return
+    }
+    if (!isValidEmployeeCode(composeEmployeeCode(form.employee_code))) {
+      toast.error('Employee ID must be EMP- followed by numbers only.')
+      return
+    }
     if (activeTab === 'government-ids' && govIdValidation.hasErrors) {
       toast.error('Fix Government ID validation errors before saving.')
       return
@@ -3954,6 +4021,7 @@ export default function AdminEmployeeProfile() {
         last_name: form.last_name || undefined,
         suffix: form.suffix || null,
         username: form.username || undefined,
+        employee_code: composeEmployeeCode(form.employee_code) || null,
         email: form.email || undefined,
         phone_number: form.phone_number || undefined,
         date_of_birth: form.date_of_birth || null,
@@ -4213,7 +4281,7 @@ export default function AdminEmployeeProfile() {
               </Button>
               <Button
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || employeeCodeChecking || Boolean(employeeCodeError)}
                 size="sm"
                 className="bg-teal-600 text-white hover:bg-teal-500 focus-visible:ring-teal-500 dark:bg-teal-600 dark:hover:bg-teal-500"
               >
@@ -4447,6 +4515,83 @@ export default function AdminEmployeeProfile() {
                   </Label>
                   <Input className="h-11" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
                   <FieldHint>Used for login. For imports, this is generated from first name.</FieldHint>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <IdCard className="size-4 shrink-0 text-muted-foreground" />
+                    Employee ID
+                  </Label>
+                  <div
+                    className={cn(
+                      'flex h-11 items-stretch overflow-hidden rounded-md border border-input bg-background shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30',
+                      employeeCodeError && 'border-destructive focus-within:border-destructive focus-within:ring-destructive/30',
+                      !employeeCodeError &&
+                        !employeeCodeChecking &&
+                        isValidEmployeeCode(composeEmployeeCode(form.employee_code)) &&
+                        composeEmployeeCode(form.employee_code).toLowerCase() !== composeEmployeeCode(employee?.employee_code).toLowerCase() &&
+                        'border-emerald-500/70'
+                    )}
+                  >
+                    <span className="inline-flex select-none items-center border-r border-input bg-muted/50 px-3 text-sm font-semibold tracking-wide text-muted-foreground">
+                      {EMPLOYEE_CODE_PREFIX}
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="min-w-0 flex-1 bg-transparent px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                      value={employeeCodeDigits(form.employee_code)}
+                      onChange={(e) => {
+                        const next = composeEmployeeCode(e.target.value)
+                        setForm((f) => ({ ...f, employee_code: next }))
+                        const original = composeEmployeeCode(employee?.employee_code)
+                        if (!employeeCodeDigits(next)) {
+                          setEmployeeCodeChecking(false)
+                          setEmployeeCodeError('Enter the numeric part of the Employee ID.')
+                        } else if (next.toLowerCase() !== original.toLowerCase()) {
+                          setEmployeeCodeChecking(true)
+                          setEmployeeCodeError('')
+                        } else {
+                          setEmployeeCodeChecking(false)
+                          setEmployeeCodeError('')
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        // Block letters / symbols; allow control keys and digits
+                        if (e.ctrlKey || e.metaKey || e.altKey) return
+                        const allowed = ['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight', 'Home', 'End']
+                        if (allowed.includes(e.key)) return
+                        if (!/^\d$/.test(e.key)) e.preventDefault()
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault()
+                        const pasted = e.clipboardData?.getData('text') || ''
+                        const next = composeEmployeeCode(pasted)
+                        setForm((f) => ({ ...f, employee_code: next }))
+                      }}
+                      placeholder="000123"
+                      aria-invalid={Boolean(employeeCodeError)}
+                      aria-label="Employee ID number"
+                    />
+                  </div>
+                  {employeeCodeChecking ? (
+                    <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Loader2 className="size-3 animate-spin" />
+                      Checking if Employee ID is available…
+                    </p>
+                  ) : employeeCodeError ? (
+                    <p className="text-sm font-medium text-destructive">{employeeCodeError}</p>
+                  ) : isValidEmployeeCode(composeEmployeeCode(form.employee_code)) &&
+                    composeEmployeeCode(form.employee_code).toLowerCase() !== composeEmployeeCode(employee?.employee_code).toLowerCase() ? (
+                    <p className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="size-3.5 shrink-0" />
+                      Employee ID is available
+                    </p>
+                  ) : (
+                    <FieldHint>Prefix EMP- is fixed. Enter numbers only. Must be unique.</FieldHint>
+                  )}
                 </div>
                 <div className="space-y-2">
                     <Label className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -5455,7 +5600,7 @@ export default function AdminEmployeeProfile() {
                     type="button"
                     className="bg-[#0A0A0A] text-white shadow-sm hover:bg-[#171717] focus-visible:ring-2 focus-visible:ring-[#0A0A0A]/35 focus-visible:ring-offset-2 dark:bg-[#0A0A0A] dark:text-white dark:hover:bg-neutral-800"
                     onClick={handleSave}
-                    disabled={saving || !canEditProfile}
+                    disabled={saving || !canEditProfile || employeeCodeChecking || Boolean(employeeCodeError)}
                   >
                     {saving && saveStatus !== 'saved' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : 'Save Changes'}
                   </Button>
@@ -6295,7 +6440,7 @@ export default function AdminEmployeeProfile() {
                 <p className="text-xs text-muted-foreground">Changes will be reviewed by HR before being finalized.</p>
                 <div className="flex gap-2">
                   <Button type="button" variant="outline" onClick={() => navigate(hrPanelPath(hrBase, 'employees'))}>Cancel</Button>
-                  <Button type="button" onClick={handleSave} disabled={saving}>
+                  <Button type="button" onClick={handleSave} disabled={saving || employeeCodeChecking || Boolean(employeeCodeError)}>
                     {saving && saveStatus !== 'saved' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Save Changes'}
                   </Button>
                 </div>
@@ -6332,7 +6477,7 @@ export default function AdminEmployeeProfile() {
                     <Upload className="mr-2 size-4" />
                     Export PDF
                   </Button>
-                  <Button type="button" onClick={handleSave} disabled={saving}>
+                  <Button type="button" onClick={handleSave} disabled={saving || employeeCodeChecking || Boolean(employeeCodeError)}>
                     <FilePenLine className="mr-2 size-4" />
                     {saving ? 'Updating…' : 'Update Profile'}
                   </Button>
@@ -6789,7 +6934,7 @@ export default function AdminEmployeeProfile() {
             <Button variant="outline" onClick={() => navigate(hrPanelPath(hrBase, 'employees'))}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={handleSave} disabled={saving || employeeCodeChecking || Boolean(employeeCodeError)}>
               <FilePenLine className="mr-2 size-4" />
               {saving && saveStatus !== 'saved' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Save Changes'}
             </Button>

@@ -82,6 +82,34 @@ class EmployeeController extends Controller
     }
 
     /**
+     * Real-time uniqueness check for Employee ID (employee_code).
+     * Query: employee_code (required when non-empty), exclude_id (optional current user id).
+     */
+    public function checkEmployeeCode(Request $request): JsonResponse
+    {
+        $normalized = $this->normalizeEmployeeCode($request->query('employee_code'));
+        if ($normalized === null) {
+            return response()->json([
+                'available' => false,
+                'employee_code' => '',
+                'message' => 'Enter numbers only after EMP-.',
+            ]);
+        }
+
+        $excludeId = $request->filled('exclude_id') ? (int) $request->query('exclude_id') : null;
+        $taken = User::query()
+            ->whereRaw('LOWER(TRIM(employee_code)) = ?', [mb_strtolower($normalized)])
+            ->when($excludeId, fn ($q) => $q->where('id', '!=', $excludeId))
+            ->exists();
+
+        return response()->json([
+            'available' => ! $taken,
+            'employee_code' => $normalized,
+            'message' => $taken ? 'This Employee ID is already used by another employee.' : null,
+        ]);
+    }
+
+    /**
      * List staff roster (employees + Admin HR accounts) with simple pagination.
      *
      * Query params:
@@ -995,6 +1023,7 @@ class EmployeeController extends Controller
             'postal_code' => ['nullable', 'string', 'max:32'],
             'email' => ['nullable', 'string', 'email', 'max:255', Rule::unique('users', 'email')],
             'username' => ['required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username'],
+            'employee_code' => ['nullable', 'string', 'max:50', 'regex:/^EMP-\d{1,20}$/i', 'unique:users,employee_code'],
             'password' => ['required', 'string', 'min:8'],
             'phone_number' => $phoneRules,
             'schedule' => ['nullable', 'array'],
@@ -1018,6 +1047,7 @@ class EmployeeController extends Controller
             'profile_photo' => ['nullable', 'file', 'mimes:jpeg,jpg,png,gif,webp', 'max:20480'],
             'signature_data_url' => ['nullable', 'string'],
         ], [
+            'employee_code.regex' => 'Employee ID must be EMP- followed by numbers only (e.g. EMP-000123).',
             'phone_number.regex' => 'The phone number must be in Philippine mobile format (e.g. +63 912 345 6789 or 09123456789).',
             'phone_number.unique' => 'This phone number is already in use by another account.',
             'profile_photo.max' => 'Image must be under 20 MB.',
@@ -1162,7 +1192,8 @@ class EmployeeController extends Controller
             'monthly_rate' => isset($validated['monthly_rate']) && $validated['monthly_rate'] > 0 ? (float) $validated['monthly_rate'] : null,
         ]);
 
-        $user->employee_code = $this->generateEmployeeCode($user->id);
+        $user->employee_code = $this->normalizeEmployeeCode($validated['employee_code'] ?? null)
+            ?? $this->generateEmployeeCode($user->id);
         $user->save();
         $user = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
             $user->fresh() ?? $user,
@@ -1385,6 +1416,7 @@ class EmployeeController extends Controller
                 'suffix' => ['sometimes', 'nullable', 'string', 'max:50'],
                 'email' => ['sometimes', 'required', 'string', 'email', 'max:255', 'unique:users,email,'.$id],
                 'username' => ['sometimes', 'required', 'string', 'max:255', 'regex:/^[A-Za-z0-9._]+$/', 'unique:users,username,'.$id],
+                'employee_code' => ['sometimes', 'required', 'string', 'max:50', 'regex:/^EMP-\d{1,20}$/i', 'unique:users,employee_code,'.$id],
                 'department_id' => ['sometimes', 'nullable', 'integer', 'exists:departments,id'],
                 'department' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'division_id' => ['sometimes', 'nullable', 'integer', 'exists:divisions,id'],
@@ -1426,6 +1458,8 @@ class EmployeeController extends Controller
                 'hourly_rate' => ['sometimes', 'nullable', 'numeric', 'min:0'],
                 'salary_effectivity_date' => ['sometimes', 'nullable', 'date'],
             ], [
+                'employee_code.regex' => 'Employee ID must be EMP- followed by numbers only (e.g. EMP-000123).',
+                'employee_code.required' => 'Employee ID is required.',
                 'phone_number.regex' => 'The phone number must be in Philippine mobile format (e.g. +63 912 345 6789 or 09123456789).',
                 'phone_number.unique' => 'This phone number is already in use by another account.',
             ]);
@@ -1455,6 +1489,12 @@ class EmployeeController extends Controller
             }
             if ($this->requestHasInput($request, 'username')) {
                 $employee->username = trim((string) $request->input('username'));
+            }
+            if ($this->requestHasInput($request, 'employee_code')) {
+                $normalized = $this->normalizeEmployeeCode($request->input('employee_code'));
+                if ($normalized !== null) {
+                    $employee->employee_code = $normalized;
+                }
             }
             if ($this->requestHasInput($request, 'phone_number')) {
                 $raw = $request->input('phone_number');
@@ -3695,6 +3735,30 @@ class EmployeeController extends Controller
     private function generateEmployeeCode(int $id): string
     {
         return sprintf('EMP-%06d', $id);
+    }
+
+    /**
+     * Normalize to EMP-{digits}. Empty / non-numeric → null (auto-generate on create).
+     */
+    private function normalizeEmployeeCode(mixed $raw): ?string
+    {
+        if (! is_string($raw) && ! is_numeric($raw)) {
+            return null;
+        }
+        $text = trim((string) $raw);
+        if ($text === '') {
+            return null;
+        }
+        $withoutPrefix = preg_replace('/^EMP-?/i', '', $text) ?? $text;
+        $digits = preg_replace('/\D+/', '', $withoutPrefix) ?? '';
+        if ($digits === '') {
+            return null;
+        }
+        if (strlen($digits) > 20) {
+            $digits = substr($digits, 0, 20);
+        }
+
+        return 'EMP-'.$digits;
     }
 
     private function isManagerialPosition(?string $position): bool
