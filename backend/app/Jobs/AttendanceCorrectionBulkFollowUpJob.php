@@ -76,26 +76,18 @@ class AttendanceCorrectionBulkFollowUpJob implements ShouldQueue
             ->values();
         $syncResults = $attendanceLogSyncService->syncApprovedCorrectionsBatch($finalCorrections, $actor, $roleLabel);
         $now = now();
-        $syncRows = [];
         foreach ($finalCorrections as $correction) {
             $sync = $syncResults[(int) $correction->id] ?? null;
             if ($sync === null) {
                 continue;
             }
-            $syncRows[] = [
-                'id' => (int) $correction->id,
+            // UPDATE-only: upsert INSERT path lacks required columns like user_id under MySQL strict mode.
+            DB::table('attendance_corrections')->where('id', (int) $correction->id)->update([
                 'is_incomplete_record' => ! (($sync['applied_time_in'] ?? null) && ($sync['applied_time_out'] ?? null)),
                 'attendance_logs_synced_at' => $now,
                 'attendance_logs_synced_by' => (int) $actor->id,
                 'updated_at' => $now,
-            ];
-        }
-        if ($syncRows !== []) {
-            DB::table('attendance_corrections')->upsert(
-                $syncRows,
-                ['id'],
-                ['is_incomplete_record', 'attendance_logs_synced_at', 'attendance_logs_synced_by', 'updated_at'],
-            );
+            ]);
         }
 
         $overtimeSyncKeys = [];

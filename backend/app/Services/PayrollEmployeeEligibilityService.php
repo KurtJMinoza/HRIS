@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AttendanceCorrection;
 use App\Models\EmployeeOrganizationAssignment;
 use App\Models\ExecomEmployeeProfile;
 use App\Models\PayrollBatchRun;
@@ -240,11 +241,40 @@ class PayrollEmployeeEligibilityService
         $end = Carbon::parse($periodEnd)->startOfDay();
         $payrollStart = $this->payrollStartDate($employee);
 
+        $clamped = $start;
         if ($payrollStart instanceof Carbon && $payrollStart->betweenIncluded($start, $end)) {
-            return $payrollStart->copy();
+            $clamped = $payrollStart->copy();
         }
 
-        return $start;
+        // Newly hired / late-encoded employees often have payroll_start = created_at, but HR may
+        // still approve attendance corrections for earlier days in the same cutoff. Those days are
+        // intentional pay days — pull the computation window back to include them.
+        if ($clamped->gt($start) && Schema::hasTable('attendance_corrections')) {
+            $earliestCorrectionDate = AttendanceCorrection::query()
+                ->where('user_id', (int) $employee->id)
+                ->where('approved', true)
+                ->where(function ($q) {
+                    $q->where('pending_approval', false)->orWhereNull('pending_approval');
+                })
+                ->whereNull('rejected_at')
+                ->when(
+                    Schema::hasColumn('attendance_corrections', 'reversed_at'),
+                    fn ($q) => $q->whereNull('reversed_at')
+                )
+                ->whereDate('date', '>=', $start->toDateString())
+                ->whereDate('date', '<', $clamped->toDateString())
+                ->orderBy('date')
+                ->value('date');
+
+            if ($earliestCorrectionDate) {
+                $correctionStart = Carbon::parse((string) $earliestCorrectionDate)->startOfDay();
+                if ($correctionStart->lt($clamped) && $correctionStart->gte($start)) {
+                    $clamped = $correctionStart;
+                }
+            }
+        }
+
+        return $clamped;
     }
 
     private function execomPayrollQuery(

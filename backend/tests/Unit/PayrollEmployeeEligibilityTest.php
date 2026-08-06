@@ -166,6 +166,34 @@ class PayrollEmployeeEligibilityTest extends TestCase
         $this->assertSame('2026-05-05', $clamped->toDateString());
     }
 
+    public function test_approved_correction_before_payroll_start_pulls_computation_window_back(): void
+    {
+        $company = Company::query()->create(['name' => 'ACI']);
+        $employee = $this->employee($company, [
+            'hire_date' => '2026-04-08',
+            'payroll_effective_date' => '2026-08-05',
+            'created_at' => Carbon::parse('2026-08-05 09:00:00'),
+        ]);
+
+        \App\Models\AttendanceCorrection::query()->create([
+            'user_id' => (int) $employee->id,
+            'date' => '2026-08-04',
+            'time_in' => '2026-08-04 00:00:00',
+            'time_out' => '2026-08-04 10:00:00',
+            'issue_kind' => 'both',
+            'approved' => true,
+            'pending_approval' => false,
+            'status' => 'approved',
+            'approved_at' => now(),
+        ]);
+
+        $periodStart = Carbon::parse('2026-07-26');
+        $periodEnd = Carbon::parse('2026-08-10');
+
+        $clamped = $this->service->clampComputationStart($employee, $periodStart, $periodEnd);
+        $this->assertSame('2026-08-04', $clamped->toDateString());
+    }
+
     public function test_assignment_effective_after_payroll_period_excludes_employee(): void
     {
         if (! Schema::hasTable('employee_organization_assignments')) {

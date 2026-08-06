@@ -127,6 +127,17 @@ module.exports = {
       '--tries=1',
       '--max-jobs=100',
     ]),
+    // Bulk attendance-correction follow-up (log sync + daily payroll). Without this, approved
+    // corrections stay unsynced forever — AttendanceCorrectionBulkFollowUpJob uses this queue.
+    laravelApp('queue-attendance-corrections', [
+      'artisan',
+      'queue:work',
+      'redis',
+      '--queue=attendance-corrections',
+      '--timeout=120',
+      '--sleep=1',
+      '--tries=1',
+    ]),
     laravelApp('queue-payslip-pdf', [
       'artisan',
       'queue:work',
