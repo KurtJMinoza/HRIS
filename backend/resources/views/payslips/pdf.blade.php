@@ -425,7 +425,7 @@
               @else
                 @foreach($dailyEarnLines as $line)
                   <tr>
-                    <td>{{ strtolower(trim((string) ($line['label'] ?? ''))) === 'holiday premium' ? 'Holiday premium' : ($line['label'] ?? 'Daily computation earning') }}</td>
+                    <td>{{ $line['label'] ?? 'Daily computation earning' }}</td>
                     <td class="units">{{ $formatUnits($line) }}</td>
                     <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                   </tr>

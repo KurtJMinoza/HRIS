@@ -155,29 +155,6 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
     return fallback
   }, [dailyComputationEarnings, earnings, isConsultantPayroll, isExecomPayroll, summary])
 
-  const holidayPremiumDetails = useMemo(() => {
-    const rows = Array.isArray(summary?.holiday_premium_breakdown) ? summary.holiday_premium_breakdown : []
-    const formatHolidayDate = (value) => {
-      if (!value) return ''
-      const d = new Date(value)
-      if (Number.isNaN(d.getTime())) return String(value)
-      return d.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' })
-    }
-    return rows
-      .map((row, idx) => {
-        const amount = Number(row?.amount || 0)
-        const name = String(row?.holiday_name || 'Holiday').trim() || 'Holiday'
-        const type = String(row?.holiday_type || row?.type || 'Holiday').trim() || 'Holiday'
-        const dt = formatHolidayDate(row?.date)
-        return {
-          key: `${row?.date || idx}-${name}-${type}`,
-          amount,
-          text: `${name}${dt ? ` (${dt})` : ''} - ${type}: ${peso(amount)}`,
-        }
-      })
-      .filter((row) => row.amount > 0)
-  }, [summary])
-
   const allDeductions = useMemo(() => {
     const gov = Array.isArray(summary?.payslip_deduction_lines) ? summary.payslip_deduction_lines : []
     const custom = Array.isArray(summary?.payslip_custom_deduction_lines) ? summary.payslip_custom_deduction_lines : []
@@ -356,7 +333,6 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                 </thead>
                 <tbody>
                   {displayEarnings.map((line, idx) => {
-                    const isHolidayPremium = String(line?.label || '').trim().toLowerCase() === 'holiday premium'
                     const isThirteenthMonth = String(line?.component_code || '').trim().toUpperCase() === '13TH_MONTH_PAY'
                     const basisType = String(line?.metadata?.basis_type || '').trim().toLowerCase()
                     const earningLabel = isThirteenthMonth
@@ -368,16 +344,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                         className="border-b border-slate-100/90 transition-colors last:border-b-0 bg-white hover:bg-white"
                       >
                         <td className="py-2.5 pl-3 pr-2 font-normal text-[#0A0A0A]/88">
-                          {isHolidayPremium ? 'Holiday Pay' : earningLabel}
-                          {isHolidayPremium && holidayPremiumDetails.length > 0 ? (
-                            <div className="mt-1 space-y-0.5">
-                              {holidayPremiumDetails.map((detail) => (
-                                <p key={detail.key} className="text-[12px] leading-snug text-[#0A0A0A]/55">
-                                  {detail.text}
-                                </p>
-                              ))}
-                            </div>
-                          ) : null}
+                          {earningLabel}
                         </td>
                         <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">
                           {formatUnits(line?.minutes_worked, line?.units) || '-'}

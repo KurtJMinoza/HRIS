@@ -305,4 +305,55 @@ class PayrollMultipleHolidaysTest extends TestCase
         $this->assertCount(1, $lines);
         $this->assertSame(572.69, $lines[0]['amount']);
     }
+
+    public function test_holiday_breakdown_synthesizes_label_from_day_premium_when_evaluation_missing(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = (new ReflectionClass(PayrollComputationService::class))
+            ->getMethod('buildHolidayPremiumBreakdown');
+        $method->setAccessible(true);
+
+        $breakdown = $method->invoke($service, [[
+            'date' => '2026-08-01',
+            'status' => 'holiday',
+            'is_rest_day' => false,
+            'holiday_premium_pay' => 769.23,
+            'regular_day_minutes' => 0,
+            'regular_night_minutes' => 0,
+            'required_minutes' => 480,
+            'holiday' => [
+                'id' => 69,
+                'name' => 'TEST',
+                'type' => 'regular',
+            ],
+            'conditions' => ['rule_code' => 'RH', 'first_8' => 1],
+            'breakdown' => [[
+                'component' => 'holiday_premium',
+                'component_code' => 'REGULAR_HOLIDAY_UNWORKED_PAY',
+                'description' => 'Regular Holiday — Unworked Pay: TEST',
+                'minutes' => 480,
+                'multiplier' => 1,
+                'holiday_id' => 69,
+                'holiday_name' => 'TEST',
+                'holiday_type' => 'regular',
+                'amount' => 769.23,
+                'worked' => false,
+                'unworked' => true,
+            ]],
+        ]], 769.23);
+
+        $this->assertCount(1, $breakdown);
+        $this->assertTrue($breakdown[0]['eligible']);
+        $this->assertSame(769.23, $breakdown[0]['amount']);
+        $this->assertSame('REGULAR_HOLIDAY_UNWORKED_PAY', $breakdown[0]['component_code']);
+        $this->assertSame('Regular Holiday — Unworked Pay: TEST', $breakdown[0]['description']);
+        $this->assertFalse($breakdown[0]['worked']);
+
+        $linesMethod = (new ReflectionClass(PayrollComputationService::class))
+            ->getMethod('buildPerHolidayEarningLines');
+        $linesMethod->setAccessible(true);
+        $lines = $linesMethod->invoke($service, $breakdown, 769.23);
+        $this->assertCount(1, $lines);
+        $this->assertSame('Regular Holiday — Unworked Pay: TEST', $lines[0]['label']);
+    }
 }

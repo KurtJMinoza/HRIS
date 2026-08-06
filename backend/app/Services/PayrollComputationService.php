@@ -4719,6 +4719,11 @@ class PayrollComputationService
                 ? $d['holiday_pay_evaluation']
                 : null;
             if ($holidayEvaluation === null) {
+                // computeDayPayroll may already book holiday_premium (with description + component_code)
+                // even when the period evaluation pass did not attach holiday_pay_evaluation.
+                $holidayEvaluation = $this->synthesizeHolidayEvaluationFromDayBreakdown($d);
+            }
+            if ($holidayEvaluation === null) {
                 continue;
             }
 
@@ -4800,12 +4805,64 @@ class PayrollComputationService
                 'scope_match' => (bool) ($holidayEvaluation['holiday_scope_match'] ?? true),
                 'coverage_behaviour' => $holidayEvaluation['coverage_behaviour'] ?? null,
                 'component_code' => $holidayEvaluation['component_code'] ?? null,
+                'description' => $holidayEvaluation['description'] ?? null,
             ];
         }
 
         usort($breakdown, fn (array $a, array $b): int => strcmp((string) ($a['date'] ?? ''), (string) ($b['date'] ?? '')));
 
         return $breakdown;
+    }
+
+    /**
+     * Rebuild a minimal holiday evaluation from an already-booked holiday_premium day line.
+     * Used when computeDayPayroll paid the holiday but the period evaluation pass did not attach
+     * holiday_pay_evaluation (so payslips would otherwise fall back to a generic "Holiday premium").
+     *
+     * @param  array<string, mixed>  $day
+     * @return array<string, mixed>|null
+     */
+    private function synthesizeHolidayEvaluationFromDayBreakdown(array $day): ?array
+    {
+        $entries = collect(is_array($day['breakdown'] ?? null) ? $day['breakdown'] : [])
+            ->filter(function ($entry): bool {
+                if (! is_array($entry)) {
+                    return false;
+                }
+                if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'holiday_premium') {
+                    return false;
+                }
+
+                return round((float) ($entry['amount'] ?? 0), 2) > 0.0001;
+            })
+            ->values();
+        if ($entries->isEmpty()) {
+            return null;
+        }
+
+        $entry = $entries->first();
+        $holiday = is_array($day['holiday'] ?? null) ? $day['holiday'] : [];
+        $worked = (bool) ($entry['worked'] ?? false);
+        $dateKey = substr((string) ($day['date'] ?? ''), 0, 10);
+
+        return [
+            'date' => $dateKey,
+            'holiday_id' => $entry['holiday_id'] ?? $holiday['id'] ?? null,
+            'holiday_name' => (string) ($entry['holiday_name'] ?? $holiday['name'] ?? 'Holiday'),
+            'holiday_type' => (string) ($entry['holiday_type'] ?? $holiday['type'] ?? ''),
+            'worked' => $worked,
+            'qualified' => true,
+            'amount' => round((float) ($entry['amount'] ?? 0), 2),
+            'multiplier' => (float) ($entry['multiplier'] ?? $entry['premium_multiplier'] ?? 1),
+            'component_code' => $entry['component_code'] ?? null,
+            'description' => $entry['description'] ?? null,
+            'should_create_holiday_pay' => true,
+            'should_create_worked_holiday_pay' => $worked,
+            'should_create_unworked_holiday_pay' => ! $worked,
+            'holiday_scope_match' => true,
+            'pay_type' => $worked ? 'holiday_work_pay' : 'holiday_pay',
+            'rule_code' => $day['conditions']['rule_code'] ?? null,
+        ];
     }
 
     /** @param array<string, mixed> $evaluation */
@@ -4910,12 +4967,18 @@ class PayrollComputationService
             $dateKey = (string) ($item['date'] ?? '');
             $holidayName = (string) ($item['holiday_name'] ?? 'Holiday');
             $normalizedType = $this->holidayEligibility->normalizeHolidayType($item['holiday_type'] ?? null);
-            $componentCode = (string) ($item['component_code'] ?? $this->holidayEligibility->holidayPayComponentCode(
-                $normalizedType,
-                ! (bool) ($item['worked'] ?? false),
-                (bool) ($item['is_rest_day'] ?? false)
-            ));
-            $description = $this->holidayEligibility->holidayPayDescription($componentCode, $holidayName);
+            $rawComponentCode = trim((string) ($item['component_code'] ?? ''));
+            $componentCode = $rawComponentCode !== ''
+                ? $rawComponentCode
+                : $this->holidayEligibility->holidayPayComponentCode(
+                    $normalizedType,
+                    ! (bool) ($item['worked'] ?? false),
+                    (bool) ($item['is_rest_day'] ?? false)
+                );
+            $description = trim((string) ($item['description'] ?? ''));
+            if ($description === '') {
+                $description = $this->holidayEligibility->holidayPayDescription($componentCode, $holidayName);
+            }
             $worked = (bool) ($item['worked'] ?? false);
             $hours = (float) ($item['hours'] ?? 0);
             $minutes = $hours > 0

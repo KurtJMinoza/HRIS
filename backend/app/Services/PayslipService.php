@@ -3382,8 +3382,13 @@ class PayslipService
             }
             $holiday[] = [
                 'holiday_name' => $this->sanitizePayslipText((string) ($item['holiday_name'] ?? 'Holiday')) ?: 'Holiday',
+                'holiday_type' => $this->sanitizePayslipText((string) ($item['holiday_type'] ?? '')) ?: null,
                 'amount' => (float) ($item['amount'] ?? 0),
                 'date' => $item['date'] ?? null,
+                'worked' => (bool) ($item['worked'] ?? false),
+                'is_rest_day' => (bool) ($item['is_rest_day'] ?? false),
+                'component_code' => $item['component_code'] ?? null,
+                'description' => $this->sanitizePayslipText((string) ($item['description'] ?? '')) ?: null,
             ];
         }
         $summary['holiday_premium_breakdown'] = array_values($holiday);
