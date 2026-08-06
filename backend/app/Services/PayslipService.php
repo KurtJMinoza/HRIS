@@ -1100,6 +1100,77 @@ class PayslipService
     }
 
     /**
+     * Recompute draft/generated payslips that cover the given calendar dates for one employee,
+     * then re-aggregate batch-run totals. Finalize "Total net pay" SUMs stored payslip.net_pay;
+     * without this, attendance changes leave the draft total stale until a payslip is opened.
+     *
+     * @param  list<string>  $dateKeys  YYYY-MM-DD
+     */
+    public function refreshDraftPayslipsCoveringDates(User $employee, array $dateKeys): int
+    {
+        $normalized = [];
+        foreach ($dateKeys as $raw) {
+            $key = substr(trim((string) $raw), 0, 10);
+            if ($key !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $key)) {
+                $normalized[$key] = $key;
+            }
+        }
+        $dateKeys = array_values($normalized);
+        if ($dateKeys === [] || (int) $employee->id <= 0) {
+            return 0;
+        }
+
+        sort($dateKeys);
+        $minDate = $dateKeys[0];
+        $maxDate = $dateKeys[array_key_last($dateKeys)];
+
+        $drafts = Payslip::query()
+            ->where('user_id', (int) $employee->id)
+            ->whereIn('status', $this->draftSnapshotStatuses())
+            ->whereNull('voided_at')
+            ->whereDate('pay_period_start', '<=', $maxDate)
+            ->whereDate('pay_period_end', '>=', $minDate)
+            ->get();
+
+        $drafts = $drafts->filter(function (Payslip $payslip) use ($dateKeys) {
+            $start = $payslip->pay_period_start?->toDateString();
+            $end = $payslip->pay_period_end?->toDateString();
+            if ($start === null || $end === null) {
+                return false;
+            }
+            foreach ($dateKeys as $dateKey) {
+                if ($dateKey >= $start && $dateKey <= $end) {
+                    return true;
+                }
+            }
+
+            return false;
+        });
+
+        if ($drafts->isEmpty()) {
+            return 0;
+        }
+
+        $runIds = [];
+        foreach ($drafts as $draft) {
+            $this->refreshDraftPayslipFromLiveComputation($draft, $employee);
+            $runId = (int) ($draft->payroll_batch_run_id ?? 0);
+            if ($runId > 0) {
+                $runIds[$runId] = true;
+            }
+        }
+
+        foreach (array_keys($runIds) as $runId) {
+            $run = PayrollBatchRun::query()->find((int) $runId);
+            if ($run) {
+                $this->syncBatchRunTotals($run);
+            }
+        }
+
+        return $drafts->count();
+    }
+
+    /**
      * Repair consultant draft snapshots (fixed Basic Pay, no units) without rerunning attendance payroll.
      */
     public function refreshConsultantDraftPayslipSnapshot(Payslip $payslip, User $employee): Payslip

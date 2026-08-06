@@ -190,5 +190,17 @@ class AttendanceCorrectionBulkFollowUpJob implements ShouldQueue
         foreach ($affectedPayrollPairs as [$employee, $dateKey]) {
             $payrollDailyRecordSyncService->syncDayForUser($employee, $dateKey);
         }
+
+        /** @var array<int, array{employee: \App\Models\User, dates: list<string>}> $draftRefreshByEmployee */
+        $draftRefreshByEmployee = [];
+        foreach ($affectedPayrollPairs as [$employee, $dateKey]) {
+            $uid = (int) $employee->id;
+            $draftRefreshByEmployee[$uid] ??= ['employee' => $employee, 'dates' => []];
+            $draftRefreshByEmployee[$uid]['dates'][] = $dateKey;
+        }
+        $payslipService = app(\App\Services\PayslipService::class);
+        foreach ($draftRefreshByEmployee as $bundle) {
+            $payslipService->refreshDraftPayslipsCoveringDates($bundle['employee'], $bundle['dates']);
+        }
     }
 }

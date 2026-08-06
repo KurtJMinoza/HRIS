@@ -609,7 +609,10 @@ export default function ManualAttendance() {
       <ManualAttendanceModal
         open={modalOpen}
         onOpenChange={setModalOpen}
-        onSaved={() => listQuery.refetch()}
+        onSaved={() => {
+          listQuery.refetch()
+          window.dispatchEvent(new CustomEvent('hr:attendance-payroll-changed'))
+        }}
         editRecord={editRecord}
         reasonCodes={reasonCodes}
         canOverrideConflict={canOverride}

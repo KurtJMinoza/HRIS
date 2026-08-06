@@ -2407,6 +2407,7 @@ class PresenceFilingController extends Controller
 
         if (! $this->isBulkApprovalRequest($request)) {
             ProcessDailyPayrollJob::dispatchSync($dateKey);
+            app(\App\Services\PayslipService::class)->refreshDraftPayslipsCoveringDates($employee, [$dateKey]);
         }
         if (! $this->isBulkApprovalRequest($request)) {
             AttendanceCorrectionModuleCache::flushAfterMutation(

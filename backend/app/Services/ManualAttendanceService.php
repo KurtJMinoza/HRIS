@@ -795,6 +795,8 @@ class ManualAttendanceService
         $this->overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $record->time_out, $admin);
         // ponytail: sync only this employee. ProcessDailyPayrollJob::dispatchSync rebuilds ALL employees for the day (10–20s×N).
         $this->payrollDailyRecordSyncService->syncDayForUser($employee, $dateKey);
+        // Keep finalize draft Total net pay aligned without opening each payslip / reloading.
+        app(PayslipService::class)->refreshDraftPayslipsCoveringDates($employee, [$dateKey]);
         \App\Services\AdminAttendanceCacheService::invalidateAffected(
             (int) $employee->id,
             $dateKey,
@@ -815,9 +817,11 @@ class ManualAttendanceService
     {
         $this->attendanceSessionService->flushRuntimeCache();
         $lastRecordId = 0;
+        $dateKeys = [];
         foreach ($touched as $item) {
             $dateKey = $item['date'];
             $record = $item['record'];
+            $dateKeys[] = $dateKey;
             $this->overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $record->time_out, $admin);
             $this->payrollDailyRecordSyncService->syncDayForUser($employee, $dateKey);
             \App\Services\AdminAttendanceCacheService::invalidateAffected(
@@ -828,6 +832,7 @@ class ManualAttendanceService
             );
             $lastRecordId = (int) $record->id;
         }
+        app(PayslipService::class)->refreshDraftPayslipsCoveringDates($employee, $dateKeys);
         AttendanceCorrectionModuleCache::flushAfterMutation(
             $admin,
             (int) ($employee->company_id ?? 0) ?: null,
