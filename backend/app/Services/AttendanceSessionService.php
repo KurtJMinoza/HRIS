@@ -8,6 +8,7 @@ use App\Models\Overtime;
 use App\Models\User;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Resolves clock-in / clock-out for a calendar day in the attendance timezone.
@@ -74,6 +75,7 @@ class AttendanceSessionService
                 $q->where('pending_approval', false)->orWhereNull('pending_approval');
             })
             ->whereNull('rejected_at')
+            ->when(Schema::hasColumn('attendance_corrections', 'reversed_at'), fn ($q) => $q->whereNull('reversed_at'))
             ->orderByDesc('approved_at')
             ->orderByDesc('id')
             ->get();
@@ -185,6 +187,7 @@ class AttendanceSessionService
                 $query->where('pending_approval', false)->orWhereNull('pending_approval');
             })
             ->whereNull('rejected_at')
+            ->when(Schema::hasColumn('attendance_corrections', 'reversed_at'), fn ($q) => $q->whereNull('reversed_at'))
             ->exists();
 
         if ($hasApprovedCorrection) {
@@ -298,6 +301,7 @@ class AttendanceSessionService
                 $q->where('pending_approval', false)->orWhereNull('pending_approval');
             })
             ->whereNull('rejected_at')
+            ->when(Schema::hasColumn('attendance_corrections', 'reversed_at'), fn ($q) => $q->whereNull('reversed_at'))
             ->orderByDesc('approved_at')
             ->orderByDesc('id')
             ->first();

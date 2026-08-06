@@ -505,9 +505,13 @@ class AttendanceMonitoringController extends Controller
                 'pending_approval',
                 'reason_code',
                 'filed_at',
+                'source_type',
+                'is_manual',
+                'reversed_at',
             ])
             ->whereIn('user_id', $userIds)
             ->whereBetween('date', [$from->toDateString(), $to->toDateString()])
+            ->when(Schema::hasColumn('attendance_corrections', 'reversed_at'), fn ($q) => $q->whereNull('reversed_at'))
             ->get()
             ->groupBy(fn ($c) => $c->user_id.'|'.$c->date->toDateString());
 
@@ -1014,6 +1018,10 @@ class AttendanceMonitoringController extends Controller
                     'correction_id' => $correction?->id,
                     'correction_approved' => $approved,
                     'correction_remarks' => $remarks,
+                    'is_manual_attendance' => $correction && ($correction->is_manual || $correction->source_type === AttendanceCorrection::SOURCE_ADMIN_MANUAL),
+                    'attendance_source_badge' => ($correction && ($correction->is_manual || $correction->source_type === AttendanceCorrection::SOURCE_ADMIN_MANUAL))
+                        ? 'Admin Manual'
+                        : (($correction && $correction->approved) ? 'Correction' : null),
                     'has_approved_overtime' => $approvedFromFiling > 0.0001,
                     'approved_ot_end_time' => $approvedOvertimeForRow?->expected_end_time?->format('H:i'),
                     'effective_expected_out' => $approvedOvertimeForRow?->expected_end_time

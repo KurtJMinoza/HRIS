@@ -8,16 +8,30 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class AttendanceCorrection extends Model
 {
+    public const SOURCE_ADMIN_MANUAL = 'admin_manual';
+
     protected $fillable = [
         'user_id',
         'date',
         'time_in',
         'time_out',
+        'work_segments',
+        'matched_schedule_option_id',
+        'shift_match_mode',
         'remarks',
+        'source_type',
+        'is_manual',
+        'manual_reason_code',
+        'manual_remarks',
+        'created_by_admin_id',
         'issue_kind',
         'approved',
         'approved_by',
+        'approved_by_admin_id',
         'approved_at',
+        'reversed_at',
+        'reversed_by_admin_id',
+        'reversal_reason',
         'pending_approval',
         'status',
         'final_approved_by',
@@ -48,8 +62,11 @@ class AttendanceCorrection extends Model
             'date' => 'date',
             'time_in' => 'datetime',
             'time_out' => 'datetime',
+            'work_segments' => 'array',
+            'is_manual' => 'boolean',
             'approved' => 'boolean',
             'approved_at' => 'datetime',
+            'reversed_at' => 'datetime',
             'pending_approval' => 'boolean',
             'filed_at' => 'datetime',
             'filer_signed_at' => 'datetime',
@@ -99,6 +116,38 @@ class AttendanceCorrection extends Model
     public function approvals(): HasMany
     {
         return $this->hasMany(AttendanceCorrectionApproval::class, 'attendance_correction_id')->orderBy('acted_at')->orderBy('id');
+    }
+
+    public function manualRevisions(): HasMany
+    {
+        return $this->hasMany(ManualAttendanceRevision::class, 'attendance_record_id')->orderByDesc('changed_at');
+    }
+
+    public function createdByAdmin(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by_admin_id');
+    }
+
+    public function isAdminManual(): bool
+    {
+        return $this->source_type === self::SOURCE_ADMIN_MANUAL || (bool) $this->is_manual;
+    }
+
+    public function isReversed(): bool
+    {
+        return $this->reversed_at !== null;
+    }
+
+    public function scopeAdminManual($query)
+    {
+        return $query->where(function ($q) {
+            $q->where('source_type', self::SOURCE_ADMIN_MANUAL)->orWhere('is_manual', true);
+        });
+    }
+
+    public function scopeActiveManual($query)
+    {
+        return $query->adminManual()->whereNull('reversed_at');
     }
 
     public function resolvedIssueKind(): string

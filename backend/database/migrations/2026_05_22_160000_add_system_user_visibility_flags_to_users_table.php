@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (! Schema::hasTable('users')) {
+            return;
+        }
+
         if (! Schema::hasColumn('users', 'is_system_user')) {
             Schema::table('users', function (Blueprint $table): void {
                 $table->boolean('is_system_user')->default(false)->after('is_super_admin')->index();

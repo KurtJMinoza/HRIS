@@ -11,6 +11,7 @@ import {
   CalendarRange,
   ClipboardCheck,
   ClipboardList,
+  ClipboardPen,
   FileText,
   HandCoins,
   Landmark,
@@ -69,6 +70,7 @@ export const adminNavItems = [
     icon: CalendarCheck,
     children: [
       { to: '/admin/attendance', end: false, label: 'Attendance', icon: CalendarCheck },
+      { to: '/admin/manual-attendance', end: false, label: 'Manual Attendance', icon: ClipboardPen },
       { to: '/admin/schedules', end: false, label: 'Work Schedules', icon: CalendarClock },
       { to: '/admin/schedule-requests', end: false, label: 'Schedule Approvals', icon: ClipboardList },
       { to: '/admin/corrections', end: false, label: 'Attendance Corrections', icon: ClipboardList },

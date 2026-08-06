@@ -332,6 +332,22 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:attendance.corrections.create')->post('/admin/attendance/corrections', [AttendanceCorrectionController::class, 'store']);
         Route::middleware('permission:attendance.corrections.delete')->delete('/admin/attendance/corrections/{id}', [AttendanceCorrectionController::class, 'destroy']);
 
+        Route::middleware('permission:attendance.manual.view|attendance.manual.create|attendance.manual.edit')->group(function () {
+            Route::get('/admin/attendance/manual', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'index']);
+            Route::get('/admin/attendance/manual/{id}', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'show'])->whereNumber('id');
+            Route::get('/admin/attendance/manual/{id}/history', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'history'])->whereNumber('id');
+        });
+        Route::middleware('permission:attendance.manual.create')->group(function () {
+            Route::post('/admin/attendance/manual/preview', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'preview']);
+            Route::post('/admin/attendance/manual', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'store']);
+        });
+        Route::middleware('permission:attendance.manual.edit')->group(function () {
+            Route::patch('/admin/attendance/manual/{id}', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'update'])->whereNumber('id');
+            Route::post('/admin/attendance/manual/{id}/segments', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'addSegments'])->whereNumber('id');
+        });
+        Route::middleware('permission:attendance.manual.reverse')->post('/admin/attendance/manual/{id}/reverse', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'reverse'])->whereNumber('id');
+        Route::middleware('permission:attendance.manual.bulk_create')->post('/admin/attendance/manual/bulk', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'bulk']);
+
         Route::middleware('permission:attendance.corrections.approve')->group(function () {
             Route::get('/admin/presence-filings', [PresenceFilingController::class, 'adminIndex']);
             Route::get('/attendance-corrections', [PresenceFilingController::class, 'adminIndex']);

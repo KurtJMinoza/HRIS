@@ -20,6 +20,9 @@ class AttendanceLog extends Model
     /** Synthetic punches after HR-approved presence filing / correction */
     public const AUTH_METHOD_HR_APPROVED_CORRECTION = 'HR Approved Correction';
 
+    /** Direct admin manual attendance (no approval workflow) */
+    public const AUTH_METHOD_ADMIN_MANUAL = 'Admin Manual Attendance';
+
     protected $fillable = [
         'user_id',
         'type',

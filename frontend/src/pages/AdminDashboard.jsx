@@ -1731,6 +1731,28 @@ export default function AdminDashboard() {
               Today
             </span>
           </div>
+          {lateTodayCount >= 3 && (
+            <button
+              type="button"
+              onClick={() => navigate(hrPanelPath(hrBase, 'attendance'))}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card px-3 py-1.5 text-xs shadow-sm transition-colors hover:border-foreground/25 hover:bg-muted/40"
+            >
+              <span className="size-1.5 rounded-full bg-orange-500" aria-hidden />
+              <span className="font-semibold tabular-nums text-foreground">{lateTodayCount} late</span>
+              <span className="text-muted-foreground">· open</span>
+            </button>
+          )}
+          {todaysAttendanceRate !== null && todaysAttendanceRate < 0.5 && (
+            <button
+              type="button"
+              onClick={() => navigate(hrPanelPath(hrBase, 'attendance'))}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card px-3 py-1.5 text-xs shadow-sm transition-colors hover:border-foreground/25 hover:bg-muted/40"
+            >
+              <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
+              <span className="font-semibold tabular-nums text-foreground">{Math.round(todaysAttendanceRate * 100)}% in</span>
+              <span className="text-muted-foreground">· open</span>
+            </button>
+          )}
         </div>
       </Motion.div>
 
@@ -1747,42 +1769,6 @@ export default function AdminDashboard() {
               </p>
             </CardContent>
           </Card>
-        </Motion.div>
-      )}
-
-      {todaysAttendanceRate !== null && todaysAttendanceRate < 0.5 && (
-        <Motion.div variants={itemVariants}>
-          <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 border-l-[3px] border-l-amber-500 bg-amber-500/8 px-3.5 py-2.5 dark:bg-amber-500/10">
-            <AlertCircle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="flex-1 text-sm text-foreground">
-              <span className="font-semibold text-amber-700 dark:text-amber-300">Low attendance: </span>
-              Only{' '}
-              <span className="font-bold">{Math.round(todaysAttendanceRate * 100)}%</span>{' '}
-              of employees have clocked in. Follow up with managers.
-            </p>
-            <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">
-              {Math.round(todaysAttendanceRate * 100)}%
-            </span>
-          </div>
-        </Motion.div>
-      )}
-
-      {lateTodayCount >= 3 && (
-        <Motion.div variants={itemVariants}>
-          <div className="flex items-center gap-3 rounded-lg border border-rose-500/20 border-l-[3px] border-l-rose-500 bg-rose-500/8 px-3.5 py-2.5 dark:bg-rose-500/10">
-            <span className="relative inline-flex shrink-0 size-4">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-rose-400/50" />
-              <AlertCircle className="relative size-4 text-rose-600 dark:text-rose-400" />
-            </span>
-            <p className="flex-1 text-sm text-foreground">
-              <span className="font-semibold text-rose-700 dark:text-rose-300">High late activity: </span>
-              <span className="font-bold">{lateTodayCount} employees</span>{' '}
-              marked late today. Consider sending reminders.
-            </p>
-            <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold text-rose-700 dark:text-rose-300">
-              {lateTodayCount} late
-            </span>
-          </div>
         </Motion.div>
       )}
 
@@ -1855,24 +1841,33 @@ export default function AdminDashboard() {
           return (
             <Motion.div key={key} variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15, ease: 'easeOut' } }}>
               <Card
+                role={isLateAlert ? 'button' : undefined}
+                tabIndex={isLateAlert ? 0 : undefined}
+                onClick={isLateAlert ? () => navigate(hrPanelPath(hrBase, 'attendance')) : undefined}
+                onKeyDown={isLateAlert ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    navigate(hrPanelPath(hrBase, 'attendance'))
+                  }
+                } : undefined}
                 className={[
                   'admin-dashboard-card relative min-h-[250px] gap-0 overflow-hidden py-0 transition-all duration-200',
                   isLateAlert
-                    ? 'border-rose-500/40 ring-1 ring-rose-500/15'
+                    ? 'cursor-pointer border-orange-500/45 hover:border-orange-500/70'
                     : `${meta.hoverShadow ?? ''}`,
                 ].join(' ')}
               >
               <CardHeader className="relative z-10 flex flex-col items-start gap-5 px-5 pb-0 pt-5">
-                <div className={`flex size-11 items-center justify-center rounded-full ring-1 ${isLateAlert ? 'animate-pulse bg-rose-500/15 text-rose-500 ring-rose-500/35' : `${meta.iconBg} ${meta.accent}`}`}>
+                <div className={`flex size-11 items-center justify-center rounded-full ring-1 ${isLateAlert ? 'bg-orange-500/12 text-orange-600 ring-orange-500/25 dark:text-orange-300' : `${meta.iconBg} ${meta.accent}`}`}>
                   <Icon className="size-5" />
                 </div>
-                <CardTitle className={`mb-0 text-[13px] font-extrabold uppercase tracking-[0.04em] ${isLateAlert ? 'text-rose-700 dark:text-rose-300' : 'text-foreground'}`}>
+                <CardTitle className={`mb-0 text-[13px] font-extrabold uppercase tracking-[0.04em] ${isLateAlert ? 'text-orange-800 dark:text-orange-200' : 'text-foreground'}`}>
                   {label}
                 </CardTitle>
               </CardHeader>
               <CardContent className="relative z-10 px-5 pb-5 pt-5">
                 <div className="flex items-end justify-between gap-3">
-                  <div className={`text-[46px] font-extrabold tabular-nums leading-none tracking-tight ${isLateAlert ? 'text-rose-600 dark:text-rose-300' : 'text-foreground'}`}>
+                  <div className={`text-[46px] font-extrabold tabular-nums leading-none tracking-tight ${isLateAlert ? 'text-orange-700 dark:text-orange-300' : 'text-foreground'}`}>
                     <KpiValue value={value} />
                   </div>
                   <div className="mb-1 flex flex-col items-end gap-1">
@@ -1915,7 +1910,7 @@ export default function AdminDashboard() {
                 </div>
                 <div className="mt-7 h-10 w-full">
                   {miniSeries.length > 0 ? (
-                    <div className={`h-full w-full ${isLateAlert ? 'text-rose-500' : meta.accent}`}>
+                    <div className={`h-full w-full ${isLateAlert ? 'text-orange-500' : meta.accent}`}>
                       <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={miniSeries} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
                         <defs>

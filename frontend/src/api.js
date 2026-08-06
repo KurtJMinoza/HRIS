@@ -2504,6 +2504,96 @@ export async function exportAdminEmployeeLogs(params = {}) {
   return res.blob()
 }
 
+// —— Admin: Manual Attendance ——
+
+export async function getManualAttendanceList(params = {}) {
+  const query = new URLSearchParams()
+  if (params.employee_id) query.set('employee_id', String(params.employee_id))
+  if (params.from_date) query.set('from_date', params.from_date)
+  if (params.to_date) query.set('to_date', params.to_date)
+  if (params.status) query.set('status', params.status)
+  query.set('page', String(params.page || 1))
+  query.set('per_page', String(params.per_page || 25))
+  const res = await authenticatedFetch(`/admin/attendance/manual?${query.toString()}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load manual attendance')
+  return data
+}
+
+export async function previewManualAttendance(payload) {
+  const res = await authenticatedFetch('/admin/attendance/manual/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = data.errors?.date?.[0] || data.errors?.segments?.[0] || data.message || 'Preview failed'
+    throw new Error(msg)
+  }
+  return data
+}
+
+export async function createManualAttendance(payload) {
+  const res = await authenticatedFetch('/admin/attendance/manual', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg =
+      data.errors?.dates?.[0]
+      || data.errors?.date?.[0]
+      || data.errors?.leave?.[0]
+      || data.errors?.conflict_action?.[0]
+      || data.message
+      || 'Save failed'
+    throw new Error(msg)
+  }
+  return data
+}
+
+export async function updateManualAttendance(id, payload) {
+  const res = await authenticatedFetch(`/admin/attendance/manual/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Update failed')
+  return data
+}
+
+export async function reverseManualAttendance(id, reversalReason) {
+  const res = await authenticatedFetch(`/admin/attendance/manual/${id}/reverse`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reversal_reason: reversalReason }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Reverse failed')
+  return data
+}
+
+export async function getManualAttendanceHistory(id) {
+  const res = await authenticatedFetch(`/admin/attendance/manual/${id}/history`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load history')
+  return data
+}
+
+export async function bulkManualAttendance(payload) {
+  const res = await authenticatedFetch('/admin/attendance/manual/bulk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Bulk operation failed')
+  return data
+}
+
 // —— Admin: Attendance Corrections ——
 
 /**
@@ -3969,8 +4059,17 @@ export async function getEmployees(params = {}) {
   // Keep employee list payloads small by default; callers can pass lite:false when they truly need full rows.
   if (params.lite !== false) query.set('lite', '1')
   if (params.page) query.set('page', String(params.page))
-  const employeesPerPage = normalizePerPage(params.per_page)
-  if (employeesPerPage != null) query.set('per_page', String(employeesPerPage))
+  // Backend treats per_page=all|0 as full roster (cap 2000). Do not clamp "all" to 100.
+  const rawPerPage = params.per_page
+  if (rawPerPage != null && rawPerPage !== '') {
+    const asAll = typeof rawPerPage === 'string' && rawPerPage.trim().toLowerCase() === 'all'
+    if (asAll || Number(rawPerPage) === 0) {
+      query.set('per_page', asAll ? 'all' : '0')
+    } else {
+      const employeesPerPage = normalizePerPage(rawPerPage)
+      if (employeesPerPage != null) query.set('per_page', String(employeesPerPage))
+    }
+  }
   if (params.for_schedule_assignment) query.set('for_schedule_assignment', '1')
   if (params.for_leadership_assignment) query.set('for_leadership_assignment', '1')
   if (params.active_filter) query.set('active_filter', String(params.active_filter))

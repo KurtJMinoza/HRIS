@@ -331,6 +331,7 @@ export function employeeDurationLabel(row) {
 }
 
 export function adminTypeReasonLabel(row) {
+  if (row.attendance_source_badge === 'Admin Manual' || row.is_manual_attendance) return 'Admin Manual'
   if (row.status === 'leave' || row.status === 'halfday') {
     if (row.leave_pay_label) return row.leave_pay_label
     if (row.leave_pay_status === 'paid') return 'Leave with pay'
@@ -345,6 +346,7 @@ export function adminTypeReasonLabel(row) {
 }
 
 export function employeeTypeReasonLabel(row) {
+  if (row.attendance_source_badge === 'Admin Manual' || row.is_manual_attendance) return 'Recorded by HR'
   if (row.presence_filing?.status === 'pending') return 'Correction · Pending'
   if (row.presence_filing?.status === 'approved') return 'Correction · Approved'
   if (row.presence_filing?.status === 'rejected') return 'Correction · Rejected'

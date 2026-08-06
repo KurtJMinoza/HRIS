@@ -3400,7 +3400,8 @@ class AttendanceController extends Controller
 
     /**
      * Kiosk: list recent attendance logs (for display on login page DTR panel).
-     * Public, no auth. Includes synthetic HR-approved rows so seeded / corrected DTR can appear alongside live scans.
+     * Public, no auth. Includes synthetic HR-approved correction rows so seeded / corrected DTR can appear
+     * alongside live scans, but excludes admin manual attendance (back-office entries, not kiosk punches).
      *
      * Sort / dedupe / late labels follow {@see AttendanceLog::$verified_at} first so batches that share one
      * {@see AttendanceLog::$created_at} timestamp do not collapse the feed.
@@ -3410,6 +3411,10 @@ class AttendanceController extends Controller
         $tz = $this->attendanceTimezone();
 
         $logEntries = AttendanceLog::query()
+            ->where(function ($q) {
+                $q->whereNull('authentication_method')
+                    ->orWhere('authentication_method', '!=', AttendanceLog::AUTH_METHOD_ADMIN_MANUAL);
+            })
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
                 'user.workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days',

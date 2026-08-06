@@ -33,6 +33,7 @@ const ScheduleRequestsPage = lazy(() => import('@/pages/ScheduleRequestsPage'))
 const MySchedule = lazy(() => import('@/pages/MySchedule'))
 const AdminDashboard = lazy(() => import('@/pages/AdminDashboard'))
 const AdminAttendance = lazy(() => import('@/pages/AdminAttendance'))
+const ManualAttendance = lazy(() => import('@/pages/ManualAttendance'))
 const AdminEmployeeLogs = lazy(() => import('@/pages/AdminEmployeeLogs'))
 const AdminGeofencing = lazy(() => import('@/pages/AdminGeofencing'))
 const AdminReports = lazy(() => import('@/pages/AdminReports'))
@@ -200,6 +201,7 @@ export const HR_PANEL_CHILD_ROUTES = [
     element={<Navigate to="../compensation/government-deduction" replace />}
   />,
   <Route key="hr-at" path="attendance" element={withSuspense(<AdminAttendance />, <DataTableRouteFallback titleWidth="w-72" />)} />,
+  <Route key="hr-manual-att" path="manual-attendance" element={withSuspense(<ManualAttendance />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-employee-logs" path="employee-logs" element={withSuspense(<AdminEmployeeLogs />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-geofencing" path="geofencing" element={withSuspense(<AdminGeofencing />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-email-notifications" path="email-notifications" element={withSuspense(<AdminEmailNotifications />, <DataTableRouteFallback titleWidth="w-72" />)} />,

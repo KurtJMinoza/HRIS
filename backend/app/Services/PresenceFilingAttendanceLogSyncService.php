@@ -134,6 +134,7 @@ class PresenceFilingAttendanceLogSyncService
         ?string $issueKind = null,
         ?Collection $prefetchedLogs = null,
         bool $writeSyncAudit = true,
+        ?string $authMethod = null,
     ): array {
         $tz = $this->presenceFilingService->attendanceTimezone();
         $effectiveIssueKind = is_string($issueKind) ? trim($issueKind) : null;
@@ -201,13 +202,16 @@ class PresenceFilingAttendanceLogSyncService
         // - Delete duplicate rows per type in the same day window.
         $byType = $existingLogs->groupBy('type');
 
+        $authMethod = $authMethod ?? AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION;
+
         $this->upsertCanonicalTypeLog(
             $employee->id,
             AttendanceLog::TYPE_CLOCK_IN,
             $finalIn,
             $byType->get(AttendanceLog::TYPE_CLOCK_IN, collect()),
             $base,
-            $now
+            $now,
+            $authMethod,
         );
         $this->upsertCanonicalTypeLog(
             $employee->id,
@@ -215,7 +219,8 @@ class PresenceFilingAttendanceLogSyncService
             $finalOut,
             $byType->get(AttendanceLog::TYPE_CLOCK_OUT, collect()),
             $base,
-            $now
+            $now,
+            $authMethod,
         );
 
         if ($writeSyncAudit && $attendanceCorrectionId !== null) {
@@ -256,8 +261,10 @@ class PresenceFilingAttendanceLogSyncService
         ?Carbon $targetUtc,
         \Illuminate\Support\Collection $typeLogs,
         array $base,
-        Carbon $now
+        Carbon $now,
+        ?string $authMethod = null,
     ): void {
+        $authMethod = $authMethod ?? AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION;
         $ordered = $typeLogs
             ->sortBy(fn (AttendanceLog $log) => $this->effectiveStamp($log)?->timestamp ?? 0)
             ->values();
@@ -278,7 +285,7 @@ class PresenceFilingAttendanceLogSyncService
 
         if ($canonical instanceof AttendanceLog) {
             AttendanceLog::query()->whereKey($canonical->id)->update([
-                'authentication_method' => AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION,
+                'authentication_method' => $authMethod,
                 'verified_at' => $targetUtc,
                 'created_at' => $targetUtc,
                 'updated_at' => $now,
@@ -298,7 +305,7 @@ class PresenceFilingAttendanceLogSyncService
         AttendanceLog::query()->create(array_merge($base, [
             'type' => $type,
             'verified_at' => $targetUtc,
-            'authentication_method' => AttendanceLog::AUTH_METHOD_HR_APPROVED_CORRECTION,
+            'authentication_method' => $authMethod,
             'created_at' => $targetUtc,
             'updated_at' => $now,
         ]));
