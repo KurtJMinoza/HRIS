@@ -8,8 +8,11 @@ use App\Models\OrganizationPositionType;
 use App\Models\OrganizationUnit;
 use App\Models\OrganizationUnitLeader;
 use App\Models\User;
+use App\Support\AttendanceCorrectionModuleCache;
 use App\Support\CompanyLeadershipPosition;
+use App\Support\LeaveModuleCache;
 use App\Support\OrganizationLeadershipScopeOptionsCache;
+use App\Support\OvertimeModuleCache;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -29,7 +32,6 @@ class OrganizationLeadershipService
         private readonly LegacyOrganizationMirrorService $mirrorService,
         private readonly OrganizationLeadershipAssignmentScopeService $assignmentScopeService,
         private readonly ApprovalChainCacheService $approvalChainCacheService,
-        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     /**
@@ -261,7 +263,7 @@ class OrganizationLeadershipService
         OrganizationLeadershipScopeOptionsCache::flush($legacyType, $legacyId);
 
         if (in_array($legacyType, ['company', 'area', 'branch', 'division', 'department', 'section_unit'], true)) {
-            LeadershipPendingChainResyncJob::dispatch(['leave', 'overtime'])->afterResponse();
+            $this->dispatchPendingApprovalChainResync($legacyType, $legacyId);
         }
 
         return $this->leadershipPayload($legacyType, $legacyId);
@@ -364,7 +366,18 @@ class OrganizationLeadershipService
             ],
         );
 
-        if ($previousEmployeeId !== null && $previousEmployeeId !== $employeeId) {
+        if ($employeeId === null) {
+            // Clearing the head: deactivate every active head assignment on this unit
+            // (not only previousEmployeeId — orphaned active rows still route approvals).
+            OrganizationPositionAssignment::query()
+                ->where('organization_unit_id', (int) $unit->id)
+                ->where('position_type_id', (int) $positionType->id)
+                ->where('is_active', true)
+                ->update([
+                    'is_active' => false,
+                    'effective_to' => now()->toDateString(),
+                ]);
+        } elseif ($previousEmployeeId !== null && $previousEmployeeId !== $employeeId) {
             OrganizationPositionAssignment::query()
                 ->where('organization_unit_id', (int) $unit->id)
                 ->where('position_type_id', (int) $positionType->id)
@@ -377,7 +390,7 @@ class OrganizationLeadershipService
 
         if ($employeeId !== null) {
             $this->assertActiveEmployee($employeeId);
-            $assignment = OrganizationPositionAssignment::query()->updateOrCreate(
+            OrganizationPositionAssignment::query()->updateOrCreate(
                 [
                     'organization_unit_id' => (int) $unit->id,
                     'position_type_id' => (int) $positionType->id,
@@ -395,6 +408,42 @@ class OrganizationLeadershipService
         }
 
         $this->syncUnitLeadersFromAssignments($unit);
+
+        // Head changed: pending leave/OT/correction/schedule chains still point at the old approver_id.
+        $headChanged = $previousEmployeeId !== null
+            && (int) $previousEmployeeId !== (int) ($employeeId ?? 0);
+        if ($headChanged || ($previousEmployeeId === null && $employeeId !== null)) {
+            $this->approvalChainCacheService->forgetForLegacyUnit($legacyType, $legacyId);
+            $this->approvalChainCacheService->forgetWorkflowSettings();
+            $this->dispatchPendingApprovalChainResync($legacyType, $legacyId);
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function pendingFilingResyncTypes(): array
+    {
+        return [
+            OrgApprovalWorkflowService::MODULE_LEAVE,
+            OrgApprovalWorkflowService::MODULE_OVERTIME,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE,
+        ];
+    }
+
+    private function dispatchPendingApprovalChainResync(string $legacyType, int $legacyId): void
+    {
+        // Invalidate list caches now; heavy pending-chain rewrite runs on a worker so head-save stays fast.
+        LeaveModuleCache::flush();
+        OvertimeModuleCache::flush();
+        AttendanceCorrectionModuleCache::flush();
+
+        LeadershipPendingChainResyncJob::dispatch(
+            self::pendingFilingResyncTypes(),
+            $legacyType,
+            $legacyId,
+        );
     }
 
     private function defaultHeadPositionName(string $legacyType): string

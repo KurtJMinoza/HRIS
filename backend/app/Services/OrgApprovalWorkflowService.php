@@ -3,8 +3,13 @@
 namespace App\Services;
 
 use App\Enums\HrRole;
+use App\Models\AttendanceCorrection;
+use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
+use App\Models\Overtime;
 use App\Models\User;
+use App\Support\AttendanceCorrectionModuleCache;
+use App\Support\HrApprovalStages;
 use App\Support\LeaveModuleCache;
 use App\Support\OvertimeModuleCache;
 use App\Support\ReviewRequestCache;
@@ -108,6 +113,12 @@ class OrgApprovalWorkflowService
 
                 return $this->records($moduleType, $requestId);
             } else {
+                // Chain shape already matches — still refresh legacy first/second/stage snapshots
+                // (head removal can leave Arbole on first_approver_id while org records are already HR-only).
+                if ($isPending) {
+                    $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
+                }
+
                 return $this->records($moduleType, $requestId);
             }
         }
@@ -151,37 +162,85 @@ class OrgApprovalWorkflowService
     }
 
     /**
-     * Re-resolve approval chains for pending requests after workflow settings change.
+     * Re-resolve approval chains for pending requests after workflow settings / head change.
      *
      * @param  list<string>  $requestTypes
      */
-    public function resyncPendingRequestChains(array $requestTypes): int
-    {
+    public function resyncPendingRequestChains(
+        array $requestTypes,
+        ?string $legacyType = null,
+        ?int $legacyId = null,
+    ): int {
         $normalized = array_values(array_unique(array_filter(array_map(
             fn (string $type): ?string => self::normalizeModuleType($type),
             $requestTypes,
         ))));
 
         $synced = 0;
+        $scope = ($legacyType !== null && $legacyId !== null && $legacyId > 0)
+            ? ['legacy_type' => $legacyType, 'legacy_id' => $legacyId]
+            : null;
 
         if (in_array(self::MODULE_LEAVE, $normalized, true)) {
-            $synced += $this->resyncPendingLeaveRequests();
+            $synced += $this->resyncPendingLeaveRequests($scope);
             LeaveModuleCache::flush();
         }
 
         if (in_array(self::MODULE_OVERTIME, $normalized, true)) {
-            $synced += $this->resyncPendingOvertimeRequests();
+            $synced += $this->resyncPendingOvertimeRequests($scope);
             OvertimeModuleCache::flush();
+        }
+
+        if (in_array(self::MODULE_ATTENDANCE_CORRECTION, $normalized, true)) {
+            $synced += $this->resyncPendingAttendanceCorrectionRequests($scope);
+            AttendanceCorrectionModuleCache::flush();
+        }
+
+        if (in_array(self::MODULE_CHANGE_SCHEDULE, $normalized, true)) {
+            $synced += $this->resyncPendingScheduleRequests($scope);
         }
 
         if ($synced > 0) {
             Log::info('approval_chain: resynced pending request chains after workflow settings change', [
                 'request_types' => $normalized,
                 'requests_updated' => $synced,
+                'legacy_type' => $legacyType,
+                'legacy_id' => $legacyId,
             ]);
         }
 
         return $synced;
+    }
+
+    /**
+     * Limit pending-filing resync to employees under a legacy org unit (head change path).
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<\Illuminate\Database\Eloquent\Model>  $query
+     * @param  array{legacy_type: string, legacy_id: int}|null  $scope
+     */
+    private function applyEmployeeOrgScope($query, ?array $scope): void
+    {
+        if ($scope === null) {
+            return;
+        }
+
+        $legacyType = (string) $scope['legacy_type'];
+        $legacyId = (int) $scope['legacy_id'];
+        if ($legacyId <= 0) {
+            return;
+        }
+
+        $query->whereHas('user', function ($userQuery) use ($legacyType, $legacyId): void {
+            match ($legacyType) {
+                'company' => $userQuery->where('company_id', $legacyId),
+                'branch' => $userQuery->where('branch_id', $legacyId),
+                'division' => $userQuery->where('division_id', $legacyId),
+                'department' => $userQuery->where('department_id', $legacyId),
+                'section_unit' => $userQuery->where('section_unit_id', $legacyId),
+                'area' => $userQuery->whereHas('branch', fn ($branchQuery) => $branchQuery->where('area_id', $legacyId)),
+                default => $userQuery->whereRaw('1 = 0'),
+            };
+        });
     }
 
     /**
@@ -1085,30 +1144,68 @@ class OrgApprovalWorkflowService
      */
     private function syncLegacyRequestApprovers(Model $request, string $moduleType, array $steps): void
     {
-        if ($moduleType !== self::MODULE_LEAVE || ! $request instanceof \App\Models\LeaveRequest) {
-            return;
-        }
-
         if (! $this->requestIsPending($request, $moduleType)) {
             return;
         }
 
+        $normalized = self::normalizeModuleType($moduleType) ?? $moduleType;
         $firstLine = collect($steps)->first(fn (array $step): bool => ($step['approver_role'] ?? null) !== HrRole::AdminHr);
         $hrLine = collect($steps)->first(fn (array $step): bool => ($step['approver_role'] ?? null) === HrRole::AdminHr);
+        $pendingIsHrOnly = $firstLine === null && $hrLine !== null;
 
-        $updates = [];
-        if ($firstLine) {
-            $updates['first_approver_id'] = (int) $firstLine['approver_id'];
-        } else {
-            $updates['first_approver_id'] = null;
-        }
-
-        if ($hrLine) {
-            $updates['second_approver_id'] = (int) $hrLine['approver_id'];
-        }
-
-        if ($updates !== []) {
+        if ($normalized === self::MODULE_LEAVE && $request instanceof LeaveRequest) {
+            $updates = [
+                'first_approver_id' => $firstLine ? (int) $firstLine['approver_id'] : null,
+            ];
+            if ($hrLine) {
+                $updates['second_approver_id'] = (int) $hrLine['approver_id'];
+            }
             $request->forceFill($updates)->save();
+
+            return;
+        }
+
+        if ($normalized === self::MODULE_OVERTIME && $request instanceof Overtime) {
+            $updates = [
+                'first_approver_id' => $firstLine ? (int) $firstLine['approver_id'] : null,
+                'approval_stage' => $pendingIsHrOnly
+                    ? HrApprovalStages::PENDING_SECOND
+                    : HrApprovalStages::PENDING_FIRST,
+            ];
+            if ($hrLine) {
+                $updates['second_approver_id'] = (int) $hrLine['approver_id'];
+            }
+            $request->forceFill($updates)->save();
+
+            return;
+        }
+
+        if ($normalized === self::MODULE_ATTENDANCE_CORRECTION && $request instanceof AttendanceCorrection) {
+            $updates = [
+                'first_approver_id' => $firstLine ? (int) $firstLine['approver_id'] : null,
+                'approval_stage' => $pendingIsHrOnly
+                    ? HrApprovalStages::PENDING_SECOND
+                    : HrApprovalStages::PENDING_FIRST,
+            ];
+            if ($hrLine) {
+                $updates['second_approver_id'] = (int) $hrLine['approver_id'];
+            }
+
+            $before = [
+                'first_approver_id' => $request->first_approver_id !== null ? (int) $request->first_approver_id : null,
+                'second_approver_id' => $request->second_approver_id !== null ? (int) $request->second_approver_id : null,
+                'approval_stage' => (string) ($request->approval_stage ?? ''),
+            ];
+            $request->forceFill($updates)->save();
+            $after = [
+                'first_approver_id' => $updates['first_approver_id'],
+                'second_approver_id' => $updates['second_approver_id'] ?? $before['second_approver_id'],
+                'approval_stage' => (string) $updates['approval_stage'],
+            ];
+            if ($before !== $after) {
+                ReviewRequestCache::forget(self::MODULE_ATTENDANCE_CORRECTION, (int) $request->getKey());
+                AttendanceCorrectionModuleCache::flush();
+            }
         }
     }
 
@@ -1137,14 +1234,20 @@ class OrgApprovalWorkflowService
         return str_contains($lower, 'approval') ? $base : $base.' approval';
     }
 
-    private function resyncPendingLeaveRequests(): int
+    /**
+     * @param  array{legacy_type: string, legacy_id: int}|null  $scope
+     */
+    private function resyncPendingLeaveRequests(?array $scope = null): int
     {
         $synced = 0;
 
-        \App\Models\LeaveRequest::query()
+        $query = \App\Models\LeaveRequest::query()
             ->where('pending_approval', true)
             ->where('status', \App\Models\LeaveRequest::STATUS_PENDING)
-            ->whereNull('rejected_at')
+            ->whereNull('rejected_at');
+        $this->applyEmployeeOrgScope($query, $scope);
+
+        $query
             ->with(['user', 'filedBy'])
             ->orderBy('id')
             ->chunkById(100, function ($leaves) use (&$synced): void {
@@ -1164,14 +1267,20 @@ class OrgApprovalWorkflowService
         return $synced;
     }
 
-    private function resyncPendingOvertimeRequests(): int
+    /**
+     * @param  array{legacy_type: string, legacy_id: int}|null  $scope
+     */
+    private function resyncPendingOvertimeRequests(?array $scope = null): int
     {
         $synced = 0;
 
-        \App\Models\Overtime::query()
+        $query = \App\Models\Overtime::query()
             ->where('pending_approval', true)
             ->where('status', \App\Models\Overtime::STATUS_PENDING)
-            ->whereNull('rejected_at')
+            ->whereNull('rejected_at');
+        $this->applyEmployeeOrgScope($query, $scope);
+
+        $query
             ->with(['user', 'filedBy'])
             ->orderBy('id')
             ->chunkById(100, function ($overtimes) use (&$synced): void {
@@ -1183,6 +1292,76 @@ class OrgApprovalWorkflowService
 
                     $requestor = $overtime->filedBy instanceof User ? $overtime->filedBy : $employee;
                     if ($this->resyncRequestChain($overtime, self::MODULE_OVERTIME, $employee, $requestor)) {
+                        $synced++;
+                    }
+                }
+            });
+
+        return $synced;
+    }
+
+    /**
+     * @param  array{legacy_type: string, legacy_id: int}|null  $scope
+     */
+    private function resyncPendingAttendanceCorrectionRequests(?array $scope = null): int
+    {
+        $synced = 0;
+
+        $query = \App\Models\AttendanceCorrection::query()
+            ->where('pending_approval', true)
+            ->where('approved', false)
+            ->whereNull('rejected_at')
+            ->when(
+                \Illuminate\Support\Facades\Schema::hasColumn('attendance_corrections', 'reversed_at'),
+                fn ($q) => $q->whereNull('reversed_at')
+            );
+        $this->applyEmployeeOrgScope($query, $scope);
+
+        $query
+            ->with(['user', 'filedBy'])
+            ->orderBy('id')
+            ->chunkById(100, function ($corrections) use (&$synced): void {
+                foreach ($corrections as $correction) {
+                    $employee = $correction->user;
+                    if (! $employee instanceof User) {
+                        continue;
+                    }
+
+                    $requestor = $correction->filedBy instanceof User ? $correction->filedBy : $employee;
+                    if ($this->resyncRequestChain($correction, self::MODULE_ATTENDANCE_CORRECTION, $employee, $requestor)) {
+                        $synced++;
+                    }
+                }
+            });
+
+        return $synced;
+    }
+
+    /**
+     * @param  array{legacy_type: string, legacy_id: int}|null  $scope
+     */
+    private function resyncPendingScheduleRequests(?array $scope = null): int
+    {
+        $synced = 0;
+
+        $query = \App\Models\ScheduleRequest::query()
+            ->where('pending_approval', true)
+            ->where('status', \App\Models\ScheduleRequest::STATUS_PENDING)
+            ->whereNull('rejected_at');
+        $this->applyEmployeeOrgScope($query, $scope);
+
+        $query
+            ->with(['user', 'filedBy'])
+            ->orderBy('id')
+            ->chunkById(100, function ($requests) use (&$synced): void {
+                foreach ($requests as $request) {
+                    $employee = $request->user;
+                    if (! $employee instanceof User) {
+                        continue;
+                    }
+
+                    $requestor = $request->filedBy instanceof User ? $request->filedBy : $employee;
+                    if ($this->resyncRequestChain($request, self::MODULE_CHANGE_SCHEDULE, $employee, $requestor)) {
                         $synced++;
                     }
                 }
@@ -1220,12 +1399,21 @@ class OrgApprovalWorkflowService
 
         $changed = $before !== $after;
 
+        // Legacy columns / list cache can lag even when org_approval_records already match.
+        if ($moduleType === self::MODULE_ATTENDANCE_CORRECTION
+            || $moduleType === self::MODULE_OVERTIME
+            || $moduleType === self::MODULE_LEAVE) {
+            $request->refresh();
+        }
+
         if ($changed) {
             ReviewRequestCache::forget($moduleType, $requestId);
             if ($moduleType === self::MODULE_LEAVE) {
                 LeaveModuleCache::flush();
             } elseif ($moduleType === self::MODULE_OVERTIME) {
                 OvertimeModuleCache::flush();
+            } elseif ($moduleType === self::MODULE_ATTENDANCE_CORRECTION) {
+                AttendanceCorrectionModuleCache::flush();
             }
         }
 
