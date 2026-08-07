@@ -9,8 +9,9 @@ use Carbon\CarbonInterface;
 /**
  * Attendance lateness and half-day computation.
  *
- * Late bands (30-min buckets from scheduled start + grace):
+ * Late bands (ceil to 30-min from scheduled start; grace only for Present vs Late):
  *   Present → 30 min → 1 hr → 1.5 hr → 2 hr → 2.5 hr → 3 hr → 3.5 hr → 4 hr late.
+ *   Exactly 30 minutes past start buckets as 30 minutes late (not 1 hour).
  *
  * Half Day: triggered ONLY when lateness >= half_day_threshold_minutes
  *   (= scheduled_paid_minutes / 2, typically 240 min for an 8 h shift).
@@ -92,9 +93,8 @@ class AttendanceStatusService
     }
 
     /**
-     * Late buckets by raw minutes late (from scheduled start, 8:00-style bands).
-     * 8:06–8:29 → 30 min; 8:30–8:59 → 1 hr; 9:00–9:29 → 1 hr 30 min; 9:30–9:59 → 2 hr;
-     * 10:00–10:29 → 2 hr 30 min; 10:30–10:59 → 3 hr; 11:00–11:29 → 3 hr 30 min; 11:30–11:59 → 4 hr.
+     * Late buckets by raw minutes late from scheduled start (ceil to 30-minute bands).
+     * Example for 08:00 start: 08:06–08:30 → 30 min; 08:31–09:00 → 1 hr; 09:01–09:30 → 1 hr 30 min.
      *
      * @return array{minutes: int, label: string}
      */
@@ -103,29 +103,23 @@ class AttendanceStatusService
         if ($rawMinutesLate <= 0) {
             return ['minutes' => 0, 'label' => 'Present'];
         }
-        if ($rawMinutesLate <= 29) {
-            return ['minutes' => 30, 'label' => '30 Minutes late'];
-        }
-        if ($rawMinutesLate <= 59) {
-            return ['minutes' => 60, 'label' => '1 Hour Late'];
-        }
-        if ($rawMinutesLate <= 89) {
-            return ['minutes' => 90, 'label' => '1 Hour 30 minutes late'];
-        }
-        if ($rawMinutesLate <= 119) {
-            return ['minutes' => 120, 'label' => '2 Hours Late'];
-        }
-        if ($rawMinutesLate <= 149) {
-            return ['minutes' => 150, 'label' => '2 Hours 30 minutes late'];
-        }
-        if ($rawMinutesLate <= 179) {
-            return ['minutes' => 180, 'label' => '3 Hours Late'];
-        }
-        if ($rawMinutesLate <= 209) {
-            return ['minutes' => 210, 'label' => '3 Hours 30 minutes late'];
-        }
 
-        return ['minutes' => 240, 'label' => '4 Hours Late'];
+        // ponytail: ceil-to-30 so exactly :30 past start is 30 min late, not the next hour band.
+        $bucketMinutes = min(240, (int) (ceil($rawMinutesLate / 30) * 30));
+
+        return [
+            'minutes' => $bucketMinutes,
+            'label' => match ($bucketMinutes) {
+                30 => '30 Minutes late',
+                60 => '1 Hour Late',
+                90 => '1 Hour 30 minutes late',
+                120 => '2 Hours Late',
+                150 => '2 Hours 30 minutes late',
+                180 => '3 Hours Late',
+                210 => '3 Hours 30 minutes late',
+                default => '4 Hours Late',
+            },
+        ];
     }
 
     /**
