@@ -523,7 +523,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
     document.documentElement.scrollTop = 0
     document.body.scrollTop = 0
-  }, [location.pathname, location.search])
+    // Pathname only — query changes (filters, selected employee_id, tabs) must not jump the page.
+  }, [location.pathname])
 
   useEffect(() => {
     scheduleRadixModalLockReset()

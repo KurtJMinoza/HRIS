@@ -167,6 +167,10 @@ class EmployeeController extends Controller
         if (! in_array($faceFilter, ['registered', 'unregistered'], true)) {
             $faceFilter = '';
         }
+        $salaryFilter = strtolower(trim((string) $request->query('salary_filter', '')));
+        if (! in_array($salaryFilter, ['with_salary', 'without_salary'], true)) {
+            $salaryFilter = '';
+        }
         $assignmentBranchId = $request->filled('assignment_branch_id') ? (int) $request->query('assignment_branch_id') : null;
         $employeeScopeOptions = [];
         if ($forDepartmentAssignment && $assignmentBranchId !== null) {
@@ -448,6 +452,7 @@ class EmployeeController extends Controller
             $this->applyActiveFilter($query, $activeFilter);
             $this->applyScheduleFilter($query, $scheduleFilter);
             $this->applyFaceFilter($query, $faceFilter);
+            $this->applySalaryFilter($query, $salaryFilter);
             if (! $forLeadershipAssignment) {
                 $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
             }
@@ -476,6 +481,7 @@ class EmployeeController extends Controller
             $employees = $users->map(fn (User $u) => $lite
                 ? $this->employeeLiteResponse($u, $canSensitive, $orgMaps, $assignmentMaps[(int) $u->id] ?? [])
                 : $this->employeeResponse($u, $canSensitive, true, false, true))->values();
+            $employees = $this->appendBasicSalaryFlags($employees);
             $rowsMs = round((microtime(true) - $rowsStart) * 1000);
             $transformMs = round((microtime(true) - $transformStart) * 1000);
 
@@ -520,6 +526,7 @@ class EmployeeController extends Controller
         $this->applyActiveFilter($query, $activeFilter);
         $this->applyScheduleFilter($query, $scheduleFilter);
         $this->applyFaceFilter($query, $faceFilter);
+        $this->applySalaryFilter($query, $salaryFilter);
         if (! $lite) {
             $query->with($fullEagerLoads);
         }
@@ -554,6 +561,7 @@ class EmployeeController extends Controller
                 ? $this->employeeLiteResponse($u, $canSensitive, $orgMaps, $assignmentMaps[(int) $u->id] ?? [])
                 : $this->employeeResponse($u, $canSensitive, true, false, true))
             ->values();
+        $employees = $this->appendBasicSalaryFlags($employees);
         $rowsMs = round((microtime(true) - $rowsStart) * 1000);
         $transformMs = round((microtime(true) - $transformStart) * 1000);
 
@@ -3422,6 +3430,95 @@ class EmployeeController extends Controller
                         ->orWhere('face_status', '!=', 'registered');
                 });
         });
+    }
+
+    /**
+     * Filter roster by whether an active Basic Salary compensation line exists.
+     */
+    private function applySalaryFilter($query, string $salaryFilter): void
+    {
+        if ($salaryFilter === '') {
+            return;
+        }
+
+        $hasBasicSalary = function ($q): void {
+            $q->where('is_active', true)
+                ->where(function ($inner): void {
+                    $inner->whereRaw("UPPER(TRIM(COALESCE(code, ''))) = ?", ['BASIC_SALARY'])
+                        ->orWhereRaw('LOWER(TRIM(COALESCE(name, \'\'))) IN (?, ?)', ['basic salary', 'basic pay'])
+                        ->orWhereHas('payComponent', function ($pc): void {
+                            $pc->whereRaw("UPPER(TRIM(COALESCE(code, ''))) = ?", ['BASIC_SALARY'])
+                                ->orWhereRaw('LOWER(TRIM(COALESCE(name, \'\'))) IN (?, ?)', ['basic salary', 'basic pay']);
+                        });
+                })
+                ->where(function ($amount): void {
+                    $amount->where('value', '>', 0)
+                        ->orWhere('hourly_rate', '>', 0);
+                });
+        };
+
+        if ($salaryFilter === 'with_salary') {
+            $query->whereHas('compensationComponents', $hasBasicSalary);
+
+            return;
+        }
+
+        $query->whereDoesntHave('compensationComponents', $hasBasicSalary);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $employees
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    private function appendBasicSalaryFlags($employees)
+    {
+        if ($employees->isEmpty()) {
+            return $employees;
+        }
+
+        if (! \Illuminate\Support\Facades\Schema::hasTable('employee_compensation_components')) {
+            return $employees->map(function (array $row): array {
+                $row['has_basic_salary'] = false;
+
+                return $row;
+            })->values();
+        }
+
+        $ids = $employees->pluck('id')->map(fn ($id) => (int) $id)->filter()->values()->all();
+        if ($ids === []) {
+            return $employees->map(function (array $row): array {
+                $row['has_basic_salary'] = false;
+
+                return $row;
+            })->values();
+        }
+
+        $withSalary = DB::table('employee_compensation_components as ecc')
+            ->leftJoin('pay_components as pc', 'pc.id', '=', 'ecc.pay_component_id')
+            ->whereIn('ecc.user_id', $ids)
+            ->where('ecc.is_active', true)
+            ->where(function ($q): void {
+                $q->whereRaw("UPPER(TRIM(COALESCE(ecc.code, ''))) = ?", ['BASIC_SALARY'])
+                    ->orWhereRaw('LOWER(TRIM(COALESCE(ecc.name, \'\'))) IN (?, ?)', ['basic salary', 'basic pay'])
+                    ->orWhereRaw("UPPER(TRIM(COALESCE(pc.code, ''))) = ?", ['BASIC_SALARY'])
+                    ->orWhereRaw('LOWER(TRIM(COALESCE(pc.name, \'\'))) IN (?, ?)', ['basic salary', 'basic pay']);
+            })
+            ->where(function ($q): void {
+                $q->where('ecc.value', '>', 0)
+                    ->orWhere('ecc.hourly_rate', '>', 0);
+            })
+            ->distinct()
+            ->pluck('ecc.user_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $withSalarySet = array_fill_keys($withSalary, true);
+
+        return $employees->map(function (array $row) use ($withSalarySet): array {
+            $row['has_basic_salary'] = isset($withSalarySet[(int) ($row['id'] ?? 0)]);
+
+            return $row;
+        })->values();
     }
 
     /**

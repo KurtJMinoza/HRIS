@@ -160,9 +160,12 @@ class ProcessFaceRegistrationJob implements ShouldQueue
         }
 
         $descriptor = array_values(array_map('floatval', $result['descriptor']));
+        $descriptor = array_values(array_map('floatval', $result['descriptor']));
         // FaceAuthService /verify returns embeddings only; keep the capture the user submitted.
         // Rekognition (if ever wired) may supply reference_image_base64 instead.
-        $referenceImage = $result['reference_image_base64'] ?? $this->imageBase64;
+        $referenceImage = $this->normalizeReferenceImage(
+            $result['reference_image_base64'] ?? null
+        ) ?? $this->normalizeReferenceImage($this->imageBase64);
 
         // Per registering employee + global short lock so two accounts cannot commit the same face concurrently.
         $userLock = Cache::lock('face-registration-user:'.$this->targetUserId, 60);
@@ -328,5 +331,32 @@ class ProcessFaceRegistrationJob implements ShouldQueue
             FaceRegistrationStatusService::fail($this->trackId, 'Face registration failed. Please try again.', 'job_failed');
             throw $e;
         }
+    }
+
+    /**
+     * Normalize a capture / reference image for storage in users.face_image.
+     */
+    private function normalizeReferenceImage(?string $image): ?string
+    {
+        if (! is_string($image)) {
+            return null;
+        }
+
+        $trimmed = trim($image);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (str_starts_with($trimmed, 'data:')) {
+            return $trimmed;
+        }
+
+        // Strip accidental whitespace from raw base64 payloads.
+        $compact = preg_replace('/\s+/', '', $trimmed) ?? $trimmed;
+        if ($compact === '' || ! preg_match('/^[A-Za-z0-9+\/=]+$/', $compact)) {
+            return null;
+        }
+
+        return $compact;
     }
 }

@@ -41,7 +41,7 @@ class FaceAuthService
     /**
      * Verify + embed via Python /verify endpoint.
      *
-     * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float}|null
+     * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float, reference_image_base64?: string|null}|null
      */
     public static function verifyFaceForRegistration(string $imageBase64): ?array
     {
@@ -64,8 +64,14 @@ class FaceAuthService
                     'descriptor' => null,
                     'message' => 'Liveness confidence too low for registration. Please use a clearer capture or complete guided liveness.',
                     'spoof_confidence' => $spoof,
+                    'reference_image_base64' => $base['reference_image_base64'] ?? null,
                 ];
             }
+        }
+
+        // Always retain the registration capture as a fallback reference photo for View Face.
+        if (empty($base['reference_image_base64'])) {
+            $base['reference_image_base64'] = $imageBase64;
         }
 
         return $base;
@@ -75,7 +81,7 @@ class FaceAuthService
      * Extract 512D descriptor via Python /verify endpoint.
      *
      * @param  string  $imageBase64  Base64-encoded face image
-     * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float}|null
+     * @return array{is_live: bool, descriptor: array|null, message: string, spoof_confidence?: float, reference_image_base64?: string|null}|null
      */
     public static function verifyFace(string $imageBase64): ?array
     {
@@ -90,6 +96,8 @@ class FaceAuthService
             return null;
         }
 
+        $referenceImage = $data['reference_image_base64'] ?? $data['reference_image'] ?? null;
+
         return [
             'is_live' => (bool) ($data['is_live'] ?? false),
             'descriptor' => isset($data['descriptor']) && is_array($data['descriptor'])
@@ -98,6 +106,9 @@ class FaceAuthService
             'message' => (string) ($data['message'] ?? ''),
             'spoof_confidence' => isset($data['spoof_confidence'])
                 ? (float) $data['spoof_confidence']
+                : null,
+            'reference_image_base64' => is_string($referenceImage) && trim($referenceImage) !== ''
+                ? trim($referenceImage)
                 : null,
         ];
     }

@@ -4075,6 +4075,7 @@ export async function getEmployees(params = {}) {
   if (params.active_filter) query.set('active_filter', String(params.active_filter))
   if (params.schedule_filter) query.set('schedule_filter', String(params.schedule_filter))
   if (params.face_filter) query.set('face_filter', String(params.face_filter))
+  if (params.salary_filter) query.set('salary_filter', String(params.salary_filter))
   if (params.q) query.set('q', String(params.q))
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))
@@ -6595,7 +6596,10 @@ export function companyLogoUrl(company) {
 }
 
 export async function getCompanies(params = {}) {
-  const path = params.fresh ? `/admin/companies?_ts=${Date.now()}` : '/admin/companies'
+  const query = new URLSearchParams()
+  if (params.lite) query.set('lite', '1')
+  if (params.fresh) query.set('_ts', String(Date.now()))
+  const path = `/admin/companies${query.toString() ? `?${query.toString()}` : ''}`
   return cachedAuthenticatedGetJson(path, {
     ttlMs: params.fresh ? 0 : 5 * 60 * 1000,
     signal: params.signal,

@@ -46,15 +46,19 @@ class CompanyController extends Controller
             abort(403, 'The Company module is not available for your role.');
         }
 
-        $employeeCounts = $this->companyEmployeeCountsSubquery();
-
+        $lite = $request->boolean('lite');
         $companiesQuery = Company::query()
             ->select('companies.*')
-            ->leftJoinSub($employeeCounts, 'employee_counts', 'employee_counts.company_id', '=', 'companies.id')
-            ->addSelect(DB::raw('COALESCE(employee_counts.total_employees, 0) as total_employees'))
             ->with('companyHead:id,name,first_name,middle_name,last_name,suffix,profile_image,email')
-            ->withCount(['areas', 'branches', 'departments as departments_count'])
             ->orderBy('name');
+
+        if (! $lite) {
+            $employeeCounts = $this->companyEmployeeCountsSubquery();
+            $companiesQuery
+                ->leftJoinSub($employeeCounts, 'employee_counts', 'employee_counts.company_id', '=', 'companies.id')
+                ->addSelect(DB::raw('COALESCE(employee_counts.total_employees, 0) as total_employees'))
+                ->withCount(['areas', 'branches', 'departments as departments_count']);
+        }
 
         $this->dataScopeService->restrictCompanyQuery($request->user(), $companiesQuery);
 
@@ -65,7 +69,7 @@ class CompanyController extends Controller
 
         return response()->json([
             'companies' => $companies->map(
-                fn (Company $c) => $this->companyResponse($c, $officersByCompany->get((int) $c->id)),
+                fn (Company $c) => $this->companyResponse($c, $officersByCompany->get((int) $c->id), $lite),
             ),
         ]);
     }
@@ -349,7 +353,7 @@ class CompanyController extends Controller
         return $this->leadershipAssignments->officerInChargeByCompanyIds([$companyId])->get($companyId);
     }
 
-    private function companyResponse(Company $c, ?User $officerInCharge = null): array
+    private function companyResponse(Company $c, ?User $officerInCharge = null, bool $lite = false): array
     {
         return [
             'id' => $c->id,
@@ -369,10 +373,10 @@ class CompanyController extends Controller
             'tin' => $c->tin,
             'address' => $c->address,
             'founded_at' => $c->founded_at?->format('Y-m-d'),
-            'branches_count' => $c->branches_count ?? 0,
-            'areas_count' => $c->areas_count ?? 0,
-            'departments_count' => $c->departments_count ?? 0,
-            'total_employees' => $c->total_employees ?? 0,
+            'branches_count' => $lite ? null : ($c->branches_count ?? 0),
+            'areas_count' => $lite ? null : ($c->areas_count ?? 0),
+            'departments_count' => $lite ? null : ($c->departments_count ?? 0),
+            'total_employees' => $lite ? null : ($c->total_employees ?? 0),
             'created_at' => $c->created_at?->toIso8601String(),
         ];
     }

@@ -221,6 +221,7 @@ export default function AdminEmployeeCompensationPage() {
   const [branches, setBranches] = useState([])
   const [filterCompany, setFilterCompany] = useState('')
   const [filterBranch, setFilterBranch] = useState('')
+  const [filterSalary, setFilterSalary] = useState('')
   /** Single selected employee payload from GET /admin/employee-compensation (cached per id in compensationCacheRef). */
   const [detailEntry, setDetailEntry] = useState(null)
   const [employeeSearch, setEmployeeSearch] = useState('')
@@ -276,10 +277,11 @@ export default function AdminEmployeeCompensationPage() {
       const trimmed = String(searchTerm || '').trim()
       const employeeRes = await getEmployees({
         q: searchTerm,
-        per_page: 100,
+        // Full roster (cap 2000). per_page:100 was cutting off after ~M surnames.
+        for_schedule_assignment: true,
+        fresh: true,
         ...(filterCompany ? { company_id: filterCompany } : {}),
         ...(filterBranch ? { branch_id: filterBranch } : {}),
-        ...(trimmed || filterCompany || filterBranch ? { fresh: true } : {}),
       })
       const employeeRows = Array.isArray(employeeRes?.employees) ? employeeRes.employees : []
       setEmployees(employeeRows)
@@ -484,7 +486,7 @@ export default function AdminEmployeeCompensationPage() {
         if (!next.has('employee_id')) return prev
         next.delete('employee_id')
         return next
-      }, { replace: true })
+      }, { replace: true, preventScrollReset: true })
       return
     }
     setSearchParams((prev) => {
@@ -492,7 +494,7 @@ export default function AdminEmployeeCompensationPage() {
       if (next.get('employee_id') === String(id)) return prev
       next.set('employee_id', String(id))
       return next
-    }, { replace: true })
+    }, { replace: true, preventScrollReset: true })
   }, [activeEmployeeId, setSearchParams])
 
   useEffect(() => {
@@ -546,9 +548,26 @@ export default function AdminEmployeeCompensationPage() {
     return null
   }, [employees, activeEmployeeId, detailEntry])
 
+  const visibleEmployees = useMemo(() => {
+    if (filterSalary === 'without_salary') {
+      return employees.filter((employee) => !employee?.has_basic_salary)
+    }
+    if (filterSalary === 'with_salary') {
+      return employees.filter((employee) => Boolean(employee?.has_basic_salary))
+    }
+    return employees
+  }, [employees, filterSalary])
+
+  useEffect(() => {
+    if (!filterSalary) return
+    if (visibleEmployees.some((employee) => Number(employee.id) === Number(activeEmployeeId))) return
+    setActiveEmployeeId(visibleEmployees.length > 0 ? visibleEmployees[0].id : null)
+  }, [filterSalary, visibleEmployees, activeEmployeeId])
+
   const activeCompensation = detailEntry?.employee?.id === activeEmployeeId ? detailEntry : null
   const activeEmployeePhoto = employeeAvatarSrc(activeEmployee)
-  const activeEmployeeFallbackClass = getEmployeeAvatarColorClass(activeEmployee?.id, activeEmployee?.name)
+  const activeEmployeeName = employeeDisplayName(activeEmployee)
+  const activeEmployeeFallbackClass = getEmployeeAvatarColorClass(activeEmployee?.id, activeEmployeeName)
 
   const summary = activeCompensation?.summary || {}
   const earnings = summary.earnings || []
@@ -974,7 +993,7 @@ export default function AdminEmployeeCompensationPage() {
               <h2 className="text-lg font-semibold text-foreground">Employees</h2>
               <p className="text-sm text-muted-foreground">Search and choose one</p>
             </div>
-            <Badge className="rounded-full bg-brand/10 text-brand hover:bg-brand/10">{activeEmployee ? 1 : 0}</Badge>
+            <Badge className="rounded-full bg-brand/10 text-brand hover:bg-brand/10">{visibleEmployees.length}</Badge>
           </div>
 
           <label className="relative mt-4 block">
@@ -1031,6 +1050,19 @@ export default function AdminEmployeeCompensationPage() {
                 ))}
               </select>
             </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Salary setup</span>
+              <select
+                value={filterSalary}
+                onChange={(event) => setFilterSalary(event.target.value)}
+                className={inputClass}
+                aria-label="Filter employees by salary assignment"
+              >
+                <option value="">All employees</option>
+                <option value="without_salary">No basic salary yet</option>
+                <option value="with_salary">Has basic salary</option>
+              </select>
+            </label>
           </div>
 
           <div ref={employeeListScrollRef} className={cn('mt-4 max-h-[720px] space-y-2 overflow-y-auto pr-1', listRefreshing && 'opacity-90')}>
@@ -1038,21 +1070,23 @@ export default function AdminEmployeeCompensationPage() {
               Array.from({ length: 8 }).map((_, index) => (
                 <div key={index} className="h-20 animate-pulse rounded-xl bg-muted" />
               ))
-            ) : employees.length === 0 ? (
+            ) : visibleEmployees.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-                {filterCompany || filterBranch || String(employeeSearch || '').trim()
+                {filterCompany || filterBranch || filterSalary || String(employeeSearch || '').trim()
                   ? 'No employees matched your filters.'
                   : 'No employees matched your search.'}
               </div>
             ) : (
-              employees.map((employee) => {
+              visibleEmployees.map((employee) => {
                 const active = activeEmployeeId === employee.id
+                const listName = employeeDisplayName(employee)
                 const photo = employeeAvatarSrc(employee)
-                const fallbackClass = getEmployeeAvatarColorClass(employee.id, employee.name)
+                const fallbackClass = getEmployeeAvatarColorClass(employee.id, listName)
                 return (
                   <button
                     key={employee.id}
                     type="button"
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => selectEmployee(employee)}
                     className={`w-full rounded-xl border px-3 py-3 text-left transition ${
                       active
@@ -1062,13 +1096,13 @@ export default function AdminEmployeeCompensationPage() {
                   >
                     <div className="flex items-center gap-3">
                       <Avatar className="size-11 border border-border/70">
-                        <AvatarImage src={photo || undefined} alt={employee.name} className="object-cover" />
+                        <AvatarImage src={photo || undefined} alt={listName} className="object-cover" />
                         <AvatarFallback className={cn('font-semibold', fallbackClass)}>
-                          {initials(employee.name)}
+                          {initials(listName)}
                         </AvatarFallback>
                       </Avatar>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-foreground">{employee.name}</p>
+                        <p className="truncate text-sm font-semibold text-foreground">{listName}</p>
                         <p className="mt-1 truncate text-xs text-muted-foreground">
                           {[employee.position || 'No position', employee.department].filter(Boolean).join(' · ') || 'No position'}
                         </p>
@@ -1113,14 +1147,14 @@ export default function AdminEmployeeCompensationPage() {
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
                   <div className="flex items-center gap-4">
                     <Avatar className="size-16 border border-border/70">
-                      <AvatarImage src={activeEmployeePhoto || undefined} alt={activeEmployee.name} className="object-cover" />
+                      <AvatarImage src={activeEmployeePhoto || undefined} alt={activeEmployeeName} className="object-cover" />
                       <AvatarFallback className={cn('text-lg font-bold', activeEmployeeFallbackClass)}>
-                        {initials(activeEmployee.name)}
+                        {initials(activeEmployeeName)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-2xl font-semibold text-foreground">{activeEmployee.name}</h2>
+                        <h2 className="text-2xl font-semibold text-foreground">{activeEmployeeName}</h2>
                         <Badge className="rounded-full bg-muted text-muted-foreground hover:bg-muted">{activeEmployee.employee_code || 'No code'}</Badge>
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">{activeEmployee.position || 'No position assigned'}</p>
@@ -1854,8 +1888,29 @@ function Field({ label, children, required = false }) {
   )
 }
 
+function employeeDisplayName(employee) {
+  if (!employee || typeof employee !== 'object') return '—'
+  return (
+    employee.formatted_name
+    || employee.full_name_last_first
+    || employee.display_name
+    || employee.name
+    || [employee.last_name, employee.first_name].filter(Boolean).join(', ')
+    || '—'
+  )
+}
+
 function initials(name) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+  const raw = String(name || '').trim()
+  if (!raw || raw === '—') return 'HR'
+  if (raw.includes(',')) {
+    const [lastPart, rest] = raw.split(',').map((part) => part.trim())
+    const firstToken = String(rest || '').split(/\s+/).filter(Boolean)[0] || ''
+    const lastToken = String(lastPart || '').split(/\s+/).filter(Boolean)[0] || ''
+    const pair = `${firstToken[0] || ''}${lastToken[0] || ''}`.toUpperCase()
+    return pair || 'HR'
+  }
+  const parts = raw.split(/\s+/).filter(Boolean)
   if (parts.length === 0) return 'HR'
   const first = parts[0]?.[0] || ''
   const second = parts[1]?.[0] || first

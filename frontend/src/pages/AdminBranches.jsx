@@ -70,7 +70,7 @@ function buildBranchManagerMap(branches, excludeBranchId) {
 }
 
 /** Searchable Branch Manager picker - cross-company active employee search. */
-function BranchManagerPicker({ value, onChange, employees, branches, companies, companyId, excludeBranchId, disabled, triggerClassName }) {
+function BranchManagerPicker({ value, onChange, employees, branches, companies, excludeBranchId, disabled, triggerClassName }) {
   const [open, setOpen] = useState(false)
   const branchManagerMap = useMemo(() => buildBranchManagerMap(branches, excludeBranchId), [branches, excludeBranchId])
   /** Map: userId -> companyName for employees who are company heads */
@@ -252,6 +252,7 @@ export default function AdminBranches() {
   const [areas, setAreas] = useState([])
   const [allEmployees, setAllEmployees] = useState([])
   const [loading, setLoading] = useState(true)
+  const [countsRefreshing, setCountsRefreshing] = useState(false)
   const [page, setPage] = useState(1)
 
   // Read initial company filter from URL
@@ -298,7 +299,7 @@ export default function AdminBranches() {
 
   useDismissOnRouteChange(dismissOverlays)
 
-  // Sync URL param when filter changes
+  // Sync URL param only when it actually changes; repeated replace() calls can retrigger the org route loader.
   useEffect(() => {
     const nextParams = new URLSearchParams()
     if (companyFilter) {
@@ -349,24 +350,43 @@ export default function AdminBranches() {
     }
   }, [])
 
-  // Initial list: branches + company filter options in parallel (areas deferred until modal)
+  // Initial list: render a lightweight shell first, then refresh expensive counts.
   useOrgModuleLoad(async ({ signal, isStale }) => {
     setLoading(true)
+    setCountsRefreshing(false)
     try {
       const branchParams = companyFilter ? { company_id: companyFilter, signal } : { signal }
       const [branchRes, companyRes] = await Promise.all([
-        getBranches(branchParams),
-        getCompanies({ signal }),
+        getBranches({ ...branchParams, lite: true }),
+        getCompanies({ signal, lite: true }),
+      ])
+      if (isStale()) return
+      setBranches(branchRes.branches || [])
+      setCompanies(companyRes.companies || [])
+      setLoading(false)
+    } catch (e) {
+      if (isStale() || e?.name === 'AbortError') return
+      setBranches([])
+      toast({ title: 'Failed to load branches', description: e?.message || 'Please try again.', variant: 'error' })
+      setLoading(false)
+      return
+    }
+
+    setCountsRefreshing(true)
+    try {
+      const fullBranchParams = companyFilter ? { company_id: companyFilter, signal, fresh: true } : { signal, fresh: true }
+      const [branchRes, companyRes] = await Promise.all([
+        getBranches(fullBranchParams),
+        getCompanies({ signal, fresh: true }),
       ])
       if (isStale()) return
       setBranches(branchRes.branches || [])
       setCompanies(companyRes.companies || [])
     } catch (e) {
       if (isStale() || e?.name === 'AbortError') return
-      setBranches([])
-      toast({ title: 'Failed to load branches', description: e?.message || 'Please try again.', variant: 'error' })
+      // Keep the lite shell visible; counts can retry on next visit/filter change.
     } finally {
-      if (!isStale()) setLoading(false)
+      if (!isStale()) setCountsRefreshing(false)
     }
   }, [companyFilter, toast])
 
@@ -610,6 +630,12 @@ export default function AdminBranches() {
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
+        {countsRefreshing ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 px-3 py-1 text-xs font-semibold text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" />
+            Updating counts
+          </span>
+        ) : null}
         {companyFilter && (
           <Button variant="ghost" size="sm" className="h-9 rounded-xl px-3 text-xs font-semibold text-muted-foreground hover:text-foreground" onClick={() => setCompanyFilter('')}>
             Clear filter
@@ -709,16 +735,16 @@ export default function AdminBranches() {
                             title="View departments"
                           >
                             <Layers className="size-3 shrink-0" />
-                            {branch.departments_count ?? 0} Departments
+                            {branch.departments_count == null ? '—' : branch.departments_count} Departments
                           </button>
                           <button
                             type="button"
                             onClick={() => openEmployeesModal(branch)}
                             className="inline-flex items-center gap-1.5 rounded-xl bg-muted px-4 py-2 text-sm font-bold text-foreground transition-colors hover:bg-muted/80"
-                            title={`${branch.employees_count ?? 0} employee(s) in this branch`}
+                            title={branch.employees_count == null ? 'Employee count is loading' : `${branch.employees_count} employee(s) in this branch`}
                           >
                             <Users className="size-3 shrink-0" />
-                            {branch.employees_count ?? 0} Employees
+                            {branch.employees_count == null ? '—' : branch.employees_count} Employees
                           </button>
                           <div className="ml-auto">
                             <DropdownMenu>
@@ -863,7 +889,6 @@ export default function AdminBranches() {
                   employees={allEmployees}
                   branches={branches}
                   companies={companies}
-                  companyId={createCompanyId}
                   excludeBranchId={null}
                   disabled={createSubmitting}
                   triggerClassName="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35"
@@ -966,7 +991,6 @@ export default function AdminBranches() {
                   employees={allEmployees}
                   branches={branches}
                   companies={companies}
-                  companyId={editCompanyId}
                   excludeBranchId={editBranch?.id}
                   disabled={editSubmitting}
                   triggerClassName="h-12 rounded-xl border-border/80 bg-background px-4 text-sm shadow-sm dark:bg-input/35"
