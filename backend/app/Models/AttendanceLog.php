@@ -23,6 +23,19 @@ class AttendanceLog extends Model
     /** Direct admin manual attendance (no approval workflow) */
     public const AUTH_METHOD_ADMIN_MANUAL = 'Admin Manual Attendance';
 
+    /**
+     * Synthetic / non-kiosk punches that must not appear on the login kiosk Recent Activity feed.
+     *
+     * @return list<string>
+     */
+    public static function nonKioskRecentAuthMethods(): array
+    {
+        return [
+            self::AUTH_METHOD_ADMIN_MANUAL,
+            self::AUTH_METHOD_HR_APPROVED_CORRECTION,
+        ];
+    }
+
     protected $fillable = [
         'user_id',
         'type',

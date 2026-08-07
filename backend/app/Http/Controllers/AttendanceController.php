@@ -3412,8 +3412,9 @@ class AttendanceController extends Controller
 
         $logEntries = AttendanceLog::query()
             ->where(function ($q) {
+                // Kiosk feed is live punches only — hide synthetic correction / admin manual rows.
                 $q->whereNull('authentication_method')
-                    ->orWhere('authentication_method', '!=', AttendanceLog::AUTH_METHOD_ADMIN_MANUAL);
+                    ->orWhereNotIn('authentication_method', AttendanceLog::nonKioskRecentAuthMethods());
             })
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
