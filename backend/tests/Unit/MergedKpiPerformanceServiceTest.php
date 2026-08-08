@@ -67,9 +67,26 @@ class MergedKpiPerformanceServiceTest extends TestCase
 
         $this->assertIsFloat($rows->get(1660)['performance_percentage']);
         $this->assertIsFloat($rows->get(1671)['performance_percentage']);
-        $this->assertSame('merged_kpi_period_snapshots', $rows->get(1660)['source']);
+        // Month ranges prefer merge "Avg efficiency" (monthly overall_efficiency).
+        $this->assertSame('merged_user_efficiency_breakdowns', $rows->get(1660)['source']);
         $this->assertArrayHasKey(3, $bundle['by_company']->all());
         $this->assertIsFloat($bundle['by_company']->get(3));
+    }
+
+    public function test_month_range_uses_merge_avg_efficiency(): void
+    {
+        $service = app(MergedKpiPerformanceService::class);
+        $bundle = $service->getPerformanceForRange('2026-08-01', '2026-08-31', [1660, 1830]);
+
+        $malubay = $bundle['by_employee']->get(1660);
+        $bernabe = $bundle['by_employee']->get(1830);
+
+        $this->assertNotNull($malubay);
+        $this->assertNotNull($bernabe);
+        $this->assertSame('merged_user_efficiency_breakdowns', $malubay['source']);
+        $this->assertSame(93.0, $malubay['performance_percentage']);
+        $this->assertSame(93.0, $malubay['period_efficiency_percentage']);
+        $this->assertSame(98.0, $bernabe['performance_percentage']);
     }
 
     public function test_period_snapshots_attach_performance_to_dates(): void
@@ -100,16 +117,16 @@ class MergedKpiPerformanceServiceTest extends TestCase
         $this->assertTrue($bundle['by_company']->isEmpty());
     }
 
-    public function test_single_day_uses_per_employee_latest_snapshot_when_today_is_missing(): void
+    public function test_single_day_keeps_snapshot_source_not_monthly_efficiency(): void
     {
         $service = app(MergedKpiPerformanceService::class);
-        // Live has a 2026-07-18 snapshot for 1671 only; 1660 should look back to 2026-07-17.
         $bundle = $service->getPerformanceForRange('2026-07-18', '2026-07-18', [1660, 1671]);
         $row = $bundle['by_employee']->get(1660);
 
         $this->assertNotNull($row);
         $this->assertIsFloat($row['performance_percentage']);
-        $this->assertSame('2026-07-17', $row['as_of_date'] ?? null);
+        $this->assertSame('merged_kpi_period_snapshots', $row['source']);
+        $this->assertNull($row['period_efficiency_percentage'] ?? null);
         $this->assertArrayHasKey('2026-07-18', $row['by_date']);
         $this->assertArrayHasKey(3, $bundle['by_company']->all());
     }
@@ -123,9 +140,11 @@ class MergedKpiPerformanceServiceTest extends TestCase
 
         $this->assertNotNull($kurt);
         $this->assertNotNull($laurence);
-        $this->assertSame('merged_kpi_period_snapshots', $kurt['source']);
-        $this->assertSame(33.33, $kurt['performance_percentage']);
-        $this->assertSame(80.0, $laurence['performance_percentage']);
+        // Headline score is monthly Avg efficiency; daily history still uses contributor rows.
+        $this->assertSame('merged_user_efficiency_breakdowns', $kurt['source']);
+        $this->assertSame(73.0, $kurt['performance_percentage']);
+        $this->assertSame(85.0, $laurence['performance_percentage']);
         $this->assertArrayHasKey('2026-07-17', $kurt['by_date']);
+        $this->assertIsFloat($kurt['by_date']['2026-07-17']);
     }
 }

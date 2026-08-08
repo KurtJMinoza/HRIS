@@ -96,17 +96,23 @@ class EmployeeDashboardController extends Controller
         krsort($byDate);
         $latestKpiDate = $byDate !== [] ? array_key_first($byDate) : null;
         $performancePct = round((float) $performance['performance_percentage'], 2);
-        $snapshotAveragePct = $byDate !== []
-            ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
-            : $performancePct;
         $source = (string) ($performance['source'] ?? 'merged_kpi_period_snapshots');
+        // Prefer merge monthly Avg efficiency; do not recompute from daily snapshot mixes.
+        $snapshotAveragePct = $source === 'merged_user_efficiency_breakdowns'
+            ? $performancePct
+            : ($byDate !== []
+                ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
+                : $performancePct);
+        $sourceLabel = match ($source) {
+            'merged_user_efficiency_breakdowns' => 'Avg efficiency',
+            'merged_kpi_user_averages' => 'KPI overall average',
+            default => 'KPI snapshots',
+        };
 
         return response()->json([
             'performance' => [
                 'source' => $source,
-                'source_label' => $source === 'merged_kpi_user_averages'
-                    ? 'KPI overall average'
-                    : 'KPI snapshots',
+                'source_label' => $sourceLabel,
                 'from_date' => $monthStartDate,
                 'to_date' => $monthEndDate,
                 'as_of_date' => $performance['as_of_date'] ?? null,

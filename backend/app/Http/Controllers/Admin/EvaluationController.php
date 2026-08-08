@@ -1105,17 +1105,22 @@ class EvaluationController extends Controller
         $performancePct = is_array($performance) && isset($performance['performance_percentage'])
             ? round((float) $performance['performance_percentage'], 2)
             : null;
-        $snapshotAveragePct = $byDate !== []
-            ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
-            : $performancePct;
         $performanceSource = is_array($performance)
             ? (string) ($performance['source'] ?? 'merged_kpi_period_snapshots')
             : null;
+        $snapshotAveragePct = $performanceSource === 'merged_user_efficiency_breakdowns' && $performancePct !== null
+            ? $performancePct
+            : ($byDate !== []
+                ? round(array_sum(array_map('floatval', $byDate)) / count($byDate), 2)
+                : $performancePct);
+        $sourceLabel = match ($performanceSource) {
+            'merged_user_efficiency_breakdowns' => 'Avg efficiency',
+            'merged_kpi_user_averages' => 'KPI overall average',
+            default => 'KPI snapshots',
+        };
         $performancePayload = is_array($performance) && $performancePct !== null ? [
             'source' => $performanceSource,
-            'source_label' => $performanceSource === 'merged_kpi_user_averages'
-                ? 'KPI overall average'
-                : 'KPI snapshots',
+            'source_label' => $sourceLabel,
             'from_date' => $monthStart->toDateString(),
             'to_date' => $monthEnd->toDateString(),
             'as_of_date' => $performance['as_of_date'] ?? null,

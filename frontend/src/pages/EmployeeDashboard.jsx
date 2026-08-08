@@ -2487,9 +2487,11 @@ export default function EmployeeDashboard() {
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {hasPerformanceSnapshotAverage
-                        ? (performanceWidget?.source === 'merged_kpi_user_averages'
-                          ? 'Overall KPI average'
-                          : 'Monthly KPI snapshot result')
+                        ? (performanceWidget?.source === 'merged_user_efficiency_breakdowns'
+                          ? 'Monthly avg efficiency'
+                          : performanceWidget?.source === 'merged_kpi_user_averages'
+                            ? 'Overall KPI average'
+                            : 'Monthly KPI snapshot result')
                         : 'No monthly KPI snapshots'}
                     </p>
                   </div>
@@ -3591,7 +3593,11 @@ export default function EmployeeDashboard() {
                             {hasPerformanceSnapshotAverage ? Number(performanceSnapshotAveragePercentage).toFixed(2) : '—'}
                             {hasPerformanceSnapshotAverage ? <span className="ml-1 text-xl font-semibold text-muted-foreground">%</span> : null}
                           </p>
-                          <p className="mt-2 text-sm font-semibold text-foreground">KPI snapshot average for {getMonthLabel()}</p>
+                          <p className="mt-2 text-sm font-semibold text-foreground">
+                            {performanceWidget?.source === 'merged_user_efficiency_breakdowns'
+                              ? `Avg efficiency for ${getMonthLabel()}`
+                              : `KPI snapshot average for ${getMonthLabel()}`}
+                          </p>
                           <p className="mt-1 text-sm text-muted-foreground">
                             {performanceWidget?.latest_rating || 'No rating yet'} · Latest snapshot: {performanceWidget?.latest_date || '—'}
                           </p>

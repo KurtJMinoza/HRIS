@@ -11,10 +11,12 @@ use Throwable;
 /**
  * Date-aware KPI performance from mergedatabase-live (connection: mergedatabase).
  * Powers employee KPI Performance and admin Company Efficiency performance.
- * Scores come from merged_kpi_period_snapshots in the selected range, including
- * per-contributor progress for sub-assignees.
- * When a short range (e.g. Today) has no snapshots yet, falls back to the
- * latest DAILY snapshot on or before the end date (lookback window).
+ *
+ * Primary month score is merge "Avg efficiency"
+ * (`merged_user_efficiency_breakdowns.overall_efficiency`, MONTHLY).
+ * Daily history still comes from merged_kpi_period_snapshots (contributor progress).
+ * When a short range (e.g. Today) has no monthly efficiency, falls back to
+ * snapshots / identity averages, with lookback for empty ETL lag.
  */
 class MergedKpiPerformanceService
 {
@@ -75,9 +77,13 @@ class MergedKpiPerformanceService
 
             $periodStats = $this->loadPeriodStatsBySourceUser($effectiveFrom, $effectiveTo);
             $companyAvgsFromSnapshots = $this->loadCompanyAveragesFromSnapshots($effectiveFrom, $effectiveTo);
+            // Month/week ranges use merge Avg efficiency. Single-day views keep snapshot lookback.
+            $monthlyEfficiency = $fromDate === $toDate
+                ? []
+                : $this->loadMonthlyEfficiencyBySourceUser($fromDate, $toDate);
 
             // Today / empty ETL lag: use latest daily snapshot on or before end date.
-            if ($periodStats === [] && $companyAvgsFromSnapshots === []) {
+            if ($periodStats === [] && $companyAvgsFromSnapshots === [] && $monthlyEfficiency === []) {
                 $fallbackDate = $this->latestDailySnapshotDateOnOrBefore(
                     $toDate,
                     self::EMPTY_RANGE_LOOKBACK_DAYS,
@@ -88,6 +94,9 @@ class MergedKpiPerformanceService
                     $asOfDate = $fallbackDate;
                     $periodStats = $this->loadPeriodStatsBySourceUser($effectiveFrom, $effectiveTo);
                     $companyAvgsFromSnapshots = $this->loadCompanyAveragesFromSnapshots($effectiveFrom, $effectiveTo);
+                    if ($monthlyEfficiency === []) {
+                        $monthlyEfficiency = $this->loadMonthlyEfficiencyBySourceUser($effectiveFrom, $effectiveTo);
+                    }
                 }
             }
 
@@ -157,8 +166,15 @@ class MergedKpiPerformanceService
                 $byDate = is_array($period) && is_array($period['by_date'] ?? null)
                     ? $period['by_date']
                     : [];
+                $periodEfficiency = $monthlyEfficiency[$sourceUserId] ?? null;
 
-                if (is_array($period) && $byDate !== [] && isset($period['average_percent'])) {
+                // Merge portal "Avg efficiency" for the selected month(s) wins over
+                // recomputed snapshot day averages (which mix contributor_progress rows).
+                if ($periodEfficiency !== null) {
+                    $pct = $periodEfficiency;
+                    $source = 'merged_user_efficiency_breakdowns';
+                    $snapshotCount = (int) ($period['snapshot_count'] ?? count($byDate));
+                } elseif (is_array($period) && $byDate !== [] && isset($period['average_percent'])) {
                     $pct = (float) $period['average_percent'];
                     $source = 'merged_kpi_period_snapshots';
                     $snapshotCount = (int) ($period['snapshot_count'] ?? count($byDate));
@@ -184,9 +200,11 @@ class MergedKpiPerformanceService
                     'by_date' => $byDate,
                     'overall_percent' => is_array($identity) ? ($identity['overall_percent'] ?? null) : null,
                     'average_percent' => is_array($identity) ? ($identity['average_percent'] ?? null) : null,
-                    'overall_efficiency' => is_array($identity) ? ($identity['overall_efficiency'] ?? null) : null,
+                    'overall_efficiency' => $periodEfficiency
+                        ?? (is_array($identity) ? ($identity['overall_efficiency'] ?? null) : null),
                     'task_efficiency' => is_array($identity) ? ($identity['task_efficiency'] ?? null) : null,
                     'ticket_efficiency' => is_array($identity) ? ($identity['ticket_efficiency'] ?? null) : null,
+                    'period_efficiency_percentage' => $periodEfficiency,
                     'performance_level' => $scoring->ratingLabelFromPercentage($pct),
                     'source' => $source,
                     'as_of_date' => $asOfBySource[$sourceUserId] ?? $asOfDate,
@@ -272,6 +290,65 @@ class MergedKpiPerformanceService
         }
 
         return null;
+    }
+
+    /**
+     * Merge portal "Avg efficiency" for MONTHLY periods covering the range.
+     *
+     * @return array<int, float> source_user_id => overall_efficiency
+     */
+    private function loadMonthlyEfficiencyBySourceUser(string $fromDate, string $toDate): array
+    {
+        if (! $this->connectionReady()) {
+            return [];
+        }
+
+        $periodKeys = [];
+        $cursor = Carbon::parse($fromDate)->startOfMonth();
+        $end = Carbon::parse($toDate)->startOfMonth();
+        while ($cursor->lte($end)) {
+            $periodKeys[] = $cursor->format('Y-m');
+            $cursor->addMonth();
+        }
+        if ($periodKeys === []) {
+            return [];
+        }
+
+        try {
+            $rows = DB::connection(self::CONNECTION)
+                ->table('merged_user_efficiency_breakdowns')
+                ->where('frequency', 'MONTHLY')
+                ->whereIn('period_key', $periodKeys)
+                ->whereNotNull('overall_efficiency')
+                ->get(['source_user_id', 'period_key', 'overall_efficiency']);
+        } catch (Throwable $e) {
+            Log::warning('[MergedKpiPerformance] failed to load monthly avg efficiency', [
+                'message' => $e->getMessage(),
+                'from' => $fromDate,
+                'to' => $toDate,
+            ]);
+
+            return [];
+        }
+
+        $buckets = [];
+        foreach ($rows as $row) {
+            $sourceUserId = (int) ($row->source_user_id ?? 0);
+            if ($sourceUserId <= 0 || ! is_numeric($row->overall_efficiency)) {
+                continue;
+            }
+            $buckets[$sourceUserId][] = max(0.0, min(100.0, (float) $row->overall_efficiency));
+        }
+
+        $out = [];
+        foreach ($buckets as $sourceUserId => $values) {
+            if ($values === []) {
+                continue;
+            }
+            $out[$sourceUserId] = round(array_sum($values) / count($values), 2);
+        }
+
+        return $out;
     }
 
     /**
