@@ -103,6 +103,23 @@ class OrgApprovalWorkflowService
                     ->delete();
                 ReviewRequestCache::forget($moduleType, $requestId);
             } elseif ($isPending && $this->chainNeedsSync($existing, $steps, $moduleType)) {
+                // Wrong/stale request org snapshots can re-resolve to HR-only and wipe the
+                // current Department Head (etc.) step mid-approve — keep the active chain.
+                if ($this->wouldDropActiveOrgPendingApprover($existing, $steps)) {
+                    Log::warning('approval_chain: refusing sync that would drop active org pending approver', [
+                        'module_type' => $moduleType,
+                        'request_id' => $requestId,
+                        'existing_count' => $existing->count(),
+                        'resolved_count' => count($steps),
+                        'pending_approver_id' => $existing
+                            ->first(fn (OrgApprovalRecord $record): bool => $record->approval_status === OrgApprovalRecord::STATUS_PENDING
+                                && $record->approver_role !== HrRole::AdminHr->value)
+                            ?->approver_id,
+                    ]);
+
+                    return $existing;
+                }
+
                 Log::info('approval_chain: syncing org approval records for pending request', [
                     'module_type' => $moduleType,
                     'request_id' => $requestId,
@@ -241,6 +258,39 @@ class OrgApprovalWorkflowService
                 default => $userQuery->whereRaw('1 = 0'),
             };
         });
+    }
+
+    /**
+     * True when a re-resolved chain would remove a still-pending non-HR approver
+     * (e.g. stale overtime company/department snapshot resolves to Admin HR only).
+     *
+     * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
+     * @param  array<int, array<string, mixed>>  $steps
+     */
+    private function wouldDropActiveOrgPendingApprover(EloquentCollection $existing, array $steps): bool
+    {
+        $pendingOrg = $existing->first(
+            fn (OrgApprovalRecord $record): bool => $record->approval_status === OrgApprovalRecord::STATUS_PENDING
+                && $record->approver_role !== HrRole::AdminHr->value
+                && (int) ($record->approver_id ?? 0) > 0
+        );
+
+        if ($pendingOrg === null) {
+            return false;
+        }
+
+        foreach ($steps as $step) {
+            $role = $step['approver_role'] ?? null;
+            $roleValue = $role instanceof HrRole ? $role->value : (string) $role;
+            if ($roleValue === HrRole::AdminHr->value) {
+                continue;
+            }
+            if ((int) ($step['approver_id'] ?? 0) === (int) $pendingOrg->approver_id) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
