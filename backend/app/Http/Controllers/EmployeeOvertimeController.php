@@ -1324,12 +1324,12 @@ class EmployeeOvertimeController extends Controller
             $attachmentPath = $request->file('attachment')->store('overtime_attachments', 'public');
         }
 
-        $stage = $this->hrApprovalChainResolver->initialApprovalStage(
+        $stage = (string) ($routing['initial_stage'] ?? $this->hrApprovalChainResolver->initialApprovalStage(
             $user,
             true,
             OrgApprovalWorkflowService::MODULE_OVERTIME,
             $assignmentContext,
-        );
+        ));
         $hrApproverId = $routing['hr_approver']?->id;
         if (! $hrApproverId) {
             throw ValidationException::withMessages([
@@ -1390,6 +1390,10 @@ class EmployeeOvertimeController extends Controller
             return collect($rows);
         });
 
+        $employeeLabel = $user->display_name ?? $user->name ?? 'An employee';
+        $notificationService = $this->notificationService;
+        $emailTrigger = $this->emailTrigger;
+        $overtimeIds = [];
         foreach ($overtimes as $overtime) {
             $this->approvalWorkflowService->ensureRecordsForRequest(
                 $overtime,
@@ -1397,32 +1401,35 @@ class EmployeeOvertimeController extends Controller
                 $user,
                 $user,
             );
-
-            $this->notificationService->notifyCurrentApprover(
-                $overtime,
-                OrgApprovalWorkflowService::MODULE_OVERTIME,
-                'overtime',
-                'overtime.needs_approval',
-                'Overtime request needs approval',
-                ($user->display_name ?? $user->name ?? 'An employee').' filed an overtime request.',
-                '/admin/overtime?review_id='.$overtime->id,
-            );
-            $this->emailTrigger->overtimeFiled($overtime);
+            $overtimeIds[] = (int) $overtime->id;
         }
+
+        dispatch(static function () use ($overtimeIds, $employeeLabel, $notificationService, $emailTrigger): void {
+            foreach ($overtimeIds as $overtimeId) {
+                $filed = Overtime::query()->find($overtimeId);
+                if (! $filed) {
+                    continue;
+                }
+                $notificationService->notifyCurrentApprover(
+                    $filed,
+                    OrgApprovalWorkflowService::MODULE_OVERTIME,
+                    'overtime',
+                    'overtime.needs_approval',
+                    'Overtime request needs approval',
+                    $employeeLabel.' filed an overtime request.',
+                    '/admin/overtime?review_id='.$filed->id,
+                );
+                $emailTrigger->overtimeFiled($filed);
+            }
+        })->afterResponse();
+
         OvertimeModuleCache::flush();
 
         return response()->json([
             'message' => $overtimes->count() > 1
                 ? 'Overtime requests submitted successfully.'
                 : 'Overtime request submitted successfully.',
-            'overtimes' => $overtimes->map(fn (Overtime $overtime) => $this->mapOvertimeRowForEmployee($overtime->fresh([
-                'approvedBy:id,name,first_name,middle_name,last_name,suffix',
-                'user:id,name,first_name,middle_name,last_name,suffix,position,profile_image,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
-                'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
-                'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-                'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-                'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
-            ]), $user))->values(),
+            'overtimes' => $overtimes->map(fn (Overtime $overtime) => $this->mapOvertimeRowForEmployee($overtime, $user))->values(),
         ], 201);
     }
 }

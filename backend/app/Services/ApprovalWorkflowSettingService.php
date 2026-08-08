@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ApprovalWorkflowSetting;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -120,10 +121,18 @@ class ApprovalWorkflowSettingService
     public function resolveSetting(?string $requestType, array $context = []): array
     {
         $normalized = $this->normalizeRequestType($requestType);
+        // ponytail: filing resolves settings 3–6× per request; array store is request-scoped (Octane-safe).
+        $cacheKey = 'approval_workflow_settings:payload:'.($normalized ?? '_null');
+        $cached = Cache::store('array')->get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
+        }
+
         $fallback = $this->defaultSettingPayload($normalized);
 
         if (! Schema::hasTable('approval_workflow_settings')) {
             $this->logSettingLookup($normalized, $fallback, $context, 'table_missing');
+            Cache::store('array')->put($cacheKey, $fallback, 3600);
 
             return $fallback;
         }
@@ -132,6 +141,7 @@ class ApprovalWorkflowSettingService
 
         if ($normalized === null) {
             $this->logSettingLookup(null, $fallback, $context, 'missing_request_type');
+            Cache::store('array')->put($cacheKey, $fallback, 3600);
 
             return $fallback;
         }
@@ -143,12 +153,14 @@ class ApprovalWorkflowSettingService
 
         if ($row === null) {
             $this->logSettingLookup($normalized, $fallback, $context, 'setting_not_found');
+            Cache::store('array')->put($cacheKey, $fallback, 3600);
 
             return $fallback;
         }
 
         $payload = $this->payloadFromModel($row);
         $this->logSettingLookup($normalized, $payload, $context, 'setting_found');
+        Cache::store('array')->put($cacheKey, $payload, 3600);
 
         return $payload;
     }
@@ -261,11 +273,29 @@ class ApprovalWorkflowSettingService
 
     public function ensureDefaults(): void
     {
+        // ponytail: firstOrCreate×catalog on every setting lookup was a filing hotspot; once per request is enough.
+        if (Cache::store('array')->get('approval_workflow_settings:defaults_ensured')) {
+            return;
+        }
+
         if (! Schema::hasTable('approval_workflow_settings')) {
             return;
         }
 
+        $existingTypes = ApprovalWorkflowSetting::query()->pluck('request_type')->all();
+        $allPresent = count(array_diff(array_keys(self::REQUEST_TYPE_CATALOG), $existingTypes)) === 0;
+
+        if ($allPresent) {
+            Cache::store('array')->put('approval_workflow_settings:defaults_ensured', true, 3600);
+
+            return;
+        }
+
         foreach (self::REQUEST_TYPE_CATALOG as $requestType => $meta) {
+            if (in_array($requestType, $existingTypes, true)) {
+                continue;
+            }
+
             $setting = ApprovalWorkflowSetting::query()->firstOrCreate(
                 ['request_type' => $requestType],
                 [
@@ -293,6 +323,8 @@ class ApprovalWorkflowSettingService
 
             $this->normalizeHierarchyStepColumnsOnModel($setting);
         }
+
+        Cache::store('array')->put('approval_workflow_settings:defaults_ensured', true, 3600);
     }
 
     private function normalizeHierarchyStepColumnsOnModel(ApprovalWorkflowSetting $setting): void
@@ -508,7 +540,7 @@ class ApprovalWorkflowSettingService
      */
     private function logSettingLookup(?string $requestType, array $setting, array $context, string $source): void
     {
-        Log::info('approval_chain: workflow setting lookup', array_merge([
+        Log::debug('approval_chain: workflow setting lookup', array_merge([
             'request_type' => $requestType,
             'workflow_setting_found' => $source === 'setting_found',
             'workflow_setting_source' => $source,

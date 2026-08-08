@@ -107,11 +107,11 @@ class MyScheduleController extends Controller
                 'approval' => ['Your account cannot file schedule requests right now.'],
             ]);
         }
-        $initialStage = $this->approvalChainResolver->initialApprovalStage(
+        $initialStage = (string) ($routing['initial_stage'] ?? $this->approvalChainResolver->initialApprovalStage(
             $user,
             true,
             OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE,
-        );
+        ));
         $firstApproverId = $initialStage === \App\Support\HrApprovalStages::PENDING_FIRST
             ? ($routing['first_level_approver']?->id)
             : null;

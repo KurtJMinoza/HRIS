@@ -14,6 +14,7 @@ use App\Models\OrganizationUnit;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Support\HrApprovalStages;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
@@ -118,6 +119,13 @@ class HrApprovalChainResolver
 
         $subjectId = (int) $subject->id;
         $requestorId = $requestor ? (int) $requestor->id : $subjectId;
+        // ponytail: filing calls this 3–4× with the same inputs; request_id is log-only so omit from key.
+        $cacheKey = $this->approvalChainCacheKey($subjectId, $moduleType, $requestorId, $context);
+        $cached = Cache::store('array')->get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
+        }
+
         $usedApproverIds = [];
         $steps = [];
         $logContext = array_merge($context, [
@@ -129,7 +137,7 @@ class HrApprovalChainResolver
         $approvalChainMode = (string) ($workflowSetting['approval_chain_mode'] ?? ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS);
         $maxOrgApprovalSteps = $this->maxOrgApprovalStepsForMode($approvalChainMode, $workflowSetting);
 
-        Log::info('approval_chain: resolving flexible two-step chain', [
+        Log::debug('approval_chain: resolving flexible two-step chain', [
             'request_id' => $logContext['request_id'] ?? null,
             'module_type' => $moduleType,
             'request_type' => $workflowSetting['request_type'] ?? $moduleType,
@@ -155,7 +163,7 @@ class HrApprovalChainResolver
         ]);
 
         if (! ($workflowSetting['use_hierarchy_approval'] ?? false)) {
-            Log::info('approval_chain: hierarchy disabled by workflow setting; routing directly to Admin HR', [
+            Log::debug('approval_chain: hierarchy disabled by workflow setting; routing directly to Admin HR', [
                 'request_id' => $logContext['request_id'] ?? null,
                 'employee_id' => $subjectId,
                 'requestor_id' => $requestorId,
@@ -163,6 +171,7 @@ class HrApprovalChainResolver
                 'skip_reason' => 'workflow_setting_hierarchy_off',
             ]);
             $this->appendAdminHrFinalStep($steps, $subject, $requestor, $usedApproverIds);
+            Cache::store('array')->put($cacheKey, $steps, 3600);
 
             return $steps;
         }
@@ -185,7 +194,7 @@ class HrApprovalChainResolver
             );
             if ($legacyImmediate !== null) {
                 $hierarchySteps = [$legacyImmediate];
-                Log::info('approval_chain: using legacy immediate approver fallback', [
+                Log::debug('approval_chain: using legacy immediate approver fallback', [
                     'request_id' => $logContext['request_id'] ?? null,
                     'employee_id' => $subjectId,
                     'approver_id' => $legacyImmediate['approver_id'] ?? null,
@@ -203,7 +212,7 @@ class HrApprovalChainResolver
                 continue;
             }
             if ($maxOrgApprovalSteps !== null && count($steps) >= $maxOrgApprovalSteps) {
-                Log::info('approval_chain: hierarchy approver skipped by max org approval steps', [
+                Log::debug('approval_chain: hierarchy approver skipped by max org approval steps', [
                     'request_id' => $logContext['request_id'] ?? null,
                     'employee_id' => $subjectId,
                     'approval_chain_mode' => $approvalChainMode,
@@ -218,7 +227,7 @@ class HrApprovalChainResolver
             }
             $usedApproverIds[] = $approverId;
             $steps[] = $this->formatFlexibleStep($flexible, count($steps) + 1);
-            Log::info('approval_chain: hierarchy approver added', [
+            Log::debug('approval_chain: hierarchy approver added', [
                 'request_id' => $logContext['request_id'] ?? null,
                 'employee_id' => $subjectId,
                 'level' => $flexible['approval_level'] ?? null,
@@ -229,7 +238,7 @@ class HrApprovalChainResolver
         }
 
         if ($hierarchySteps === []) {
-            Log::info('approval_chain: no hierarchy approvers resolved', [
+            Log::debug('approval_chain: no hierarchy approvers resolved', [
                 'request_id' => $logContext['request_id'] ?? null,
                 'employee_id' => $subjectId,
                 'request_type' => $moduleType,
@@ -242,7 +251,7 @@ class HrApprovalChainResolver
             $this->appendAdminHrFinalStep($steps, $subject, $requestor, $usedApproverIds);
         }
 
-        Log::info('approval_chain: final order', [
+        Log::debug('approval_chain: final order', [
             'request_id' => $logContext['request_id'] ?? null,
             'employee_id' => $subjectId,
             'fallback_to_parent_approver' => (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false),
@@ -261,7 +270,28 @@ class HrApprovalChainResolver
             ),
         ]);
 
+        Cache::store('array')->put($cacheKey, $steps, 3600);
+
         return $steps;
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function approvalChainCacheKey(int $subjectId, ?string $moduleType, int $requestorId, array $context): string
+    {
+        return 'hr_approval_chain:'.implode(':', [
+            $subjectId,
+            (string) ($moduleType ?? ''),
+            $requestorId,
+            (string) ($context['assignment_id'] ?? ''),
+            (string) ($context['assignment_type'] ?? ''),
+            (string) ($context['company_id'] ?? ''),
+            (string) ($context['branch_id'] ?? ''),
+            (string) ($context['division_id'] ?? ''),
+            (string) ($context['department_id'] ?? ''),
+            (string) ($context['section_unit_id'] ?? ''),
+        ]);
     }
 
     /**
@@ -270,7 +300,8 @@ class HrApprovalChainResolver
      *   fallback_to_admin: bool,
      *   fallback_reasons: array<int, string>,
      *   first_level_approver: ?User,
-     *   hr_approver: ?User
+     *   hr_approver: ?User,
+     *   initial_stage: string
      * }
      */
     public function resolveRoutingDecision(User $employee, bool $employeeSubmitted = true, ?string $requestType = null, array $context = []): array
@@ -290,18 +321,20 @@ class HrApprovalChainResolver
             'fallback_reasons' => $chain === null ? ['no_active_admin_hr'] : [],
             'first_level_approver' => $firstLine['approver'] ?? null,
             'hr_approver' => $this->resolveHrApprover(),
+            'initial_stage' => $this->stageFromChain($chain),
         ];
     }
 
     public function initialApprovalStage(User $employee, bool $employeeSubmitted = true, ?string $requestType = null, array $context = []): string
     {
-        $steps = $this->resolveApprovalChain(
-            $employee,
-            $requestType,
-            $employeeSubmitted ? $employee : null,
-            $context,
-        );
-        $chain = $steps === [] ? null : array_map(fn (array $step): HrRole => $step['approver_role'], $steps);
+        return $this->resolveRoutingDecision($employee, $employeeSubmitted, $requestType, $context)['initial_stage'];
+    }
+
+    /**
+     * @param  array<int, HrRole>|null  $chain
+     */
+    private function stageFromChain(?array $chain): string
+    {
         if ($chain === null) {
             return HrApprovalStages::REJECTED;
         }
@@ -361,12 +394,24 @@ class HrApprovalChainResolver
 
     public function resolveHrApprover(): ?User
     {
-        return User::query()
+        $cacheKey = 'hr_approval_chain:admin_hr_approver';
+        if (Cache::store('array')->has($cacheKey)) {
+            $cached = Cache::store('array')->get($cacheKey);
+
+            return $cached instanceof User ? $cached : null;
+        }
+
+        $approver = User::query()
             ->approvableEmployees()
             ->where('role', User::ROLE_ADMIN)
             ->active()
             ->orderBy('id')
             ->first();
+
+        // ponytail: store false for miss so we don't re-query when no Admin HR exists.
+        Cache::store('array')->put($cacheKey, $approver ?? false, 3600);
+
+        return $approver;
     }
 
     private function firstApproverRoleForSubject(HrRole $subjectRole): ?HrRole
@@ -416,7 +461,7 @@ class HrApprovalChainResolver
 
         $hrId = (int) $hrApprover->id;
         if (in_array($hrId, $usedApproverIds, true)) {
-            Log::info('approval_chain: Admin HR approver already appears in org chain; still appending final HR step', [
+            Log::debug('approval_chain: Admin HR approver already appears in org chain; still appending final HR step', [
                 'employee_id' => $subjectId,
                 'approver_id' => $hrId,
             ]);
@@ -424,7 +469,7 @@ class HrApprovalChainResolver
 
         $steps[] = $this->formatStep(HrRole::AdminHr, $hrApprover, count($steps) + 1);
 
-        Log::info('approval_chain: Admin HR final step appended', [
+        Log::debug('approval_chain: Admin HR final step appended', [
             'employee_id' => $subjectId,
             'approver_id' => $hrId,
             'approver_name' => $hrApprover->display_name,
@@ -535,7 +580,7 @@ class HrApprovalChainResolver
         }
 
         if (in_array($targetRole, [HrRole::BranchHead, HrRole::AreaHead, HrRole::OfficerInCharge, HrRole::CompanyHead], true)) {
-            Log::info('approval_chain: legacy scoped fallback found no approver for role', array_merge($context, [
+            Log::debug('approval_chain: legacy scoped fallback found no approver for role', array_merge($context, [
                 'target_role' => $targetRole->value,
                 'subject_role' => $subjectRole->value,
                 'skip_reason' => 'no_scope_matched_scoped_org_head',
@@ -546,7 +591,7 @@ class HrApprovalChainResolver
 
         $approver = $this->resolveApproverForRole($subject, $targetRole);
         if (! $approver) {
-            Log::info('approval_chain: legacy fallback found no approver for role', array_merge($context, [
+            Log::debug('approval_chain: legacy fallback found no approver for role', array_merge($context, [
                 'target_role' => $targetRole->value,
                 'subject_role' => $subjectRole->value,
             ]));
@@ -556,7 +601,7 @@ class HrApprovalChainResolver
 
         $approverId = (int) $approver->id;
         if ($approverId === (int) $subject->id || $approverId === $requestorId || in_array($approverId, $usedApproverIds, true)) {
-            Log::info('approval_chain: legacy fallback approver rejected', array_merge($context, [
+            Log::debug('approval_chain: legacy fallback approver rejected', array_merge($context, [
                 'target_role' => $targetRole->value,
                 'approver_id' => $approverId,
                 'reason' => 'self_or_duplicate',

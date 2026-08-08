@@ -57,28 +57,40 @@ class NotificationService
 
         $this->clearCountCache($user->id);
 
-        try {
-            $unreadCount = $this->unreadCount($user);
-            $moduleCounts = $this->moduleCounts($user);
+        // ponytail: keep DB write on the request; count queries + websocket fan-out after response.
+        $notificationId = (string) $notification->id;
+        $recipientUserId = (int) $user->id;
+        dispatch(function () use ($notificationId, $recipientUserId): void {
+            $notification = HrisNotification::query()->find($notificationId);
+            $user = User::query()->find($recipientUserId);
+            if (! $notification || ! $user) {
+                return;
+            }
 
-            broadcast(new NotificationCreated(
-                $notification,
-                $unreadCount,
-                $moduleCounts,
-            ));
-            broadcast(new DashboardCountsUpdated((int) $user->id, [
-                'module' => $notification->module,
-                'entity_id' => $notification->entity_id,
-                'type' => $notification->type,
-                'notification_counts' => $moduleCounts,
-            ]));
-        } catch (\Throwable $e) {
-            Log::warning('Notification broadcast failed', [
-                'notification_id' => $notification->id,
-                'recipient_user_id' => $user->id,
-                'error' => $e->getMessage(),
-            ]);
-        }
+            try {
+                $service = app(self::class);
+                $unreadCount = $service->unreadCount($user);
+                $moduleCounts = $service->moduleCounts($user);
+
+                broadcast(new NotificationCreated(
+                    $notification,
+                    $unreadCount,
+                    $moduleCounts,
+                ));
+                broadcast(new DashboardCountsUpdated($recipientUserId, [
+                    'module' => $notification->module,
+                    'entity_id' => $notification->entity_id,
+                    'type' => $notification->type,
+                    'notification_counts' => $moduleCounts,
+                ]));
+            } catch (\Throwable $e) {
+                Log::warning('Notification broadcast failed', [
+                    'notification_id' => $notificationId,
+                    'recipient_user_id' => $recipientUserId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        })->afterResponse();
 
         return $notification;
     }

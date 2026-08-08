@@ -271,6 +271,13 @@ class LeaveCreditService
      */
     public function ensureAnnualRechargeForUser(User $user): bool
     {
+        // ponytail: filing called this under row lock every time; skip when Jan-1 stamp is current and normalize is a no-op.
+        if ($this->canSkipLockedRechargePass($user)) {
+            $this->initializeLeaveCreditsForRegularEmployeeIfEligible($user, null, 'lazy_recharge');
+
+            return false;
+        }
+
         $recharged = DB::transaction(function () use ($user) {
             /** @var User $locked */
             $locked = User::query()->whereKey($user->id)->lockForUpdate()->firstOrFail();
@@ -295,6 +302,27 @@ class LeaveCreditService
         $this->initializeLeaveCreditsForRegularEmployeeIfEligible($user->fresh() ?? $user, null, 'lazy_recharge');
 
         return $recharged;
+    }
+
+    private function canSkipLockedRechargePass(User $user): bool
+    {
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $startOfYear = Carbon::now($tz)->startOfYear()->toDateString();
+        if ($user->leave_credits_reset_date === null) {
+            return false;
+        }
+
+        $reset = Carbon::parse($user->leave_credits_reset_date, $tz)->toDateString();
+        if ($reset < $startOfYear) {
+            return false;
+        }
+
+        // Ineligible with a positive pool still needs normalize under lock.
+        if (! $this->eligibleForPaidLeavePool($user) && (int) $user->leave_credits > 0) {
+            return false;
+        }
+
+        return true;
     }
 
     public function ensureAnnualRechargeForUserId(int $userId): bool
@@ -695,17 +723,8 @@ class LeaveCreditService
         if ($bypass) {
             return;
         }
+        // ponytail: insufficient credits no longer hard-fail on file; still recharge, skip dead day scan.
         $this->ensureAnnualRechargeForUser($employee);
-        $employee->refresh();
-
-        $days = $this->billableCreditDaysForUser($employee, $type, $startDate, $endDate);
-        if ($days <= 0) {
-            return;
-        }
-        if (! $this->eligibleForPaidLeavePool($employee)) {
-            return;
-        }
-        // Insufficient pool no longer throws — UI warns; approval splits paid/unpaid.
     }
 
     /**

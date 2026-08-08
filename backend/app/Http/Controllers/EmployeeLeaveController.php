@@ -809,12 +809,12 @@ class EmployeeLeaveController extends Controller
             ]);
         }
 
-        $stage = $this->hrApprovalChainResolver->initialApprovalStage(
+        $stage = (string) ($routing['initial_stage'] ?? $this->hrApprovalChainResolver->initialApprovalStage(
             $user,
             true,
             OrgApprovalWorkflowService::MODULE_LEAVE,
             $assignmentContext,
-        );
+        ));
         $hrApproverId = $routing['hr_approver']?->id;
         if (! $hrApproverId) {
             throw ValidationException::withMessages([
@@ -862,26 +862,28 @@ class EmployeeLeaveController extends Controller
             $user,
         );
 
-        $this->notificationService->notifyCurrentApprover(
-            $leave,
-            OrgApprovalWorkflowService::MODULE_LEAVE,
-            'leave',
-            'leave.needs_approval',
-            'Leave request needs approval',
-            ($user->display_name ?? $user->name ?? 'An employee').' filed a leave request.',
-            '/admin/leave?review_id='.$leave->id,
-        );
-        $this->emailTrigger->leaveFiled($leave);
+        $leaveId = (int) $leave->id;
+        $employeeLabel = $user->display_name ?? $user->name ?? 'An employee';
+        $notificationService = $this->notificationService;
+        $emailTrigger = $this->emailTrigger;
+        dispatch(static function () use ($leaveId, $employeeLabel, $notificationService, $emailTrigger): void {
+            $filed = LeaveRequest::query()->find($leaveId);
+            if (! $filed) {
+                return;
+            }
+            $notificationService->notifyCurrentApprover(
+                $filed,
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+                'leave',
+                'leave.needs_approval',
+                'Leave request needs approval',
+                $employeeLabel.' filed a leave request.',
+                '/admin/leave?review_id='.$filed->id,
+            );
+            $emailTrigger->leaveFiled($filed);
+        })->afterResponse();
 
-        $leave->refresh();
         LeaveModuleCache::flush();
-        $leave->load([
-            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,employment_status,employment_status_effective_date,hire_date,leave_credits,schedule,working_schedule_id',
-            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,branch_id,company_id',
-            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
-            'approvalAudits' => fn ($q) => $q->with('actor:id,name,first_name,middle_name,last_name,suffix')->orderBy('created_at'),
-        ]);
 
         return response()->json([
             'message' => 'Leave request submitted.',

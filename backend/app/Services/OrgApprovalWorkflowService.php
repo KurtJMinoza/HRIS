@@ -16,6 +16,7 @@ use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -141,13 +142,15 @@ class OrgApprovalWorkflowService
         }
 
         DB::transaction(function () use ($steps, $request, $moduleType, $requestId): void {
+            $now = now();
+            $rows = [];
             foreach ($steps as $step) {
                 $legacyStatus = $this->legacyStatusForStep($request, $step);
                 $approvedAt = $legacyStatus === OrgApprovalRecord::STATUS_APPROVED
                     ? $this->legacyApprovedAtForStep($request, $step)
                     : null;
 
-                OrgApprovalRecord::query()->create([
+                $rows[] = [
                     'request_id' => $requestId,
                     'module_type' => $moduleType,
                     'approval_level' => $step['approval_level'],
@@ -155,13 +158,21 @@ class OrgApprovalWorkflowService
                     'approver_role' => $step['approver_role']->value,
                     'approver_id' => $step['approver_id'],
                     'approver_name' => $step['approver_name'],
-                    'eligible_approver_ids' => $step['eligible_approver_ids'] ?? null,
+                    'eligible_approver_ids' => isset($step['eligible_approver_ids'])
+                        ? json_encode(array_values($step['eligible_approver_ids']))
+                        : null,
                     'routing_rule' => $step['routing_rule'] ?? null,
                     'approval_status' => $legacyStatus,
                     'remarks' => null,
                     'approved_at' => $approvedAt,
                     'sequence_order' => $step['sequence_order'],
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+
+            if ($rows !== []) {
+                OrgApprovalRecord::query()->insert($rows);
             }
 
             $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
@@ -1472,8 +1483,29 @@ class OrgApprovalWorkflowService
 
     private function employeeForApprovalRouting(User $employee): User
     {
-        return User::query()
-            ->with(['departmentRelation', 'sectionUnit', 'division', 'branch', 'company', 'assignedTeamLeader'])
-            ->findOrFail((int) $employee->id);
+        $employeeId = (int) $employee->id;
+        $cacheKey = 'org_approval_routing_user:'.$employeeId;
+        $cached = Cache::store('array')->get($cacheKey);
+        if ($cached instanceof User) {
+            return $cached;
+        }
+
+        $relations = ['departmentRelation', 'sectionUnit', 'division', 'branch', 'company', 'assignedTeamLeader'];
+        $missing = array_values(array_filter(
+            $relations,
+            static fn (string $relation): bool => ! $employee->relationLoaded($relation),
+        ));
+        if ($missing === []) {
+            Cache::store('array')->put($cacheKey, $employee, 3600);
+
+            return $employee;
+        }
+
+        $loaded = User::query()
+            ->with($relations)
+            ->findOrFail($employeeId);
+        Cache::store('array')->put($cacheKey, $loaded, 3600);
+
+        return $loaded;
     }
 }

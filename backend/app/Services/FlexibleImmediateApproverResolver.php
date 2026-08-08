@@ -17,6 +17,7 @@ use App\Models\SectionUnit;
 use App\Models\User;
 use App\Support\CompanyLeadershipPosition;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -45,7 +46,7 @@ class FlexibleImmediateApproverResolver
         array $usedApproverIds = [],
         array $context = [],
     ): ?array {
-        $hasFlexibleOrg = Schema::hasTable('organization_units');
+        $hasFlexibleOrg = $this->schemaHasTable('organization_units');
 
         if ($this->workflowSettingService->isHrOnlyRequestType($requestType, $context)) {
             $this->log($context, 'hierarchy disabled by workflow setting; immediate approver skipped', [
@@ -436,7 +437,7 @@ class FlexibleImmediateApproverResolver
                     continue;
                 }
 
-                if (Schema::hasTable('organization_position_assignments') && $this->unitHasFlexibleApprovalAssignments($unit)) {
+                if ($this->schemaHasTable('organization_position_assignments') && $this->unitHasFlexibleApprovalAssignments($unit)) {
                     $this->log($scopeContext, 'legacy head fallback skipped — flexible approval assignments control routing', $levelLog + [
                         'skipped_reason' => 'flexible_assignment_scope_not_matched',
                     ]);
@@ -533,7 +534,7 @@ class FlexibleImmediateApproverResolver
             'legacy_id' => $unit->legacy_source_id,
         ];
 
-        if (Schema::hasTable('organization_position_assignments')) {
+        if ($this->schemaHasTable('organization_position_assignments')) {
             $assignments = $unit->activePositionAssignments()
                 ->with(['employee', 'positionType'])
                 ->get()
@@ -688,7 +689,7 @@ class FlexibleImmediateApproverResolver
             'section_unit_head_id' => $section->section_unit_head_id ? (int) $section->section_unit_head_id : null,
         ];
 
-        if (Schema::hasTable('section_unit_team_leaders')) {
+        if ($this->schemaHasTable('section_unit_team_leaders')) {
             $teamLeaders = $section->teamLeaders()
                 ->orderBy('section_unit_team_leaders.id')
                 ->get();
@@ -878,7 +879,7 @@ class FlexibleImmediateApproverResolver
             ];
         }
 
-        $teamLeaderIds = Schema::hasTable('section_unit_team_leaders')
+        $teamLeaderIds = $this->schemaHasTable('section_unit_team_leaders')
             ? $section->teamLeaders()->pluck('users.id')->map(fn ($id) => (int) $id)->all()
             : [];
 
@@ -1056,7 +1057,7 @@ class FlexibleImmediateApproverResolver
 
         $candidates = [];
 
-        if (Schema::hasTable('organization_leadership_assignments')) {
+        if ($this->schemaHasTable('organization_leadership_assignments')) {
             $query = DB::table('organization_leadership_assignments');
 
             if (Schema::hasColumn('organization_leadership_assignments', 'organization_type')) {
@@ -1195,7 +1196,7 @@ class FlexibleImmediateApproverResolver
         array $levelLog,
     ): ?array {
         $sectionUnitId = (int) ($hierarchy['section_unit'] ?? 0);
-        if ($sectionUnitId <= 0 || ! Schema::hasTable('section_unit_team_leaders')) {
+        if ($sectionUnitId <= 0 || ! $this->schemaHasTable('section_unit_team_leaders')) {
             return null;
         }
 
@@ -1348,7 +1349,7 @@ class FlexibleImmediateApproverResolver
         }
 
         $sectionUnitId = $subject->section_unit_id ?: $section?->id;
-        if (! $sectionUnitId && Schema::hasTable('section_unit_team_leaders')) {
+        if (! $sectionUnitId && $this->schemaHasTable('section_unit_team_leaders')) {
             $ledSectionId = (int) (DB::table('section_unit_team_leaders')
                 ->where('employee_id', (int) $subject->id)
                 ->orderBy('section_unit_id')
@@ -1786,7 +1787,7 @@ class FlexibleImmediateApproverResolver
             ...$sectionQuery->pluck('id')->map(fn ($id) => (int) $id)->all(),
         ];
 
-        if (Schema::hasTable('section_unit_team_leaders')) {
+        if ($this->schemaHasTable('section_unit_team_leaders')) {
             $ids = [
                 ...$ids,
                 ...DB::table('section_unit_team_leaders')
@@ -1797,13 +1798,13 @@ class FlexibleImmediateApproverResolver
             ];
         }
 
-        if (Schema::hasTable('organization_units')) {
+        if ($this->schemaHasTable('organization_units')) {
             $unitQuery = OrganizationUnit::query()
                 ->where('legacy_source_type', 'section_unit')
                 ->where(function ($query) use ($userId): void {
                     $query->whereHas('activeLeaders', fn ($leaderQuery) => $leaderQuery->where('employee_id', $userId));
 
-                    if (Schema::hasTable('organization_position_assignments')) {
+                    if ($this->schemaHasTable('organization_position_assignments')) {
                         $query->orWhereHas('activePositionAssignments', function ($assignmentQuery) use ($userId): void {
                             $assignmentQuery
                                 ->where('employee_id', $userId)
@@ -1818,7 +1819,7 @@ class FlexibleImmediateApproverResolver
             ];
         }
 
-        if (Schema::hasTable('organization_leadership_assignments')) {
+        if ($this->schemaHasTable('organization_leadership_assignments')) {
             $leadership = DB::table('organization_leadership_assignments')->where('employee_id', $userId);
             if (Schema::hasColumn('organization_leadership_assignments', 'organization_type')) {
                 $leadership->where('organization_type', 'section_unit');
@@ -1894,7 +1895,7 @@ class FlexibleImmediateApproverResolver
                 ...$unit->activeLeaders()->pluck('employee_id')->map(fn ($id) => (int) $id)->all(),
             ];
 
-            if (Schema::hasTable('organization_position_assignments')) {
+            if ($this->schemaHasTable('organization_position_assignments')) {
                 $ids = [
                     ...$ids,
                     ...$unit->activePositionAssignments()
@@ -1906,7 +1907,7 @@ class FlexibleImmediateApproverResolver
             }
         }
 
-        if (Schema::hasTable('section_unit_team_leaders') && $section) {
+        if ($this->schemaHasTable('section_unit_team_leaders') && $section) {
             $ids = [
                 ...$ids,
                 ...$section->teamLeaders()->pluck('users.id')->map(fn ($id) => (int) $id)->all(),
@@ -1970,7 +1971,7 @@ class FlexibleImmediateApproverResolver
             /** @var OrganizationLeadershipAssignmentService $assignments */
             $assignments = app(OrganizationLeadershipAssignmentService::class);
 
-            if (Schema::hasTable('organization_position_assignments')
+            if ($this->schemaHasTable('organization_position_assignments')
                 && $this->companyHasFlexibleLeadershipAssignments($legacyId)) {
                 return $assignments->hasCompanyLeadershipAssignment($user, $legacyId, false);
             }
@@ -2104,7 +2105,7 @@ class FlexibleImmediateApproverResolver
         $workflowSetting = $this->workflowSettingService->resolveSetting($requestType, $context);
         $stepFlags = $this->workflowSettingService->hierarchyStepFlags($workflowSetting);
         $requesterLevel = $this->detectRequesterLevel($requestorUser, $hierarchy);
-        $hasFlexibleOrg = Schema::hasTable('organization_units');
+        $hasFlexibleOrg = $this->schemaHasTable('organization_units');
         $primaryAssignment = $this->selectedAssignmentFor($subject, $context);
         $fallbackToParent = (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false);
         $chainMode = (string) ($workflowSetting['approval_chain_mode'] ?? ApprovalWorkflowSetting::CHAIN_MODE_CUSTOM_SELECTED_STEPS);
@@ -2559,7 +2560,7 @@ class FlexibleImmediateApproverResolver
         array $context = [],
         array $levelLog = [],
     ): ?array {
-        if (Schema::hasTable('organization_position_assignments')) {
+        if ($this->schemaHasTable('organization_position_assignments')) {
             $resolved = $this->resolveFromPositionAssignments($unit, $subject, $requestType, $skipIds, $context, $levelLog);
             if ($resolved !== null) {
                 return $resolved;
@@ -2699,7 +2700,7 @@ class FlexibleImmediateApproverResolver
 
     private function companyHasFlexibleLeadershipAssignments(int $companyId): bool
     {
-        if (! Schema::hasTable('organization_position_assignments') || $companyId <= 0) {
+        if (! $this->schemaHasTable('organization_position_assignments') || $companyId <= 0) {
             return false;
         }
 
@@ -2929,9 +2930,35 @@ class FlexibleImmediateApproverResolver
             return;
         }
 
+        $needed = [];
         foreach (self::HIERARCHY_ORDER as $legacyType) {
             $legacyId = (int) ($hierarchy[$legacyType] ?? 0);
-            if ($legacyId <= 0) {
+            if ($legacyId > 0) {
+                $needed[] = [$legacyType, $legacyId];
+            }
+        }
+        if ($needed === []) {
+            return;
+        }
+
+        // ponytail: filing only needs mirrors that exist; updateOrCreate×levels was the create-path write storm.
+        // Missing units still sync once; org admin mutations keep mirrors current.
+        $existingKeys = OrganizationUnit::query()
+            ->where(function ($query) use ($needed): void {
+                foreach ($needed as [$legacyType, $legacyId]) {
+                    $query->orWhere(function ($inner) use ($legacyType, $legacyId): void {
+                        $inner->where('legacy_source_type', $legacyType)
+                            ->where('legacy_source_id', $legacyId);
+                    });
+                }
+            })
+            ->get(['legacy_source_type', 'legacy_source_id'])
+            ->map(static fn (OrganizationUnit $unit): string => $unit->legacy_source_type.':'.$unit->legacy_source_id)
+            ->all();
+        $existingLookup = array_fill_keys($existingKeys, true);
+
+        foreach ($needed as [$legacyType, $legacyId]) {
+            if (isset($existingLookup[$legacyType.':'.$legacyId])) {
                 continue;
             }
 
@@ -2952,7 +2979,7 @@ class FlexibleImmediateApproverResolver
     {
         $userId = (int) $user->id;
 
-        if (Schema::hasTable('organization_position_assignments')) {
+        if ($this->schemaHasTable('organization_position_assignments')) {
             $hasAssignment = $unit->activePositionAssignments()
                 ->where('employee_id', $userId)
                 ->whereHas('positionType', fn ($query) => $query->where('can_approve', true))
@@ -3060,7 +3087,7 @@ class FlexibleImmediateApproverResolver
 
     private function primaryAssignmentFor(User $subject): ?EmployeeOrganizationAssignment
     {
-        if (! Schema::hasTable('employee_organization_assignments')) {
+        if (! $this->schemaHasTable('employee_organization_assignments')) {
             return null;
         }
 
@@ -3082,7 +3109,7 @@ class FlexibleImmediateApproverResolver
 
     private function selectedAssignmentFor(User $subject, array $context = []): ?EmployeeOrganizationAssignment
     {
-        if (! Schema::hasTable('employee_organization_assignments')) {
+        if (! $this->schemaHasTable('employee_organization_assignments')) {
             return null;
         }
 
@@ -3142,7 +3169,8 @@ class FlexibleImmediateApproverResolver
      */
     private function log(array $context, string $message, array $payload = []): void
     {
-        Log::info('approval_chain: '.$message, array_merge([
+        // ponytail: filing hit dozens of info logs per resolve; debug keeps diagnostics without I/O cost.
+        Log::debug('approval_chain: '.$message, array_merge([
             'request_id' => $context['request_id'] ?? null,
             'module_type' => $context['module_type'] ?? null,
         ], $payload));
@@ -3163,7 +3191,7 @@ class FlexibleImmediateApproverResolver
 
     private function userHasCompanyHeadAssignmentOnUnit(User $user, OrganizationUnit $unit): bool
     {
-        if (! Schema::hasTable('organization_position_assignments')) {
+        if (! $this->schemaHasTable('organization_position_assignments')) {
             return false;
         }
 
@@ -3179,7 +3207,7 @@ class FlexibleImmediateApproverResolver
 
     private function userHasOfficerInChargeAssignmentOnUnit(User $user, OrganizationUnit $unit): bool
     {
-        if (! Schema::hasTable('organization_position_assignments')) {
+        if (! $this->schemaHasTable('organization_position_assignments')) {
             return false;
         }
 
@@ -3262,5 +3290,15 @@ class FlexibleImmediateApproverResolver
             HrRole::SectionUnitHead => 'section_unit_head',
             default => 'employee',
         };
+    }
+
+    private function schemaHasTable(string $table): bool
+    {
+        // ponytail: hierarchy resolve hits Schema::hasTable dozens of times per filing.
+        return (bool) Cache::store('array')->remember(
+            'schema_has_table:'.$table,
+            3600,
+            static fn (): bool => Schema::hasTable($table),
+        );
     }
 }

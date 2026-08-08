@@ -73,7 +73,8 @@ class AttendanceCorrectionApprovalService
      *   fallback_to_admin: bool,
      *   fallback_reasons: array<int, string>,
      *   first_level_approver: ?\App\Models\User,
-     *   hr_approver: ?\App\Models\User
+     *   hr_approver: ?\App\Models\User,
+     *   initial_stage: string
      * }
      */
     public function resolveRoutingDecision(User $employee): array

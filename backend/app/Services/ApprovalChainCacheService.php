@@ -66,5 +66,16 @@ class ApprovalChainCacheService
     public function forgetWorkflowSettings(): void
     {
         Cache::forget('approval_workflow_settings');
+        Cache::store('array')->forget('approval_workflow_settings:defaults_ensured');
+        Cache::store('array')->forget('approval_workflow_settings:payload:_null');
+        foreach ([
+            'attendance_correction',
+            'leave',
+            'overtime',
+            'change_schedule',
+            'reports_request',
+        ] as $requestType) {
+            Cache::store('array')->forget('approval_workflow_settings:payload:'.$requestType);
+        }
     }
 }

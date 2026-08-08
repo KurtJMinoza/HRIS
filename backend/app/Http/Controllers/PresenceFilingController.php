@@ -78,6 +78,35 @@ class PresenceFilingController extends Controller
         return $v;
     }
 
+    /**
+     * @return array{0: bool, 1: bool}
+     */
+    private function dayHasClockInOut(int $userId, Carbon $dayStart, Carbon $dayEnd): array
+    {
+        if (! Cache::store('array')->remember(
+            'schema_has_table:attendance_logs',
+            3600,
+            static fn (): bool => Schema::hasTable('attendance_logs'),
+        )) {
+            return [false, false];
+        }
+
+        $types = AttendanceLog::query()
+            ->where('user_id', $userId)
+            ->whereBetween('verified_at', [
+                $dayStart->copy()->setTimezone('UTC'),
+                $dayEnd->copy()->setTimezone('UTC'),
+            ])
+            ->whereIn('type', [AttendanceLog::TYPE_CLOCK_IN, AttendanceLog::TYPE_CLOCK_OUT])
+            ->distinct()
+            ->pluck('type');
+
+        return [
+            $types->contains(AttendanceLog::TYPE_CLOCK_IN),
+            $types->contains(AttendanceLog::TYPE_CLOCK_OUT),
+        ];
+    }
+
     private function normalizeIssueKind(AttendanceCorrection $correction): string
     {
         $stored = is_string($correction->issue_kind) ? trim($correction->issue_kind) : '';
@@ -137,11 +166,6 @@ class PresenceFilingController extends Controller
             ]);
         }
 
-        $chain = $this->approvalService->getApprovalChain($user);
-        if ($chain === null) {
-            return response()->json(['message' => 'Your role cannot file attendance corrections.'], 403);
-        }
-
         $tz = $this->presenceFilingService->attendanceTimezone();
 
         $validated = $request->validate([
@@ -170,10 +194,7 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $employee = User::query()
-            ->whereKey($user->id)
-            ->with('workingSchedule')
-            ->firstOrFail();
+        $employee = $user->loadMissing('workingSchedule');
 
         $timeInStr = $kind === 'missing_out'
             ? null
@@ -211,16 +232,7 @@ class PresenceFilingController extends Controller
 
         $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();
         $dayEnd = Carbon::parse($dateKey, $tz)->endOfDay();
-        $hasIn = Schema::hasTable('attendance_logs') && AttendanceLog::query()
-            ->where('user_id', $employee->id)
-            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
-            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->exists();
-        $hasOut = Schema::hasTable('attendance_logs') && AttendanceLog::query()
-            ->where('user_id', $employee->id)
-            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
-            ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
-            ->exists();
+        [$hasIn, $hasOut] = $this->dayHasClockInOut((int) $employee->id, $dayStart, $dayEnd);
         $isIncompleteRecord = ($hasIn xor $hasOut) || (! $hasIn && ! $hasOut);
 
         $existing = AttendanceCorrection::query()
@@ -230,11 +242,9 @@ class PresenceFilingController extends Controller
 
         $routing = $this->approvalService->resolveRoutingDecision($employee);
         if (($routing['chain'] ?? null) === null) {
-            throw ValidationException::withMessages([
-                'approval' => ['Your account cannot file attendance corrections right now.'],
-            ]);
+            return response()->json(['message' => 'Your role cannot file attendance corrections.'], 403);
         }
-        $initialStage = $this->approvalService->initialApprovalStage($employee);
+        $initialStage = (string) ($routing['initial_stage'] ?? $this->approvalService->initialApprovalStage($employee));
         $firstApproverId = $initialStage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST
             ? ($routing['first_level_approver']?->id)
             : null;
@@ -312,19 +322,41 @@ class PresenceFilingController extends Controller
         });
 
         $correction->load([
-            'user',
-            'filedBy',
-            'firstApprover',
-            'secondApprover',
-            'attendanceLogsSyncedBy',
-            'rejectedBy',
-            'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
-            'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
         ]);
         AttendanceCorrectionModuleCache::flush();
 
-        $this->notifyAttendanceCorrectionApprover($correction);
-        $this->emailTrigger->correctionFiled($correction);
+        $correctionId = (int) $correction->id;
+        $notificationService = $this->notificationService;
+        $emailTrigger = $this->emailTrigger;
+        dispatch(static function () use ($correctionId, $notificationService, $emailTrigger): void {
+            $filed = AttendanceCorrection::query()
+                ->with('user:id,name,first_name,middle_name,last_name,suffix,department_id,company_id')
+                ->find($correctionId);
+            if (! $filed) {
+                return;
+            }
+
+            $approverId = $filed->first_approver_id ?: $filed->second_approver_id;
+            if ($approverId) {
+                $employeeName = $filed->user?->display_name ?? $filed->user?->name ?? 'An employee';
+                $notificationService->notifyUser((int) $approverId, [
+                    'type' => 'attendance_correction.needs_approval',
+                    'title' => 'Attendance correction needs approval',
+                    'message' => $employeeName.' submitted an attendance correction.',
+                    'module' => 'attendance_correction',
+                    'entity_id' => $filed->id,
+                    'entity_type' => AttendanceCorrection::class,
+                    'action_url' => '/admin/attendance/corrections?review_id='.$filed->id,
+                    'company_id' => $filed->company_id ?? $filed->user?->getEffectiveCompanyId(),
+                    'department_id' => $filed->department_id ?? $filed->user?->department_id,
+                ]);
+            }
+            $emailTrigger->correctionFiled($filed);
+        })->afterResponse();
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',
@@ -457,16 +489,7 @@ class PresenceFilingController extends Controller
 
         $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();
         $dayEnd = Carbon::parse($dateKey, $tz)->endOfDay();
-        $hasIn = Schema::hasTable('attendance_logs') && AttendanceLog::query()
-            ->where('user_id', $employee->id)
-            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
-            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->exists();
-        $hasOut = Schema::hasTable('attendance_logs') && AttendanceLog::query()
-            ->where('user_id', $employee->id)
-            ->whereBetween('verified_at', [$dayStart->copy()->setTimezone('UTC'), $dayEnd->copy()->setTimezone('UTC')])
-            ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
-            ->exists();
+        [$hasIn, $hasOut] = $this->dayHasClockInOut((int) $employee->id, $dayStart, $dayEnd);
         $isIncompleteRecord = ($hasIn xor $hasOut) || (! $hasIn && ! $hasOut);
 
         $existing = AttendanceCorrection::query()
@@ -480,7 +503,7 @@ class PresenceFilingController extends Controller
                 'approval' => ['This employee cannot file attendance corrections right now.'],
             ]);
         }
-        $initialStage = $this->approvalService->initialApprovalStage($employee);
+        $initialStage = (string) ($routing['initial_stage'] ?? $this->approvalService->initialApprovalStage($employee));
         $firstApproverId = $initialStage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST
             ? ($routing['first_level_approver']?->id)
             : null;
@@ -557,19 +580,41 @@ class PresenceFilingController extends Controller
         });
 
         $correction->load([
-            'user',
-            'filedBy',
-            'firstApprover',
-            'secondApprover',
-            'attendanceLogsSyncedBy',
-            'rejectedBy',
-            'approvals' => fn ($q) => $q->orderBy('acted_at')->orderBy('id')->with('approver'),
-            'audits' => fn ($r) => $r->orderBy('created_at')->with('admin'),
+            'user:id,name,first_name,middle_name,last_name,suffix,profile_image,position,role,department_id,department,branch_id,company_id,section_unit_id,division_id,supervisor_id,assigned_team_leader_id',
+            'filedBy:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'firstApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
+            'secondApprover:id,name,first_name,middle_name,last_name,suffix,profile_image',
         ]);
         AttendanceCorrectionModuleCache::flush();
 
-        $this->notifyAttendanceCorrectionApprover($correction);
-        $this->emailTrigger->correctionFiled($correction);
+        $correctionId = (int) $correction->id;
+        $notificationService = $this->notificationService;
+        $emailTrigger = $this->emailTrigger;
+        dispatch(static function () use ($correctionId, $notificationService, $emailTrigger): void {
+            $filed = AttendanceCorrection::query()
+                ->with('user:id,name,first_name,middle_name,last_name,suffix,department_id,company_id')
+                ->find($correctionId);
+            if (! $filed) {
+                return;
+            }
+
+            $approverId = $filed->first_approver_id ?: $filed->second_approver_id;
+            if ($approverId) {
+                $employeeName = $filed->user?->display_name ?? $filed->user?->name ?? 'An employee';
+                $notificationService->notifyUser((int) $approverId, [
+                    'type' => 'attendance_correction.needs_approval',
+                    'title' => 'Attendance correction needs approval',
+                    'message' => $employeeName.' submitted an attendance correction.',
+                    'module' => 'attendance_correction',
+                    'entity_id' => $filed->id,
+                    'entity_type' => AttendanceCorrection::class,
+                    'action_url' => '/admin/attendance/corrections?review_id='.$filed->id,
+                    'company_id' => $filed->company_id ?? $filed->user?->getEffectiveCompanyId(),
+                    'department_id' => $filed->department_id ?? $filed->user?->department_id,
+                ]);
+            }
+            $emailTrigger->correctionFiled($filed);
+        })->afterResponse();
 
         return response()->json([
             'message' => 'Attendance correction submitted for approval.',

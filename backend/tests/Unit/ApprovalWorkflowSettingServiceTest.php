@@ -3,8 +3,10 @@
 namespace Tests\Unit;
 
 use App\Models\ApprovalWorkflowSetting;
+use App\Services\ApprovalChainCacheService;
 use App\Services\ApprovalWorkflowSettingService;
 use App\Services\HrApprovalChainResolver;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -23,6 +25,8 @@ class ApprovalWorkflowSettingServiceTest extends TestCase
 
         DB::beginTransaction();
         $this->transactionStarted = true;
+        Cache::store('array')->flush();
+        app(ApprovalChainCacheService::class)->forgetWorkflowSettings();
         app(ApprovalWorkflowSettingService::class)->ensureDefaults();
     }
 
@@ -65,6 +69,7 @@ class ApprovalWorkflowSettingServiceTest extends TestCase
         ApprovalWorkflowSetting::query()
             ->where('request_type', ApprovalWorkflowSetting::REQUEST_TYPE_ATTENDANCE_CORRECTION)
             ->update(['use_hierarchy_approval' => true]);
+        app(ApprovalChainCacheService::class)->forgetWorkflowSettings();
 
         $service = app(ApprovalWorkflowSettingService::class);
 
@@ -77,6 +82,7 @@ class ApprovalWorkflowSettingServiceTest extends TestCase
         ApprovalWorkflowSetting::query()
             ->where('request_type', ApprovalWorkflowSetting::REQUEST_TYPE_LEAVE)
             ->update(['use_hierarchy_approval' => false]);
+        app(ApprovalChainCacheService::class)->forgetWorkflowSettings();
 
         $service = app(ApprovalWorkflowSettingService::class);
 
