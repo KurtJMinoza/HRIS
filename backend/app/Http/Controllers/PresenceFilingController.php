@@ -1375,7 +1375,7 @@ class PresenceFilingController extends Controller
             'per_page' => $perPage,
         ], static fn ($value): bool => $value !== null && $value !== '');
 
-        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v4:v'.AttendanceCorrectionModuleCache::version();
+        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':actions-v1:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1405,6 +1405,15 @@ class PresenceFilingController extends Controller
         $timeOutIso = $c->time_out?->copy()->setTimezone($tz)->toIso8601String();
         $canDelete = $c->pending_approval && ! $c->approved && ! $c->rejected_at
             && ((int) $employee->id === (int) $c->user_id || (int) $employee->id === (int) $c->filed_by);
+        $auth = $currentApproval
+            ? $this->approvalWorkflowService->authorizePendingRecord($employee, $currentApproval, $employee, OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION)
+            : ['allowed' => false];
+        $canAct = (bool) ($auth['allowed'] ?? false);
+        if ($canAct
+            && $currentApproval?->approver_role === HrRole::AdminHr->value
+            && ! $c->hasRequiredTimesForFinalApproval()) {
+            $canAct = false;
+        }
         $approverFields = $this->approvalWorkflowService->listApproverDisplayFields($currentApproval, $latestActedApproval);
 
         return array_merge([
@@ -1440,6 +1449,10 @@ class PresenceFilingController extends Controller
             'employee_role_label' => $empRole->badgeLabel(),
             'requested_by_hr_role' => $empRole->value,
             'requested_by_role_label' => $empRole->badgeLabel(),
+            'actor_can_approve' => $canAct,
+            'actor_can_reject' => $canAct,
+            'can_approve' => $canAct,
+            'can_reject' => $canAct,
             'actor_can_delete' => $canDelete,
         ], $approverFields);
     }

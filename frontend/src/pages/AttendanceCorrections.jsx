@@ -1942,8 +1942,8 @@ export default function AttendanceCorrections() {
                         showBulkCheckbox={tab === 'all' && canSeeAll}
                         bulkSelection={bulkSelection}
                         bulkApproving={bulkApproving}
-                        showApprove={tab === 'all' && item.actor_can_approve}
-                        showReject={tab === 'all' && item.actor_can_reject}
+                        showApprove={Boolean(item.actor_can_approve)}
+                        showReject={Boolean(item.actor_can_reject)}
                         showDelete={Boolean(item.actor_can_delete)}
                         onView={openView}
                         onApprove={openApprove}
@@ -2090,9 +2090,9 @@ export default function AttendanceCorrections() {
                                 <AdminDataTableActions
                                   dense
                                   onView={() => openView(item)}
-                                  showApprove={tab === 'all' && item.actor_can_approve}
+                                  showApprove={Boolean(item.actor_can_approve)}
                                   onApprove={() => openApprove(item)}
-                                  showReject={tab === 'all' && item.actor_can_reject}
+                                  showReject={Boolean(item.actor_can_reject)}
                                   onReject={() => openReject(item)}
                                   showDelete={Boolean(item.actor_can_delete)}
                                   onDelete={() => setDeleteDialog({ open: true, item })}
