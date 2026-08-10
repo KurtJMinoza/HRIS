@@ -12,6 +12,10 @@ import {
   Clock,
   AlertTriangle,
   Eye,
+  Mail,
+  Phone,
+  BriefcaseBusiness,
+  MapPin,
   RefreshCw,
   Trash2,
   KeyRound,
@@ -104,6 +108,15 @@ const EMPLOYEE_LEVEL_OPTIONS = [
   { value: '5', label: 'Level 5 Company Head / Executive' },
   { value: '6', label: 'Level 6 Admin' },
 ]
+
+const BUSINESS_CARD_BUILDINGS_BG = '/business-card-assets/buildings-header.png'
+const BUSINESS_CARD_DEFAULT_THEME = {
+  primary: '#003da5',
+  primaryDark: '#002d7f',
+  primarySoft: '#e8f1ff',
+  text: '#233b60',
+  accent: '#5aa142',
+}
 
 function hasWorkingDays(schedule) {
   if (!schedule || typeof schedule !== 'object') return false
@@ -204,6 +217,250 @@ function isManagerialPosition(position) {
   return p.includes('manager') || p.includes('supervisor') || p.includes('lead') || p.includes('head')
 }
 
+function employeeInitials(employee) {
+  const name = employee?.name || employee?.display_name || '?'
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((n) => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2) || '?'
+}
+
+function companyInitials(name) {
+  const normalized = String(name || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+  const words = normalized
+    .split(' ')
+    .filter(Boolean)
+  if (words.length === 0) return 'CO'
+  const firstWord = words[0].replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+  const acronymLikeFirstWord = /^[A-Z0-9]{3,8}$/.test(firstWord)
+  if (acronymLikeFirstWord) return firstWord
+
+  const ignoredWords = new Set([
+    'A',
+    'AN',
+    'AND',
+    'THE',
+    'OF',
+    'FOR',
+    'IN',
+    'ON',
+    'AT',
+    'BY',
+    'CORP',
+    'CORPORATION',
+    'CO',
+    'COMPANY',
+    'INC',
+    'INCORPORATED',
+    'LTD',
+    'LIMITED',
+    'LLC',
+  ])
+  const meaningfulWords = words
+    .map((word) => word.replace(/[^A-Za-z0-9]/g, '').toUpperCase())
+    .filter((word) => word && !ignoredWords.has(word))
+  if (meaningfulWords.length === 0) return firstWord || 'CO'
+  if (meaningfulWords.length === 1) return meaningfulWords[0].slice(0, 8)
+  return meaningfulWords.map((word) => word[0]).join('').slice(0, 8)
+}
+
+function safeDownloadName(value, fallback = 'employee-business-card') {
+  return String(value || fallback)
+    .trim()
+    .replace(/[^a-z0-9-_]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    || fallback
+}
+
+function firstPresentEmployeeValue(employee, keys) {
+  for (const key of keys) {
+    const value = employee?.[key]
+    if (value !== null && value !== undefined && String(value).trim() !== '') return String(value).trim()
+  }
+  return ''
+}
+
+function loadCanvasImage(src) {
+  return new Promise((resolve) => {
+    if (!src) {
+      resolve(null)
+      return
+    }
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => resolve(img)
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
+}
+
+function hexToRgb(hex) {
+  const normalized = String(hex || '').replace('#', '').trim()
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return { r: 0, g: 61, b: 165 }
+  return {
+    r: parseInt(normalized.slice(0, 2), 16),
+    g: parseInt(normalized.slice(2, 4), 16),
+    b: parseInt(normalized.slice(4, 6), 16),
+  }
+}
+
+function rgbToHex({ r, g, b }) {
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`
+}
+
+function mixRgb(a, b, weight = 0.5) {
+  return {
+    r: a.r * (1 - weight) + b.r * weight,
+    g: a.g * (1 - weight) + b.g * weight,
+    b: a.b * (1 - weight) + b.b * weight,
+  }
+}
+
+function luminance({ r, g, b }) {
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+}
+
+function themeFromPrimary(primaryHex) {
+  const primary = hexToRgb(primaryHex)
+  const dark = mixRgb(primary, { r: 0, g: 0, b: 0 }, luminance(primary) > 0.42 ? 0.38 : 0.18)
+  const soft = mixRgb(primary, { r: 255, g: 255, b: 255 }, 0.9)
+  const text = mixRgb(primary, { r: 15, g: 23, b: 42 }, 0.42)
+  return {
+    primary: rgbToHex(primary),
+    primaryDark: rgbToHex(dark),
+    primarySoft: rgbToHex(soft),
+    text: rgbToHex(text),
+    accent: BUSINESS_CARD_DEFAULT_THEME.accent,
+  }
+}
+
+async function extractThemeFromLogo(logoUrl) {
+  const img = await loadCanvasImage(logoUrl)
+  if (!img) return BUSINESS_CARD_DEFAULT_THEME
+  try {
+    const size = 48
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    ctx.drawImage(img, 0, 0, size, size)
+    const { data } = ctx.getImageData(0, 0, size, size)
+    const buckets = new Map()
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3]
+      if (alpha < 80) continue
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      const max = Math.max(r, g, b)
+      const min = Math.min(r, g, b)
+      const saturation = max === 0 ? 0 : (max - min) / max
+      const light = (r + g + b) / 3
+      if (light > 238 || light < 25 || saturation < 0.18) continue
+      const qr = Math.round(r / 24) * 24
+      const qg = Math.round(g / 24) * 24
+      const qb = Math.round(b / 24) * 24
+      const key = `${qr},${qg},${qb}`
+      const current = buckets.get(key) || { r: 0, g: 0, b: 0, weight: 0 }
+      const weight = saturation * (1.2 - Math.abs(light - 128) / 180)
+      buckets.set(key, {
+        r: current.r + r * weight,
+        g: current.g + g * weight,
+        b: current.b + b * weight,
+        weight: current.weight + weight,
+      })
+    }
+    const dominant = [...buckets.values()].sort((a, b) => b.weight - a.weight)[0]
+    if (!dominant || dominant.weight <= 0) return BUSINESS_CARD_DEFAULT_THEME
+    return themeFromPrimary(rgbToHex({
+      r: dominant.r / dominant.weight,
+      g: dominant.g / dominant.weight,
+      b: dominant.b / dominant.weight,
+    }))
+  } catch {
+    return BUSINESS_CARD_DEFAULT_THEME
+  }
+}
+
+function roundedRectPath(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.arcTo(x + width, y, x + width, y + height, r)
+  ctx.arcTo(x + width, y + height, x, y + height, r)
+  ctx.arcTo(x, y + height, x, y, r)
+  ctx.arcTo(x, y, x + width, y, r)
+  ctx.closePath()
+}
+
+function drawContainedImage(ctx, img, x, y, width, height) {
+  if (!img) return
+  const ratio = Math.min(width / img.width, height / img.height)
+  const drawWidth = img.width * ratio
+  const drawHeight = img.height * ratio
+  ctx.drawImage(img, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight)
+}
+
+function drawCanvasText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+  const value = String(text || '').trim()
+  if (!value) return y
+  const words = value.split(/\s+/)
+  let line = ''
+  let lines = []
+  words.forEach((word) => {
+    if (ctx.measureText(word).width > maxWidth) {
+      if (line) {
+        lines.push(line)
+        line = ''
+      }
+      let chunk = ''
+      for (const char of word) {
+        if (chunk && ctx.measureText(`${chunk}${char}`).width > maxWidth) {
+          lines.push(chunk)
+          chunk = char
+        } else {
+          chunk += char
+        }
+      }
+      line = chunk
+      return
+    }
+
+    const testLine = line ? `${line} ${word}` : word
+    if (ctx.measureText(testLine).width <= maxWidth || !line) {
+      line = testLine
+    } else {
+      lines.push(line)
+      line = word
+    }
+  })
+  if (line) lines.push(line)
+  lines = lines.slice(0, maxLines)
+  if (lines.length === maxLines && words.length > 0 && ctx.measureText(value).width > maxWidth) {
+    let last = lines[lines.length - 1]
+    while (last.length > 1 && ctx.measureText(`${last}...`).width > maxWidth) {
+      last = last.slice(0, -1)
+    }
+    lines[lines.length - 1] = `${last}...`
+  }
+  lines.forEach((row, index) => ctx.fillText(row, x, y + index * lineHeight))
+  return y + lines.length * lineHeight
+}
+
+function fitCanvasFont(ctx, text, { maxWidth, fontWeight = 800, maxSize = 48, minSize = 24, family = 'Inter, Arial, sans-serif' }) {
+  const value = String(text || '').trim()
+  for (let size = maxSize; size >= minSize; size -= 1) {
+    ctx.font = `${fontWeight} ${size}px ${family}`
+    if (ctx.measureText(value).width <= maxWidth) return size
+  }
+  return minSize
+}
+
 export default function AdminEmployees() {
   const { toast } = useToast()
   const { user } = useAuth()
@@ -256,6 +513,10 @@ export default function AdminEmployees() {
   const qrCanvasRef = useRef(null)
   const [pendingQrDownload, setPendingQrDownload] = useState(null)
   const hiddenQrRef = useRef(null)
+  const [businessCardOpen, setBusinessCardOpen] = useState(false)
+  const [businessCardEmployee, setBusinessCardEmployee] = useState(null)
+  const [businessCardDownloading, setBusinessCardDownloading] = useState(false)
+  const [businessCardTheme, setBusinessCardTheme] = useState(BUSINESS_CARD_DEFAULT_THEME)
 
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleEmployee, setScheduleEmployee] = useState(null)
@@ -360,6 +621,75 @@ export default function AdminEmployees() {
   const [editEmployeeCodesSaving, setEditEmployeeCodesSaving] = useState(false)
   const listPerPage = 20
   const listPage = page
+
+  const companyById = useMemo(() => {
+    const byId = new Map()
+    companies.forEach((company) => {
+      if (company?.id !== null && company?.id !== undefined) byId.set(String(company.id), company)
+    })
+    return byId
+  }, [companies])
+
+  const getEmployeeCompanyLogoUrl = useCallback((emp) => {
+    const direct = companyLogoUrl(emp?.company_logo_url || emp?.logo_url)
+    if (direct) return direct
+    const company = emp?.company_id !== null && emp?.company_id !== undefined
+      ? companyById.get(String(emp.company_id))
+      : null
+    return companyLogoUrl(company)
+  }, [companyById])
+
+  const getBusinessCardDetails = useCallback((emp) => {
+    if (!emp) return null
+    const companyName = emp.company_name || 'Company not assigned'
+    return {
+      name: emp.name || emp.display_name || 'Employee',
+      employeeCode: composeEmployeeCode(emp.employee_code) || emp.username || '',
+      position: emp.position || 'Position not set',
+      email: emp.email || '',
+      phone: emp.phone_number || '',
+      companyName,
+      department: emp.department_name || emp.department || '',
+      branch: emp.branch_name || '',
+      hireDate: emp.hire_date || '',
+      employmentStatus: formatEmploymentStatusForViewer(emp.employment_status, emp.employment_status_label, false) || '',
+      level: emp.employee_level_label || '',
+      currentOrgPath: emp.current_org_path || '',
+      initials: employeeInitials(emp),
+      logoUrl: getEmployeeCompanyLogoUrl(emp),
+      avatarUrl: profileImageUrl(firstPresentEmployeeValue(emp, ['profile_image', 'profile_image_url', 'avatar_url'])),
+    }
+  }, [getEmployeeCompanyLogoUrl])
+
+  const openBusinessCard = useCallback((emp) => {
+    setBusinessCardEmployee(emp)
+    setBusinessCardOpen(true)
+  }, [])
+
+  const closeBusinessCard = useCallback(() => {
+    setBusinessCardOpen(false)
+    setBusinessCardEmployee(null)
+    setBusinessCardDownloading(false)
+    setBusinessCardTheme(BUSINESS_CARD_DEFAULT_THEME)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!businessCardOpen || !businessCardEmployee) {
+      setBusinessCardTheme(BUSINESS_CARD_DEFAULT_THEME)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const logoUrl = getEmployeeCompanyLogoUrl(businessCardEmployee)
+    extractThemeFromLogo(logoUrl).then((theme) => {
+      if (!cancelled) setBusinessCardTheme(theme)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [businessCardOpen, businessCardEmployee, getEmployeeCompanyLogoUrl])
 
   useEffect(() => {
     setPage(1)
@@ -776,6 +1106,200 @@ export default function AdminEmployees() {
     }, 150)
     return () => clearTimeout(timer)
   }, [pendingQrDownload])
+
+  const downloadBusinessCard = useCallback(async (emp = businessCardEmployee) => {
+    const details = getBusinessCardDetails(emp)
+    if (!details || businessCardDownloading) return
+    setBusinessCardDownloading(true)
+    try {
+      const theme = await extractThemeFromLogo(details.logoUrl)
+      const scale = 2
+      const width = 980
+      const height = 1090
+      const canvas = document.createElement('canvas')
+      canvas.width = width * scale
+      canvas.height = height * scale
+      const ctx = canvas.getContext('2d')
+      ctx.scale(scale, scale)
+
+      const logo = await loadCanvasImage(details.logoUrl)
+      const avatar = await loadCanvasImage(details.avatarUrl)
+      const buildingBg = await loadCanvasImage(BUSINESS_CARD_BUILDINGS_BG)
+
+      ctx.clearRect(0, 0, width, height)
+      ctx.fillStyle = '#ffffff'
+      roundedRectPath(ctx, 10, 10, width - 20, height - 20, 22)
+      ctx.fill()
+
+      ctx.save()
+      roundedRectPath(ctx, 10, 10, width - 20, 272, 22)
+      ctx.clip()
+      const headerBg = ctx.createLinearGradient(10, 10, width, 290)
+      headerBg.addColorStop(0, theme.primaryDark)
+      headerBg.addColorStop(0.55, theme.primary)
+      headerBg.addColorStop(1, '#67a6e8')
+      ctx.fillStyle = headerBg
+      ctx.fillRect(10, 10, width - 20, 300)
+      if (buildingBg) {
+        const imgRatio = buildingBg.width / buildingBg.height
+        const drawHeight = 300
+        const drawWidth = drawHeight * imgRatio
+        ctx.drawImage(buildingBg, width - drawWidth - 10, 10, drawWidth, drawHeight)
+      }
+      const tintRgb = hexToRgb(theme.primary)
+      ctx.fillStyle = `rgba(${tintRgb.r},${tintRgb.g},${tintRgb.b},0.28)`
+      ctx.fillRect(10, 10, width - 20, 300)
+      const overlay = ctx.createLinearGradient(10, 10, width, 10)
+      const primary = hexToRgb(theme.primary)
+      const primaryDark = hexToRgb(theme.primaryDark)
+      overlay.addColorStop(0, `rgba(${primaryDark.r},${primaryDark.g},${primaryDark.b},0.98)`)
+      overlay.addColorStop(0.42, `rgba(${primary.r},${primary.g},${primary.b},0.72)`)
+      overlay.addColorStop(0.72, `rgba(${primary.r},${primary.g},${primary.b},0.16)`)
+      overlay.addColorStop(1, 'rgba(0,0,0,0.05)')
+      ctx.fillStyle = overlay
+      ctx.fillRect(10, 10, width - 20, 300)
+
+      ctx.fillStyle = '#ffffff'
+      roundedRectPath(ctx, 54, 70, 124, 124, 22)
+      ctx.fill()
+      if (logo) {
+        drawContainedImage(ctx, logo, 70, 86, 92, 92)
+      } else {
+        ctx.fillStyle = theme.primary
+        ctx.font = '800 34px Inter, Arial, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(companyInitials(details.companyName), 116, 132)
+      }
+
+      ctx.strokeStyle = 'rgba(120,186,255,0.75)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(204, 86)
+      ctx.lineTo(204, 176)
+      ctx.stroke()
+
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillStyle = '#ffffff'
+      const companyAcronym = companyInitials(details.companyName)
+      ctx.font = `800 ${fitCanvasFont(ctx, companyAcronym, { maxWidth: 220, maxSize: 48, minSize: 30 })}px Inter, Arial, sans-serif`
+      ctx.fillText(companyAcronym, 230, 132)
+      ctx.font = '500 28px Inter, Arial, sans-serif'
+      drawCanvasText(ctx, (details.branch || 'Branch not set').toUpperCase(), 230, 176, 250, 32, 1)
+      ctx.restore()
+
+      ctx.save()
+      roundedRectPath(ctx, 400, 180, 180, 180, 90)
+      ctx.clip()
+      ctx.fillStyle = theme.primary
+      ctx.fillRect(400, 180, 180, 180)
+      if (avatar) {
+        const side = Math.min(avatar.width, avatar.height)
+        ctx.drawImage(avatar, (avatar.width - side) / 2, (avatar.height - side) / 2, side, side, 400, 180, 180, 180)
+      } else {
+        ctx.fillStyle = '#ffffff'
+        ctx.font = '800 58px Inter, Arial, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(details.initials, 490, 270)
+      }
+      ctx.restore()
+
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 10
+      roundedRectPath(ctx, 400, 180, 180, 180, 90)
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(15,23,42,0.12)'
+      ctx.lineWidth = 2
+      roundedRectPath(ctx, 400, 180, 180, 180, 90)
+      ctx.stroke()
+
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillStyle = '#050a14'
+      const nameSize = fitCanvasFont(ctx, details.name, { maxWidth: width - 220, maxSize: 48, minSize: 30 })
+      ctx.font = `800 ${nameSize}px Inter, Arial, sans-serif`
+      drawCanvasText(ctx, details.name, 110, 452, width - 220, nameSize + 8, 2)
+      const positionSize = fitCanvasFont(ctx, details.position.toUpperCase(), { maxWidth: width - 300, fontWeight: 500, maxSize: 28, minSize: 18 })
+      ctx.font = `500 ${positionSize}px Inter, Arial, sans-serif`
+      ctx.fillStyle = theme.primary
+      drawCanvasText(ctx, details.position.toUpperCase(), 150, 515, width - 300, positionSize + 6, 1)
+
+      ctx.fillStyle = theme.primary
+      roundedRectPath(ctx, 421, 552, 112, 4, 2)
+      ctx.fill()
+      ctx.fillStyle = theme.accent
+      roundedRectPath(ctx, 532, 552, 34, 4, 2)
+      ctx.fill()
+
+      const rows = [
+        ['Employee ID', details.employeeCode || 'Not set'],
+        ['Position', details.position || 'Not set'],
+        ['Work Email', details.email || 'Not set'],
+        ['Contact', details.phone || 'Not set'],
+        ['Branch', details.branch || 'Not set'],
+      ]
+      ctx.strokeStyle = '#d8dee8'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(56, 620)
+      ctx.lineTo(56, 978)
+      ctx.stroke()
+      ctx.strokeStyle = theme.primary
+      ctx.lineWidth = 4
+      ctx.beginPath()
+      ctx.moveTo(56, 620)
+      ctx.lineTo(56, 678)
+      ctx.stroke()
+
+      let y = 646
+      const rowLeft = 150
+      const rowValueLeft = 372
+      const rowRight = 918
+      ctx.textAlign = 'left'
+      rows.forEach(([label, value], index) => {
+        ctx.fillStyle = theme.text
+        ctx.font = '600 22px Inter, Arial, sans-serif'
+        ctx.fillText(label.toUpperCase(), rowLeft, y)
+        ctx.fillStyle = '#050a14'
+        const valueSize = fitCanvasFont(ctx, value, { maxWidth: rowRight - rowValueLeft, fontWeight: 500, maxSize: 24, minSize: 18 })
+        ctx.font = `500 ${valueSize}px Inter, Arial, sans-serif`
+        const nextTextY = drawCanvasText(ctx, value, rowValueLeft, y, rowRight - rowValueLeft, valueSize + 8, 2)
+        const rowHeight = Math.max(78, nextTextY - y + 42)
+        if (index < rows.length - 1) {
+          ctx.strokeStyle = '#d8dee8'
+          ctx.lineWidth = 1
+          ctx.beginPath()
+          ctx.moveTo(108, y + rowHeight - 24)
+          ctx.lineTo(rowRight, y + rowHeight - 24)
+          ctx.stroke()
+        }
+        y += rowHeight
+      })
+
+      ctx.strokeStyle = '#d8dee8'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(10, 990)
+      ctx.lineTo(width - 10, 990)
+      ctx.stroke()
+
+      const a = document.createElement('a')
+      a.href = canvas.toDataURL('image/png')
+      a.download = `${safeDownloadName(details.name)}-business-card.png`
+      a.click()
+      toast({ title: 'Business card downloaded', description: details.name, variant: 'success' })
+    } catch (e) {
+      toast({
+        title: 'Failed to download business card',
+        description: e?.message || 'Unable to render the employee business card.',
+        variant: 'error',
+      })
+    } finally {
+      setBusinessCardDownloading(false)
+    }
+  }, [businessCardEmployee, businessCardDownloading, getBusinessCardDetails, toast])
 
   const openSchedule = (emp) => {
     setScheduleEmployee(emp)
@@ -1591,6 +2115,20 @@ export default function AdminEmployees() {
     }
   }, [canExportEmployees, toast])
 
+  const businessCardDetails = useMemo(
+    () => getBusinessCardDetails(businessCardEmployee),
+    [businessCardEmployee, getBusinessCardDetails],
+  )
+  const businessCardThemeStyle = useMemo(() => ({
+    '--business-card-primary': businessCardTheme.primary,
+    '--business-card-primary-dark': businessCardTheme.primaryDark,
+    '--business-card-primary-soft': businessCardTheme.primarySoft,
+    '--business-card-text': businessCardTheme.text,
+    '--business-card-accent': businessCardTheme.accent,
+    '--business-card-primary-rgb': `${hexToRgb(businessCardTheme.primary).r}, ${hexToRgb(businessCardTheme.primary).g}, ${hexToRgb(businessCardTheme.primary).b}`,
+    '--business-card-overlay': `linear-gradient(90deg, ${businessCardTheme.primaryDark}fa 0%, ${businessCardTheme.primary}bf 43%, ${businessCardTheme.primary}29 73%, rgba(0,0,0,.05) 100%)`,
+  }), [businessCardTheme])
+
   const pageTransition = { duration: 0.25, ease: [0.23, 1, 0.32, 1] }
 
   return (
@@ -2371,6 +2909,15 @@ export default function AdminEmployees() {
                                 >
                                   <Eye className="size-3.5" />
                                 </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                                  aria-label="Business card"
+                                  onClick={(e) => { e.stopPropagation(); openBusinessCard(emp) }}
+                                >
+                                  <IdCard className="size-3.5" />
+                                </Button>
                                 {canAssignSchedule && (
                                   <Button
                                     variant="ghost"
@@ -2416,6 +2963,10 @@ export default function AdminEmployees() {
                                   <DropdownMenuItem onClick={() => openPreview(emp)}>
                                     <Eye className="size-4 mr-2" />
                                     {canEditEmployeeTarget(emp) ? 'Edit / View profile' : 'View profile'}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => openBusinessCard(emp)}>
+                                    <IdCard className="size-4 mr-2" />
+                                    Business card
                                   </DropdownMenuItem>
                                   {canAssignSchedule && (
                                     <DropdownMenuItem onClick={() => openSchedule(emp)}>
@@ -3075,6 +3626,130 @@ export default function AdminEmployees() {
           fetchEmployees={fetchEmployees}
         />
       )}
+
+      {/* Employee business card */}
+      <Dialog open={businessCardOpen} onOpenChange={(open) => !open && closeBusinessCard()}>
+        <DialogContent
+          className="max-h-[calc(100dvh-1rem)] w-[min(calc(100vw-1rem),30rem)] rounded-2xl border-slate-200/90 bg-white p-0 shadow-[0_26px_80px_-32px_rgba(15,23,42,0.7)] dark:border-slate-800 dark:bg-white"
+          innerClassName="gap-0 overflow-y-auto p-0"
+          closeButtonClassName="right-3 top-3 size-8 rounded-xl border-white/70 bg-white text-slate-950 shadow-lg hover:bg-white sm:right-4 sm:top-4"
+        >
+          {businessCardDetails && (
+            <>
+              <DialogHeader className="sr-only">
+                <DialogTitle>Employee business card</DialogTitle>
+                <DialogDescription>
+                  Downloadable business card for {businessCardDetails.name}.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="bg-white text-slate-950" style={businessCardThemeStyle}>
+                <div
+                  className="relative h-32 overflow-hidden rounded-t-2xl bg-[var(--business-card-primary)] bg-cover bg-right text-white sm:h-36"
+                  style={{ backgroundImage: `url(${BUSINESS_CARD_BUILDINGS_BG})` }}
+                >
+                  <div className="absolute inset-0 bg-[rgba(var(--business-card-primary-rgb),0.28)] mix-blend-multiply" aria-hidden />
+                  <div className="absolute inset-0" style={{ background: 'var(--business-card-overlay)' }} aria-hidden />
+                  <div className="absolute inset-0 opacity-20 [background-image:repeating-linear-gradient(132deg,transparent_0,transparent_25px,rgba(255,255,255,.2)_26px,transparent_27px)]" aria-hidden />
+                  <div className="relative flex h-full items-start gap-3 px-5 pt-5 sm:px-6 sm:pt-7">
+                    <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-white p-2 shadow-lg sm:size-16">
+                      {businessCardDetails.logoUrl ? (
+                        <img
+                          src={businessCardDetails.logoUrl}
+                          alt=""
+                          className="max-h-full max-w-full object-contain"
+                          onError={(e) => { e.currentTarget.style.display = 'none' }}
+                        />
+                      ) : (
+                        <span className="text-sm font-black text-[var(--business-card-primary)] sm:text-base">
+                          {companyInitials(businessCardDetails.companyName)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1.5 h-11 w-px shrink-0 bg-sky-200/80 sm:h-12" aria-hidden />
+                    <div className="mt-1 min-w-0">
+                      <p className="truncate pr-9 text-xl font-black leading-none tracking-normal sm:text-2xl">{companyInitials(businessCardDetails.companyName)}</p>
+                      <p className="mt-2 max-w-[13rem] truncate text-sm font-light uppercase tracking-normal text-white/95 sm:max-w-[17rem] sm:text-base">
+                        {businessCardDetails.branch || 'Branch not set'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white px-5 pb-5 pt-0 text-slate-950 sm:px-6">
+                  <div className="-mt-8 flex flex-col items-center sm:-mt-9">
+                    <Avatar className="size-20 rounded-full border-[5px] border-white bg-[var(--business-card-primary)] shadow-xl ring-1 ring-slate-950/10 sm:size-24 sm:border-[6px]">
+                      <AvatarImage src={businessCardDetails.avatarUrl} alt="" className="object-cover" />
+                      <AvatarFallback className="rounded-full bg-[var(--business-card-primary)] text-2xl font-black text-white sm:text-3xl">
+                        {businessCardDetails.initials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <h3 className="mt-3 max-w-full text-center text-[clamp(1.15rem,5vw,1.55rem)] font-black leading-tight tracking-normal text-slate-950 sm:mt-4">
+                      {businessCardDetails.name}
+                    </h3>
+                    <p className="mt-1.5 max-w-full text-center text-[clamp(.75rem,3.4vw,.95rem)] font-medium uppercase tracking-normal text-[var(--business-card-primary)]">
+                      {businessCardDetails.position || 'Position not set'}
+                    </p>
+                    <div className="mt-3 flex h-0.5 w-16 overflow-hidden rounded-full bg-[var(--business-card-primary)] sm:w-20">
+                      <span className="h-full flex-1 bg-[var(--business-card-primary)]" />
+                      <span className="h-full w-5 bg-[var(--business-card-accent)]" />
+                    </div>
+                  </div>
+
+                  <div className="relative mt-4 space-y-0 border-l border-slate-200 pl-4 sm:pl-5">
+                    <span className="absolute -left-[2px] top-0 h-9 w-1 rounded-full bg-[var(--business-card-primary)]" aria-hidden />
+                    {[
+                      { icon: IdCard, label: 'Employee ID', value: businessCardDetails.employeeCode || 'Not set' },
+                      { icon: BriefcaseBusiness, label: 'Position', value: businessCardDetails.position || 'Not set' },
+                      { icon: Mail, label: 'Work Email', value: businessCardDetails.email || 'Not set', breakAll: true },
+                      { icon: Phone, label: 'Contact', value: businessCardDetails.phone || 'Not set' },
+                      { icon: MapPin, label: 'Branch', value: businessCardDetails.branch || 'Not set' },
+                    ].map((row, index, rows) => {
+                      const Icon = row.icon
+                      return (
+                        <div
+                          key={row.label}
+                          className={[
+                            'grid min-h-12 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-1 py-1.5 sm:grid-cols-[1.75rem_6.25rem_minmax(0,1fr)] sm:py-0',
+                            index < rows.length - 1 ? 'border-b border-slate-200' : '',
+                          ].join(' ')}
+                        >
+                          <Icon className="size-4 text-[var(--business-card-primary)]" strokeWidth={2} />
+                          <span className="text-[.68rem] font-medium uppercase tracking-normal text-[var(--business-card-text)] sm:text-xs">
+                            {row.label}
+                          </span>
+                          <span className={`col-start-2 min-w-0 text-sm font-normal text-slate-950 sm:col-start-auto ${row.breakAll ? 'break-all' : 'break-words'}`}>
+                            {row.value}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              <DialogFooter className="grid grid-cols-2 gap-2 border-t border-slate-200 bg-white px-5 py-3.5 sm:flex sm:px-6">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 min-w-0 rounded-xl border-[var(--business-card-primary)] px-4 text-sm font-medium text-[var(--business-card-primary)] hover:bg-[var(--business-card-primary-soft)] hover:text-[var(--business-card-primary)] sm:min-w-20 sm:px-6"
+                  onClick={closeBusinessCard}
+                >
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  className="h-9 min-w-0 rounded-xl bg-[var(--business-card-primary)] px-4 text-sm font-medium text-white shadow-lg hover:bg-[var(--business-card-primary-dark)] sm:min-w-32 sm:px-6"
+                  onClick={() => downloadBusinessCard()}
+                  disabled={businessCardDownloading}
+                  title="Download business card as PNG"
+                >
+                  {businessCardDownloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                  Download
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Issue / view QR */}
       <Dialog open={qrOpen} onOpenChange={(open) => !open && closeQr()}>
