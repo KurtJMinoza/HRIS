@@ -15,6 +15,7 @@ use App\Support\OrganizationLeadershipScopeOptionsCache;
 use App\Support\OvertimeModuleCache;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class OrganizationLeadershipService
@@ -434,10 +435,25 @@ class OrganizationLeadershipService
 
     private function dispatchPendingApprovalChainResync(string $legacyType, int $legacyId): void
     {
-        // Invalidate list caches now; heavy pending-chain rewrite runs on a worker so head-save stays fast.
+        // Invalidate list caches now, then rewrite the scoped pending chains immediately
+        // so review modals do not show a removed head while the queue catches up.
         LeaveModuleCache::flush();
         OvertimeModuleCache::flush();
         AttendanceCorrectionModuleCache::flush();
+
+        try {
+            app(OrgApprovalWorkflowService::class)->resyncPendingRequestChains(
+                self::pendingFilingResyncTypes(),
+                $legacyType,
+                $legacyId,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('leadership: immediate pending approval chain resync failed', [
+                'legacy_type' => $legacyType,
+                'legacy_id' => $legacyId,
+                'message' => $e->getMessage(),
+            ]);
+        }
 
         LeadershipPendingChainResyncJob::dispatch(
             self::pendingFilingResyncTypes(),

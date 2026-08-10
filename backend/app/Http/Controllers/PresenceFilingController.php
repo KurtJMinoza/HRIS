@@ -153,6 +153,53 @@ class PresenceFilingController extends Controller
         ]);
     }
 
+    private function presenceFilingHasRoutingSnapshot(AttendanceCorrection $correction): bool
+    {
+        foreach (['assignment_id', 'company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'] as $column) {
+            $value = $correction->getAttribute($column);
+            if ($value !== null && $value !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function refreshPresenceFilingApprovalChainIfSnapshotBacked(AttendanceCorrection $correction): bool
+    {
+        if (! (bool) $correction->pending_approval || ! $this->presenceFilingHasRoutingSnapshot($correction)) {
+            return false;
+        }
+
+        $correction->loadMissing(['user', 'filedBy']);
+        if (! $correction->user instanceof User) {
+            return false;
+        }
+
+        $this->approvalWorkflowService->ensureRecordsForRequest(
+            $correction,
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $correction->user,
+            $correction->filedBy instanceof User ? $correction->filedBy : $correction->user,
+        );
+        ReviewRequestCache::forget(OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, (int) $correction->id);
+
+        return true;
+    }
+
+    private function refreshPresenceFilingApprovalChainsForList($corrections): bool
+    {
+        $refreshed = false;
+        foreach ($corrections as $correction) {
+            if ($correction instanceof AttendanceCorrection
+                && $this->refreshPresenceFilingApprovalChainIfSnapshotBacked($correction)) {
+                $refreshed = true;
+            }
+        }
+
+        return $refreshed;
+    }
+
     /**
      * Employee (including org heads): submit or update manual attendance / presence filing for any past date.
      */
@@ -747,6 +794,13 @@ class PresenceFilingController extends Controller
                 'attendance_logs_synced_by',
                 'created_at',
                 'updated_at',
+                'assignment_id',
+                'assignment_type',
+                'company_id',
+                'branch_id',
+                'division_id',
+                'department_id',
+                'section_unit_id',
             ])
             ->where('user_id', $user->id)
             ->where(function ($sub) {
@@ -766,7 +820,9 @@ class PresenceFilingController extends Controller
         $summary = $includeSummary ? $this->presenceFilingStatusCounts(clone $q) : null;
 
         $paginator = $q->paginate($perPage, ['*'], 'page', $page)->withQueryString();
-        $pageIds = $paginator->getCollection()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $pageRows = $paginator->getCollection();
+        $this->refreshPresenceFilingApprovalChainsForList($pageRows);
+        $pageIds = $pageRows->pluck('id')->map(fn ($id) => (int) $id)->all();
         $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
         $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
             OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
@@ -949,9 +1005,17 @@ class PresenceFilingController extends Controller
                 'second_approved_at',
                 'is_incomplete_record',
                 'created_at',
+                'assignment_id',
+                'assignment_type',
+                'company_id',
+                'branch_id',
+                'division_id',
+                'department_id',
+                'section_unit_id',
             ])
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,department_id,department',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix',
             ])
             ->orderByDesc('filed_at');
 
@@ -1023,6 +1087,7 @@ class PresenceFilingController extends Controller
 
         $paginator = $query->paginate($perPage)->withQueryString();
         $pageRows = $paginator->getCollection();
+        $this->refreshPresenceFilingApprovalChainsForList($pageRows);
         $pageIds = $pageRows->pluck('id')->map(fn ($id) => (int) $id)->all();
         $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
         $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
@@ -1271,7 +1336,7 @@ class PresenceFilingController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v5:v'.AttendanceCorrectionModuleCache::version();
+        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v6:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1395,7 +1460,7 @@ class PresenceFilingController extends Controller
             'per_page' => $perPage,
         ], static fn ($value): bool => $value !== null && $value !== '');
 
-        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':actions-v1:v'.AttendanceCorrectionModuleCache::version();
+        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':actions-v2:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1842,6 +1907,8 @@ class PresenceFilingController extends Controller
                 'approval_stage', 'first_approver_id', 'first_approved_at',
                 'second_approver_id', 'second_approved_at', 'is_incomplete_record',
                 'attendance_logs_synced_at', 'attendance_logs_synced_by', 'created_at', 'updated_at',
+                'assignment_id', 'assignment_type', 'company_id', 'branch_id',
+                'division_id', 'department_id', 'section_unit_id',
             ])
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,role,employee_code,department,department_id,branch_id,company_id,profile_image,position',
@@ -1864,11 +1931,16 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => 'Attendance correction not found.'], 404);
         }
 
+        $refreshedApprovalChain = $this->refreshPresenceFilingApprovalChainIfSnapshotBacked($correction);
+
         if (! $this->canAccessPresenceFilingThroughApprovalScope($actor, $correction)) {
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
         $tz = $this->presenceFilingService->attendanceTimezone();
+        if ($refreshedApprovalChain) {
+            $correction = $this->correctionFormatter->freshWithDisplayRelations($correction);
+        }
         $cached = ReviewRequestCache::remember('attendance_correction', $id, fn () => $this->correctionFormatter->format(
             $correction,
             $tz,
@@ -1906,11 +1978,29 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
+        $cacheProbe = AttendanceCorrection::query()
+            ->select(['id', 'pending_approval', 'assignment_id', 'company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'])
+            ->findOrFail($id);
+        if ((bool) $cacheProbe->pending_approval && $this->presenceFilingHasRoutingSnapshot($cacheProbe)) {
+            ReviewRequestCache::forget(OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION, (int) $cacheProbe->id);
+        }
+
         $cached = ReviewRequestCache::rememberAttendanceCorrectionReviewLite($id, (int) $actor->id, function () use ($actor, $id): array {
             $c = AttendanceCorrection::query()
-                ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'remarks', 'issue_kind', 'approved', 'approved_by', 'approved_at', 'pending_approval', 'filed_at', 'filed_by', 'rejected_at', 'rejected_by', 'rejection_note', 'approval_stage', 'first_approver_id', 'second_approver_id', 'created_at'])
-                ->with(['user:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,department_id,department'])
+                ->select([
+                    'id', 'user_id', 'date', 'time_in', 'time_out', 'remarks', 'issue_kind',
+                    'approved', 'approved_by', 'approved_at', 'pending_approval', 'filed_at',
+                    'filed_by', 'rejected_at', 'rejected_by', 'rejection_note', 'approval_stage',
+                    'first_approver_id', 'second_approver_id', 'created_at',
+                    'assignment_id', 'assignment_type', 'company_id', 'branch_id',
+                    'division_id', 'department_id', 'section_unit_id',
+                ])
+                ->with([
+                    'user:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,department_id,department',
+                    'filedBy:id,name,first_name,middle_name,last_name,suffix',
+                ])
                 ->findOrFail($id);
+            $this->refreshPresenceFilingApprovalChainIfSnapshotBacked($c);
             if (! $this->canAccessPresenceFilingThroughApprovalScope($actor, $c)) {
                 abort(403, 'Forbidden.');
             }

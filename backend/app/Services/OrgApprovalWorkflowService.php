@@ -107,7 +107,8 @@ class OrgApprovalWorkflowService
             } elseif ($isPending && $this->chainNeedsSync($existing, $steps, $moduleType)) {
                 // Wrong/stale request org snapshots can re-resolve to HR-only and wipe the
                 // current Department Head (etc.) step mid-approve — keep the active chain.
-                if ($this->wouldDropActiveOrgPendingApprover($existing, $steps)) {
+                if (! $this->requestHasApprovalRoutingSnapshot($request)
+                    && $this->wouldDropActiveOrgPendingApprover($existing, $steps)) {
                     Log::warning('approval_chain: refusing sync that would drop active org pending approver', [
                         'module_type' => $moduleType,
                         'request_id' => $requestId,
@@ -296,6 +297,18 @@ class OrgApprovalWorkflowService
                 }
             }
         });
+    }
+
+    private function requestHasApprovalRoutingSnapshot(Model $request): bool
+    {
+        foreach (['assignment_id', 'company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'] as $column) {
+            $value = $request->getAttribute($column);
+            if ($value !== null && $value !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
