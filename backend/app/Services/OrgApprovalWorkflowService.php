@@ -19,6 +19,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class OrgApprovalWorkflowService
 {
@@ -258,16 +259,42 @@ class OrgApprovalWorkflowService
             return;
         }
 
-        $query->whereHas('user', function ($userQuery) use ($legacyType, $legacyId): void {
-            match ($legacyType) {
-                'company' => $userQuery->where('company_id', $legacyId),
-                'branch' => $userQuery->where('branch_id', $legacyId),
-                'division' => $userQuery->where('division_id', $legacyId),
-                'department' => $userQuery->where('department_id', $legacyId),
-                'section_unit' => $userQuery->where('section_unit_id', $legacyId),
-                'area' => $userQuery->whereHas('branch', fn ($branchQuery) => $branchQuery->where('area_id', $legacyId)),
-                default => $userQuery->whereRaw('1 = 0'),
-            };
+        $requestTable = $query->getModel()->getTable();
+        $snapshotColumn = match ($legacyType) {
+            'company' => 'company_id',
+            'branch' => 'branch_id',
+            'division' => 'division_id',
+            'department' => 'department_id',
+            'section_unit' => 'section_unit_id',
+            default => null,
+        };
+
+        $query->where(function ($scopeQuery) use ($legacyType, $legacyId, $requestTable, $snapshotColumn): void {
+            $scopeQuery->whereHas('user', function ($userQuery) use ($legacyType, $legacyId): void {
+                match ($legacyType) {
+                    'company' => $userQuery->where('company_id', $legacyId),
+                    'branch' => $userQuery->where('branch_id', $legacyId),
+                    'division' => $userQuery->where('division_id', $legacyId),
+                    'department' => $userQuery->where('department_id', $legacyId),
+                    'section_unit' => $userQuery->where('section_unit_id', $legacyId),
+                    'area' => $userQuery->whereHas('branch', fn ($branchQuery) => $branchQuery->where('area_id', $legacyId)),
+                    default => $userQuery->whereRaw('1 = 0'),
+                };
+            });
+
+            if ($snapshotColumn !== null && Schema::hasColumn($requestTable, $snapshotColumn)) {
+                $scopeQuery->orWhere($requestTable.'.'.$snapshotColumn, $legacyId);
+            }
+
+            if ($legacyType === 'area' && Schema::hasColumn($requestTable, 'branch_id') && Schema::hasColumn('branches', 'area_id')) {
+                $branchIds = DB::table('branches')
+                    ->where('area_id', $legacyId)
+                    ->pluck('id');
+
+                if ($branchIds->isNotEmpty()) {
+                    $scopeQuery->orWhereIn($requestTable.'.branch_id', $branchIds);
+                }
+            }
         });
     }
 

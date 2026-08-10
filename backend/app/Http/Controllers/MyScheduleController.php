@@ -11,6 +11,7 @@ use App\Models\WorkingScheduleDay;
 use App\Models\WorkingScheduleDayOption;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\ScheduleApprovalService;
 use App\Services\ScheduleRequestPayloadService;
@@ -29,6 +30,8 @@ class MyScheduleController extends Controller
         private readonly ScheduleApprovalService $scheduleApprovalService,
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly ScheduleRequestPayloadService $scheduleRequestPayloadService,
+        private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -77,6 +80,7 @@ class MyScheduleController extends Controller
             'request_kind' => ['required', 'in:template,custom'],
             'effective_from' => ['required', 'date', 'after_or_equal:'.$minEffective],
             'remarks' => ['nullable', 'string', 'max:2000'],
+            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
         ]);
 
         $workingScheduleId = null;
@@ -97,10 +101,18 @@ class MyScheduleController extends Controller
             );
         }
 
+        $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
+            $user,
+            isset($base['assignment_id']) ? (int) $base['assignment_id'] : null,
+            $base['effective_from'],
+        );
+        $assignmentContext = $this->organizationAssignments->requestContextPayload($selectedAssignment);
+
         $routing = $this->approvalChainResolver->resolveRoutingDecision(
             $user,
             true,
             OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE,
+            $assignmentContext,
         );
         if (($routing['chain'] ?? null) === null) {
             throw ValidationException::withMessages([
@@ -111,6 +123,7 @@ class MyScheduleController extends Controller
             $user,
             true,
             OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE,
+            $assignmentContext,
         ));
         $firstApproverId = $initialStage === \App\Support\HrApprovalStages::PENDING_FIRST
             ? ($routing['first_level_approver']?->id)
@@ -136,6 +149,7 @@ class MyScheduleController extends Controller
             'second_approver_id' => $hrApproverId,
             'filed_at' => now(),
             'filed_by' => $user->id,
+            ...$assignmentContext,
         ]);
         $scheduleRequest->save();
 
@@ -149,6 +163,13 @@ class MyScheduleController extends Controller
             'details' => $auditDetails,
             'approver_role' => $this->hrRoleResolver->resolveForApprovalSubject($user)->value,
         ]);
+
+        $this->approvalWorkflowService->ensureRecordsForRequest(
+            $scheduleRequest,
+            OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE,
+            $user,
+            $user,
+        );
 
         $scheduleRequest->load($this->requestRelations());
 
@@ -517,7 +538,11 @@ class MyScheduleController extends Controller
         ]];
 
         $requestType = OrgApprovalWorkflowService::MODULE_CHANGE_SCHEDULE;
-        $firstApprover = $this->approvalChainResolver->resolveFirstLevelApprover($user, $requestType);
+        $assignmentContext = $this->organizationAssignments->requestContextPayload(
+            $this->organizationAssignments->resolveRequestAssignment($user)
+        );
+        $routing = $this->approvalChainResolver->resolveRoutingDecision($user, true, $requestType, $assignmentContext);
+        $firstApprover = $routing['first_level_approver'] ?? null;
         if ($firstApprover) {
             $preview[] = [
                 'key' => 'line_approval',

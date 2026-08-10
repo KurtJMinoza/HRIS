@@ -54,6 +54,13 @@ class AttendanceCorrection extends Model
         'is_incomplete_record',
         'attendance_logs_synced_at',
         'attendance_logs_synced_by',
+        'assignment_id',
+        'assignment_type',
+        'company_id',
+        'branch_id',
+        'division_id',
+        'department_id',
+        'section_unit_id',
     ];
 
     protected function casts(): array
@@ -106,6 +113,11 @@ class AttendanceCorrection extends Model
     public function attendanceLogsSyncedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'attendance_logs_synced_by');
+    }
+
+    public function organizationAssignment(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeOrganizationAssignment::class, 'assignment_id');
     }
 
     public function audits(): HasMany

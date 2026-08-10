@@ -58,12 +58,13 @@ class AttendanceCorrectionApprovalService
         );
     }
 
-    public function initialApprovalStage(User $employee): string
+    public function initialApprovalStage(User $employee, array $context = []): string
     {
         return $this->chainResolver->initialApprovalStage(
             $employee,
             true,
             OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $context,
         );
     }
 
@@ -77,12 +78,13 @@ class AttendanceCorrectionApprovalService
      *   initial_stage: string
      * }
      */
-    public function resolveRoutingDecision(User $employee): array
+    public function resolveRoutingDecision(User $employee, array $context = []): array
     {
         return $this->chainResolver->resolveRoutingDecision(
             $employee,
             true,
             OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+            $context,
         );
     }
 

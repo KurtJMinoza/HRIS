@@ -37,6 +37,13 @@ class ScheduleRequest extends Model
         'rejected_at',
         'rejected_by',
         'rejection_note',
+        'assignment_id',
+        'assignment_type',
+        'company_id',
+        'branch_id',
+        'division_id',
+        'department_id',
+        'section_unit_id',
     ];
 
     protected function casts(): array
@@ -80,6 +87,11 @@ class ScheduleRequest extends Model
     public function rejectedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    public function organizationAssignment(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeOrganizationAssignment::class, 'assignment_id');
     }
 
     public function approvalAudits(): HasMany

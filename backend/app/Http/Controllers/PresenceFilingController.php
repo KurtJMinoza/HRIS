@@ -20,6 +20,7 @@ use App\Services\BulkApproval\AttendanceCorrectionBulkApprovalService;
 use App\Services\BulkApproval\BulkApprovalCacheService;
 use App\Services\BulkApproval\PresenceFilingBulkApprovalQuery;
 use App\Services\DataScopeService;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\HrRoleResolver;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
@@ -62,6 +63,7 @@ class PresenceFilingController extends Controller
         private readonly OvertimeService $overtimeService,
         private readonly NotificationService $notificationService,
         private readonly AttendanceCorrectionStatusService $correctionStatusService,
+        private readonly EmployeeOrganizationAssignmentService $organizationAssignments,
         private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
@@ -172,6 +174,7 @@ class PresenceFilingController extends Controller
             'date' => ['required', 'date', 'before_or_equal:today'],
             'issue_kind' => ['required', 'string', 'in:missing_in,missing_out,both'],
             'remarks' => ['required', 'string', 'min:1', 'max:65535'],
+            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
             'time_in' => [
                 Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_in', 'both'], true)),
                 'nullable',
@@ -240,11 +243,18 @@ class PresenceFilingController extends Controller
             ->whereDate('date', $dateKey)
             ->first();
 
-        $routing = $this->approvalService->resolveRoutingDecision($employee);
+        $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
+            $employee,
+            isset($validated['assignment_id']) ? (int) $validated['assignment_id'] : null,
+            $dateKey,
+        );
+        $assignmentContext = $this->organizationAssignments->requestContextPayload($selectedAssignment);
+
+        $routing = $this->approvalService->resolveRoutingDecision($employee, $assignmentContext);
         if (($routing['chain'] ?? null) === null) {
             return response()->json(['message' => 'Your role cannot file attendance corrections.'], 403);
         }
-        $initialStage = (string) ($routing['initial_stage'] ?? $this->approvalService->initialApprovalStage($employee));
+        $initialStage = (string) ($routing['initial_stage'] ?? $this->approvalService->initialApprovalStage($employee, $assignmentContext));
         $firstApproverId = $initialStage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST
             ? ($routing['first_level_approver']?->id)
             : null;
@@ -256,7 +266,7 @@ class PresenceFilingController extends Controller
         }
         $auditReason = $fullRemarks;
 
-        $correction = DB::transaction(function () use ($employee, $dateKey, $timeInUtc, $timeOutUtc, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $auditReason) {
+        $correction = DB::transaction(function () use ($employee, $dateKey, $timeInUtc, $timeOutUtc, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $auditReason, $assignmentContext) {
             $correction = AttendanceCorrection::updateOrCreate(
                 [
                     'user_id' => $employee->id,
@@ -286,6 +296,7 @@ class PresenceFilingController extends Controller
                     'second_approver_id' => $hrApproverId,
                     'second_approved_at' => null,
                     'is_incomplete_record' => $isIncompleteRecord,
+                    ...$assignmentContext,
                 ]
             );
 
@@ -431,6 +442,7 @@ class PresenceFilingController extends Controller
             'date' => ['required', 'date', 'before_or_equal:today'],
             'issue_kind' => ['required', 'string', 'in:missing_in,missing_out,both'],
             'remarks' => ['required', 'string', 'min:1', 'max:65535'],
+            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
             'time_in' => [
                 Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_in', 'both'], true)),
                 'nullable',
@@ -497,13 +509,20 @@ class PresenceFilingController extends Controller
             ->whereDate('date', $dateKey)
             ->first();
 
-        $routing = $this->approvalService->resolveRoutingDecision($employee);
+        $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
+            $employee,
+            isset($validated['assignment_id']) ? (int) $validated['assignment_id'] : null,
+            $dateKey,
+        );
+        $assignmentContext = $this->organizationAssignments->requestContextPayload($selectedAssignment);
+
+        $routing = $this->approvalService->resolveRoutingDecision($employee, $assignmentContext);
         if (($routing['chain'] ?? null) === null) {
             throw ValidationException::withMessages([
                 'approval' => ['This employee cannot file attendance corrections right now.'],
             ]);
         }
-        $initialStage = (string) ($routing['initial_stage'] ?? $this->approvalService->initialApprovalStage($employee));
+        $initialStage = (string) ($routing['initial_stage'] ?? $this->approvalService->initialApprovalStage($employee, $assignmentContext));
         $firstApproverId = $initialStage === AttendanceCorrectionApprovalService::STAGE_PENDING_FIRST
             ? ($routing['first_level_approver']?->id)
             : null;
@@ -514,7 +533,7 @@ class PresenceFilingController extends Controller
             ]);
         }
 
-        $correction = DB::transaction(function () use ($employee, $actor, $dateKey, $timeIn, $timeOut, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId) {
+        $correction = DB::transaction(function () use ($employee, $actor, $dateKey, $timeIn, $timeOut, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $assignmentContext) {
             $correction = AttendanceCorrection::updateOrCreate(
                 [
                     'user_id' => $employee->id,
@@ -544,6 +563,7 @@ class PresenceFilingController extends Controller
                     'second_approver_id' => $hrApproverId,
                     'second_approved_at' => null,
                     'is_incomplete_record' => $isIncompleteRecord,
+                    ...$assignmentContext,
                 ]
             );
 
