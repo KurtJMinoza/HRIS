@@ -167,7 +167,7 @@ class PresenceFilingController extends Controller
 
     private function refreshPresenceFilingApprovalChainIfSnapshotBacked(AttendanceCorrection $correction): bool
     {
-        if (! (bool) $correction->pending_approval || ! $this->presenceFilingHasRoutingSnapshot($correction)) {
+        if (! (bool) $correction->pending_approval) {
             return false;
         }
 
