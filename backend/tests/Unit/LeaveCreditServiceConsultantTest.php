@@ -74,15 +74,59 @@ class LeaveCreditServiceConsultantTest extends TestCase
         $regular = new User([
             'employment_status' => 'regular',
             'employment_status_effective_date' => '2020-01-01',
+            'hire_date' => '2020-01-01',
         ]);
 
         $probationary = new User([
             'employment_status' => 'probationary',
             'employment_status_effective_date' => '2020-01-01',
+            'hire_date' => '2020-01-01',
         ]);
 
         $this->assertTrue($service->eligibleForPaidLeavePool($regular));
         $this->assertFalse($service->eligibleForPaidLeavePool($probationary));
+    }
+
+    public function test_recent_status_effective_date_does_not_delay_hire_date_eligibility(): void
+    {
+        $service = $this->service(allowPaidLeave: true);
+
+        $regular = new User([
+            'employment_status' => 'regular',
+            'hire_date' => '2024-08-04',
+            'employment_status_effective_date' => '2026-08-01',
+        ]);
+
+        $this->assertSame('2024-08-04', $service->leaveCreditsServiceAnchorDate($regular)?->toDateString());
+        $this->assertTrue($service->eligibleForPaidLeavePool($regular));
+    }
+
+    public function test_old_status_effective_date_does_not_bypass_hire_date_anniversary(): void
+    {
+        $service = $this->service(allowPaidLeave: true);
+
+        $regular = new User([
+            'employment_status' => 'regular',
+            'hire_date' => '2026-01-01',
+            'employment_status_effective_date' => '2020-01-01',
+        ]);
+
+        $this->assertSame('2026-01-01', $service->leaveCreditsServiceAnchorDate($regular)?->toDateString());
+        $this->assertFalse($service->eligibleForPaidLeavePool($regular));
+    }
+
+    public function test_status_effective_date_cannot_replace_a_missing_hire_date(): void
+    {
+        $service = $this->service(allowPaidLeave: true);
+
+        $regular = new User([
+            'employment_status' => 'regular',
+            'hire_date' => null,
+            'employment_status_effective_date' => '2020-01-01',
+        ]);
+
+        $this->assertNull($service->leaveCreditsServiceAnchorDate($regular));
+        $this->assertFalse($service->eligibleForPaidLeavePool($regular));
     }
 
     private function service(bool $allowPaidLeave): LeaveCreditService

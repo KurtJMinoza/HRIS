@@ -3756,7 +3756,7 @@ class EmployeeController extends Controller
      * Leave credits for list/detail JSON — same pipeline as Employee Profile (`buildLeaveCreditsApiPayload`).
      * Runs annual recharge + DB refresh so `users.leave_credits` is current; eligibility uses
      * {@see LeaveCreditService::eligibleForPaidLeavePool()} (Regular via {@see EmploymentStatus::tryFromStored()},
-     * one full year from `employment_status_effective_date`).
+     * one full year from `hire_date`; status effective date is not an eligibility input).
      *
      * @return array<string, mixed>
      */

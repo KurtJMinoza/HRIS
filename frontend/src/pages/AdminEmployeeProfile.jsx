@@ -2143,10 +2143,9 @@ export default function AdminEmployeeProfile() {
 
     const today = new Date()
     const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-    const effectiveDate = parseIsoDateOnly(form.employment_status_effective_date)
     const hireDate = parseIsoDateOnly(form.hire_date)
     const isRegular = String(form.employment_status || '').trim().toLowerCase() === 'regular'
-    const serviceAnchorDate = effectiveDate || hireDate
+    const serviceAnchorDate = hireDate
     const serviceAnchorDateLabel = formatDateOnlyForPayload(serviceAnchorDate)
     const eligibilityDate = serviceAnchorDate ? addYearsDateOnly(serviceAnchorDate, 1) : null
     const eligibleNow = Boolean(isRegular && eligibilityDate && todayDateOnly.getTime() >= eligibilityDate.getTime())
@@ -2155,7 +2154,7 @@ export default function AdminEmployeeProfile() {
 
     // Keep the server payload as the source of truth when it already matches the live employment data.
     // Only override the obvious stale UI case: Employment tab proves eligibility, but the snapshot still
-    // says 0/14 or ineligible because it has not caught up to the latest status/effective-date update yet.
+    // says 0/14 or ineligible because it has not caught up to the latest Hire Date update yet.
     if (eligibleNow) {
       return {
         ...leaveCreditsBlock,
@@ -2169,7 +2168,7 @@ export default function AdminEmployeeProfile() {
         probationary: false,
         has_one_year_of_service: true,
         display: `${remaining > 0 ? remaining : annualAllocation}/${annualAllocation} credits (Eligible)`,
-        status_summary: 'Eligible for paid leave credits (Regular + 1 year service)',
+        status_summary: 'Eligible for paid leave credits (Regular + 1 year since Hire Date)',
         unpaid_leave_notice: null,
         warning:
           remaining > 0 || Number(leaveCreditsBlock.effective_available ?? 0) > 0
@@ -2180,7 +2179,7 @@ export default function AdminEmployeeProfile() {
       }
     }
 
-    if (isRegular && effectiveDate && eligibilityDate && todayDateOnly.getTime() < eligibilityDate.getTime()) {
+    if (isRegular && hireDate && eligibilityDate && todayDateOnly.getTime() < eligibilityDate.getTime()) {
       return {
         ...leaveCreditsBlock,
         remaining: 0,
@@ -2189,8 +2188,8 @@ export default function AdminEmployeeProfile() {
         is_regular_employment: true,
         probationary: false,
         has_one_year_of_service: false,
-        display: `0/${annualAllocation} - Not yet eligible (under 1 year regular service)`,
-        status_summary: 'Complete 1 full year of regular service to unlock paid leave credits.',
+        display: `0/${annualAllocation} - Not yet eligible (under 1 year since Hire Date)`,
+        status_summary: 'Complete 1 full year from Hire Date to unlock paid leave credits.',
         unpaid_leave_notice: 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
         warning: 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
         service_anchor_date: serviceAnchorDateLabel || leaveCreditsBlock.service_anchor_date || null,
@@ -2199,7 +2198,7 @@ export default function AdminEmployeeProfile() {
     }
 
     return leaveCreditsBlock
-  }, [leaveCreditsBlock, form.employment_status, form.employment_status_effective_date, form.hire_date])
+  }, [leaveCreditsBlock, form.employment_status, form.hire_date])
 
   const completionState = useMemo(() => {
     const sections = [

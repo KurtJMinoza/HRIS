@@ -2651,7 +2651,7 @@ export default function AdminEmployees() {
                       const isActive = activeEmployeeId === emp.id
                       const isSelected = selectedIds.includes(emp.id)
                       const isEven = rowIdx % 2 === 1
-                      /** Aligns list with profile Leave Balance: Regular + 1yr from status effective date; fills stale 0 pool. */
+                      /** Aligns list with profile Leave Balance: Regular + 1 year from Hire Date; fills stale 0 pool. */
                       const leaveCreditsRow = deriveAdminEmployeeListLeaveCredits(emp)
                       return (
                         <motion.tr

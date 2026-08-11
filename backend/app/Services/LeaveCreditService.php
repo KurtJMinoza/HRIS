@@ -19,16 +19,16 @@ use Illuminate\Validation\ValidationException;
  * Eligibility for paid leave / credit pool:
  *
  * 1. **Employment status = Regular**.
- * 2. **One full year of regular service** completed, measured from the employee's
- *    Status Effective Date. Hire Date is only a fallback for older records without that date.
+ * 2. **One full year of service** completed, measured from the employee's Hire Date.
+ *    Status Effective Date records status history and never controls leave-credit eligibility.
  *
  * Until both apply: **available_credits = 0**; employees may still file leave, but credit-consuming
  * types are **unpaid** (no deduction from pool; payroll excludes pay for those days).
  *
  * **Probationary** employees: **0** credits (not eligible). **Project-based** employees: **0**
  * credits even after one year of service. **Consultants** receive the pool only when Policy Settings
- * → Employment → Consultant has **Allow paid leave** enabled, plus one full year from the status
- * effective date (or hire date). **Regular** employees with **less than one full year of
+ * → Employment → Consultant has **Allow paid leave** enabled, plus one full year from Hire Date.
+ * **Regular** employees with **less than one full year of
  * service**: **0** credits (not eligible yet). Only **Regular + ≥1 year** (or eligible consultant)
  * receive the annual pool.
  *
@@ -36,7 +36,7 @@ use Illuminate\Validation\ValidationException;
  * for eligible employees; unused credits do not carry over (not cumulative).
  *
  * **Regularization / employment updates:** once the employee is Regular **and** has completed
- * one full year from the current Status Effective Date, the balance is normalized to the
+ * one full year from Hire Date, the balance is normalized to the
  * annual allocation when below.
  */
 class LeaveCreditService
@@ -52,7 +52,7 @@ class LeaveCreditService
     private static function summaryCacheKey(int $userId, bool $includePendingReservedDays = false): string
     {
         // Include annual allocation so raising 7→14 busts stale 7/7 summary rows automatically.
-        return 'leave:balance:'.$userId.':summary:v3:a'.self::annualAllocation().':pending:'.($includePendingReservedDays ? '1' : '0');
+        return 'leave:balance:'.$userId.':summary:v4:a'.self::annualAllocation().':pending:'.($includePendingReservedDays ? '1' : '0');
     }
 
     public function forgetSummaryCacheForUser(int $userId): void
@@ -61,6 +61,8 @@ class LeaveCreditService
         foreach ([7, 14, self::annualAllocation()] as $annual) {
             Cache::forget('leave:balance:'.$userId.':summary:v3:a'.$annual.':pending:0');
             Cache::forget('leave:balance:'.$userId.':summary:v3:a'.$annual.':pending:1');
+            Cache::forget('leave:balance:'.$userId.':summary:v4:a'.$annual.':pending:0');
+            Cache::forget('leave:balance:'.$userId.':summary:v4:a'.$annual.':pending:1');
         }
         Cache::forget('leave:balance:'.$userId.':summary:v2:pending:0');
         Cache::forget('leave:balance:'.$userId.':summary:v2:pending:1');
@@ -104,8 +106,8 @@ class LeaveCreditService
 
     /**
      * Paid annual pool:
-     * - **Regular** + one full year from the regular-status anchor date, or
-     * - **Consultant** with Employment policy **Allow paid leave** + one full year from anchor.
+     * - **Regular** + one full year from Hire Date, or
+     * - **Consultant** with Employment policy **Allow paid leave** + one full year from Hire Date.
      */
     public function eligibleForPaidLeavePool(User $user): bool
     {
@@ -163,8 +165,8 @@ class LeaveCreditService
     }
 
     /**
-     * Date from which "one year of regular service" is measured for leave-credit eligibility.
-     * Uses Status Effective Date first so admin and employee views resolve the same balance.
+     * Hire Date is the sole service anchor for leave-credit eligibility.
+     * Status Effective Date belongs to status history and must not delay or unlock credits.
      */
     public function leaveCreditsServiceAnchorDate(User $user): ?Carbon
     {
@@ -172,10 +174,6 @@ class LeaveCreditService
 
         if (! $this->hasLeaveCreditPoolEmployment($user)) {
             return null;
-        }
-
-        if ($user->employment_status_effective_date) {
-            return Carbon::parse($user->employment_status_effective_date, $tz)->startOfDay();
         }
 
         if ($user->hire_date) {
@@ -186,7 +184,7 @@ class LeaveCreditService
     }
 
     /**
-     * One full calendar year has passed since the leave-credit anchor date.
+     * One full calendar year has passed since Hire Date.
      */
     public function hasCompletedOneYearOfService(User $user, ?Carbon $asOf = null): bool
     {
@@ -394,7 +392,7 @@ class LeaveCreditService
             'balance_after' => $newBalance,
             'reason' => $eligible
                 ? 'Annual recharge (January 1) — balance set to '.$allocation.' paid-leave credits'
-                : 'Annual recharge (January 1) — no paid-leave pool (probationary or under one year of service)',
+                : 'Annual recharge (January 1) — no paid-leave pool (probationary or under one year since Hire Date)',
             'leave_request_id' => null,
             'actor_id' => $actor?->id,
             'leave_type_context' => null,
@@ -404,7 +402,7 @@ class LeaveCreditService
     }
 
     /**
-     * Probationary / under one year: stored balance must not show a paid pool (correct stale HR data).
+     * Probationary / under one year since Hire Date: stored balance must not show a paid pool.
      *
      * @internal Called with row lock
      */
@@ -425,7 +423,7 @@ class LeaveCreditService
             'change_type' => LeaveCreditTransaction::TYPE_ADJUSTMENT,
             'delta' => -$current,
             'balance_after' => 0,
-            'reason' => 'Eligibility: paid leave pool not available (probationary, non-regular, or under one year of service).',
+            'reason' => 'Eligibility: paid leave pool not available (probationary, non-regular, or under one year since Hire Date).',
             'leave_request_id' => null,
             'actor_id' => $actor?->id,
             'leave_type_context' => 'eligibility_normalize',
@@ -609,7 +607,7 @@ class LeaveCreditService
     public function sumPendingBillableDays(int $userId, ?int $exceptLeaveRequestId = null): int
     {
         $user = User::query()
-            ->select(['id', 'employment_status', 'employment_status_effective_date', 'hire_date', 'leave_credits'])
+            ->select(['id', 'employment_status', 'hire_date', 'leave_credits'])
             ->find($userId);
         if (! $user || ! $this->eligibleForPaidLeavePool($user)) {
             return 0;
@@ -682,7 +680,7 @@ class LeaveCreditService
             if ($this->isConsultantEmployment($user) && ! $this->consultantPaidLeaveAllowedByPolicy($user)) {
                 $messageDetail = 'Paid leave credits for consultants require Allow paid leave to be enabled in Policy Settings → Employment → Consultant.';
             } else {
-                $messageDetail = 'Paid leave credits apply to Regular employees with one full year of service, or eligible consultants when paid leave is enabled in Employment policy.';
+                $messageDetail = 'Paid leave credits apply to Regular employees with one full year since Hire Date, or eligible consultants when paid leave is enabled in Employment policy.';
             }
         } elseif ($paidDays >= $billable && $billable > 0) {
             $message = 'This leave will be paid using your leave credits.';
@@ -729,7 +727,7 @@ class LeaveCreditService
 
     /**
      * After HR approves regularization to Regular: grant full annual pool if employee already has
-     * one year of service (otherwise they receive credits on the next January 1 annual reset
+     * one year since Hire Date (otherwise they receive credits on the next January 1 annual reset
      * once they are eligible).
      */
     public function grantAnnualAllocationOnRegularizationIfEligible(User $employee, ?User $actor = null): void
@@ -760,7 +758,7 @@ class LeaveCreditService
                 'change_type' => LeaveCreditTransaction::TYPE_ADDITION,
                 'delta' => $allocation - $prev,
                 'balance_after' => $allocation,
-                'reason' => 'Regularization: eligible employee receives annual paid-leave pool after completing one year of service ('.$allocation.' credits).',
+                'reason' => 'Regularization: eligible employee receives annual paid-leave pool after completing one year since Hire Date ('.$allocation.' credits).',
                 'leave_request_id' => null,
                 'actor_id' => $actor?->id,
                 'leave_type_context' => 'regularization',
@@ -1206,7 +1204,6 @@ class LeaveCreditService
                     ->select([
                         'id',
                         'employment_status',
-                        'employment_status_effective_date',
                         'hire_date',
                         'regularization_date',
                         'leave_credits',
@@ -1229,8 +1226,8 @@ class LeaveCreditService
                         'employment_status' => null,
                         'service_anchor_date' => null,
                         'regular_service_start_date' => null,
-                        'display' => '0/'.self::annualAllocation().' - Not yet eligible (under 1 year regular service)',
-                        'status_summary' => 'Not eligible: paid leave credits require Regular status and one full year of service',
+                        'display' => '0/'.self::annualAllocation().' - Not yet eligible (under 1 year since Hire Date)',
+                        'status_summary' => 'Not eligible: paid leave credits require Regular status and one full year since Hire Date',
                         'unpaid_leave_notice' => 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
                         'warning' => 'This leave will be unpaid because you are not yet eligible for paid leave credits.',
                     ];
@@ -1258,11 +1255,11 @@ class LeaveCreditService
                 if ($eligible) {
                     $display = "{$remaining}/{$annual} credits (Eligible)";
                     $statusSummary = $consultant
-                        ? 'Eligible for paid leave credits (Consultant + paid leave enabled + 1 year service)'
-                        : 'Eligible for paid leave credits (Regular + 1 year service)';
+                        ? 'Eligible for paid leave credits (Consultant + paid leave enabled + 1 year since Hire Date)'
+                        : 'Eligible for paid leave credits (Regular + 1 year since Hire Date)';
                 } else {
                     // Single line for any ineligible employee (probationary, project-based, Regular <1 year, or non-Regular).
-                    $display = "0/{$annual} - Not yet eligible (under 1 year regular service)";
+                    $display = "0/{$annual} - Not yet eligible (under 1 year since Hire Date)";
                     if ($projectBased) {
                         $display = "0/{$annual} - Not eligible (project-based)";
                         $statusSummary = 'Not eligible: project-based employees do not receive paid leave credits.';
@@ -1270,14 +1267,14 @@ class LeaveCreditService
                         $display = "0/{$annual} - Not eligible (consultant paid leave disabled)";
                         $statusSummary = 'Not eligible: enable Allow paid leave for Consultant in Policy Settings → Employment.';
                     } elseif ($consultant && ! $oneYear) {
-                        $display = "0/{$annual} - Not yet eligible (under 1 year service)";
-                        $statusSummary = 'Complete 1 full year of service to unlock paid leave credits.';
+                        $display = "0/{$annual} - Not yet eligible (under 1 year since Hire Date)";
+                        $statusSummary = 'Complete 1 full year from Hire Date to unlock paid leave credits.';
                     } elseif ($probationary) {
                         $statusSummary = 'Not yet eligible: probationary employees do not receive paid leave credits';
                     } elseif ($regular && ! $oneYear) {
-                        $statusSummary = 'Complete 1 full year of regular service to unlock paid leave credits.';
+                        $statusSummary = 'Complete 1 full year from Hire Date to unlock paid leave credits.';
                     } else {
-                        $statusSummary = 'Not eligible: paid leave credits require Regular status and one full year of service';
+                        $statusSummary = 'Not eligible: paid leave credits require Regular status and one full year since Hire Date';
                     }
                 }
 

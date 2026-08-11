@@ -264,7 +264,7 @@ class EmployeeStatusServiceTest extends TestCase
         $employee = User::factory()->create([
             'employment_status' => EmploymentStatus::Regular->value,
             'hire_date' => '2025-05-01',
-            'employment_status_effective_date' => '2025-05-01',
+            'employment_status_effective_date' => '2026-05-26',
             'is_active' => true,
             'leave_credits' => 0,
             'leave_credits_reset_date' => null,

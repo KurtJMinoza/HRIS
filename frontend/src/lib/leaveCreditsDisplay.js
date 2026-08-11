@@ -1,6 +1,6 @@
 /**
  * Leave credits display helpers — aligned with AdminEmployeeProfile `liveLeaveCreditsBlock`
- * and LeaveCreditService rules (Regular + 1 full year from employment_status_effective_date).
+ * and LeaveCreditService rules (Regular + 1 full year from Hire Date).
  *
  * Use for **read-only** admin list / preview rows so the table matches the profile card when
  * the API still returns 0 remaining for an eligible employee (stale balance until recharge runs).
@@ -172,14 +172,14 @@ export function deriveAdminEmployeeListLeaveCredits(emp) {
 
   const today = new Date()
   const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  const effectiveDate = parseIsoDateOnly(emp.employment_status_effective_date)
+  const hireDate = parseIsoDateOnly(emp.hire_date)
   const isRegular = isRegularEmploymentStatus(emp.employment_status)
-  const eligibilityDate = effectiveDate ? addYearsDateOnly(effectiveDate, 1) : null
+  const eligibilityDate = hireDate ? addYearsDateOnly(hireDate, 1) : null
   const eligibleNow = Boolean(isRegular && eligibilityDate && todayDateOnly.getTime() >= eligibilityDate.getTime())
 
   const apiTitle = [emp.leave_credits_display, emp.leave_credits_status_summary].filter(Boolean).join(' · ')
 
-  // Same override as profile: eligible by employment dates but pool still reads 0 → show full annual pool.
+  // Same override as profile: eligible by Hire Date but pool still reads 0 → show full annual pool.
   if (eligibleNow) {
     const remaining = serverRemaining > 0 ? serverRemaining : annual
     return {
@@ -191,14 +191,14 @@ export function deriveAdminEmployeeListLeaveCredits(emp) {
     }
   }
 
-  // Regular but not yet 1 year from status effective date — mirror profile "not yet eligible" line.
-  if (isRegular && effectiveDate && eligibilityDate && todayDateOnly.getTime() < eligibilityDate.getTime()) {
+  // Regular but not yet one year from Hire Date: mirror the profile eligibility line.
+  if (isRegular && hireDate && eligibilityDate && todayDateOnly.getTime() < eligibilityDate.getTime()) {
     return {
       remaining: 0,
       annual,
       showEligibleBadge: false,
       fractionLabel: `0/${annual}`,
-      title: 'Not yet eligible (under 1 year regular service)',
+      title: 'Not yet eligible (under 1 year since Hire Date)',
     }
   }
 
