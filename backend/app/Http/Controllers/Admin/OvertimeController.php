@@ -547,7 +547,10 @@ class OvertimeController extends Controller
                     'filed_at',
                     'filed_by',
                     'first_approver_id',
+                    'first_approved_at',
                     'second_approver_id',
+                    'second_approved_at',
+                    'approved_at',
                     'rejected_at',
                     'rejection_note',
                     'remarks',
@@ -1788,8 +1791,8 @@ class OvertimeController extends Controller
             'current_approver' => $pending?->approver?->display_name ?? $pending?->approver_name,
             'current_stage' => $pending ? $this->approvalRecordStageLabel($pending) : $overtime->approval_stage,
             'approval_stage' => $overtime->approval_stage,
-            'approval_chain' => $this->approvalRecordSummary($records),
-            'approval_progress' => $this->approvalRecordSummary($records),
+            'approval_chain' => $this->approvalRecordSummary($records, $overtime),
+            'approval_progress' => $this->approvalRecordSummary($records, $overtime),
             'approval_history' => $records
                 ->whereIn('approval_status', [OrgApprovalRecord::STATUS_APPROVED, OrgApprovalRecord::STATUS_REJECTED])
                 ->map(fn (OrgApprovalRecord $record): array => [
@@ -1829,15 +1832,17 @@ class OvertimeController extends Controller
         return $role?->badgeLabel() ?? (string) ($record->approver_role ?: 'Approver');
     }
 
-    private function approvalRecordSummary($records): array
+    private function approvalRecordSummary($records, ?Overtime $overtime = null): array
     {
         $currentMarked = false;
+        $requestApproved = $overtime?->status === Overtime::STATUS_APPROVED;
+        $requestRejected = $overtime?->status === Overtime::STATUS_REJECTED || $overtime?->rejected_at !== null;
 
-        return $records->map(function (OrgApprovalRecord $record) use (&$currentMarked): array {
+        return $records->map(function (OrgApprovalRecord $record) use (&$currentMarked, $requestApproved, $requestRejected): array {
             $status = match ($record->approval_status) {
                 OrgApprovalRecord::STATUS_APPROVED => 'completed',
                 OrgApprovalRecord::STATUS_REJECTED => 'rejected',
-                default => $currentMarked ? 'pending' : 'current',
+                default => $requestApproved ? 'completed' : ($requestRejected ? 'skipped' : ($currentMarked ? 'pending' : 'current')),
             };
             if ($status === 'current') {
                 $currentMarked = true;

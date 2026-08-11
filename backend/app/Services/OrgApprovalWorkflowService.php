@@ -1024,13 +1024,17 @@ class OrgApprovalWorkflowService
     private function legacyStatusForStep(Model $request, array $step): string
     {
         $approvalStage = (string) ($request->approval_stage ?? '');
-        $isHr = $step['approver_role'] === HrRole::AdminHr;
+        $isHr = $this->stepIsAdminHr($step);
 
         if (in_array($approvalStage, ['approved'], true)) {
             return OrgApprovalRecord::STATUS_APPROVED;
         }
 
-        if ($isHr && $request->second_approved_at) {
+        if ($isHr && $this->legacyTimestampForColumns($request, ['second_approved_at', 'approved_at', 'reviewed_at'])) {
+            return OrgApprovalRecord::STATUS_APPROVED;
+        }
+
+        if (! $isHr && $this->legacyTimestampForColumns($request, ['first_approved_at'])) {
             return OrgApprovalRecord::STATUS_APPROVED;
         }
 
@@ -1200,21 +1204,51 @@ class OrgApprovalWorkflowService
      */
     private function legacyApprovedAtForStep(Model $request, array $step): ?Carbon
     {
-        $value = $step['approver_role'] === HrRole::AdminHr
-            ? ($request->second_approved_at ?? $request->approved_at ?? $request->reviewed_at ?? null)
-            : ($request->first_approved_at ?? null);
+        return $this->stepIsAdminHr($step)
+            ? $this->legacyTimestampForColumns($request, ['second_approved_at', 'approved_at', 'reviewed_at'])
+            : $this->legacyTimestampForColumns($request, ['first_approved_at']);
+    }
 
-        if ($value instanceof Carbon) {
-            return $value;
-        }
-        if ($value instanceof \DateTimeInterface) {
-            return Carbon::instance($value);
-        }
-        if (is_string($value) && $value !== '') {
-            try {
-                return Carbon::parse($value);
-            } catch (\Throwable) {
-                return null;
+    /**
+     * @param  array<string, mixed>  $step
+     */
+    private function stepIsAdminHr(array $step): bool
+    {
+        $role = $step['approver_role'] ?? null;
+
+        return $role instanceof HrRole
+            ? $role === HrRole::AdminHr
+            : (string) $role === HrRole::AdminHr->value;
+    }
+
+    /**
+     * @param  list<string>  $columns
+     */
+    private function legacyTimestampForColumns(Model $request, array $columns): ?Carbon
+    {
+        foreach ($columns as $column) {
+            $value = array_key_exists($column, $request->getAttributes())
+                ? $request->getAttribute($column)
+                : null;
+
+            if ($value === null && $request->exists && Schema::hasColumn($request->getTable(), $column)) {
+                $value = $request->newQueryWithoutRelationships()
+                    ->whereKey($request->getKey())
+                    ->value($column);
+            }
+
+            if ($value instanceof Carbon) {
+                return $value;
+            }
+            if ($value instanceof \DateTimeInterface) {
+                return Carbon::instance($value);
+            }
+            if (is_string($value) && $value !== '') {
+                try {
+                    return Carbon::parse($value);
+                } catch (\Throwable) {
+                    return null;
+                }
             }
         }
 
@@ -1253,6 +1287,7 @@ class OrgApprovalWorkflowService
         $firstLine = collect($steps)->first(fn (array $step): bool => ($step['approver_role'] ?? null) !== HrRole::AdminHr);
         $hrLine = collect($steps)->first(fn (array $step): bool => ($step['approver_role'] ?? null) === HrRole::AdminHr);
         $pendingIsHrOnly = $firstLine === null && $hrLine !== null;
+        $firstStepAlreadyApproved = $this->legacyTimestampForColumns($request, ['first_approved_at']) !== null && $hrLine !== null;
 
         if ($normalized === self::MODULE_LEAVE && $request instanceof LeaveRequest) {
             $updates = [
@@ -1269,7 +1304,7 @@ class OrgApprovalWorkflowService
         if ($normalized === self::MODULE_OVERTIME && $request instanceof Overtime) {
             $updates = [
                 'first_approver_id' => $firstLine ? (int) $firstLine['approver_id'] : null,
-                'approval_stage' => $pendingIsHrOnly
+                'approval_stage' => ($pendingIsHrOnly || $firstStepAlreadyApproved)
                     ? HrApprovalStages::PENDING_SECOND
                     : HrApprovalStages::PENDING_FIRST,
             ];
@@ -1284,7 +1319,7 @@ class OrgApprovalWorkflowService
         if ($normalized === self::MODULE_ATTENDANCE_CORRECTION && $request instanceof AttendanceCorrection) {
             $updates = [
                 'first_approver_id' => $firstLine ? (int) $firstLine['approver_id'] : null,
-                'approval_stage' => $pendingIsHrOnly
+                'approval_stage' => ($pendingIsHrOnly || $firstStepAlreadyApproved)
                     ? HrApprovalStages::PENDING_SECOND
                     : HrApprovalStages::PENDING_FIRST,
             ];
