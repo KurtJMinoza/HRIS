@@ -107,8 +107,7 @@ class OrgApprovalWorkflowService
             } elseif ($isPending && $this->chainNeedsSync($existing, $steps, $moduleType)) {
                 // Wrong/stale request org snapshots can re-resolve to HR-only and wipe the
                 // current Department Head (etc.) step mid-approve — keep the active chain.
-                if (! $this->requestHasApprovalRoutingSnapshot($request)
-                    && $this->wouldDropActiveOrgPendingApprover($existing, $steps)) {
+                if ($this->shouldKeepActiveOrgPendingApprover($request, $moduleType, $employee, $existing, $steps)) {
                     Log::warning('approval_chain: refusing sync that would drop active org pending approver', [
                         'module_type' => $moduleType,
                         'request_id' => $requestId,
@@ -342,6 +341,37 @@ class OrgApprovalWorkflowService
         }
 
         return true;
+    }
+
+    /**
+     * Keep a non-HR pending approver only when dropping it would likely hide a
+     * still-valid workflow step. Company Head/Admin HR requesters legitimately
+     * route straight to Admin HR, so stale legacy first approvers should sync away.
+     *
+     * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
+     * @param  array<int, array<string, mixed>>  $steps
+     */
+    private function shouldKeepActiveOrgPendingApprover(
+        Model $request,
+        string $moduleType,
+        User $employee,
+        EloquentCollection $existing,
+        array $steps,
+    ): bool {
+        if (! $this->wouldDropActiveOrgPendingApprover($existing, $steps)) {
+            return false;
+        }
+
+        if ($this->workflowSettingService->isHrOnlyRequestType(self::normalizeModuleType($moduleType))) {
+            return false;
+        }
+
+        $subjectRole = $this->roleResolver->resolveForApprovalSubject($employee);
+        if (in_array($subjectRole, [HrRole::CompanyHead, HrRole::AdminHr], true)) {
+            return false;
+        }
+
+        return $this->requestHasApprovalRoutingSnapshot($request);
     }
 
     /**
