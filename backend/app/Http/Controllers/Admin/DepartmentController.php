@@ -157,12 +157,14 @@ class DepartmentController extends Controller
                 }
             })
             ->orderByLastName()
-            ->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image'])
+            ->get(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image', 'is_active', 'qr_token'])
             ->map(fn (User $u) => [
                 'id' => $u->id,
                 'name' => $u->display_name,
                 'formatted_name' => $u->formatted_name,
                 'profile_image' => $u->profile_image_url,
+                'is_active' => (bool) $u->is_active,
+                'has_qr' => ! empty($u->qr_token),
             ]);
 
         return response()->json([
@@ -417,9 +419,7 @@ class DepartmentController extends Controller
             'description' => $d->description,
             'logo' => $companyLogo,
             'logo_url' => $logoUrl,
-            'total_employees' => array_key_exists('employees_count', $d->getAttributes())
-                ? (int) $d->employees_count
-                : ($d->employees_count ?? $d->employees()->count()),
+            'total_employees' => $this->departmentMemberCount((int) $d->id),
             'department_head_id' => $d->department_head_id,
             'department_head_name' => $d->departmentHead?->display_name,
             'department_head_profile_image' => $d->departmentHead?->profile_image_url ?? null,
@@ -454,6 +454,33 @@ class DepartmentController extends Controller
         // Skip Storage::exists() check on list endpoints — filesystem I/O per row is too costly.
         // The frontend handles missing images gracefully with initials fallbacks.
         return '/api/media/public/'.$this->encodeStoragePath($normalized);
+    }
+
+    private function departmentMemberCount(int $departmentId): int
+    {
+        $directIds = User::query()
+            ->visibleEmployees()
+            ->where('department_id', $departmentId)
+            ->pluck('id')
+            ->map(fn ($employeeId) => (int) $employeeId)
+            ->all();
+
+        $assignmentIds = EmployeeOrganizationAssignment::query()
+            ->active()
+            ->where('department_id', $departmentId)
+            ->pluck('employee_id')
+            ->map(fn ($employeeId) => (int) $employeeId)
+            ->all();
+
+        $employeeIds = array_values(array_unique(array_merge($directIds, $assignmentIds)));
+        if ($employeeIds === []) {
+            return 0;
+        }
+
+        return User::query()
+            ->visibleEmployees()
+            ->whereIn('id', $employeeIds)
+            ->count();
     }
 
     /**

@@ -41,10 +41,9 @@ const php = resolveBinary('PHP_BIN', isWin ? 'C:\\xampp\\php\\php.exe' : 'php', 
 const python = resolveBinary('FACE_SERVICE_PYTHON', 'python', ['python', 'python3']);
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const octaneHost = process.env.OCTANE_HOST || '127.0.0.1';
-const octanePort = process.env.OCTANE_PORT || '8200';
+const octanePort = process.env.OCTANE_PORT || '8000';
 const frontendVite = path.join(root, 'frontend', 'node_modules', 'vite', 'bin', 'vite.js');
 const backendDir = path.join(root, 'backend');
-const octaneStart = path.join(backendDir, isWin ? 'octane-start.cmd' : 'artisan');
 const faceServiceDir = path.join(root, 'face_service');
 
 // Match backend/.env FACE_VERIFICATION_URLS (2000-2004). Override with FACE_SERVICE_PORTS.
@@ -75,14 +74,11 @@ function laravelApp(name, args) {
 
 function octaneApp() {
   if (isWin) {
-    return {
-      name: 'laravel-octane',
-      cwd: backendDir,
-      script: octaneStart,
-      args: [`--host=${octaneHost}`, `--port=${octanePort}`],
-      interpreter: 'none',
-      ...pm2Defaults,
-    };
+    return laravelApp('laravel-octane', [
+      'octane-start-windows.php',
+      `--host=${octaneHost}`,
+      `--port=${octanePort}`,
+    ]);
   }
 
   return laravelApp('laravel-octane', [

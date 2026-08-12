@@ -846,8 +846,8 @@ export default function AdminDepartments() {
     }
     list.sort((a, b) => {
       if (sortCol === 'total') {
-        const aT = employees.filter((e) => sameUserId(e.department_id, a.id)).length || a.total_employees || 0
-        const bT = employees.filter((e) => sameUserId(e.department_id, b.id)).length || b.total_employees || 0
+        const aT = a.total_employees || 0
+        const bT = b.total_employees || 0
         return sortDir === 'asc' ? aT - bT : bT - aT
       }
       const an = (a.name || '').toLowerCase()
@@ -1065,16 +1065,24 @@ export default function AdminDepartments() {
                   {pagedDepts.map((dept) => {
                     const memberTotal = dept.total_employees ?? 0
                     const stats = (() => {
-                      let active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0
+                      let active = 0, inactive = 0, withQr = 0, schedulesAssigned = 0, detailCount = 0
                       employees.forEach((emp) => {
                         if (sameUserId(emp.department_id, dept.id)) {
+                          detailCount += 1
                           if (emp.is_active) active += 1
                           else inactive += 1
                           if (emp.has_qr) withQr += 1
                           if (hasWorkingDays(emp.schedule)) schedulesAssigned += 1
                         }
                       })
-                      return { total: memberTotal, active, inactive, withQr, schedulesAssigned }
+                      return {
+                        total: memberTotal,
+                        active,
+                        inactive,
+                        withQr,
+                        schedulesAssigned,
+                        hasDetailStats: memberTotal > 0 && detailCount >= memberTotal,
+                      }
                     })()
 
                     const deptInitials = (dept.name || '').trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '—'
@@ -1171,37 +1179,39 @@ export default function AdminDepartments() {
                             <p className="text-base font-extrabold text-foreground">
                               {stats.total} {stats.total === 1 ? 'employee' : 'employees'}
                             </p>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                                <span className="size-2 rounded-full bg-emerald-500" />{stats.active} active
-                              </span>
-                              {stats.inactive > 0 && (
-                                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">
-                                  <span className="size-2 rounded-full bg-rose-500" />{stats.inactive} inactive
-                                </span>
-                              )}
-                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
-                                <span className="size-2 rounded-full bg-blue-500" />{stats.withQr} QR
-                              </span>
-                            </div>
-                            {stats.total > 0 && (
-                              <div className="flex items-center gap-2">
-                                <div
-                                  className="h-1.5 w-20 overflow-hidden rounded-full bg-muted dark:bg-input/50"
-                                  title={`QR issuance: ${stats.withQr} of ${stats.total} employees have QR codes for attendance check-in`}
-                                >
-                                  <div
-                                    className="h-full rounded-full transition-all"
-                                    style={{ width: `${qrPct}%`, background: qrBarColor }}
-                                  />
+                            {stats.hasDetailStats && (
+                              <>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                                    <span className="size-2 rounded-full bg-emerald-500" />{stats.active} active
+                                  </span>
+                                  {stats.inactive > 0 && (
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-400">
+                                      <span className="size-2 rounded-full bg-rose-500" />{stats.inactive} inactive
+                                    </span>
+                                  )}
+                                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+                                    <span className="size-2 rounded-full bg-blue-500" />{stats.withQr} QR
+                                  </span>
                                 </div>
-                                <span
-                                  className="cursor-default text-xs tabular-nums text-muted-foreground"
-                                  title={`${stats.withQr} of ${stats.total} employees issued QR codes`}
-                                >
-                                  {qrPct}% QR
-                                </span>
-                              </div>
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className="h-1.5 w-20 overflow-hidden rounded-full bg-muted dark:bg-input/50"
+                                    title={`QR issuance: ${stats.withQr} of ${stats.total} employees have QR codes for attendance check-in`}
+                                  >
+                                    <div
+                                      className="h-full rounded-full transition-all"
+                                      style={{ width: `${qrPct}%`, background: qrBarColor }}
+                                    />
+                                  </div>
+                                  <span
+                                    className="cursor-default text-xs tabular-nums text-muted-foreground"
+                                    title={`${stats.withQr} of ${stats.total} employees issued QR codes`}
+                                  >
+                                    {qrPct}% QR
+                                  </span>
+                                </div>
+                              </>
                             )}
                           </div>
                         </td>
