@@ -702,6 +702,28 @@ class PolicyEngineTest extends TestCase
         $this->assertSame('1 day, 0 hrs 0 mins', $method->invoke($service, 480));
     }
 
+    public function test_payslip_salary_display_shows_monthly_and_semi_monthly_values(): void
+    {
+        $service = app(PayslipService::class);
+        $method = new \ReflectionMethod($service, 'withPayslipSalaryDisplay');
+        $method->setAccessible(true);
+
+        $result = $method->invoke($service, [], [
+            'monthly_basic_salary' => 26000,
+        ]);
+
+        $this->assertSame(26000.0, $result['monthly_basic_salary']);
+        $this->assertSame(13000.0, $result['semi_monthly_basic_salary']);
+
+        $fallback = $method->invoke($service, [
+            'daily_rate' => 1000,
+            'daily_rate_divisor_days' => 26,
+        ], []);
+
+        $this->assertSame(26000.0, $fallback['monthly_basic_salary']);
+        $this->assertSame(13000.0, $fallback['semi_monthly_basic_salary']);
+    }
+
     public function test_stored_payslip_snapshot_repairs_regular_pay_from_actual_daily_minutes(): void
     {
         $snapshot = [
