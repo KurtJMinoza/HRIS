@@ -18,6 +18,7 @@ import {
   fetchAllAdminReportsDetailedRows,
   fetchAllEmployeeReportsDetailedRows,
   getReportsPayrollReportPdfBlob,
+  getReportsPayrollDeductionsPdfBlob,
   profileImageUrl,
   REPORTS_AND_ATTENDANCE_PAGE_SIZE,
   ATTENDANCE_PAGE_SIZE_OPTIONS,
@@ -183,6 +184,7 @@ export default function AdminReports() {
   const [payrollReportCompanyId, setPayrollReportCompanyId] = useState('all')
   const [payrollReportRunId, setPayrollReportRunId] = useState('')
   const [downloadingPayrollReport, setDownloadingPayrollReport] = useState(false)
+  const [downloadingPayrollDeductions, setDownloadingPayrollDeductions] = useState(false)
 
   const { user } = useAuth()
   const location = useLocation()
@@ -721,6 +723,23 @@ export default function AdminReports() {
     }
   }
 
+  async function handleDownloadPayrollDeductionsPdf() {
+    const selectedRun = finalizedPayrollRunOptions.find((run) => run.id === payrollReportRunId)
+    if (!selectedRun || downloadingPayrollDeductions) return
+
+    setDownloadingPayrollDeductions(true)
+    try {
+      const blob = await getReportsPayrollDeductionsPdfBlob({
+        company_id: Number(selectedRun.company_id),
+        payroll_run_id: Number(selectedRun.id),
+      })
+      const companyName = String(selectedRun.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Deductions_Report_${companyName}_Run_${selectedRun.id}.pdf`)
+    } finally {
+      setDownloadingPayrollDeductions(false)
+    }
+  }
+
   const hasRows = Number(detailedReportMeta?.total ?? 0) > 0
   const showTableSkeleton = detailedQuery.isLoading && !detailedQuery.isPlaceholderData
 
@@ -867,21 +886,38 @@ export default function AdminReports() {
                 Download a finalized Payroll Report PDF for one company and payroll run.
               </CardDescription>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={handleDownloadPayrollReportPdf}
-              disabled={!payrollReportRunId || downloadingPayrollReport || payrollRunsQuery.isFetching}
-            >
-              {downloadingPayrollReport ? (
-                <RefreshCw className="size-3.5 animate-spin" />
-              ) : (
-                <FileText className="size-3.5" />
-              )}
-              Payroll Report PDF
-            </Button>
+             <div className="flex flex-wrap gap-2">
+               <Button
+                 type="button"
+                 variant="outline"
+                 size="sm"
+                 className="gap-1.5"
+                 onClick={handleDownloadPayrollReportPdf}
+                 disabled={!payrollReportRunId || downloadingPayrollReport || payrollRunsQuery.isFetching}
+               >
+                 {downloadingPayrollReport ? (
+                   <RefreshCw className="size-3.5 animate-spin" />
+                 ) : (
+                   <FileText className="size-3.5" />
+                 )}
+                 Payroll Report PDF
+               </Button>
+               <Button
+                 type="button"
+                 variant="outline"
+                 size="sm"
+                 className="gap-1.5"
+                 onClick={handleDownloadPayrollDeductionsPdf}
+                 disabled={!payrollReportRunId || downloadingPayrollDeductions || payrollRunsQuery.isFetching}
+               >
+                 {downloadingPayrollDeductions ? (
+                   <RefreshCw className="size-3.5 animate-spin" />
+                 ) : (
+                   <FileText className="size-3.5" />
+                 )}
+                 Deductions PDF
+               </Button>
+             </div>
           </CardHeader>
           <CardContent className="grid grid-cols-1 gap-3 pt-4 @md:grid-cols-[minmax(220px,320px)_1fr]">
             <FilterField label="Company">

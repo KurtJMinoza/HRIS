@@ -80,15 +80,15 @@ class PayrollReportService
     /**
      * @return array{pdf:\Barryvdh\DomPDF\PDF, filename:string, employee_count:int}
      */
-    public function pdfForRunCompany(PayrollBatchRun $run, Company $company, User $actor): array
+    public function pdfForRunCompany(PayrollBatchRun $run, Company $company, User $actor, bool $deductionOnly = false): array
     {
-        $payload = $this->buildReportPayload($run, $company, $actor);
+        $payload = $this->buildReportPayload($run, $company, $actor, $deductionOnly);
         $pdf = Pdf::loadView('reports.payroll_report_pdf', $payload)
             ->setPaper($payload['layout']['paper_size'], $payload['layout']['orientation']);
 
         return [
             'pdf' => $pdf,
-            'filename' => $this->filename($company, $run),
+            'filename' => $this->filename($company, $run, $deductionOnly),
             'employee_count' => count($payload['rows']),
         ];
     }
@@ -96,15 +96,15 @@ class PayrollReportService
     /**
      * @return array{pdf:\Barryvdh\DomPDF\PDF, filename:string, employee_count:int}
      */
-    public function pdfForRun(PayrollBatchRun $run, User $actor): array
+    public function pdfForRun(PayrollBatchRun $run, User $actor, bool $deductionOnly = false): array
     {
-        $payload = $this->buildReportPayloadForRun($run, $actor);
+        $payload = $this->buildReportPayloadForRun($run, $actor, $deductionOnly);
         $pdf = Pdf::loadView('reports.payroll_report_pdf', $payload)
             ->setPaper($payload['layout']['paper_size'], $payload['layout']['orientation']);
 
         return [
             'pdf' => $pdf,
-            'filename' => $this->runFilename($run),
+            'filename' => $this->runFilename($run, $deductionOnly),
             'employee_count' => count($payload['rows']),
         ];
     }
@@ -112,7 +112,7 @@ class PayrollReportService
     /**
      * @return array<string, mixed>
      */
-    public function buildReportPayload(PayrollBatchRun $run, Company $company, User $actor): array
+    public function buildReportPayload(PayrollBatchRun $run, Company $company, User $actor, bool $deductionOnly = false): array
     {
         if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
             throw new \RuntimeException('Payroll Report PDF is only available for finalized payroll runs.');
@@ -123,13 +123,13 @@ class PayrollReportService
             throw new \RuntimeException('No finalized payslips were found for this company and payroll run.');
         }
 
-        return $this->buildReportPayloadFromPayslips($run, $company, $actor, $payslips);
+        return $this->buildReportPayloadFromPayslips($run, $company, $actor, $payslips, $deductionOnly);
     }
 
     /**
      * @return array<string, mixed>
      */
-    public function buildReportPayloadForRun(PayrollBatchRun $run, User $actor): array
+    public function buildReportPayloadForRun(PayrollBatchRun $run, User $actor, bool $deductionOnly = false): array
     {
         if ((string) $run->status !== PayrollBatchRun::STATUS_FINALIZED) {
             throw new \RuntimeException('Payroll Report PDF is only available for finalized payroll runs.');
@@ -140,14 +140,20 @@ class PayrollReportService
             throw new \RuntimeException('No finalized payslips were found for this payroll run.');
         }
 
-        return $this->buildReportPayloadFromPayslips($run, null, $actor, $payslips);
+        return $this->buildReportPayloadFromPayslips($run, null, $actor, $payslips, $deductionOnly);
     }
 
     /**
      * @param  Collection<int, Payslip>  $payslips
      * @return array<string, mixed>
      */
-    private function buildReportPayloadFromPayslips(PayrollBatchRun $run, ?Company $company, User $actor, Collection $payslips): array
+    private function buildReportPayloadFromPayslips(
+        PayrollBatchRun $run,
+        ?Company $company,
+        User $actor,
+        Collection $payslips,
+        bool $deductionOnly = false,
+    ): array
     {
         $rows = $payslips
             ->map(fn (Payslip $payslip): array => $this->rowForPayslip($payslip))
@@ -188,7 +194,9 @@ class PayrollReportService
         ] as $key) {
             $totals[$key] = round(collect($rows)->sum($key), 2);
         }
-        $columns = $this->reportColumns($dynamicColumns);
+        $columns = $deductionOnly
+            ? $this->deductionReportColumns()
+            : $this->reportColumns($dynamicColumns);
         $layout = $this->layoutForColumnCount(count($columns));
 
         $isExecom = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM;
@@ -198,6 +206,7 @@ class PayrollReportService
             'reportCompanyName' => $isExecom ? 'Execom' : ($company?->name ?? 'Company'),
             'reportCompanyAddress' => $isExecom ? null : $company?->address,
             'isExecomPayroll' => $isExecom,
+            'isDeductionOnly' => $deductionOnly,
             'run' => $run,
             'rows' => $rows,
             'columns' => $columns,
@@ -246,6 +255,23 @@ class PayrollReportService
             ['key' => 'total_deductions', 'label' => 'Deduct.', 'group' => 'Totals', 'class' => 'num deductions'],
             ['key' => 'net_pay', 'label' => 'Net', 'group' => 'Totals', 'class' => 'num net'],
         ]);
+    }
+
+    /**
+     * @return list<array{key:string,label:string,group:string,class:string}>
+     */
+    private function deductionReportColumns(): array
+    {
+        return [
+            ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
+            ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
+            ['key' => 'sss', 'label' => 'SSS', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
+            ['key' => 'philhealth', 'label' => 'PHIC', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
+            ['key' => 'pagibig', 'label' => 'HDMF', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
+            ['key' => 'withholding_tax', 'label' => 'WHT', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
+            ['key' => 'other_deductions', 'label' => 'Other Ded.', 'group' => 'Other Ded.', 'class' => 'num deductions'],
+            ['key' => 'total_deductions', 'label' => 'Total Ded.', 'group' => 'Totals', 'class' => 'num deductions'],
+        ];
     }
 
     /**
@@ -566,16 +592,18 @@ class PayrollReportService
         return $candidate;
     }
 
-    private function filename(Company $company, PayrollBatchRun $run): string
+    private function filename(Company $company, PayrollBatchRun $run, bool $deductionOnly = false): string
     {
         $companyName = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) $company->name) ?: 'Company';
         $start = $run->pay_period_start?->format('Ymd') ?? 'period';
         $end = $run->pay_period_end?->format('Ymd') ?? 'end';
 
-        return "Payroll_Report_{$companyName}_{$start}_{$end}_Run_{$run->id}.pdf";
+        $prefix = $deductionOnly ? 'Payroll_Deductions_Report' : 'Payroll_Report';
+
+        return "{$prefix}_{$companyName}_{$start}_{$end}_Run_{$run->id}.pdf";
     }
 
-    private function runFilename(PayrollBatchRun $run): string
+    private function runFilename(PayrollBatchRun $run, bool $deductionOnly = false): string
     {
         $module = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM
             ? 'EXECOM'
@@ -583,6 +611,8 @@ class PayrollReportService
         $start = $run->pay_period_start?->format('Ymd') ?? 'period';
         $end = $run->pay_period_end?->format('Ymd') ?? 'end';
 
-        return "Payroll_Report_{$module}_All_Companies_{$start}_{$end}_Run_{$run->id}.pdf";
+        $prefix = $deductionOnly ? 'Payroll_Deductions_Report' : 'Payroll_Report';
+
+        return "{$prefix}_{$module}_All_Companies_{$start}_{$end}_Run_{$run->id}.pdf";
     }
 }

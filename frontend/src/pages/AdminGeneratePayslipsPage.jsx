@@ -17,7 +17,9 @@ import {
   getDepartments,
   getPayCycles,
   getPayrollRunCompanyPayrollReportPdfBlob,
+  getPayrollRunCompanyPayrollDeductionsPdfBlob,
   getExecomPayrollReportPdfBlob,
+  getExecomPayrollDeductionsPdfBlob,
   companyLogoUrl,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
@@ -357,6 +359,7 @@ export default function AdminGeneratePayslipsPage() {
   const [listLoading, setListLoading] = useState(false)
   const [bulkDownloadingBatchId, setBulkDownloadingBatchId] = useState(null)
   const [payrollReportDownloadingBatchId, setPayrollReportDownloadingBatchId] = useState(null)
+  const [payrollDeductionsDownloadingBatchId, setPayrollDeductionsDownloadingBatchId] = useState(null)
   /** @type {import('react').MutableRefObject<AbortController|null>} */
   const bulkDownloadAbortRef = useRef(null)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
@@ -859,35 +862,44 @@ export default function AdminGeneratePayslipsPage() {
     }
   }
 
-  const handleDownloadPayrollReportPdf = async (row) => {
+  const handleDownloadPayrollReportPdf = async (row, deductionsOnly = false) => {
     const id = row?.payroll_batch_run_id
     const isExecomRow =
       row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
     const rowCompanyId = Number(row?.company_id || 0)
-    if (id == null || payrollReportDownloadingBatchId != null) return
+    const downloadingBatchId = deductionsOnly ? payrollDeductionsDownloadingBatchId : payrollReportDownloadingBatchId
+    if (id == null || downloadingBatchId != null) return
     if (!isExecomRow && rowCompanyId <= 0) return
     if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
     if (!canBulkDownloadPayslipZip) return
 
-    setPayrollReportDownloadingBatchId(id)
+    if (deductionsOnly) setPayrollDeductionsDownloadingBatchId(id)
+    else setPayrollReportDownloadingBatchId(id)
     try {
       const blob = isExecomRow
-        ? await getExecomPayrollReportPdfBlob(id)
-        : await getPayrollRunCompanyPayrollReportPdfBlob(id, rowCompanyId)
+        ? await (deductionsOnly ? getExecomPayrollDeductionsPdfBlob(id) : getExecomPayrollReportPdfBlob(id))
+        : await (deductionsOnly
+            ? getPayrollRunCompanyPayrollDeductionsPdfBlob(id, rowCompanyId)
+            : getPayrollRunCompanyPayrollReportPdfBlob(id, rowCompanyId))
       const companyName = (isExecomRow ? 'Execom' : String(row?.company_name || 'company')).replace(
         /[^\w-]+/g,
         '_',
       )
-      savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${id}.pdf`)
-      toast({ title: 'Payroll Report PDF downloaded', description: 'Your report download has started.' })
+      const prefix = deductionsOnly ? 'Payroll_Deductions_Report' : 'Payroll_Report'
+      savePdfBlob(blob, `${prefix}_${companyName}_Run_${id}.pdf`)
+      toast({
+        title: deductionsOnly ? 'Payroll Deductions PDF downloaded' : 'Payroll Report PDF downloaded',
+        description: 'Your report download has started.',
+      })
     } catch (e) {
       toast({
-        title: 'Payroll Report PDF failed',
-        description: e.message || 'Could not download Payroll Report PDF.',
+        title: deductionsOnly ? 'Payroll Deductions PDF failed' : 'Payroll Report PDF failed',
+        description: e.message || `Could not download ${deductionsOnly ? 'Payroll Deductions' : 'Payroll Report'} PDF.`,
         variant: 'destructive',
       })
     } finally {
-      setPayrollReportDownloadingBatchId(null)
+      if (deductionsOnly) setPayrollDeductionsDownloadingBatchId(null)
+      else setPayrollReportDownloadingBatchId(null)
     }
   }
 
@@ -1821,6 +1833,23 @@ export default function AdminGeneratePayslipsPage() {
                                     <FileText className="mr-1.5 h-4 w-4" />
                                   )}
                                   Payroll Report PDF
+                                </Button>
+                              )}
+                              {showPayrollReportPdf && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
+                                  disabled={payrollDeductionsDownloadingBatchId === r.payroll_batch_run_id}
+                                  onClick={() => handleDownloadPayrollReportPdf(r, true)}
+                                >
+                                  {payrollDeductionsDownloadingBatchId === r.payroll_batch_run_id ? (
+                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <FileText className="mr-1.5 h-4 w-4" />
+                                  )}
+                                  Deductions PDF
                                 </Button>
                               )}
                               {showDelete && (

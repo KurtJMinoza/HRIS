@@ -378,6 +378,16 @@ class ExecomPayrollController extends Controller
 
     public function downloadReport(Request $request, int $batchRunId): mixed
     {
+        return $this->downloadReportPdf($request, $batchRunId);
+    }
+
+    public function downloadDeductionsReport(Request $request, int $batchRunId): mixed
+    {
+        return $this->downloadReportPdf($request, $batchRunId, true);
+    }
+
+    private function downloadReportPdf(Request $request, int $batchRunId, bool $deductionOnly = false): mixed
+    {
         $validated = $request->validate([
             'company_id' => ['nullable', 'integer', 'exists:companies,id'],
         ]);
@@ -389,7 +399,7 @@ class ExecomPayrollController extends Controller
         abort_unless($actor instanceof User, 403);
 
         try {
-            $result = $this->payrollReportService->pdfForRun($run, $actor);
+            $result = $this->payrollReportService->pdfForRun($run, $actor, $deductionOnly);
         } catch (\RuntimeException $e) {
             abort(422, $e->getMessage());
         }
