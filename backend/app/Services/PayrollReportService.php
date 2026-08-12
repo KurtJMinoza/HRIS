@@ -194,8 +194,21 @@ class PayrollReportService
         ] as $key) {
             $totals[$key] = round(collect($rows)->sum($key), 2);
         }
+        $deductionColumnLabels = [];
+        if ($deductionOnly) {
+            foreach ($rows as $row) {
+                foreach (($row['deduction_detail_labels'] ?? []) as $key => $label) {
+                    $deductionColumnLabels[$key] ??= $label;
+                }
+            }
+            foreach ($deductionColumnLabels as $key => $_label) {
+                $totals[$key] = round(collect($rows)->sum(
+                    fn (array $row): float => (float) ($row['deduction_details'][$key] ?? 0),
+                ), 2);
+            }
+        }
         $columns = $deductionOnly
-            ? $this->deductionReportColumns()
+            ? $this->deductionReportColumns($deductionColumnLabels)
             : $this->reportColumns($dynamicColumns);
         $layout = $this->layoutForColumnCount(count($columns));
 
@@ -260,18 +273,25 @@ class PayrollReportService
     /**
      * @return list<array{key:string,label:string,group:string,class:string}>
      */
-    private function deductionReportColumns(): array
+    private function deductionReportColumns(array $deductionColumnLabels): array
     {
-        return [
+        $columns = [
             ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
             ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
-            ['key' => 'sss', 'label' => 'SSS', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
-            ['key' => 'philhealth', 'label' => 'PHIC', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
-            ['key' => 'pagibig', 'label' => 'HDMF', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
-            ['key' => 'withholding_tax', 'label' => 'WHT', 'group' => 'Govt. Deductions', 'class' => 'num deductions'],
-            ['key' => 'other_deductions', 'label' => 'Other Ded.', 'group' => 'Other Ded.', 'class' => 'num deductions'],
-            ['key' => 'total_deductions', 'label' => 'Total Ded.', 'group' => 'Totals', 'class' => 'num deductions'],
         ];
+
+        foreach ($deductionColumnLabels as $key => $label) {
+            $columns[] = [
+                'key' => $key,
+                'label' => $label,
+                'group' => 'Deductions',
+                'class' => 'num deductions',
+            ];
+        }
+
+        $columns[] = ['key' => 'total_deductions', 'label' => 'Total Ded.', 'group' => 'Totals', 'class' => 'num deductions'];
+
+        return $columns;
     }
 
     /**
@@ -432,14 +452,17 @@ class PayrollReportService
             }
             $deductions[$this->deductionBucket($line)] += $amount;
         }
+        $detailedDeductions = $this->detailedDeductionAmounts($deductionLines);
 
         $name = $employee instanceof User
             ? $employee->display_name
             : trim((string) data_get($snapshot, 'employee.name', 'Employee '.$payslip->user_id));
 
-        return array_merge($earnings, $deductions, [
+        return array_merge($earnings, $deductions, $detailedDeductions['amounts'], [
             'employee_name' => $name !== '' ? $name : 'Employee '.$payslip->user_id,
             'employee_sort_key' => $employee instanceof User ? $employee->employeeListingSortKey() : mb_strtolower($name),
+            'deduction_details' => $detailedDeductions['amounts'],
+            'deduction_detail_labels' => $detailedDeductions['labels'],
             'gross_earnings' => round((float) $metrics['gross_pay'], 2),
             'total_deductions' => round((float) $metrics['total_deductions'], 2),
             'net_pay' => round((float) $metrics['net_pay'], 2),
@@ -470,6 +493,61 @@ class PayrollReportService
         }
 
         return 0.0;
+    }
+
+    /**
+     * Preserve each finalized deduction line as its own report column.
+     * Stable line keys keep the same deduction aligned across employees.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @return array{amounts:array<string, float>,labels:array<string, string>}
+     */
+    private function detailedDeductionAmounts(array $lines): array
+    {
+        $amounts = [];
+        $labels = [];
+
+        foreach ($lines as $line) {
+            $amount = $this->lineAmount($line);
+            if ($amount <= 0.0) {
+                continue;
+            }
+
+            $label = $this->deductionDetailLabel($line);
+            $identity = trim((string) ($line['key'] ?? ''));
+            if ($identity === '') {
+                $identity = strtolower($label);
+            }
+            $slug = strtolower(trim((string) preg_replace('/[^a-zA-Z0-9]+/', '_', $identity), '_'));
+            $key = 'deduction_'.($slug !== '' ? $slug : 'line');
+
+            $amounts[$key] = round(($amounts[$key] ?? 0.0) + $amount, 2);
+            $labels[$key] ??= $label;
+        }
+
+        return [
+            'amounts' => $amounts,
+            'labels' => $labels,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function deductionDetailLabel(array $line): string
+    {
+        foreach (['label', 'name', 'component_name', 'description', 'component_code', 'code', 'key'] as $field) {
+            $label = trim((string) ($line[$field] ?? ''));
+            if ($label !== '') {
+                $label = trim((string) preg_replace('/\s*\(employee\)\s*/i', '', $label));
+                $label = trim((string) preg_replace('/\s*\(Remaining:.*$/i', '', $label));
+                if ($label !== '') {
+                    return $label;
+                }
+            }
+        }
+
+        return 'Deduction';
     }
 
     /**
