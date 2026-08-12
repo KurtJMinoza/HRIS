@@ -128,6 +128,8 @@ final class PayslipStoredSnapshotViewPayload
                 'daily_rate' => (float) ($summary['daily_rate'] ?? data_get($snapshot, 'daily_rate', 0)),
                 'basic_salary_schedule_type' => (string) ($summary['basic_salary_schedule_type'] ?? ''),
                 'basic_salary_schedule_factor' => (float) ($summary['basic_salary_schedule_factor'] ?? 0),
+                'monthly_basic_salary' => (float) ($summary['monthly_basic_salary'] ?? 0),
+                'semi_monthly_basic_salary' => (float) ($summary['semi_monthly_basic_salary'] ?? 0),
                 'payslip_earning_lines' => is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
                 'daily_computation_earning_lines' => $dailyEarningLines,
                 'attendance_display_summary' => is_array($summary['attendance_display_summary'] ?? null)

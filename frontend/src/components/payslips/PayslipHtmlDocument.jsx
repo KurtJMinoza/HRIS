@@ -268,7 +268,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
 
       <div className="payslip-content space-y-5 px-6 pt-6 pb-8 @md:px-10 @md:pb-10">
         <section data-payslip-meta-bar className="rounded-xl border border-slate-200/80 bg-white px-4 py-3">
-          <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-6">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Pay cycle</p>
               <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">
@@ -284,8 +284,16 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
               <p className="mt-1 font-semibold text-[#0A0A0A]">{statusLabel}</p>
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Daily rate</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Daily Rate</p>
               <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{peso(data?.payroll?.daily_rate || data?.summary?.daily_rate || 0)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Monthly Basic Salary</p>
+              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{peso(data?.summary?.monthly_basic_salary || 0)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Semi-Monthly Basic Salary</p>
+              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{peso(data?.summary?.semi_monthly_basic_salary || 0)}</p>
             </div>
           </div>
         </section>

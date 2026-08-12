@@ -41,6 +41,8 @@
   $periodLabel = $formatDate($payslip->pay_period_start).' - '.$formatDate($payslip->pay_period_end);
   $payDate = $payslip->pay_date ?? $payslip->reference_date ?? null;
   $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
+  $monthlyBasicSalary = (float) ($summary['monthly_basic_salary'] ?? ($snapshot['monthly_basic_salary'] ?? 0));
+  $semiMonthlyBasicSalary = (float) ($summary['semi_monthly_basic_salary'] ?? round($monthlyBasicSalary / 2, 2));
   $statusRaw = strtolower(trim((string) ($payslip->status ?? '')));
   $statusLabel = match ($statusRaw) {
       'sent_finalized', 'emailed' => 'Sent finalized',
@@ -191,7 +193,7 @@
       overflow: hidden;
     }
     .meta td {
-      width: 25%;
+      width: 16.6667%;
       padding: 6px 8px;
       vertical-align: top;
     }
@@ -399,6 +401,14 @@
         <td>
           <div class="k">Daily Rate</div>
           <div class="v">{{ $formatMoney($dailyRate) }}</div>
+        </td>
+        <td>
+          <div class="k">Monthly Basic Salary</div>
+          <div class="v">{{ $formatMoney($monthlyBasicSalary) }}</div>
+        </td>
+        <td>
+          <div class="k">Semi-Monthly Basic Salary</div>
+          <div class="v">{{ $formatMoney($semiMonthlyBasicSalary) }}</div>
         </td>
       </tr>
     </table>

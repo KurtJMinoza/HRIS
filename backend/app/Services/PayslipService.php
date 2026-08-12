@@ -927,6 +927,8 @@ class PayslipService
                 'daily_rate' => (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0)),
                 'basic_salary_schedule_type' => (string) ($summary['basic_salary_schedule_type'] ?? ''),
                 'basic_salary_schedule_factor' => (float) ($summary['basic_salary_schedule_factor'] ?? 0),
+                'monthly_basic_salary' => (float) ($summary['monthly_basic_salary'] ?? ($snapshot['monthly_basic_salary'] ?? 0)),
+                'semi_monthly_basic_salary' => (float) ($summary['semi_monthly_basic_salary'] ?? 0),
                 'payslip_earning_lines' => is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
                 'daily_computation_earning_lines' => $dailyEarningLines,
                 'attendance_display_summary' => is_array($summary['attendance_display_summary'] ?? null)
@@ -1805,6 +1807,7 @@ class PayslipService
             'pay_cycle_preview' => $preview,
             'daily_rate' => round((float) ($computed['daily_rate'] ?? 0), 2),
             'daily_rate_divisor_days' => (int) ($computed['daily_rate_divisor_days'] ?? 0),
+            'monthly_basic_salary' => round((float) ($computed['basic_salary_used'] ?? 0), 2),
             'summary' => $summary,
             'daily_computation_days' => is_array($computed['days'] ?? null) ? $computed['days'] : [],
             'days_meta' => [
@@ -2554,6 +2557,7 @@ class PayslipService
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
             $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
+        $summary = $this->withPayslipSalaryDisplay($summary, $out);
         $summary = $this->normalizeAttendancePayBreakdownDetails($summary);
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
@@ -3370,6 +3374,7 @@ class PayslipService
         } else {
             $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
+        $summary = $this->withPayslipSalaryDisplay($summary, $out);
         $summary['payslip_deduction_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_deduction_lines'] ?? [],
             'Deduction',
@@ -3437,6 +3442,56 @@ class PayslipService
         $out['summary'] = $summary;
 
         return $out;
+    }
+
+    /**
+     * Add salary values used only by the payslip header.
+     * This does not affect payroll line amounts or any computation totals.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    private function withPayslipSalaryDisplay(array $summary, array $snapshot): array
+    {
+        $compensation = is_array($summary['compensation_breakdown'] ?? null)
+            ? $summary['compensation_breakdown']
+            : [];
+        $monthlyCandidates = [
+            $summary['monthly_basic_salary'] ?? null,
+            $snapshot['monthly_basic_salary'] ?? null,
+            $summary['monthly_salary'] ?? null,
+            $summary['employee_monthly_salary'] ?? null,
+            $summary['resolved_monthly_salary'] ?? null,
+            $summary['resolved_monthly'] ?? null,
+            $summary['fixed_salary'] ?? null,
+            $summary['execom_fixed_salary'] ?? null,
+            $summary['consultant_fixed_salary'] ?? null,
+            $compensation['monthly_salary'] ?? null,
+            $compensation['fixed_salary'] ?? null,
+            $compensation['basic_salary'] ?? null,
+        ];
+
+        $monthlySalary = 0.0;
+        foreach ($monthlyCandidates as $candidate) {
+            if (is_numeric($candidate) && (float) $candidate > 0.0) {
+                $monthlySalary = round((float) $candidate, 2);
+                break;
+            }
+        }
+
+        if ($monthlySalary <= 0.0) {
+            $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
+            $divisorDays = (float) ($summary['daily_rate_divisor_days'] ?? ($snapshot['daily_rate_divisor_days'] ?? 0));
+            if ($dailyRate > 0.0 && $divisorDays > 0.0) {
+                $monthlySalary = round($dailyRate * $divisorDays, 2);
+            }
+        }
+
+        $summary['monthly_basic_salary'] = $monthlySalary;
+        $summary['semi_monthly_basic_salary'] = round($monthlySalary / 2.0, 2);
+
+        return $summary;
     }
 
     /**
