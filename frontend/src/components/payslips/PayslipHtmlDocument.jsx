@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { Fragment, useMemo } from 'react'
 import { companyLogoUrl } from '@/api'
 import { displayCompanyAddress, displayCompanyTin } from '@/lib/payslipCompanyDisplay'
 import { cn } from '@/lib/utils'
@@ -8,6 +8,11 @@ function peso(v) {
   if (!Number.isFinite(n)) return '\u20B10.00'
   const sign = n < 0 ? '-' : ''
   return `${sign}\u20B1${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function attendanceDeduction(v) {
+  const amount = Number(v || 0)
+  return amount > 0 ? `-${peso(amount)}` : peso(0)
 }
 
 /**
@@ -168,6 +173,11 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
       return true
     })
   }, [summary])
+
+  const attendanceBreakdown = summary?.attendance_pay_breakdown && typeof summary.attendance_pay_breakdown === 'object'
+    ? summary.attendance_pay_breakdown
+    : null
+  const attendanceRows = Array.isArray(attendanceBreakdown?.rows) ? attendanceBreakdown.rows : []
 
   const payrollStatusRaw = String(data?.payroll?.status || '').toLowerCase()
   const netPay = Number(data?.amounts?.net_pay || 0)
@@ -338,21 +348,46 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                     const earningLabel = isThirteenthMonth
                       ? `13th Month Pay (${basisType === 'gross' ? 'Gross Pay' : 'Basic Pay'} Method)`
                       : (line?.label || 'Daily computation')
+                    const lineKey = String(line?.key || '').trim().toLowerCase()
+                    const lineLabel = String(line?.label || '').trim().toLowerCase()
+                    const isRegularPayLine = lineKey === 'daily:regular_pay' || lineLabel === 'regular pay'
                     return (
-                      <tr
-                        key={`dc-${idx}`}
-                        className="border-b border-slate-100/90 transition-colors last:border-b-0 bg-white hover:bg-white"
-                      >
-                        <td className="py-2.5 pl-3 pr-2 font-normal text-[#0A0A0A]/88">
-                          {earningLabel}
-                        </td>
-                        <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">
-                          {formatUnits(line?.minutes_worked, line?.units) || '-'}
-                        </td>
-                        <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-medium tabular-nums text-[#0A0A0A]">
-                          {Number(line?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                      </tr>
+                      <Fragment key={`dc-${idx}`}>
+                        <tr className="border-b border-slate-100/90 transition-colors last:border-b-0 bg-white hover:bg-white">
+                          <td className="py-2.5 pl-3 pr-2 font-normal text-[#0A0A0A]/88">
+                            {earningLabel}
+                          </td>
+                          <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">
+                            {formatUnits(line?.minutes_worked, line?.units) || '-'}
+                          </td>
+                          <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-medium tabular-nums text-[#0A0A0A]">
+                            {Number(line?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                        {isRegularPayLine && attendanceBreakdown?.available ? (
+                          <>
+                            <tr className="bg-slate-50/45">
+                              <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/70">Scheduled regular days</td>
+                              <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">
+                                {Number(attendanceBreakdown?.scheduled_days_count || 0)} {Number(attendanceBreakdown?.scheduled_days_count || 0) === 1 ? 'day' : 'days'}
+                              </td>
+                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/60">-</td>
+                            </tr>
+                            {attendanceRows.filter((row) => row?.key !== 'scheduled_regular_days').map((row, rowIdx) => (
+                              <tr key={`attendance-detail-${row?.key || rowIdx}`} className="bg-slate-50/45">
+                                <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/70">{row?.label || 'Attendance adjustment'}</td>
+                                <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">{row?.details || '-'}</td>
+                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/70">{attendanceDeduction(row?.amount)}</td>
+                              </tr>
+                            ))}
+                            <tr className="border-b border-emerald-100 bg-slate-50/45">
+                              <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/75">Total attendance reductions</td>
+                              <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">Included above</td>
+                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]/75">{attendanceDeduction(attendanceBreakdown?.total_deduction)}</td>
+                            </tr>
+                          </>
+                        ) : null}
+                      </Fragment>
                     )
                   })}
                   <tr className="border-t border-emerald-100 bg-white text-[#0A0A0A]">

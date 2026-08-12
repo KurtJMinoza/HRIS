@@ -56,6 +56,23 @@
     ?? ($snapshot['payroll_module'] ?? '')
   )));
   $isExecomPayroll = $payrollModule === 'execom';
+  $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+    ? $summary['attendance_pay_breakdown']
+    : [];
+  $attendanceRows = is_array($attendanceBreakdown['rows'] ?? null)
+    ? array_values($attendanceBreakdown['rows'])
+    : [];
+  $isRegularPayLine = static function (array $line): bool {
+    $lineKey = strtolower(trim((string) ($line['key'] ?? '')));
+    $lineLabel = strtolower(trim((string) ($line['label'] ?? '')));
+
+    return $lineKey === 'daily:regular_pay' || $lineLabel === 'regular pay';
+  };
+  $formatDeduction = static function ($value) use ($formatMoney): string {
+    $amount = (float) ($value ?? 0);
+
+    return $amount > 0 ? '-'.$formatMoney($amount) : $formatMoney(0);
+  };
 
   if (! $isExecomPayroll && count($dailyEarnLines) === 0) {
     $fallback = [];
@@ -69,7 +86,6 @@
     }
     $dailyEarnLines = $fallback;
   }
-
   $logoLocalPath = null;
   $logoRaw = is_string($company?->logo ?? null) ? trim((string) $company->logo) : '';
   if (! $isExecomPayroll && $logoRaw !== '') {
@@ -297,6 +313,25 @@
       background: #f8fafc;
       font-weight: 700;
     }
+    .attendance-detail td {
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 8px;
+      padding-top: 3px;
+      padding-bottom: 3px;
+    }
+    .attendance-detail .attendance-label {
+      padding-left: 18px;
+    }
+    .attendance-total td {
+      background: #f8fafc;
+      border-top: 1px solid #d1fae5;
+      color: #334155;
+      font-size: 8px;
+      font-weight: 700;
+      padding-top: 4px;
+      padding-bottom: 4px;
+    }
     .net {
       border-radius: 10px;
       background: #0a0a0a;
@@ -402,6 +437,7 @@
     </div>
 
     <table class="tables">
+      @php($attendanceDetailsRendered = false)
       <tr>
         <td>
           <div class="block-title">Earnings</div>
@@ -429,6 +465,28 @@
                     <td class="units">{{ $formatUnits($line) }}</td>
                     <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                   </tr>
+                  @if(! $attendanceDetailsRendered && $isRegularPayLine($line) && !empty($attendanceBreakdown['available']))
+                    <tr class="attendance-detail">
+                      <td class="attendance-label">Scheduled regular days</td>
+                      <td class="units">{{ (int) ($attendanceBreakdown['scheduled_days_count'] ?? 0) }} {{ ((int) ($attendanceBreakdown['scheduled_days_count'] ?? 0)) === 1 ? 'day' : 'days' }}</td>
+                      <td class="num">—</td>
+                    </tr>
+                    @foreach($attendanceRows as $row)
+                      @if(($row['key'] ?? '') !== 'scheduled_regular_days')
+                        <tr class="attendance-detail">
+                          <td class="attendance-label">{{ $row['label'] ?? 'Attendance adjustment' }}</td>
+                          <td class="units">{{ $row['details'] ?? '—' }}</td>
+                          <td class="num">{{ $formatDeduction($row['amount'] ?? 0) }}</td>
+                        </tr>
+                      @endif
+                    @endforeach
+                    <tr class="attendance-total">
+                      <td class="attendance-label">Total attendance reductions</td>
+                      <td class="units">Included above</td>
+                      <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
+                    </tr>
+                    @php($attendanceDetailsRendered = true)
+                  @endif
                 @endforeach
                 @foreach($earnLines as $line)
                   <tr>
@@ -436,6 +494,28 @@
                     <td class="units">{{ $formatUnits($line) }}</td>
                     <td class="num">{{ $formatMoney($line['amount'] ?? 0) }}</td>
                   </tr>
+                  @if(! $attendanceDetailsRendered && $isRegularPayLine($line) && !empty($attendanceBreakdown['available']))
+                    <tr class="attendance-detail">
+                      <td class="attendance-label">Scheduled regular days</td>
+                      <td class="units">{{ (int) ($attendanceBreakdown['scheduled_days_count'] ?? 0) }} {{ ((int) ($attendanceBreakdown['scheduled_days_count'] ?? 0)) === 1 ? 'day' : 'days' }}</td>
+                      <td class="num">—</td>
+                    </tr>
+                    @foreach($attendanceRows as $row)
+                      @if(($row['key'] ?? '') !== 'scheduled_regular_days')
+                        <tr class="attendance-detail">
+                          <td class="attendance-label">{{ $row['label'] ?? 'Attendance adjustment' }}</td>
+                          <td class="units">{{ $row['details'] ?? '—' }}</td>
+                          <td class="num">{{ $formatDeduction($row['amount'] ?? 0) }}</td>
+                        </tr>
+                      @endif
+                    @endforeach
+                    <tr class="attendance-total">
+                      <td class="attendance-label">Total attendance reductions</td>
+                      <td class="units">Included above</td>
+                      <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
+                    </tr>
+                    @php($attendanceDetailsRendered = true)
+                  @endif
                 @endforeach
               @endif
               @if(count($dailyEarnLines) === 0 && count($earnLines) === 0)

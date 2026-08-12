@@ -938,6 +938,16 @@ class PayslipService
                         'total_regular_hours' => 0.0,
                         'total_presence_regular_hours' => 0.0,
                     ],
+                'attendance_pay_breakdown' => is_array($summary['attendance_pay_breakdown'] ?? null)
+                    ? $summary['attendance_pay_breakdown']
+                    : [
+                        'available' => false,
+                        'is_fixed_pay' => false,
+                        'scheduled_days_count' => 0,
+                        'rows' => [],
+                        'total_deduction' => 0.0,
+                        'note' => null,
+                    ],
                 'holiday_premium_breakdown' => is_array($summary['holiday_premium_breakdown'] ?? null)
                     ? array_values($summary['holiday_premium_breakdown'])
                     : [],
@@ -3415,12 +3425,173 @@ class PayslipService
         $ads['total_regular_hours'] = (float) ($ads['total_regular_hours'] ?? 0);
         $ads['total_presence_regular_hours'] = (float) ($ads['total_presence_regular_hours'] ?? $ads['total_regular_hours'] ?? 0);
         $summary['attendance_display_summary'] = $ads;
+        $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
+            $summary,
+            $dailyComputationDays,
+            $isExecomSnapshot || $isConsultantSnapshot
+        );
 
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
 
         $out['summary'] = $summary;
 
         return $out;
+    }
+
+    /**
+     * Build payslip-only attendance detail from the frozen daily payroll rows.
+     * This is presentation data; it does not alter any payroll totals or line amounts.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  list<array<string, mixed>>  $days
+     * @return array<string, mixed>
+     */
+    private function buildAttendancePayBreakdown(array $summary, array $days, bool $attendanceDeductionsDisabled): array
+    {
+        $fixedPayResult = [
+            'available' => false,
+            'is_fixed_pay' => true,
+            'scheduled_days_count' => 0,
+            'rows' => [],
+            'total_deduction' => 0.0,
+            'note' => 'No attendance-based deductions under the fixed-pay payroll policy.',
+        ];
+
+        if ($attendanceDeductionsDisabled) {
+            return $fixedPayResult;
+        }
+
+        $dailyRate = (float) ($summary['daily_rate'] ?? 0);
+        $hourlyRate = $dailyRate > 0 ? $dailyRate / 8.0 : 0.0;
+        $scheduledDays = 0;
+        $lateCount = 0;
+        $lateMinutes = 0;
+        $halfDayCount = 0;
+        $halfDayMinutes = 0;
+        $absenceDays = 0.0;
+        $absenceMinutes = 0;
+        $undertimeCount = 0;
+        $undertimeMinutes = 0;
+
+        foreach ($days as $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+
+            $requiredMinutes = max(0, (int) ($day['required_minutes'] ?? 0));
+            if ($requiredMinutes <= 0 || (bool) ($day['is_rest_day'] ?? false)) {
+                continue;
+            }
+
+            // Premium holiday pay is rendered separately from ordinary Regular pay.
+            if (max(0.0, (float) ($day['holiday_premium_pay'] ?? 0)) > 0.0001) {
+                continue;
+            }
+
+            $scheduledDays++;
+            $status = strtolower(trim((string) ($day['status'] ?? '')));
+            if ($status === 'absent') {
+                $absenceMinutes += $requiredMinutes;
+                $absenceDays += min(1.0, $requiredMinutes / (8 * 60));
+            }
+
+            $dayLateMinutes = max(0, (int) ($day['late_deduction_minutes'] ?? 0));
+            $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
+            $tardinessLabel = (string) ($day['tardiness_label'] ?? '');
+            if ($tardinessStatus === 'half_day') {
+                $paidRegularMinutes = max(
+                    0,
+                    (int) ($day['paid_regular_minutes'] ?? ((int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)))
+                );
+                $halfDayMinutesForDay = max($dayLateMinutes, max(0, $requiredMinutes - $paidRegularMinutes));
+                $halfDayCount++;
+                $halfDayMinutes += $halfDayMinutesForDay;
+            } elseif ($tardinessStatus === 'late' && $tardinessLabel !== '') {
+                $labelMinutes = 0;
+                if (preg_match('/(\d+)\s*hour(?:s)?(?:\s+(\d+)\s*minute(?:s)?)?/i', $tardinessLabel, $hoursMatch) === 1) {
+                    $labelMinutes = ((int) $hoursMatch[1] * 60) + (int) ($hoursMatch[2] ?? 0);
+                } elseif (preg_match('/(\d+)\s*minute(?:s)?/i', $tardinessLabel, $minutesMatch) === 1) {
+                    $labelMinutes = (int) $minutesMatch[1];
+                }
+                $dayLateMinutes = max($dayLateMinutes, $labelMinutes);
+            }
+            if ($tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
+                $lateCount++;
+                $lateMinutes += $dayLateMinutes;
+            }
+
+            $dayUndertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
+            if ($dayUndertimeMinutes > 0) {
+                $undertimeCount++;
+                $undertimeMinutes += $dayUndertimeMinutes;
+            }
+        }
+
+        $lateAmount = round(($lateMinutes / 60.0) * $hourlyRate, 2);
+        $halfDayAmount = round(($halfDayMinutes / 60.0) * $hourlyRate, 2);
+        $absenceAmount = round(($absenceMinutes / 60.0) * $hourlyRate, 2);
+        $undertimeAmount = round(($undertimeMinutes / 60.0) * $hourlyRate, 2);
+
+        $formatCount = static function (int $count, string $singular, string $plural): string {
+            return $count.' '.($count === 1 ? $singular : $plural);
+        };
+        $formatDays = static function (float $days): string {
+            $rounded = round($days, 2);
+            $display = rtrim(rtrim(number_format($rounded, 2, '.', ''), '0'), '.');
+
+            return $display.' '.($rounded === 1.0 ? 'day' : 'days');
+        };
+        $formatMinutes = fn (int $minutes): string => $this->formatDurationUnitsFromMinutes($minutes) ?? '0 mins';
+
+        return [
+            'available' => $days !== [],
+            'is_fixed_pay' => false,
+            'scheduled_days_count' => $scheduledDays,
+            'rows' => [
+                [
+                    'key' => 'scheduled_regular_days',
+                    'label' => 'Scheduled regular days',
+                    'details' => $formatCount($scheduledDays, 'day', 'days'),
+                    'count' => $scheduledDays,
+                    'minutes' => null,
+                    'amount' => null,
+                ],
+                [
+                    'key' => 'late',
+                    'label' => 'Late',
+                    'details' => $formatCount($lateCount, 'occurrence', 'occurrences').' - '.$formatMinutes($lateMinutes),
+                    'count' => $lateCount,
+                    'minutes' => $lateMinutes,
+                    'amount' => $lateAmount,
+                ],
+                [
+                    'key' => 'half_day',
+                    'label' => 'Half day',
+                    'details' => $formatDays((float) $halfDayCount).' - '.$formatMinutes($halfDayMinutes),
+                    'count' => $halfDayCount,
+                    'minutes' => $halfDayMinutes,
+                    'amount' => $halfDayAmount,
+                ],
+                [
+                    'key' => 'absence',
+                    'label' => 'Absences',
+                    'details' => $formatDays($absenceDays).' - '.$formatMinutes($absenceMinutes),
+                    'count' => $absenceDays,
+                    'minutes' => $absenceMinutes,
+                    'amount' => $absenceAmount,
+                ],
+                [
+                    'key' => 'undertime',
+                    'label' => 'Undertime',
+                    'details' => $formatCount($undertimeCount, 'occurrence', 'occurrences').' - '.$formatMinutes($undertimeMinutes),
+                    'count' => $undertimeCount,
+                    'minutes' => $undertimeMinutes,
+                    'amount' => $undertimeAmount,
+                ],
+            ],
+            'total_deduction' => round($lateAmount + $halfDayAmount + $absenceAmount + $undertimeAmount, 2),
+            'note' => 'Attendance reductions are already included in Regular pay and are shown here for detail only.',
+        ];
     }
 
     /**
@@ -4940,7 +5111,7 @@ class PayslipService
      *
      * Rules:
      * - Units: integer arithmetic only → "X hr(s) Y min(s)" (uses {@see formatPayslipUnitsFromMinutes}
-     *   for regular-pay lines where day-split is appropriate).
+     *   for regular-pay lines where day-split display is appropriate).
      * - Amount: `round((totalMinutes / 60) * hourlyRate, 2)` — single rounding at the end.
      *
      * @return array{units: ?string, amount: ?float}
