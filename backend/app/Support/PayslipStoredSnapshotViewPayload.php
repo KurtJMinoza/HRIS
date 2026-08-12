@@ -139,6 +139,16 @@ final class PayslipStoredSnapshotViewPayload
                         'total_regular_hours' => 0.0,
                         'total_presence_regular_hours' => 0.0,
                     ],
+                'attendance_pay_breakdown' => is_array($summary['attendance_pay_breakdown'] ?? null)
+                    ? $summary['attendance_pay_breakdown']
+                    : [
+                        'available' => false,
+                        'is_fixed_pay' => false,
+                        'scheduled_days_count' => 0,
+                        'rows' => [],
+                        'total_deduction' => 0.0,
+                        'note' => null,
+                    ],
                 'holiday_premium_breakdown' => is_array($summary['holiday_premium_breakdown'] ?? null)
                     ? array_values($summary['holiday_premium_breakdown'])
                     : [],
