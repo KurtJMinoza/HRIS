@@ -2554,6 +2554,7 @@ class PayslipService
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
             $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
+        $summary = $this->normalizeAttendancePayBreakdownDetails($summary);
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
             $summary
@@ -3439,6 +3440,57 @@ class PayslipService
     }
 
     /**
+     * Keep attendance detail units consistent for locked snapshots created before the
+     * current payslip display format was introduced.
+     *
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    private function normalizeAttendancePayBreakdownDetails(array $summary): array
+    {
+        $breakdown = $summary['attendance_pay_breakdown'] ?? null;
+        if (! is_array($breakdown) || ! is_array($breakdown['rows'] ?? null)) {
+            return $summary;
+        }
+
+        foreach ($breakdown['rows'] as $index => $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $key = strtolower(trim((string) ($row['key'] ?? '')));
+            if ($key === 'scheduled_regular_days' && is_numeric($row['count'] ?? null)) {
+                $row['details'] = $this->formatAttendanceDayCount((float) $row['count']);
+            } elseif (
+                in_array($key, ['late', 'half_day', 'absence', 'undertime'], true)
+                && is_numeric($row['minutes'] ?? null)
+            ) {
+                $row['details'] = $this->formatAttendanceDuration((int) round((float) $row['minutes']));
+            }
+
+            $breakdown['rows'][$index] = $row;
+        }
+
+        $breakdown['rows'] = array_values($breakdown['rows']);
+        $summary['attendance_pay_breakdown'] = $breakdown;
+
+        return $summary;
+    }
+
+    private function formatAttendanceDayCount(float $days): string
+    {
+        $rounded = round(max(0.0, $days), 2);
+        $display = rtrim(rtrim(number_format($rounded, 2, '.', ''), '0'), '.');
+
+        return $display.' '.($rounded === 1.0 ? 'day' : 'days');
+    }
+
+    private function formatAttendanceDuration(int $minutes): string
+    {
+        return $this->formatDurationUnitsFromMinutes(max(0, $minutes)) ?? '0 mins';
+    }
+
+    /**
      * Build payslip-only attendance detail from the frozen daily payroll rows.
      * This is presentation data; it does not alter any payroll totals or line amounts.
      *
@@ -3532,16 +3584,7 @@ class PayslipService
         $absenceAmount = round(($absenceMinutes / 60.0) * $hourlyRate, 2);
         $undertimeAmount = round(($undertimeMinutes / 60.0) * $hourlyRate, 2);
 
-        $formatCount = static function (int $count, string $singular, string $plural): string {
-            return $count.' '.($count === 1 ? $singular : $plural);
-        };
-        $formatDays = static function (float $days): string {
-            $rounded = round($days, 2);
-            $display = rtrim(rtrim(number_format($rounded, 2, '.', ''), '0'), '.');
-
-            return $display.' '.($rounded === 1.0 ? 'day' : 'days');
-        };
-        $formatMinutes = fn (int $minutes): string => $this->formatDurationUnitsFromMinutes($minutes) ?? '0 mins';
+        $formatAttendanceUnits = fn (int $minutes): string => $this->formatAttendanceDuration($minutes);
 
         return [
             'available' => $days !== [],
@@ -3551,7 +3594,7 @@ class PayslipService
                 [
                     'key' => 'scheduled_regular_days',
                     'label' => 'Scheduled regular days',
-                    'details' => $formatCount($scheduledDays, 'day', 'days'),
+                    'details' => $this->formatAttendanceDayCount((float) $scheduledDays),
                     'count' => $scheduledDays,
                     'minutes' => null,
                     'amount' => null,
@@ -3559,7 +3602,7 @@ class PayslipService
                 [
                     'key' => 'late',
                     'label' => 'Late',
-                    'details' => $formatCount($lateCount, 'occurrence', 'occurrences').' - '.$formatMinutes($lateMinutes),
+                    'details' => $formatAttendanceUnits($lateMinutes),
                     'count' => $lateCount,
                     'minutes' => $lateMinutes,
                     'amount' => $lateAmount,
@@ -3567,7 +3610,7 @@ class PayslipService
                 [
                     'key' => 'half_day',
                     'label' => 'Half day',
-                    'details' => $formatDays((float) $halfDayCount).' - '.$formatMinutes($halfDayMinutes),
+                    'details' => $formatAttendanceUnits($halfDayMinutes),
                     'count' => $halfDayCount,
                     'minutes' => $halfDayMinutes,
                     'amount' => $halfDayAmount,
@@ -3575,7 +3618,7 @@ class PayslipService
                 [
                     'key' => 'absence',
                     'label' => 'Absences',
-                    'details' => $formatDays($absenceDays).' - '.$formatMinutes($absenceMinutes),
+                    'details' => $formatAttendanceUnits($absenceMinutes),
                     'count' => $absenceDays,
                     'minutes' => $absenceMinutes,
                     'amount' => $absenceAmount,
@@ -3583,7 +3626,7 @@ class PayslipService
                 [
                     'key' => 'undertime',
                     'label' => 'Undertime',
-                    'details' => $formatCount($undertimeCount, 'occurrence', 'occurrences').' - '.$formatMinutes($undertimeMinutes),
+                    'details' => $formatAttendanceUnits($undertimeMinutes),
                     'count' => $undertimeCount,
                     'minutes' => $undertimeMinutes,
                     'amount' => $undertimeAmount,
