@@ -378,7 +378,20 @@ class ExecomPayrollSeparationTest extends TestCase
             'pay_period_end' => '2026-06-10',
             'status' => PayrollBatchRun::STATUS_FINALIZED,
         ]);
-        $this->payslip($run, $firstExecom, PayrollBatchRun::MODULE_EXECOM, 50000, Payslip::STATUS_FINALIZED, '2026-05-26', '2026-06-10');
+        $firstPayslip = $this->payslip($run, $firstExecom, PayrollBatchRun::MODULE_EXECOM, 50000, Payslip::STATUS_FINALIZED, '2026-05-26', '2026-06-10');
+        $firstPayslip->update([
+            'snapshot' => [
+                'summary' => [
+                    'payslip_deduction_lines' => [
+                        ['key' => 'SSS', 'label' => 'SSS', 'amount' => 50],
+                    ],
+                    'payslip_custom_deduction_lines' => [
+                        ['key' => 'pay_component:12', 'label' => 'Cash Advance', 'amount' => 100],
+                    ],
+                ],
+            ],
+            'total_deductions' => 150,
+        ]);
         $this->payslip($run, $secondExecom, PayrollBatchRun::MODULE_EXECOM, 60000, Payslip::STATUS_FINALIZED, '2026-05-26', '2026-06-10');
 
         $payload = app(PayrollReportService::class)->buildReportPayloadForRun($run, $admin);
@@ -392,7 +405,7 @@ class ExecomPayrollSeparationTest extends TestCase
 
         $this->assertTrue($deductionPayload['isDeductionOnly']);
         $this->assertSame(
-            ['row_number', 'employee_name', 'sss', 'philhealth', 'pagibig', 'withholding_tax', 'other_deductions', 'total_deductions'],
+            ['row_number', 'employee_name', 'deduction_sss', 'deduction_pay_component_12', 'total_deductions'],
             array_column($deductionPayload['columns'], 'key'),
         );
     }
