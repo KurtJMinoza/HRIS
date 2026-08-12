@@ -387,6 +387,14 @@ class ExecomPayrollSeparationTest extends TestCase
         $this->assertNull($payload['company']);
         $this->assertSame('Execom', $payload['reportCompanyName']);
         $this->assertCount(2, $payload['rows']);
+
+        $deductionPayload = app(PayrollReportService::class)->buildReportPayloadForRun($run, $admin, true);
+
+        $this->assertTrue($deductionPayload['isDeductionOnly']);
+        $this->assertSame(
+            ['row_number', 'employee_name', 'sss', 'philhealth', 'pagibig', 'withholding_tax', 'other_deductions', 'total_deductions'],
+            array_column($deductionPayload['columns'], 'key'),
+        );
     }
 
     private function payslip(

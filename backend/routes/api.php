@@ -706,6 +706,7 @@ Route::middleware('auth:sanctum')->group(function () {
         });
         Route::middleware('permission:execom.reports')->group(function () {
             Route::get('/admin/execom/payroll/batches/{id}/report/pdf', [ExecomPayrollController::class, 'downloadReport'])->whereNumber('id');
+            Route::get('/admin/execom/payroll/batches/{id}/deductions-report/pdf', [ExecomPayrollController::class, 'downloadDeductionsReport'])->whereNumber('id');
         });
         Route::middleware('permission:payslip.download')->group(function () {
             Route::get('/admin/payslips/{id}/pdf', [AdminPayslipController::class, 'download'])->whereNumber('id');
@@ -718,7 +719,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/payroll-runs/{id}/company/{companyId}/payroll-report/pdf', [PayrollReportController::class, 'downloadForRunCompany'])
                 ->whereNumber('id')
                 ->whereNumber('companyId');
+            Route::get('/payroll-runs/{id}/company/{companyId}/payroll-deductions-report/pdf', [PayrollReportController::class, 'downloadDeductionsForRunCompany'])
+                ->whereNumber('id')
+                ->whereNumber('companyId');
             Route::get('/reports/payroll-report', [PayrollReportController::class, 'downloadFromReports']);
+            Route::get('/reports/payroll-deductions-report', [PayrollReportController::class, 'downloadDeductionsFromReports']);
         });
         Route::middleware('permission:approval.workflow.manage')->group(function () {
             Route::get('/admin/approval-workflow-settings', [ApprovalWorkflowSettingsController::class, 'index']);

@@ -7,6 +7,7 @@ use App\Models\AttendanceCorrection;
 use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
+use App\Models\ScheduleRequest;
 use App\Models\User;
 use App\Support\AttendanceCorrectionModuleCache;
 use App\Support\HrApprovalStages;
@@ -239,6 +240,198 @@ class OrgApprovalWorkflowService
         }
 
         return $synced;
+    }
+
+    /**
+     * Re-resolve pending attendance corrections after an employee's organization
+     * assignment changes. The correction snapshot must follow the current active
+     * assignment so a new department/company head becomes effective immediately.
+     *
+     * @param  list<int>  $employeeIds
+     */
+    public function resyncPendingAttendanceCorrectionChainsForEmployees(array $employeeIds): int
+    {
+        return $this->resyncPendingFilingChainsForEmployees($employeeIds, [self::MODULE_ATTENDANCE_CORRECTION]);
+    }
+
+    /**
+     * Re-resolve every pending filing for employees whose organization assignment changed.
+     * This keeps leave, overtime, attendance corrections, and schedule requests aligned
+     * with the employee's current shared or primary organization.
+     *
+     * @param  list<int>  $employeeIds
+     * @param  list<string>|null  $requestTypes
+     */
+    public function resyncPendingFilingChainsForEmployees(array $employeeIds, ?array $requestTypes = null): int
+    {
+        $employeeIds = array_values(array_unique(array_filter(
+            array_map('intval', $employeeIds),
+            static fn (int $id): bool => $id > 0,
+        )));
+        if ($employeeIds === []) {
+            return 0;
+        }
+
+        $requestTypes = $requestTypes ?? [
+            self::MODULE_LEAVE,
+            self::MODULE_OVERTIME,
+            self::MODULE_ATTENDANCE_CORRECTION,
+            self::MODULE_CHANGE_SCHEDULE,
+        ];
+        $requestTypes = array_values(array_unique(array_map(
+            fn (string $type): string => self::normalizeModuleType($type) ?? $type,
+            $requestTypes,
+        )));
+
+        $synced = 0;
+        if (in_array(self::MODULE_LEAVE, $requestTypes, true)) {
+            $synced += $this->resyncPendingEmployeeRequests(
+                LeaveRequest::query()
+                    ->where('pending_approval', true)
+                    ->where('status', LeaveRequest::STATUS_PENDING)
+                    ->whereNull('rejected_at'),
+                $employeeIds,
+                self::MODULE_LEAVE,
+                'start_date',
+            );
+        }
+
+        if (in_array(self::MODULE_OVERTIME, $requestTypes, true)) {
+            $synced += $this->resyncPendingEmployeeRequests(
+                Overtime::query()
+                    ->where('pending_approval', true)
+                    ->where('status', Overtime::STATUS_PENDING)
+                    ->whereNull('rejected_at'),
+                $employeeIds,
+                self::MODULE_OVERTIME,
+                'date',
+            );
+        }
+
+        if (in_array(self::MODULE_ATTENDANCE_CORRECTION, $requestTypes, true)) {
+            $synced += $this->resyncPendingEmployeeRequests(
+                AttendanceCorrection::query()
+                    ->where('pending_approval', true)
+                    ->where('approved', false)
+                    ->whereNull('rejected_at')
+                    ->when(
+                        Schema::hasColumn('attendance_corrections', 'reversed_at'),
+                        fn ($q) => $q->whereNull('reversed_at')
+                    ),
+                $employeeIds,
+                self::MODULE_ATTENDANCE_CORRECTION,
+                'date',
+            );
+        }
+
+        if (in_array(self::MODULE_CHANGE_SCHEDULE, $requestTypes, true)) {
+            $synced += $this->resyncPendingEmployeeRequests(
+                ScheduleRequest::query()
+                    ->where('pending_approval', true)
+                    ->where('status', ScheduleRequest::STATUS_PENDING)
+                    ->whereNull('rejected_at'),
+                $employeeIds,
+                self::MODULE_CHANGE_SCHEDULE,
+                'effective_from',
+                fn (ScheduleRequest $request): string => $this->scheduleApprovalModuleType($request),
+            );
+        }
+
+        return $synced;
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder  $query
+     * @param  list<int>  $employeeIds
+     * @param  callable|null  $moduleTypeResolver
+     */
+    private function resyncPendingEmployeeRequests(
+        $query,
+        array $employeeIds,
+        string $moduleType,
+        string $assignmentDateColumn,
+        ?callable $moduleTypeResolver = null,
+    ): int {
+        $synced = 0;
+        $query
+            ->whereIn('user_id', $employeeIds)
+            ->with(['user', 'filedBy'])
+            ->orderBy('id')
+            ->chunkById(100, function ($requests) use (&$synced, $moduleType, $assignmentDateColumn, $moduleTypeResolver): void {
+                foreach ($requests as $request) {
+                    $employee = $request->user;
+                    if (! $employee instanceof User) {
+                        continue;
+                    }
+
+                    $resolvedModuleType = $moduleTypeResolver
+                        ? (string) $moduleTypeResolver($request)
+                        : $moduleType;
+                    $requestor = $request->filedBy instanceof User ? $request->filedBy : $employee;
+                    if ($this->resyncRequestChainForCurrentAssignment(
+                        $request,
+                        $resolvedModuleType,
+                        $employee,
+                        $requestor,
+                        $assignmentDateColumn,
+                    )) {
+                        $synced++;
+                    }
+                }
+            });
+
+        return $synced;
+    }
+
+    private function resyncRequestChainForCurrentAssignment(
+        Model $request,
+        string $moduleType,
+        User $employee,
+        User $requestor,
+        string $assignmentDateColumn,
+    ): bool {
+        $organizationAssignments = app(EmployeeOrganizationAssignmentService::class);
+        $assignment = $organizationAssignments->resolveRequestAssignment(
+            $employee,
+            null,
+            $request->getAttribute($assignmentDateColumn),
+        );
+        $context = $organizationAssignments->requestContextPayload($assignment);
+        $snapshotChanged = false;
+        foreach ($context as $column => $value) {
+            if ($request->getAttribute($column) != $value) {
+                $snapshotChanged = true;
+                break;
+            }
+        }
+
+        if ($snapshotChanged) {
+            $request->forceFill($context + [
+                'first_approver_id' => null,
+                'first_approved_at' => null,
+                'approval_stage' => HrApprovalStages::PENDING_FIRST,
+                'second_approved_at' => null,
+            ])->save();
+            OrgApprovalRecord::query()
+                ->where('module_type', $moduleType)
+                ->where('request_id', (int) $request->getKey())
+                ->delete();
+            ReviewRequestCache::forget($moduleType, (int) $request->getKey());
+        }
+
+        return $this->resyncRequestChain($request, $moduleType, $employee, $requestor);
+    }
+
+    private function scheduleApprovalModuleType(ScheduleRequest $request): string
+    {
+        if (OrgApprovalRecord::query()
+            ->where('module_type', self::MODULE_SCHEDULE)
+            ->where('request_id', (int) $request->getKey())
+            ->exists()) {
+            return self::MODULE_SCHEDULE;
+        }
+
+        return self::MODULE_CHANGE_SCHEDULE;
     }
 
     /**
@@ -517,7 +710,10 @@ class OrgApprovalWorkflowService
             $planned = [];
 
             foreach ($steps as $step) {
-                $prior = $existing->firstWhere('approver_role', $step['approver_role']->value);
+                $prior = $existing->first(
+                    fn (OrgApprovalRecord $record): bool => $record->approver_role === $step['approver_role']->value
+                        && (int) $record->approver_id === (int) $step['approver_id'],
+                );
                 $status = $this->legacyStatusForStep($request, $step);
                 $approvedAt = null;
                 $remarks = null;
@@ -1372,6 +1568,23 @@ class OrgApprovalWorkflowService
                 ReviewRequestCache::forget(self::MODULE_ATTENDANCE_CORRECTION, (int) $request->getKey());
                 AttendanceCorrectionModuleCache::flush();
             }
+
+            return;
+        }
+
+        if ($normalized === self::MODULE_CHANGE_SCHEDULE && $request instanceof ScheduleRequest) {
+            $updates = [
+                'first_approver_id' => $firstLine ? (int) $firstLine['approver_id'] : null,
+                'approval_stage' => $pendingIsHrOnly
+                    ? HrApprovalStages::PENDING_SECOND
+                    : HrApprovalStages::PENDING_FIRST,
+            ];
+            if ($hrLine) {
+                $updates['second_approver_id'] = (int) $hrLine['approver_id'];
+            }
+
+            $request->forceFill($updates)->save();
+            ReviewRequestCache::forget($moduleType, (int) $request->getKey());
         }
     }
 
@@ -1566,7 +1779,9 @@ class OrgApprovalWorkflowService
         $changed = $before !== $after;
 
         // Legacy columns / list cache can lag even when org_approval_records already match.
-        if ($moduleType === self::MODULE_ATTENDANCE_CORRECTION
+        if ($moduleType === self::MODULE_CHANGE_SCHEDULE
+            || $moduleType === self::MODULE_SCHEDULE
+            || $moduleType === self::MODULE_ATTENDANCE_CORRECTION
             || $moduleType === self::MODULE_OVERTIME
             || $moduleType === self::MODULE_LEAVE) {
             $request->refresh();

@@ -38,6 +38,7 @@
   $reportCompanyName = (string) ($reportCompanyName ?? ($company->name ?? 'Company'));
   $reportCompanyAddress = $reportCompanyAddress ?? ($company->address ?? null);
   $isExecomPayroll = (bool) ($isExecomPayroll ?? false);
+  $isDeductionOnly = (bool) ($isDeductionOnly ?? false);
 @endphp
 <!DOCTYPE html>
 <html lang="en">
@@ -179,6 +180,7 @@
       padding: 0;
       border-right: 0.5px solid #cbd5e1;
     }
+    body.deduction-only .summary-card { width: 50%; }
     .summary-card:last-child { border-right: 0; }
     .summary-inner {
       padding: 3px 5px;
@@ -326,7 +328,7 @@
   </style>
 </head>
 <body
-  class="{{ $layoutClass }}"
+  class="{{ $layoutClass }}{{ $isDeductionOnly ? ' deduction-only' : '' }}"
   style="--report-body-font: {{ $layout['body_font'] ?? '8.5px' }}; --report-header-font: {{ $layout['header_font'] ?? '7.1px' }}; --report-cell-padding: {{ $layout['cell_padding'] ?? '1.45px 1.75px' }}; --number-col-width: {{ $layout['row_number_width'] ?? 4 }}%; --employee-col-width: {{ $layout['employee_width'] ?? 30 }}%; --numeric-col-width: {{ $layout['numeric_width'] ?? 7 }}%; --report-content-width: {{ $layout['content_width'] ?? '98.5%' }}; --report-table-width: {{ $layout['table_width'] ?? '99%' }};"
 >
   <div class="report-shell">
@@ -345,8 +347,8 @@
         </div>
       </div>
       <div class="hero-right">
-        <h2 class="report-title">{{ $isExecomPayroll ? 'EXECOM Payroll Report' : 'Payroll Report' }}</h2>
-        <p class="report-subtitle">{{ $isExecomPayroll ? 'Finalized EXECOM Payroll Register' : 'Finalized Payroll Register' }}</p>
+         <h2 class="report-title">{{ $isDeductionOnly ? 'Payroll Deductions Report' : ($isExecomPayroll ? 'EXECOM Payroll Report' : 'Payroll Report') }}</h2>
+         <p class="report-subtitle">{{ $isDeductionOnly ? 'Finalized Payroll Deductions Register' : ($isExecomPayroll ? 'Finalized EXECOM Payroll Register' : 'Finalized Payroll Register') }}</p>
       </div>
     </div>
 
@@ -374,12 +376,14 @@
     </div>
 
     <div class="summary">
+      @if(! $isDeductionOnly)
       <div class="summary-card">
         <div class="summary-inner">
           <span class="summary-label">Gross Earnings</span>
           <span class="summary-value gross">{{ $money($totals['gross_earnings'] ?? 0) }}</span>
         </div>
       </div>
+      @endif
       <div class="summary-card">
         <div class="summary-inner">
           <span class="summary-label">Total Deductions</span>
@@ -388,19 +392,21 @@
       </div>
       <div class="summary-card">
         <div class="summary-inner">
-          <span class="summary-label">Net Payroll</span>
+          <span class="summary-label">{{ $isDeductionOnly ? 'Total Net Pay' : 'Net Payroll' }}</span>
           <span class="summary-value net">{{ $money($totals['net_pay'] ?? 0) }}</span>
         </div>
       </div>
+      @if(! $isDeductionOnly)
       <div class="summary-card">
         <div class="summary-inner">
           <span class="summary-label">Employee Count</span>
           <span class="summary-value">{{ number_format($employeeCount) }} Employees</span>
         </div>
       </div>
+      @endif
     </div>
 
-    <div class="section-title">Employee Payroll Breakdown</div>
+    <div class="section-title">{{ $isDeductionOnly ? 'Employee Deductions' : 'Employee Payroll Breakdown' }}</div>
 
     <table class="payroll-table">
       <colgroup>
@@ -454,7 +460,7 @@
     </table>
 
     <div class="note">
-      Source: finalized payroll records for the payroll run indicated above.
+       Source: finalized {{ $isDeductionOnly ? 'payroll deduction records' : 'payroll records' }} for the payroll run indicated above.
     </div>
   </div>
 

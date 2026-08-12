@@ -13,6 +13,7 @@ import {
   getExecomPayrollBatches,
   getExecomPayrollPayslips,
   getExecomPayrollReportPdfBlob,
+  getExecomPayrollDeductionsPdfBlob,
 } from '@/api'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -272,6 +273,7 @@ export default function AdminExecomFinalizePayrollPage() {
   const [showSendBatchModal, setShowSendBatchModal] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
   const [sendingBatchPayslips, setSendingBatchPayslips] = useState(false)
+  const [deductionsReportDownloading, setDeductionsReportDownloading] = useState(false)
   const [finalizeStage, setFinalizeStage] = useState('Queued: waiting for worker')
   const [progress, setProgress] = useState(0)
   const [processedCount, setProcessedCount] = useState(0)
@@ -430,6 +432,19 @@ export default function AdminExecomFinalizePayrollPage() {
       saveBlob(blob, `EXECOM-payroll-report-${selectedId}.pdf`)
     } catch (error) {
       toast({ title: 'Report download failed', description: error.message, variant: 'error' })
+    }
+  }
+
+  async function downloadDeductionsReport() {
+    if (!selectedId || deductionsReportDownloading) return
+    setDeductionsReportDownloading(true)
+    try {
+      const blob = await getExecomPayrollDeductionsPdfBlob(selectedId)
+      saveBlob(blob, `EXECOM-payroll-deductions-report-${selectedId}.pdf`)
+    } catch (error) {
+      toast({ title: 'Deductions report download failed', description: error.message, variant: 'error' })
+    } finally {
+      setDeductionsReportDownloading(false)
     }
   }
 
@@ -646,6 +661,10 @@ export default function AdminExecomFinalizePayrollPage() {
               <Button type="button" variant="outline" size="sm" className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted" onClick={downloadReport} disabled={loading || working}>
                 <FileText className="h-4 w-4" />
                 Payroll Report PDF
+              </Button>
+              <Button type="button" variant="outline" size="sm" className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted" onClick={downloadDeductionsReport} disabled={loading || working || deductionsReportDownloading}>
+                {deductionsReportDownloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                Deductions PDF
               </Button>
             </>
           ) : null}

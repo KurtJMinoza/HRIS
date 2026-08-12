@@ -3248,6 +3248,18 @@ export async function getPayrollRunCompanyPayrollReportPdfBlob(batchRunId, compa
   return res.blob()
 }
 
+export async function getPayrollRunCompanyPayrollDeductionsPdfBlob(batchRunId, companyId) {
+  const res = await authenticatedFetch(
+    `/payroll-runs/${encodeURIComponent(String(batchRunId))}/company/${encodeURIComponent(String(companyId))}/payroll-deductions-report/pdf`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Deductions PDF')
+  }
+  return res.blob()
+}
+
 // ——— EXECOM payroll & employee management ———
 
 function execomQueryString(params = {}) {
@@ -3400,6 +3412,23 @@ export async function getExecomPayrollReportPdfBlob(batchRunId, companyId = null
   return res.blob()
 }
 
+export async function getExecomPayrollDeductionsPdfBlob(batchRunId, companyId = null) {
+  const params = new URLSearchParams()
+  if (companyId != null && companyId !== '') {
+    params.set('company_id', String(companyId))
+  }
+  const query = params.toString()
+  const res = await authenticatedFetch(
+    `/admin/execom/payroll/batches/${encodeURIComponent(String(batchRunId))}/deductions-report/pdf${query ? `?${query}` : ''}`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download EXECOM Payroll Deductions PDF')
+  }
+  return res.blob()
+}
+
 export async function getReportsPayrollReportPdfBlob(params = {}) {
   const q = new URLSearchParams()
   if (params.company_id != null) q.set('company_id', String(params.company_id))
@@ -3411,6 +3440,21 @@ export async function getReportsPayrollReportPdfBlob(params = {}) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.message || 'Failed to download Payroll Report PDF')
+  }
+  return res.blob()
+}
+
+export async function getReportsPayrollDeductionsPdfBlob(params = {}) {
+  const q = new URLSearchParams()
+  if (params.company_id != null) q.set('company_id', String(params.company_id))
+  if (params.payroll_run_id != null) q.set('payroll_run_id', String(params.payroll_run_id))
+  if (params.pay_period_id != null) q.set('pay_period_id', String(params.pay_period_id))
+  const res = await authenticatedFetch(`/reports/payroll-deductions-report${q.toString() ? `?${q}` : ''}`, {
+    timeoutMs: 120000,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Deductions PDF')
   }
   return res.blob()
 }

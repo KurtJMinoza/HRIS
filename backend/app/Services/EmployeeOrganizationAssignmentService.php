@@ -169,6 +169,9 @@ class EmployeeOrganizationAssignmentService
             ->unique()
             ->count();
 
+        app(OrgApprovalWorkflowService::class)
+            ->resyncPendingFilingChainsForEmployees($newEmployeeIds);
+
         return [
             'assignments' => $created,
             'added_count' => count($created),
@@ -233,7 +236,18 @@ class EmployeeOrganizationAssignmentService
             EmployeeOrganizationAssignment::query()
                 ->active()
                 ->whereIn('employee_id', $employeeIds)
-                ->where('organization_unit_id', (int) $context['organization_unit_id'])
+                ->where(function ($query) use ($context, $legacyType, $legacyId): void {
+                    $query->where('organization_unit_id', (int) $context['organization_unit_id']);
+
+                    match ($legacyType) {
+                        'company' => $query->orWhere('company_id', $legacyId),
+                        'branch' => $query->orWhere('branch_id', $legacyId),
+                        'division' => $query->orWhere('division_id', $legacyId),
+                        'department' => $query->orWhere('department_id', $legacyId),
+                        'section_unit' => $query->orWhere('section_unit_id', $legacyId),
+                        default => null,
+                    };
+                })
                 ->update([
                     'is_active' => false,
                     'effective_to' => now()->toDateString(),
@@ -248,6 +262,9 @@ class EmployeeOrganizationAssignmentService
                 $this->clearLegacyForeignKeysIfMatched($user, $legacyType, $legacyId, $context);
             }
         });
+
+        app(OrgApprovalWorkflowService::class)
+            ->resyncPendingFilingChainsForEmployees($employeeIds);
     }
 
     /**

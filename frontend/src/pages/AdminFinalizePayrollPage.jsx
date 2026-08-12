@@ -13,6 +13,7 @@ import {
   companyLogoUrl,
   getCompanies,
   getPayrollRunCompanyPayrollReportPdfBlob,
+  getPayrollRunCompanyPayrollDeductionsPdfBlob,
   userProfileImageSrc,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
@@ -307,6 +308,7 @@ export default function AdminFinalizePayrollPage() {
   const [deletingDraftBatch, setDeletingDraftBatch] = useState(false)
   const [bulkDownloadingZip, setBulkDownloadingZip] = useState(false)
   const [payrollReportDownloading, setPayrollReportDownloading] = useState(false)
+  const [payrollDeductionsDownloading, setPayrollDeductionsDownloading] = useState(false)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
   const bulkDownloadAbortRef = useRef(null)
   const [sendBatchDialogOpen, setSendBatchDialogOpen] = useState(false)
@@ -983,6 +985,28 @@ export default function AdminFinalizePayrollPage() {
     }
   }
 
+  const handleDownloadPayrollDeductionsPdf = async () => {
+    const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
+    const companyId = Number(effectivePayload.company_id || preview?.batch_run?.company_id || selectedCompany?.id || 0)
+    if (batchRunId <= 0 || companyId <= 0 || payrollDeductionsDownloading || !batchRunStatusFinalized || !canBulkDownloadPayslipZip) return
+
+    setPayrollDeductionsDownloading(true)
+    try {
+      const blob = await getPayrollRunCompanyPayrollDeductionsPdfBlob(batchRunId, companyId)
+      const companyName = String(selectedCompany?.name || preview?.totals?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Deductions_Report_${companyName}_Run_${batchRunId}.pdf`)
+      toastRef.current({ title: 'Payroll Deductions PDF downloaded', description: 'Your deductions report download has started.' })
+    } catch (e) {
+      toastRef.current({
+        title: 'Payroll Deductions PDF failed',
+        description: e.message || 'Could not download Payroll Deductions PDF.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPayrollDeductionsDownloading(false)
+    }
+  }
+
   const togglePayslipSelected = (id) => {
     setSelectedPayslipIds((prev) => {
       const next = new Set(prev)
@@ -1142,6 +1166,25 @@ export default function AdminFinalizePayrollPage() {
                     <FileText className="h-4 w-4" />
                   )}
                   Payroll Report PDF
+                </Button>
+              )}
+            {batchRunStatusFinalized &&
+              Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 &&
+              canBulkDownloadPayslipZip && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
+                  disabled={payrollDeductionsDownloading || loading}
+                  onClick={handleDownloadPayrollDeductionsPdf}
+                >
+                  {payrollDeductionsDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4" />
+                  )}
+                  Deductions PDF
                 </Button>
               )}
             {canDeleteCurrentDraftPayroll ? (
