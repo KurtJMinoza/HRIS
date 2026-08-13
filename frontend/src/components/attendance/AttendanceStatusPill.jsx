@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 function resolveVariant(statusRaw, labelRaw, presenceIssue) {
   if (presenceIssue === 'correction_pending') return 'pending'
   if (presenceIssue === 'approved_correction') return 'present'
+  if (presenceIssue === 'invalid_pair') return 'invalid'
   if (presenceIssue === 'incomplete_pair') return 'incomplete'
 
   const status = String(statusRaw || '').toLowerCase().replace(/_/g, '')
@@ -31,6 +32,7 @@ function resolveVariant(statusRaw, labelRaw, presenceIssue) {
   if (status === 'leave' || label.includes('leave')) return 'leave'
   if (status === 'halfday' || label.includes('half')) return 'halfday'
   if (status === 'upcoming') return 'upcoming'
+  if (status === 'invalid' || label.startsWith('invalid')) return 'invalid'
   if (status === 'incomplete') return 'incomplete'
 
   if (label.includes('pending')) return 'pending'
@@ -48,6 +50,7 @@ function variantStyles(v) {
     case 'late':
       return 'border-amber-200/80 bg-amber-50 text-amber-900 dark:border-amber-500/35 dark:bg-amber-500/12 dark:text-amber-100'
     case 'absent':
+    case 'invalid':
     case 'rejected':
       return 'border-red-200/80 bg-red-50 text-red-900 dark:border-red-500/35 dark:bg-red-500/12 dark:text-red-100'
     case 'undertime':
@@ -79,6 +82,8 @@ function StatusIcon({ variant, className }) {
       return <Clock3 className={common} aria-hidden />
     case 'absent':
       return <UserX className={common} aria-hidden />
+    case 'invalid':
+      return <XCircle className={common} aria-hidden />
     case 'leave':
       return <Palmtree className={common} aria-hidden />
     case 'undertime':

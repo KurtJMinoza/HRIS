@@ -29,6 +29,7 @@ class AttendanceStatusResolver
     public const STATUS_ABSENT = 'absent';
     public const STATUS_UNDERTIME = 'undertime';
     public const STATUS_INCOMPLETE = 'incomplete';
+    public const STATUS_INVALID = 'invalid';
     public const STATUS_CLOCKED_IN = 'clocked_in';
     public const STATUS_UPCOMING = 'upcoming';
 
@@ -150,15 +151,24 @@ class AttendanceStatusResolver
             $computationSchedule = AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule);
         }
 
-        $metrics = $this->computeWorkdayMetrics(
+        $invalidPair = $hasTimeIn && $hasTimeOut && ! AttendanceStatusService::punchesFormValidShiftSession(
             $dateKey,
-            $nowTz,
             $computationSchedule,
             $effectiveTimeIn,
             $effectiveTimeOut,
-            $hasTimeIn,
-            $hasTimeOut,
+            $nowTz->getTimezone()->getName(),
         );
+        $metrics = $invalidPair
+            ? $this->emptyMetrics()
+            : $this->computeWorkdayMetrics(
+                $dateKey,
+                $nowTz,
+                $computationSchedule,
+                $effectiveTimeIn,
+                $effectiveTimeOut,
+                $hasTimeIn,
+                $hasTimeOut,
+            );
 
         // Priority 1: Approved Leave
         if ($leave) {
@@ -415,6 +425,16 @@ class AttendanceStatusResolver
 
         // Priority 6–9: undertime, late, approved OT, present (both punches required below)
         if ($hasTimeIn && $hasTimeOut) {
+            if (! AttendanceStatusService::punchesFormValidShiftSession(
+                $dateKey,
+                $daySchedule,
+                $effectiveTimeIn,
+                $effectiveTimeOut,
+                $nowTz->getTimezone()->getName(),
+            )) {
+                return self::STATUS_INVALID;
+            }
+
             if ($metrics['undertime_minutes'] > 0) {
                 return self::STATUS_UNDERTIME;
             }
@@ -532,6 +552,7 @@ class AttendanceStatusResolver
             self::STATUS_ABSENT => 'Absent',
             self::STATUS_UNDERTIME => 'Undertime',
             self::STATUS_INCOMPLETE => 'Incomplete',
+            self::STATUS_INVALID => 'Invalid Shift',
             self::STATUS_CLOCKED_IN => 'Clocked In',
             default => $status,
         };

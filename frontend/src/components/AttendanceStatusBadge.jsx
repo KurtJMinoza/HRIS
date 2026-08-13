@@ -6,6 +6,7 @@
 function resolveStatusVariant(statusRaw, labelRaw, presenceIssue) {
   if (presenceIssue === 'correction_pending') return 'late'
   if (presenceIssue === 'approved_correction') return 'present'
+  if (presenceIssue === 'invalid_pair') return 'invalid'
   if (presenceIssue === 'incomplete_pair') return 'incomplete'
 
   const status = String(statusRaw || '').toLowerCase().replace(/_/g, '')
@@ -13,6 +14,7 @@ function resolveStatusVariant(statusRaw, labelRaw, presenceIssue) {
 
   if (status === 'present' || label.includes('present')) return 'present'
   if (status === 'late' || label.includes('late')) return 'late'
+  if (status === 'invalid' || label.startsWith('invalid')) return 'invalid'
   if (status === 'absent' || label.includes('absent')) return 'absent'
   if (status === 'undertime' || label.includes('undertime')) return 'undertime'
   if (status === 'overtime' || label.includes('overtime')) return 'overtime'
@@ -33,6 +35,7 @@ function getStatusBadgeClasses(variant) {
     case 'late':
       return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
     case 'absent':
+    case 'invalid':
       return 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/20 dark:text-red-300 dark:border-red-500/30'
     case 'undertime':
       return 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:border-violet-500/30'
@@ -75,6 +78,7 @@ function formatLabel(status, label) {
     upcoming: 'Upcoming',
     clocked_in: 'Clocked In',
     incomplete: 'Incomplete',
+    invalid: 'Invalid Shift',
   }
   return map[s] || String(status).charAt(0).toUpperCase() + String(status).slice(1)
 }

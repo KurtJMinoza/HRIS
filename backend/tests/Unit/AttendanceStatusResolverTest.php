@@ -184,4 +184,43 @@ class AttendanceStatusResolverTest extends TestCase
         $this->assertGreaterThan(0, $result['overtime_minutes']);
     }
 
+    public function test_day_shift_out_before_in_is_invalid_records_not_late(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-08-04';
+        $nowTz = Carbon::parse('2026-08-04 18:00:00', $tz);
+
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_minutes' => 60,
+            'grace_minutes' => 5,
+        ];
+
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-04 08:43:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-04 08:44:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['tue' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_INVALID, $result['status']);
+        $this->assertSame('invalid_pair', $result['presence_issue']);
+        $this->assertSame('Invalid Shift', $result['presence_label']);
+        $this->assertNull($result['late_label']);
+        $this->assertSame(0, $result['late_minutes']);
+    }
+
 }

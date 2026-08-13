@@ -2680,6 +2680,10 @@ class AttendanceController extends Controller
             $status = $qualified['status'];
             $presenceLabel = $qualified['presence_label'];
             $presenceIssue = $qualified['presence_issue'];
+            if ($presenceIssue === 'invalid_pair') {
+                $dayLateLabel = null;
+                $dayLateMinutes = null;
+            }
 
             if ($effectiveWorkedMinutes !== null) {
                 $metrics['total_worked_minutes'] += $effectiveWorkedMinutes;

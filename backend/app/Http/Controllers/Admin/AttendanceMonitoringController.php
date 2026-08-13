@@ -811,6 +811,10 @@ class AttendanceMonitoringController extends Controller
                 $status = $qualified['status'];
                 $presenceLabel = $qualified['presence_label'];
                 $presenceIssue = $qualified['presence_issue'];
+                if ($presenceIssue === 'invalid_pair') {
+                    $lateLabel = null;
+                    $lateMinutes = null;
+                }
                 $attendanceOtStatus = null;
                 if ($effectiveTimeIn && ! $effectiveTimeOut && $approvedOtRecords !== []) {
                     $approvedOtEnd = $approvedOvertimeForRow

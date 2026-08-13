@@ -377,6 +377,50 @@ class AttendanceStatusService
     }
 
     /**
+     * True when in/out form a real shift session for this schedule.
+     * Day shift: out must be after in. Overnight (scheduled out <= in): out may wrap to the next day.
+     */
+    public static function punchesFormValidShiftSession(
+        string $dateKey,
+        ?array $daySchedule,
+        mixed $timeIn,
+        mixed $timeOut,
+        ?string $tz = null
+    ): bool {
+        if ($timeIn === null || $timeOut === null) {
+            return false;
+        }
+
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
+        $in = $timeIn instanceof Carbon ? $timeIn->copy()->timezone($tz) : Carbon::parse($timeIn, $tz)->timezone($tz);
+        $out = $timeOut instanceof Carbon ? $timeOut->copy()->timezone($tz) : Carbon::parse($timeOut, $tz)->timezone($tz);
+
+        if ($out->greaterThan($in)) {
+            return true;
+        }
+
+        $schedIn = trim((string) ($daySchedule['in'] ?? ''));
+        $schedOut = trim((string) ($daySchedule['out'] ?? ''));
+        if ($schedIn === '' || $schedOut === '' || $schedOut > $schedIn) {
+            return false;
+        }
+
+        $outNext = $out->copy()->addDay();
+        if (! $outNext->greaterThan($in)) {
+            return false;
+        }
+
+        $scheduledStart = self::getScheduledStartForDate($dateKey, $daySchedule, $tz);
+        $scheduledEnd = self::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+        $scheduledMinutes = ($scheduledStart instanceof Carbon && $scheduledEnd instanceof Carbon)
+            ? max(1, (int) $scheduledStart->diffInMinutes($scheduledEnd))
+            : 8 * 60;
+
+        // ponytail: 12h OT buffer is the ceiling; a ~24h wrap from inverted day punches is not a night shift.
+        return $in->diffInMinutes($outNext) <= $scheduledMinutes + (12 * 60);
+    }
+
+    /**
      * Required working minutes for the day. Delegates to ScheduleComputationService
      * for consistent multi-break and shift-type support.
      *

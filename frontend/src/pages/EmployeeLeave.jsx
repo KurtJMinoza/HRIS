@@ -1382,8 +1382,17 @@ function EmployeeLeaveSelfService() {
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="emergency">
                       Emergency
                     </SelectItem>
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="half_day">
-                      Half day
+                    <SelectItem
+                      disabled
+                      value="half_day"
+                      className="rounded-lg px-4 py-3 text-base text-muted-foreground data-disabled:opacity-100"
+                    >
+                      <span className="flex w-full items-center justify-between gap-3">
+                        Half Day
+                        <span className="rounded-full border border-border/70 bg-muted px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                          Soon
+                        </span>
+                      </span>
                     </SelectItem>
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="other">
                       Other

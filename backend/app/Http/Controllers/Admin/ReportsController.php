@@ -1169,6 +1169,10 @@ class ReportsController extends Controller
                 $status = $qualifiedRow['status'];
                 $presenceLabel = $qualifiedRow['presence_label'];
                 $presenceIssue = $qualifiedRow['presence_issue'];
+                if ($presenceIssue === 'invalid_pair') {
+                    $lateLabel = null;
+                    $lateMinutes = null;
+                }
                 $attendanceOtStatus = null;
                 if ($effectiveTimeIn && ! $effectiveTimeOut && $approvedOvertimeRecords !== []) {
                     $approvedOtEnd = $approvedOtForDetailedRow
