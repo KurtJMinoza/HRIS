@@ -2468,11 +2468,11 @@ class PayrollComputationService
     }
 
     /**
-     * For each scheduled workday in the pay period (non-rest with required minutes > 0), credit
-     * min(1, paid_regular_minutes / required_minutes). Paid leave, undertime, and tardiness are
-     * already reflected in regular_day/regular_night minutes from {@see computeDayPayroll()}, so
-     * a 3-hour partial workday credits 0.375 day-units — never rounded up to a full day — keeping
-     * proratable allowances in lock-step with the same minute-accurate basis used by Regular pay.
+     * For each scheduled workday in the pay period (non-rest with required minutes > 0),
+     * credit a full 1.0 day-unit unless the day is an unpaid absence. Paid leave, approved
+     * corrections, and valid attendance all count as a whole payable day regardless of
+     * tardiness, undertime, or early timeout — allowance proration is day-based, so lateness
+     * is deducted from Regular pay hours only, never from the allowance proration.
      *
      * Used only when a pay component has is_proratable — others keep full semi-monthly schedule amounts.
      *
@@ -2550,13 +2550,11 @@ class PayrollComputationService
                 continue;
             }
 
-            // Day-unit credit must mirror Regular pay's minute-accurate basis: a worker who
-            // rendered only 3 of 8 required hours credits 0.375 day-units, not 1.0. Promoting the
-            // fraction to a whole day would over-pay proratable allowances for partial workdays.
+            // Allowance proration is day-based: any scheduled workday that is not an unpaid
+            // absence credits a full day-unit regardless of tardiness, undertime, or early
+            // timeout. Paid minutes only drive Regular pay, never the allowance proration.
             $regularPaidMinutes = max(0, (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0)));
-            $dayFraction = $required > 0
-                ? min(1.0, max(0.0, $regularPaidMinutes / $required))
-                : 1.0;
+            $dayFraction = 1.0;
 
             $credited += $dayFraction;
             $payableDays += $dayFraction;
