@@ -285,6 +285,10 @@ class AttendanceRollupService
             return 'Present (Incomplete)';
         }
 
+        if ($status === 'invalid') {
+            return 'Invalid Shift';
+        }
+
         if ($status === 'present') {
             $lateLabel = trim((string) ($row['late_label'] ?? ''));
 
@@ -310,6 +314,11 @@ class AttendanceRollupService
     public function adminDisplayLabel(array $row): string
     {
         $status = (string) ($row['status'] ?? '');
+        $presenceIssue = (string) ($row['presence_issue'] ?? '');
+        $presenceLabel = trim((string) ($row['presence_label'] ?? ''));
+        if ($presenceLabel !== '' && in_array($presenceIssue, ['invalid_pair', 'incomplete_pair', 'correction_pending'], true)) {
+            return $presenceLabel;
+        }
 
         if ($status === 'late') {
             $lateLabel = trim((string) ($row['late_label'] ?? ''));
@@ -344,6 +353,10 @@ class AttendanceRollupService
 
         if ($status === 'incomplete') {
             return 'Present (Incomplete)';
+        }
+
+        if ($status === 'invalid') {
+            return 'Invalid Shift';
         }
 
         if ($status === 'leave') {

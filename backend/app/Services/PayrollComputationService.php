@@ -774,7 +774,7 @@ class PayrollComputationService
                 ? $this->holidayEligibility->normalizeHolidayType($holiday['type'] ?? null)
                 : null;
             if (! $unworkedHolidayApplied
-                && $status === 'leave'
+                && in_array($status, ['leave', 'halfday'], true)
                 && ! in_array($nonWorkingHolidayType, ['regular', 'double', 'special'], true)) {
                 $leave = $this->approvedPrimaryLeaveForDate($user, $dateKey);
                 $leaveCredits = app(LeaveCreditService::class);
@@ -1216,8 +1216,31 @@ class PayrollComputationService
             $paidOtDayMinutes += $deltaOtPaid;
         }
 
-        return array_merge($this->buildDayResult($dateKey, $isRestDay, $holiday, 'worked', $conditions, $breakdown, round($totalPay, 2), $workedMinutes, $regularDayMinutes, $regularNightMinutes, $paidOtDayMinutes, $paidOtNightMinutes, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes), [
-            'regular_pay' => round($regularBasePayOnly, 2),
+        $halfDayLeaveRegularPay = 0.0;
+        $dayStatus = 'worked';
+        $halfDayLeaveStatus = $this->mergeApprovedHalfDayLeaveCompensation(
+            $user,
+            $dateKey,
+            $daySchedule,
+            $dailyRate,
+            $hourlyRate,
+            $first8,
+            $requiredMinutes,
+            $holiday,
+            $isRestDay,
+            $breakdown,
+            $totalPay,
+            $regularDayMinutes,
+            $regularNightMinutes,
+            $workedMinutes,
+            $halfDayLeaveRegularPay
+        );
+        if ($halfDayLeaveStatus !== null) {
+            $dayStatus = $halfDayLeaveStatus;
+        }
+
+        return array_merge($this->buildDayResult($dateKey, $isRestDay, $holiday, $dayStatus, $conditions, $breakdown, round($totalPay, 2), $workedMinutes, $regularDayMinutes, $regularNightMinutes, $paidOtDayMinutes, $paidOtNightMinutes, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes), [
+            'regular_pay' => round($regularBasePayOnly + $halfDayLeaveRegularPay, 2),
             'ot_pay' => round($otPay, 2),
             'nd_pay' => round($ndPay, 2),
             'holiday_premium_pay' => round($holidayPremiumPay, 2),
@@ -1499,9 +1522,9 @@ class PayrollComputationService
             return $this->dayStatusCache[$cacheKey];
         }
 
-        $hasLeave = $this->approvedPrimaryLeaveForDate($user, $dateKey) !== null;
-        if ($hasLeave) {
-            return $this->dayStatusCache[$cacheKey] = 'leave';
+        $leave = $this->approvedPrimaryLeaveForDate($user, $dateKey);
+        if ($leave !== null) {
+            return $this->dayStatusCache[$cacheKey] = ((string) $leave->type === 'half_day') ? 'halfday' : 'leave';
         }
         if (! $daySchedule || empty($daySchedule['in'])) {
             return $this->dayStatusCache[$cacheKey] = 'rest_or_unscheduled';
@@ -1541,11 +1564,16 @@ class PayrollComputationService
         ?array $holiday = null
     ): array {
         $type = strtolower((string) $leave->type);
-        $factor = $type === 'half_day' ? 0.5 : 1.0;
+        $halfPaidMinutes = $type === 'half_day'
+            ? AttendanceStatusService::getHalfDayRegularCapMinutes($daySchedule)
+            : 0;
+        $factor = $type === 'half_day'
+            ? ($requiredMinutes > 0 ? min(1.0, $halfPaidMinutes / $requiredMinutes) : 0.5)
+            : 1.0;
         $isHolidayDay = $holiday !== null && $first8 > 1.00001;
 
         if ($daySchedule && $requiredMinutes > 0) {
-            $paidMin = max(0, (int) round($requiredMinutes * $factor));
+            $paidMin = $type === 'half_day' ? $halfPaidMinutes : $requiredMinutes;
             $first8Pay = ($paidMin / 60.0) * $hourlyRate * $first8;
             // On holidays: full day pay → holiday_premium; paid_leave base = 0.
             $holidayPremiumPay = $isHolidayDay ? round($first8Pay, 2) : 0.0;
@@ -1618,6 +1646,64 @@ class PayrollComputationService
             'regular_night_minutes' => 0,
             'holiday_premium_pay' => round($holidayPremiumPayFlat, 2),
         ];
+    }
+
+    /**
+     * When an employee works the working half and has approved paid half-day leave,
+     * add 0.5× daily-rate compensation for the leave half on top of worked pay.
+     */
+    private function mergeApprovedHalfDayLeaveCompensation(
+        User $user,
+        string $dateKey,
+        ?array $daySchedule,
+        float $dailyRate,
+        float $hourlyRate,
+        float $first8,
+        int $requiredMinutes,
+        ?array $holiday,
+        bool $isRestDay,
+        array &$breakdown,
+        float &$totalPay,
+        int &$regularDayMinutes,
+        int &$regularNightMinutes,
+        int &$workedMinutes,
+        float &$leaveRegularPay
+    ): ?string {
+        if ($isRestDay) {
+            return null;
+        }
+
+        $leave = $this->approvedPrimaryLeaveForDate($user, $dateKey);
+        if ($leave === null || (string) $leave->type !== 'half_day') {
+            return null;
+        }
+
+        $leaveCredits = app(LeaveCreditService::class);
+        if (! $leaveCredits->consumesCredits((string) $leave->type)
+            || ! $leaveCredits->dateIsPaidLeavePortion($user, $leave, $dateKey)) {
+            return 'halfday';
+        }
+
+        $paid = $this->computePaidLeaveCompensationForDay(
+            $daySchedule,
+            $leave,
+            $dailyRate,
+            $hourlyRate,
+            $first8,
+            $requiredMinutes,
+            $holiday
+        );
+
+        $leaveRegularPay = round((float) ($paid['total_pay'] ?? 0) - (float) ($paid['holiday_premium_pay'] ?? 0), 2);
+        $totalPay += (float) ($paid['total_pay'] ?? 0);
+        foreach ($paid['breakdown'] as $item) {
+            $breakdown[] = $item;
+        }
+        $regularDayMinutes += (int) ($paid['regular_day_minutes'] ?? 0);
+        $regularNightMinutes += (int) ($paid['regular_night_minutes'] ?? 0);
+        $workedMinutes += (int) ($paid['worked_minutes'] ?? 0);
+
+        return 'halfday';
     }
 
     /**
@@ -2468,11 +2554,11 @@ class PayrollComputationService
     }
 
     /**
-     * For each scheduled workday in the pay period (non-rest with required minutes > 0), credit
-     * min(1, paid_regular_minutes / required_minutes). Paid leave, undertime, and tardiness are
-     * already reflected in regular_day/regular_night minutes from {@see computeDayPayroll()}, so
-     * a 3-hour partial workday credits 0.375 day-units — never rounded up to a full day — keeping
-     * proratable allowances in lock-step with the same minute-accurate basis used by Regular pay.
+     * For each scheduled workday in the pay period (non-rest with required minutes > 0),
+     * credit a full 1.0 day-unit unless the day is an unpaid absence. Paid leave, approved
+     * corrections, and valid attendance all count as a whole payable day regardless of
+     * tardiness, undertime, or early timeout — allowance proration is day-based, so lateness
+     * is deducted from Regular pay hours only, never from the allowance proration.
      *
      * Used only when a pay component has is_proratable — others keep full semi-monthly schedule amounts.
      *
@@ -2550,13 +2636,11 @@ class PayrollComputationService
                 continue;
             }
 
-            // Day-unit credit must mirror Regular pay's minute-accurate basis: a worker who
-            // rendered only 3 of 8 required hours credits 0.375 day-units, not 1.0. Promoting the
-            // fraction to a whole day would over-pay proratable allowances for partial workdays.
+            // Allowance proration is day-based: any scheduled workday that is not an unpaid
+            // absence credits a day-unit regardless of tardiness, undertime, or early
+            // timeout. Half-day paid leave credits 0.5; worked half + leave half = 1.0 via attendance.
             $regularPaidMinutes = max(0, (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0)));
-            $dayFraction = $required > 0
-                ? min(1.0, max(0.0, $regularPaidMinutes / $required))
-                : 1.0;
+            $dayFraction = (float) ($resolution['payable_day_unit'] ?? 1.0);
 
             $credited += $dayFraction;
             $payableDays += $dayFraction;
@@ -2660,11 +2744,14 @@ class PayrollComputationService
             $isPaidLeave = $leaveCredits->consumesCredits((string) $leave->type)
                 && $leaveCredits->dateIsPaidLeavePortion($user, $leave, $dateKey);
 
+            $payableDayUnit = ((string) $leave->type === 'half_day') ? 0.5 : 1.0;
+
             return [
                 'valid' => $isPaidLeave,
                 'scheduled_deductible_day' => true,
                 'payable_day' => $isPaidLeave,
                 'unpaid_absent_day' => ! $isPaidLeave,
+                'payable_day_unit' => $isPaidLeave ? $payableDayUnit : 0.0,
                 'reason' => $isPaidLeave ? 'approved_paid_leave' : 'approved_unpaid_leave',
                 'sources' => array_merge($attendance['sources'] ?? [], [
                     'approved_leave' => true,
@@ -4013,8 +4100,7 @@ class PayrollComputationService
                 $d = $cursor->toDateString();
                 if ($d >= $from->toDateString() && $d <= $to->toDateString()) {
                     $k = $leave->user_id.'|'.$d;
-                    $halfRaw = is_string($leave->half_type) ? strtolower(trim($leave->half_type)) : '';
-                    $dayFraction = ($halfRaw !== '' && str_contains($halfRaw, 'half')) ? 0.5 : 1.0;
+                    $dayFraction = ((string) $leave->type === 'half_day') ? 0.5 : 1.0;
                     $leaveItemsByUserDate[$k][] = [
                         'id' => $leave->id,
                         'type' => (string) ($leave->type ?? 'leave'),
@@ -4023,8 +4109,8 @@ class PayrollComputationService
                         'end_date' => $leave->end_date->toDateString(),
                         'half_type' => $leave->half_type ? (string) $leave->half_type : null,
                         'notes' => is_string($leave->notes) && trim($leave->notes) !== '' ? mb_substr(trim($leave->notes), 0, 480) : null,
-                        'leave_credits_charged' => $leave->leave_credits_charged !== null ? (int) $leave->leave_credits_charged : null,
-                        'leave_unpaid_credit_days' => $leave->leave_unpaid_credit_days !== null ? (int) $leave->leave_unpaid_credit_days : null,
+                        'leave_credits_charged' => $leave->leave_credits_charged !== null ? (float) $leave->leave_credits_charged : null,
+                        'leave_unpaid_credit_days' => $leave->leave_unpaid_credit_days !== null ? (float) $leave->leave_unpaid_credit_days : null,
                         'pending_approval' => (bool) $leave->pending_approval,
                         'day_fraction' => $dayFraction,
                         'request_span_days' => $totalSpanDays,

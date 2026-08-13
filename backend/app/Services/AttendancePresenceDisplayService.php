@@ -37,6 +37,20 @@ class AttendancePresenceDisplayService
         $hasOut = $effectiveTimeOut !== null;
         $tzName = $nowTz->getTimezone()->getName();
 
+        if ($hasIn && $hasOut && ! AttendanceStatusService::punchesFormValidShiftSession(
+            $dateKey,
+            $todaySchedule,
+            $effectiveTimeIn,
+            $effectiveTimeOut,
+            $tzName
+        )) {
+            return [
+                'status' => 'invalid',
+                'presence_label' => 'Invalid Shift',
+                'presence_issue' => 'invalid_pair',
+            ];
+        }
+
         $pastShiftEnd = false;
         if ($todaySchedule && ! empty($todaySchedule['out']) && $hasIn && ! $hasOut) {
             $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $todaySchedule, $tzName);

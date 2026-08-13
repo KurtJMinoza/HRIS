@@ -140,6 +140,7 @@ class EmployeeLeaveController extends Controller
             'end_date' => $l->end_date->toDateString(),
             'undertime_time' => $l->undertime_time ? substr((string) $l->undertime_time, 0, 5) : null,
             'half_type' => $l->half_type,
+            'half_day_time' => $l->half_day_time ? substr((string) $l->half_day_time, 0, 5) : null,
             'notes' => $l->notes,
             'rejection_note' => $l->rejection_note,
             'leave_credits_charged' => $l->leave_credits_charged,
@@ -357,6 +358,26 @@ class EmployeeLeaveController extends Controller
     }
 
     /**
+     * Validate half-day boundary time against the employee schedule for the filing date.
+     */
+    private function validateHalfDayTimeOrThrow(
+        User $user,
+        string $dateKey,
+        string $halfType,
+        string $halfDayTime,
+        string $tz
+    ): void {
+        $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
+        if (! $daySchedule) {
+            throw ValidationException::withMessages([
+                'start_date' => ['No working schedule is assigned for the selected date.'],
+            ]);
+        }
+
+        AttendanceStatusService::validateHalfDayLeaveTime($dateKey, $daySchedule, $halfType, $halfDayTime, $tz);
+    }
+
+    /**
      * List leave requests for the authenticated employee with simple summary.
      *
      * Optional query params:
@@ -493,40 +514,90 @@ class EmployeeLeaveController extends Controller
     }
 
     /**
-     * Return half-day availability flags (morning/afternoon clock-ins) for a given date.
-     *
-     * This is used by the frontend to enable/disable AM/PM half-day options in real time.
+     * Return schedule-based half-day windows for a date (AM/PM work periods and paid minutes).
+     */
+    public function halfdayPreview(Request $request): JsonResponse
+    {
+        $user = $this->refreshUserForScheduleCheck($request->user());
+        $tz = $this->attendanceTimezone();
+
+        $validated = $request->validate([
+            'date' => ['required', 'date'],
+            'half_type' => ['nullable', 'string', 'in:am,pm'],
+        ]);
+
+        $dateKey = Carbon::parse($validated['date'], $tz)->toDateString();
+        $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
+        if (! $daySchedule) {
+            throw ValidationException::withMessages([
+                'date' => ['No working schedule is assigned for the selected date.'],
+            ]);
+        }
+
+        $windows = AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        $halfType = strtolower(trim((string) ($validated['half_type'] ?? '')));
+        $selected = $halfType === 'am' || $halfType === 'pm' ? ($windows[$halfType] ?? null) : null;
+
+        return response()->json([
+            'date' => $dateKey,
+            'windows' => $windows,
+            'selected' => $selected,
+            'suggested_time' => $selected
+                ? AttendanceStatusService::suggestedHalfDayTime($windows, $halfType)
+                : null,
+        ]);
+    }
+
+    /**
+     * Return half-day availability flags for a given date (legacy; prefer halfdayPreview).
      */
     public function halfdayAvailability(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $user = $this->refreshUserForScheduleCheck($request->user());
         $tz = $this->attendanceTimezone();
 
         $validated = $request->validate([
             'date' => ['required', 'date'],
         ]);
 
-        $date = Carbon::parse($validated['date'], $tz)->startOfDay();
-        $dayStart = $date->copy();
-        $noon = $dayStart->copy()->setTime(12, 0, 0);
+        $dateKey = Carbon::parse($validated['date'], $tz)->toDateString();
+        $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
+        if (! $daySchedule) {
+            return response()->json([
+                'date' => $dateKey,
+                'has_morning_in' => false,
+                'has_afternoon_in' => false,
+                'schedule_assigned' => false,
+            ]);
+        }
+
+        $windows = AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        $splitAt = $windows['split_at'] ?? null;
+        $dayStart = Carbon::parse($dateKey, $tz)->startOfDay();
+        $splitCarbon = $splitAt ? Carbon::parse($dateKey.' '.$splitAt, $tz) : null;
         $dayEnd = $dayStart->copy()->endOfDay();
 
-        $hasMorningIn = AttendanceLog::query()
-            ->where('user_id', $user->id)
-            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->whereBetween('created_at', [$dayStart->copy()->utc(), $noon->copy()->utc()->subSecond()])
-            ->exists();
-
-        $hasAfternoonIn = AttendanceLog::query()
-            ->where('user_id', $user->id)
-            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->whereBetween('created_at', [$noon->copy()->utc(), $dayEnd->copy()->utc()])
-            ->exists();
+        $hasMorningIn = false;
+        $hasAfternoonIn = false;
+        if ($splitCarbon) {
+            $hasMorningIn = AttendanceLog::query()
+                ->where('user_id', $user->id)
+                ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+                ->whereBetween('created_at', [$dayStart->copy()->utc(), $splitCarbon->copy()->utc()->subSecond()])
+                ->exists();
+            $hasAfternoonIn = AttendanceLog::query()
+                ->where('user_id', $user->id)
+                ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+                ->whereBetween('created_at', [$splitCarbon->copy()->utc(), $dayEnd->copy()->utc()])
+                ->exists();
+        }
 
         return response()->json([
-            'date' => $date->toDateString(),
+            'date' => $dateKey,
             'has_morning_in' => $hasMorningIn,
             'has_afternoon_in' => $hasAfternoonIn,
+            'schedule_assigned' => true,
+            'windows' => $windows,
         ]);
     }
 
@@ -599,7 +670,7 @@ class EmployeeLeaveController extends Controller
         $user = $this->refreshUserForScheduleCheck($request->user());
 
         $validated = $request->validate([
-            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other'],
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,half_day,undertime'],
             'start_date' => ['required', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'except_leave_request_id' => ['nullable', 'integer'],
@@ -700,7 +771,7 @@ class EmployeeLeaveController extends Controller
         }
 
         $validated = $request->validate([
-            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other'],
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,half_day,undertime'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'undertime_time' => ['nullable', 'date_format:H:i'],
@@ -708,6 +779,7 @@ class EmployeeLeaveController extends Controller
             'reason' => ['nullable', 'string', 'max:2000'],
             // For half-day leave we require which half of the day is worked.
             'half_type' => ['nullable', 'string', 'in:am,pm'],
+            'half_day_time' => ['nullable', 'date_format:H:i'],
             'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
         ]);
 
@@ -736,19 +808,35 @@ class EmployeeLeaveController extends Controller
         }
 
         if ($type === 'half_day') {
-            // Half-day leave is always a single calendar date.
-            $validated['end_date'] = $validated['start_date'];
-
             $halfType = $validated['half_type'] ?? null;
             if ($halfType === null || $halfType === '') {
                 throw ValidationException::withMessages([
                     'half_type' => ['Half day type (AM or PM) is required.'],
                 ]);
             }
+            if (empty($validated['end_date'])) {
+                $validated['end_date'] = $validated['start_date'];
+            }
 
-            // Previous attendance-based restrictions for half-day leave (e.g. only
-            // allowing AM/PM based on existing time-ins) have been removed so that
-            // employees can file half-day leave more freely.
+            $tz = $this->attendanceTimezone();
+            $userForSchedule = $this->refreshUserForScheduleCheck($user);
+            $dateKey = Carbon::parse($validated['start_date'], $tz)->toDateString();
+            $daySchedule = $this->getDayScheduleForDate($userForSchedule, Carbon::parse($dateKey, $tz));
+            $windows = is_array($daySchedule)
+                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz)
+                : ['is_flexible' => false];
+            $halfDayTime = trim((string) ($validated['half_day_time'] ?? ''));
+
+            if (! ($windows['is_flexible'] ?? false)) {
+                if ($halfDayTime === '') {
+                    throw ValidationException::withMessages([
+                        'half_day_time' => ['Half-day time is required for your assigned schedule.'],
+                    ]);
+                }
+                $this->validateHalfDayTimeOrThrow($userForSchedule, $dateKey, (string) $halfType, $halfDayTime, $tz);
+            } elseif ($halfDayTime !== '') {
+                $this->validateHalfDayTimeOrThrow($userForSchedule, $dateKey, (string) $halfType, $halfDayTime, $tz);
+            }
         }
 
         LeaveFilingRules::assertNoOverlappingPendingOrApprovedLeave(
@@ -833,6 +921,9 @@ class EmployeeLeaveController extends Controller
                 'end_date' => $validated['end_date'],
                 'undertime_time' => $type === 'undertime' ? ($validated['undertime_time'] ?? null) : null,
                 'half_type' => $type === 'half_day' ? ($validated['half_type'] ?? null) : null,
+                'half_day_time' => $type === 'half_day' && trim((string) ($validated['half_day_time'] ?? '')) !== ''
+                    ? substr(trim((string) $validated['half_day_time']), 0, 5)
+                    : null,
                 'notes' => $notes,
                 'status' => LeaveRequest::STATUS_PENDING,
                 'approval_stage' => $stage,

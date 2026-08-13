@@ -1444,13 +1444,14 @@ export default function AdminFinalizePayrollPage() {
             {loading ? (
               <div className="w-full px-0 pb-4 pt-1">
                 <div className="w-full overflow-x-auto">
-                  <Table className="min-w-[1020px] border-0 [&_td]:border-0 [&_th]:border-0">
+                  <Table className="min-w-[1180px] border-0 [&_td]:border-0 [&_th]:border-0">
                     <TableHeader className="[&_tr]:border-0">
                       <TableRow className="border-0 bg-background hover:bg-background dark:bg-input/25 dark:hover:bg-input/25">
                         <TableHead className="h-auto py-2.5 pl-4 pr-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground first:pl-5">Employee</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Department</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Basic Salary</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Daily Rate</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Total Attendance</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Gross Pay</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Total Deductions</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-brand">Net pay</TableHead>
@@ -1465,6 +1466,7 @@ export default function AdminFinalizePayrollPage() {
                           <TableCell className="py-3 px-2"><div className="h-4 w-20 rounded bg-muted animate-pulse" /></TableCell>
                           <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
                           <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-14 rounded bg-muted animate-pulse" /></TableCell>
+                          <TableCell className="py-3 px-2"><div className="h-4 w-28 rounded bg-muted animate-pulse" /></TableCell>
                           <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
                           <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
                           <TableCell className="py-3 px-2 text-right"><div className="ml-auto h-4 w-16 rounded bg-muted animate-pulse" /></TableCell>
@@ -1485,7 +1487,7 @@ export default function AdminFinalizePayrollPage() {
             ) : (
               <div className="w-full px-0 pb-4 pt-1">
                 <div className="w-full overflow-x-auto">
-                  <Table className="min-w-[1020px] border-0 [&_td]:border-0 [&_th]:border-0">
+                  <Table className="min-w-[1180px] border-0 [&_td]:border-0 [&_th]:border-0">
                     <TableHeader className="[&_tr]:border-0">
                       <TableRow className="border-0 bg-background hover:bg-background dark:bg-input/25 dark:hover:bg-input/25">
                         {periodFinalized ? (
@@ -1504,6 +1506,7 @@ export default function AdminFinalizePayrollPage() {
                         <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Department</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Basic Salary (Period)</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Daily Rate</TableHead>
+                        <TableHead className="h-auto py-2.5 px-2 text-left text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Total Attendance</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Gross Pay</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-muted-foreground">Total Deductions</TableHead>
                         <TableHead className="h-auto py-2.5 px-2 text-right text-[12px] font-bold uppercase tracking-normal text-brand">Net pay</TableHead>
@@ -1579,6 +1582,9 @@ export default function AdminFinalizePayrollPage() {
                           </TableCell>
                           <TableCell className="py-2.5 px-2 text-right text-sm font-medium tabular-nums text-foreground/80">
                             {formatPeso(row.daily_rate)}
+                          </TableCell>
+                          <TableCell className="py-2.5 px-2 text-sm font-medium text-foreground/90">
+                            {row.total_attendance || '—'}
                           </TableCell>
                           <TableCell className="py-2.5 px-2 text-right align-middle">
                             <div className="flex flex-col items-end gap-1">

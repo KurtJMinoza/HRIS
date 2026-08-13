@@ -446,6 +446,14 @@ function getCalendarDayVisual(record, dateKey, ctx) {
     }
   }
 
+  if (status === 'invalid' || record.presence_issue === 'invalid_pair') {
+    return {
+      badge: record.presence_label || record.status_label || 'Invalid Shift',
+      tileClass: `${baseGridCell} ${tint.red}`,
+      badgeClass: `${L.ink} ${L.red}`,
+    }
+  }
+
   if (isIncompleteAttendanceRecord(record)) {
     return {
       badge: calendarIncompleteBadge(record),
@@ -925,7 +933,7 @@ export default function EmployeeDashboard() {
     const lateLabel = t?.late_label
 
     if (!status) return '—'
-    if (t.presence_issue === 'incomplete_pair' && t.presence_label) return t.presence_label
+    if ((t.presence_issue === 'incomplete_pair' || t.presence_issue === 'invalid_pair') && t.presence_label) return t.presence_label
     if (t.presence_issue === 'correction_pending' && t.presence_label) return t.presence_label
     if (status === 'leave') return t.leave_pay_label || t.status_label || 'On leave'
     if (status === 'rest' || status === 'rest_day' || status === 'no_schedule_rest') return 'Rest Day'
@@ -1669,7 +1677,7 @@ export default function EmployeeDashboard() {
   }, [summary, scheduleAssigned, isRestDay])
 
   function getDisplayStatus(status, dateKey, lateLabel, lateMinutes, statusLabel = null, presenceLabel = null, presenceIssue = null) {
-    if (presenceIssue === 'incomplete_pair' && presenceLabel) return presenceLabel
+    if ((presenceIssue === 'incomplete_pair' || presenceIssue === 'invalid_pair') && presenceLabel) return presenceLabel
     if (presenceIssue === 'correction_pending' && presenceLabel) return presenceLabel
     if (statusLabel) return statusLabel
     if (!dateKey) return status
@@ -1698,6 +1706,7 @@ export default function EmployeeDashboard() {
     if (status === 'halfday') return 'Half Day'
     if (status === 'undertime') return 'Undertime'
     if (status === 'incomplete') return 'Incomplete'
+    if (status === 'invalid' || presenceIssue === 'invalid_pair') return presenceLabel || 'Invalid Shift'
     return status
   }
 
@@ -1718,8 +1727,8 @@ export default function EmployeeDashboard() {
     const timeOut = record.formatted_time_out || record.time_out
     if (timeIn) lines.push(`In: ${formatTime(timeIn)}`)
     if (timeOut) lines.push(`Out: ${formatTime(timeOut)}`)
-    if (record.late_label) lines.push(`Status: ${record.late_label}`)
-    if (!record.late_label && typeof record.late_minutes === 'number' && record.late_minutes > 0) {
+    if (record.presence_issue !== 'invalid_pair' && record.late_label) lines.push(`Status: ${record.late_label}`)
+    if (record.presence_issue !== 'invalid_pair' && !record.late_label && typeof record.late_minutes === 'number' && record.late_minutes > 0) {
       lines.push(`Status: ${record.late_minutes} min`)
     }
     if (typeof record.undertime_minutes === 'number' && record.undertime_minutes > 0) lines.push(`Undertime: ${record.undertime_minutes} min`)
@@ -2993,7 +3002,12 @@ export default function EmployeeDashboard() {
                       {formatTodayDate(selectedDayDetails.date_iso)}
                     </DialogTitle>
                     {selectedDayDetails.status != null && (
-                      <p className="mt-1 text-sm font-semibold text-orange-700 dark:text-orange-300">
+                      <p className={cn(
+                        'mt-1 text-sm font-semibold',
+                        selectedDayDetails.presence_issue === 'invalid_pair' || selectedDayDetails.status === 'invalid'
+                          ? 'text-red-700 dark:text-red-300'
+                          : 'text-orange-700 dark:text-orange-300',
+                      )}>
                         {getDisplayStatus(
                           selectedDayDetails.status,
                           selectedDayDetails.date_iso,
@@ -3085,15 +3099,29 @@ export default function EmployeeDashboard() {
                         </div>
                       ) : null}
                       {timeIn && timeOut ? (
-                        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-card px-3 py-2.5">
+                        <div className={cn(
+                          'flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5',
+                          selectedDayDetails.presence_issue === 'invalid_pair' || selectedDayDetails.status === 'invalid'
+                            ? 'border-red-500/25 bg-red-500/10'
+                            : 'border-border/70 bg-card',
+                        )}>
                           <span className="font-medium text-muted-foreground">Status</span>
-                          <span className="font-semibold text-foreground">Clocked out</span>
+                          <span className={cn(
+                            'font-semibold',
+                            selectedDayDetails.presence_issue === 'invalid_pair' || selectedDayDetails.status === 'invalid'
+                              ? 'text-red-700 dark:text-red-300'
+                              : 'text-foreground',
+                          )}>
+                            {selectedDayDetails.presence_issue === 'invalid_pair' || selectedDayDetails.status === 'invalid'
+                              ? (selectedDayDetails.presence_label || 'Invalid Shift')
+                              : 'Clocked out'}
+                          </span>
                         </div>
                       ) : null}
                           </>
                         )
                       })()}
-                      {(selectedDayDetails.late_label ||
+                      {selectedDayDetails.presence_issue !== 'invalid_pair' && (selectedDayDetails.late_label ||
                         (typeof selectedDayDetails.late_minutes === 'number' && selectedDayDetails.late_minutes > 0)) && (
                         <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
                           <span className="font-medium text-muted-foreground">Status</span>

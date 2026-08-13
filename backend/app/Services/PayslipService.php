@@ -5159,6 +5159,56 @@ class PayslipService
     }
 
     /**
+     * Regular-pay attendance units for finalize payroll and payroll reports — same label as the payslip
+     * "Regular pay" row (for example, "9 days, 3 hrs 0 mins").
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    public function regularPayAttendanceLabel(array $summary): ?string
+    {
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? array_values($summary['daily_computation_earning_lines'])
+            : [];
+        $dailyRate = (float) ($summary['daily_rate'] ?? 0);
+        $defaultHourlyRate = $dailyRate > 0 ? $dailyRate / 8.0 : null;
+
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+
+            $key = strtolower(trim((string) ($line['key'] ?? '')));
+            $label = strtolower(trim((string) ($line['label'] ?? '')));
+            if (! str_contains($key, 'regular_pay') && $label !== 'regular pay') {
+                continue;
+            }
+
+            $units = trim((string) ($line['units'] ?? ''));
+            if ($units !== '') {
+                return $this->sanitizePayslipText($units) ?: null;
+            }
+
+            $minutesWorked = is_numeric($line['minutes_worked'] ?? null)
+                ? (int) round((float) $line['minutes_worked'])
+                : null;
+            $hourlyRate = is_numeric($line['hourly_rate'] ?? null) ? (float) $line['hourly_rate'] : $defaultHourlyRate;
+            $amount = (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0);
+
+            if (($minutesWorked === null || $minutesWorked <= 0) && $hourlyRate !== null && $hourlyRate > 0 && $amount > 0) {
+                $minutesWorked = (int) round(($amount / $hourlyRate) * 60.0);
+            }
+
+            if ($minutesWorked !== null && $minutesWorked > 0) {
+                return $this->formatPayslipUnitsFromMinutes($minutesWorked);
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
      * Convert minutes to "X days, Y hrs Z mins" using 8 hours/day.
      * Regular pay intentionally keeps zero segments visible (for example, "0 days, 1 hr 42 mins").
      */

@@ -825,7 +825,10 @@ export function AuditDetailDrawer({ open, onOpenChange, record, onRefreshRecord,
                           ) : null}
                         </div>
                         {item?.half_type ? (
-                          <p className="mt-1 text-[11px] text-muted-foreground">Half type: {item.half_type}</p>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Half type: {item.half_type}
+                            {item?.half_day_time ? ` · ${item.half_day_time}` : ''}
+                          </p>
                         ) : null}
                         {item?.notes ? (
                           <p className="mt-2 text-[12px] leading-snug text-[#0A0A0A] dark:text-foreground break-words">{item.notes}</p>

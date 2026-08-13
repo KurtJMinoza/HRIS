@@ -242,6 +242,7 @@ class PayrollReportService
         $columns = [
             ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
             ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
+            ['key' => 'total_attendance', 'label' => 'Total Attendance', 'group' => 'Attendance', 'class' => 'employee', 'format' => 'text'],
             ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num earnings'],
         ];
 
@@ -461,6 +462,11 @@ class PayrollReportService
         return array_merge($earnings, $deductions, $detailedDeductions['amounts'], [
             'employee_name' => $name !== '' ? $name : 'Employee '.$payslip->user_id,
             'employee_sort_key' => $employee instanceof User ? $employee->employeeListingSortKey() : mb_strtolower($name),
+            'total_attendance' => $this->payslipService->regularPayAttendanceLabel(
+                is_array($viewSnapshot['summary'] ?? null)
+                    ? (array) $viewSnapshot['summary']
+                    : $summary
+            ) ?? '—',
             'deduction_details' => $detailedDeductions['amounts'],
             'deduction_detail_labels' => $detailedDeductions['labels'],
             'gross_earnings' => round((float) $metrics['gross_pay'], 2),

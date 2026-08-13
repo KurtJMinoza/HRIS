@@ -11,6 +11,7 @@ use App\Models\LeaveApprovalAudit;
 use App\Models\LeaveRequest;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
+use App\Services\AttendanceStatusService;
 use App\Services\BulkApproval\BulkApprovalCacheService;
 use App\Services\BulkApproval\LeaveBulkApprovalQuery;
 use App\Services\BulkApproval\LeaveBulkApprovalService;
@@ -24,6 +25,7 @@ use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollFreezeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Support\HrApprovalStages;
+use App\Support\EmployeeScheduleResolver;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveModuleCache;
 use App\Support\LeaveScheduleSupport;
@@ -111,6 +113,7 @@ class LeaveController extends Controller
                 'undertime_time',
                 'undertime_minutes',
                 'half_type',
+                'half_day_time',
                 'status',
                 'notes',
                 'rejection_note',
@@ -178,6 +181,7 @@ class LeaveController extends Controller
                 'undertime_minutes' => $l->undertime_minutes,
                 'undertime_hours' => $l->undertime_minutes !== null ? round(((int) $l->undertime_minutes) / 60, 2) : null,
                 'half_type' => $l->half_type,
+                'half_day_time' => $l->half_day_time ? substr((string) $l->half_day_time, 0, 5) : null,
                 'duration' => $this->leaveDurationSummary($l),
                 'leave_credits_charged' => $l->leave_credits_charged,
                 'leave_unpaid_credit_days' => $l->leave_unpaid_credit_days,
@@ -317,10 +321,12 @@ class LeaveController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
-            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other'],
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,half_day,undertime'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'half_type' => ['nullable', 'string', 'in:am,pm'],
+            'half_day_time' => ['nullable', 'date_format:H:i'],
+            'undertime_time' => ['nullable', 'date_format:H:i'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'bypass_rest_days' => ['sometimes', 'boolean'],
             'rest_day_bypass_reason' => ['required_if:bypass_rest_days,true', 'nullable', 'string', 'min:10', 'max:2000'],
@@ -350,11 +356,68 @@ class LeaveController extends Controller
         $type = $validated['type'];
 
         if ($validated['type'] === 'half_day') {
-            // Half-day leave from admin side is always a single calendar date.
-            $validated['end_date'] = $validated['start_date'];
             if (empty($validated['half_type'])) {
                 return response()->json([
                     'message' => 'Half day type (AM or PM) is required.',
+                ], 422);
+            }
+
+            $dateKey = Carbon::parse($validated['start_date'], $tz)->toDateString();
+            $dayKey = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][(int) Carbon::parse($dateKey, $tz)->format('w')];
+            $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($employee, $dateKey);
+            $daySchedule = is_array($effectiveSchedule) ? ($effectiveSchedule[$dayKey] ?? null) : null;
+            $windows = is_array($daySchedule)
+                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz)
+                : ['is_flexible' => false];
+            $halfDayTime = trim((string) ($validated['half_day_time'] ?? ''));
+
+            if (! ($windows['is_flexible'] ?? false)) {
+                if ($halfDayTime === '') {
+                    return response()->json([
+                        'message' => 'Half-day time is required for the employee schedule.',
+                        'errors' => ['half_day_time' => ['Half-day time is required for the employee schedule.']],
+                    ], 422);
+                }
+                if (is_array($daySchedule)) {
+                    try {
+                        AttendanceStatusService::validateHalfDayLeaveTime(
+                            $dateKey,
+                            $daySchedule,
+                            (string) $validated['half_type'],
+                            $halfDayTime,
+                            $tz
+                        );
+                    } catch (\Illuminate\Validation\ValidationException $e) {
+                        return response()->json([
+                            'message' => collect($e->errors())->flatten()->first() ?? 'Invalid half-day time.',
+                            'errors' => $e->errors(),
+                        ], 422);
+                    }
+                }
+            } elseif ($halfDayTime !== '' && is_array($daySchedule)) {
+                try {
+                    AttendanceStatusService::validateHalfDayLeaveTime(
+                        $dateKey,
+                        $daySchedule,
+                        (string) $validated['half_type'],
+                        $halfDayTime,
+                        $tz
+                    );
+                } catch (\Illuminate\Validation\ValidationException $e) {
+                    return response()->json([
+                        'message' => collect($e->errors())->flatten()->first() ?? 'Invalid half-day time.',
+                        'errors' => $e->errors(),
+                    ], 422);
+                }
+            }
+        }
+
+        if ($validated['type'] === 'undertime') {
+            // Undertime is time-based and must always be a single calendar date.
+            $validated['end_date'] = $validated['start_date'];
+            if (empty($validated['undertime_time'])) {
+                return response()->json([
+                    'message' => 'Approved early-out time is required for undertime leave.',
                 ], 422);
             }
         }
@@ -424,6 +487,10 @@ class LeaveController extends Controller
             'start_date' => $validated['start_date'],
             'end_date' => $validated['end_date'],
             'half_type' => $validated['type'] === 'half_day' ? ($validated['half_type'] ?? null) : null,
+            'half_day_time' => $validated['type'] === 'half_day' && trim((string) ($validated['half_day_time'] ?? '')) !== ''
+                ? substr(trim((string) $validated['half_day_time']), 0, 5)
+                : null,
+            'undertime_time' => $validated['type'] === 'undertime' ? ($validated['undertime_time'] ?? null) : null,
             'notes' => $validated['notes'] ?? null,
             'status' => LeaveRequest::STATUS_PENDING,
             'approval_stage' => $stage,
@@ -585,6 +652,7 @@ class LeaveController extends Controller
                     'undertime_time',
                     'undertime_minutes',
                     'half_type',
+                    'half_day_time',
                     'status',
                     'notes',
                     'rejection_note',
@@ -2082,9 +2150,12 @@ class LeaveController extends Controller
         }
 
         if ($leave->type === 'half_day') {
+            $days = max(1, (int) $leave->start_date->diffInDays($leave->end_date) + 1);
+            $total = round($days * 0.5, 1);
             $label = $leave->half_type ? ' ('.strtoupper((string) $leave->half_type).')' : '';
+            $suffix = $days > 1 ? " across {$days} days" : '';
 
-            return '0.5 day'.$label;
+            return $total.' day'.($total === 1.0 ? '' : 's').$label.$suffix;
         }
 
         if ($leave->type === 'undertime') {
@@ -2128,6 +2199,7 @@ class LeaveController extends Controller
             'end_date' => $l->end_date->toDateString(),
             'undertime_time' => $l->undertime_time ? substr((string) $l->undertime_time, 0, 5) : null,
             'half_type' => $l->half_type,
+            'half_day_time' => $l->half_day_time ? substr((string) $l->half_day_time, 0, 5) : null,
             'leave_credits_charged' => $l->leave_credits_charged,
             'leave_unpaid_credit_days' => $l->leave_unpaid_credit_days,
             'status' => $l->status,

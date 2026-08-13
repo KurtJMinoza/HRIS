@@ -1022,6 +1022,7 @@ class CompanyEfficiencyService
             $presenceLabel = match ($presenceIssue) {
                 'approved_correction' => 'Present (Approved)',
                 'correction_pending' => 'Present (Pending Correction)',
+                'invalid_pair' => 'Invalid Shift',
                 'incomplete_pair', 'missing_in', 'missing_out' => (string) ($dailySummary['status_label'] ?? 'Incomplete'),
                 default => '',
             };

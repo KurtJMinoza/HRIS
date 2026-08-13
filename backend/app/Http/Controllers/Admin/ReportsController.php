@@ -10,6 +10,7 @@ use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\EmployeeScheduleAssignment;
 use App\Models\LeaveRequest;
+use App\Models\LeaveCreditSetting;
 use App\Models\Overtime;
 use App\Models\ReportExportRun;
 use App\Models\User;
@@ -988,31 +989,26 @@ class ReportsController extends Controller
                 $isOnLeaveApproved = $leaveInfo && $leaveInfo['status'] === LeaveRequest::STATUS_APPROVED;
                 $leaveTypeApproved = $leaveInfo['type'] ?? null;
 
-                if ($isOnLeaveApproved) {
-                    if ($leaveTypeApproved === 'half_day') {
-                        // Half-day leave uses strict attendance: status is Half Day,
-                        // but total hours come only from actual clock-in/out logs.
-                        $status = 'halfday';
-                        $isHalfday = true;
-                    } elseif ($leaveTypeApproved === 'undertime') {
-                        $status = 'undertime';
-                        if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
-                            $requiredMins = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
-                            $utTime = $leaveInfo['undertime_time'] ?? null;
-                            $computedUt = ($requiredMins > 0 && $utTime)
-                                ? $this->computeUndertimeMinutesFromEarlyOut($dateKey, $todaySchedule, (string) $utTime, $attendanceTz)
-                                : null;
-                            if ($requiredMins > 0 && $computedUt !== null) {
-                                $undertimeMinutes = $computedUt;
-                                $effectiveWorkedMinutes = max(0, $requiredMins - $computedUt);
-                            } elseif ($requiredMins > 0) {
-                                // Fallback: do not assume 0.5 day; keep required minutes as baseline if time is missing.
-                                $effectiveWorkedMinutes = $requiredMins;
-                            }
+                $isHalfDayLeaveApproved = $isOnLeaveApproved && $leaveTypeApproved === 'half_day';
+
+                if ($isOnLeaveApproved && $leaveTypeApproved === 'undertime') {
+                    $status = 'undertime';
+                    if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
+                        $requiredMins = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
+                        $utTime = $leaveInfo['undertime_time'] ?? null;
+                        $computedUt = ($requiredMins > 0 && $utTime)
+                            ? $this->computeUndertimeMinutesFromEarlyOut($dateKey, $todaySchedule, (string) $utTime, $attendanceTz)
+                            : null;
+                        if ($requiredMins > 0 && $computedUt !== null) {
+                            $undertimeMinutes = $computedUt;
+                            $effectiveWorkedMinutes = max(0, $requiredMins - $computedUt);
+                        } elseif ($requiredMins > 0) {
+                            // Fallback: do not assume 0.5 day; keep required minutes as baseline if time is missing.
+                            $effectiveWorkedMinutes = $requiredMins;
                         }
-                    } else {
-                        $status = 'leave';
                     }
+                } elseif ($isOnLeaveApproved && ! $isHalfDayLeaveApproved) {
+                    $status = 'leave';
                 } elseif ($holidayOnDate !== null) {
                     $status = 'holiday';
                 } elseif ($isRestDayRow) {
@@ -1118,11 +1114,13 @@ class ReportsController extends Controller
                             && ! $isHalfday;
 
                         // Status precedence for detailed attendance:
-                        // - Leave-based statuses are handled above.
-                        // - Half Day overrides Present.
+                        // - Approved half-day leave filing overrides tardiness half-day.
                         // - Undertime overrides Late/Present when undertime minutes exist.
                         // - Late overrides Present when clock-in is beyond grace.
-                        if ($isHalfday) {
+                        if ($isHalfDayLeaveApproved) {
+                            $status = 'halfday';
+                            $isHalfday = true;
+                        } elseif ($isHalfday) {
                             $status = 'halfday';
                         } elseif ($isUndertime) {
                             $status = 'undertime';
@@ -1150,6 +1148,11 @@ class ReportsController extends Controller
                     $status = 'present';
                 }
 
+                if ($isHalfDayLeaveApproved && in_array($status, ['—', 'absent'], true)) {
+                    $status = 'halfday';
+                    $isHalfday = true;
+                }
+
                 $correctionMeta = $this->pickCorrectionMetaRow($correctionsByKey, $correctionKey);
                 $isFutureRow = $dateKey > $todayDateRow;
                 $qualifiedRow = $this->presenceDisplay->qualify(
@@ -1166,6 +1169,10 @@ class ReportsController extends Controller
                 $status = $qualifiedRow['status'];
                 $presenceLabel = $qualifiedRow['presence_label'];
                 $presenceIssue = $qualifiedRow['presence_issue'];
+                if ($presenceIssue === 'invalid_pair') {
+                    $lateLabel = null;
+                    $lateMinutes = null;
+                }
                 $attendanceOtStatus = null;
                 if ($effectiveTimeIn && ! $effectiveTimeOut && $approvedOvertimeRecords !== []) {
                     $approvedOtEnd = $approvedOtForDetailedRow
@@ -1934,12 +1941,69 @@ class ReportsController extends Controller
 
             return response()->json(['message' => 'Forbidden.'], 403);
         }
-        $query = User::query()
+        $baseQuery = User::query()
             ->reportableEmployees()
             ->active()
+            ->with([
+                'departmentRelation:id,name,company_id,branch_id',
+                'departmentRelation.company:id,name,logo',
+                'company:id,name,logo',
+                'branch:id,name,company_id',
+                'branch.company:id,name,logo',
+            ])
             ->orderByLastName();
         if ($scopedEmployeeIds !== null) {
-            $query->whereIn('id', $scopedEmployeeIds);
+            $baseQuery->whereIn('id', $scopedEmployeeIds);
+        }
+
+        // Full-scope option lists (before org filters) so the dropdowns always reflect
+        // every company / branch / department available to the viewer.
+        $scopeUsers = (clone $baseQuery)->get([
+            'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',
+            'leave_credits', 'employment_status', 'hire_date',
+        ]);
+        $companies = $scopeUsers
+            ->filter(fn (User $u) => $u->company !== null)
+            ->map(fn (User $u) => [
+                'id' => (int) $u->company->id,
+                'name' => $u->company->name,
+                'logo_url' => $this->companyLogoUrl($u->company->logo),
+            ])
+            ->unique('id')->sortBy('name')->values()->all();
+        $branches = $scopeUsers
+            ->filter(fn (User $u) => $u->branch !== null)
+            ->map(fn (User $u) => [
+                'id' => (int) $u->branch->id,
+                'name' => $u->branch->name,
+                'company_id' => $u->branch->company_id !== null ? (int) $u->branch->company_id : null,
+                'logo_url' => $this->companyLogoUrl($u->branch->company?->logo),
+            ])
+            ->unique('id')->sortBy('name')->values()->all();
+        $departments = $scopeUsers
+            ->filter(fn (User $u) => $u->departmentRelation !== null)
+            ->map(fn (User $u) => [
+                'id' => (int) $u->departmentRelation->id,
+                'name' => $u->departmentRelation->name,
+                'company_id' => $u->departmentRelation->company_id !== null ? (int) $u->departmentRelation->company_id : null,
+                'branch_id' => $u->departmentRelation->branch_id !== null ? (int) $u->departmentRelation->branch_id : null,
+                'logo_url' => $this->companyLogoUrl($u->departmentRelation->company?->logo),
+            ])
+            ->unique('id')->sortBy('name')->values()->all();
+
+        // Server-side organization filters.
+        $companyId = $request->integer('company_id');
+        $branchId = $request->integer('branch_id');
+        $departmentId = $request->integer('department_id');
+
+        $query = clone $baseQuery;
+        if ($companyId) {
+            $query->where('company_id', $companyId);
+        }
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+        if ($departmentId) {
+            $query->where('department_id', $departmentId);
         }
         $users = $query->get([
             'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',
@@ -1971,20 +2035,144 @@ class ReportsController extends Controller
                 'employee_id' => $u->id,
                 'employee_code' => $u->employee_code,
                 'name' => $u->name,
+                'avatar_url' => $u->profile_image_url,
+                'department_name' => $u->departmentRelation?->name,
+                'company_name' => $u->company?->name,
+                'branch_name' => $u->branch?->name,
                 'employment_status' => $u->employment_status,
+                'hire_date' => $u->hire_date?->toDateString(),
                 'leave_credits_remaining' => $rem,
-                'annual_allocation' => $annual,
+                'annual_allocation' => (int) ($detail['annual_allocation'] ?? $annual),
                 'pending_reserved_days' => $pending,
                 'effective_available' => max(0, (int) ($detail['effective_available'] ?? ($rem - $pending))),
                 'eligible_for_paid_leave_pool' => $detail['eligible_for_paid_leave_pool'] ?? false,
                 'probationary' => $detail['probationary'] ?? false,
                 'display' => $detail['display'] ?? null,
+                'status_summary' => $detail['status_summary'] ?? null,
+                'warning' => $detail['warning'] ?? null,
+                'reset_date' => $detail['reset_date'] ?? null,
+                'last_recharged_display' => $detail['last_recharged_display'] ?? null,
+                'next_reset_date' => $detail['next_reset_date'] ?? null,
+                'next_recharge_display' => $detail['next_recharge_display'] ?? null,
+                'service_anchor_date' => $detail['service_anchor_date'] ?? null,
             ];
         })->values();
 
         return response()->json([
             'annual_allocation' => $annual,
+            'recharge_schedule' => LeaveCreditService::rechargeScheduleApiPayload(),
+            'filters' => [
+                'companies' => $companies,
+                'branches' => $branches,
+                'departments' => $departments,
+            ],
             'employees' => $employees,
+        ]);
+    }
+
+    /**
+     * Current annual leave-credit recharge schedule for the Leave Credits module.
+     */
+    public function leaveCreditSettings(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $this->rbacService->canViewAllReports($actor) && ! $this->rbacService->canViewSubordinateReports($actor)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        return response()->json([
+            'settings' => LeaveCreditService::rechargeScheduleApiPayload(),
+        ]);
+    }
+
+    /**
+     * Update the recurring annual recharge month/day. A date that is already due is applied immediately
+     * through the same audited reset path used by the daily scheduler and lazy balance refreshes.
+     */
+    public function updateLeaveCreditSettings(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $this->hrRoleResolver->isAdminHrAccount($actor) && ! $this->rbacService->can($actor, 'settings.manage')) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        $validated = $request->validate([
+            'reset_month' => ['required', 'integer', 'between:1,12'],
+            'reset_day' => ['required', 'integer', 'between:1,31'],
+        ]);
+        $maxDay = Carbon::create(2001, (int) $validated['reset_month'], 1)->daysInMonth;
+        if ((int) $validated['reset_day'] > $maxDay) {
+            return response()->json([
+                'message' => 'The selected month does not have that many days.',
+                'errors' => ['reset_day' => ['Choose a valid day for the selected month.']],
+            ], 422);
+        }
+
+        $setting = LeaveCreditSetting::query()->first() ?? new LeaveCreditSetting;
+        $setting->fill([
+            'reset_month' => (int) $validated['reset_month'],
+            'reset_day' => (int) $validated['reset_day'],
+            'updated_by' => $actor->id,
+        ]);
+        $setting->save();
+
+        LeaveCreditService::forgetRechargeScheduleCache();
+        $recharged = $this->leaveCreditService->rechargeAllUsersDueForNewYear($actor);
+
+        return response()->json([
+            'message' => 'Leave credit recharge schedule updated.',
+            'settings' => LeaveCreditService::rechargeScheduleApiPayload(),
+            'recharged_employees' => $recharged,
+        ]);
+    }
+
+    /**
+     * Leave-credit transaction history for one employee in the viewer's report scope.
+     */
+    public function leaveCreditHistory(Request $request, int $id): JsonResponse
+    {
+        $actor = $request->user();
+        if (! $this->rbacService->canViewAllReports($actor) && ! $this->rbacService->canViewSubordinateReports($actor)) {
+            $this->logReportsAccessDenied($actor, 'leave_credit_history_requires_all_or_subordinate_reports');
+
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        $scopedEmployeeIds = $this->dataScopeService->getReportScopedEmployeeIds($actor);
+        if ($scopedEmployeeIds === []) {
+            $this->logReportsAccessDenied($actor, 'no_reports_module_access');
+
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+        if ($scopedEmployeeIds !== null && ! in_array($id, $scopedEmployeeIds, true)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        $employee = User::query()
+            ->reportableEmployees()
+            ->with([
+                'departmentRelation:id,name',
+                'company:id,name',
+                'branch:id,name',
+            ])
+            ->whereKey($id)
+            ->first();
+
+        if (! $employee) {
+            return response()->json(['message' => 'Employee not found.'], 404);
+        }
+
+        return response()->json([
+            'employee' => [
+                'employee_id' => $employee->id,
+                'employee_code' => $employee->employee_code,
+                'name' => $employee->name,
+                'department_name' => $employee->departmentRelation?->name,
+                'company_name' => $employee->company?->name,
+                'branch_name' => $employee->branch?->name,
+            ],
+            'leave_credits' => $this->leaveCreditService->buildLeaveCreditsApiPayload($employee),
+            'history' => $this->leaveCreditService->historyForUser($id, 100),
         ]);
     }
 
@@ -2062,5 +2250,25 @@ class ReportsController extends Controller
             'scoped_employee_ids' => null,
             'forbidden_reason' => $reason,
         ]);
+    }
+
+    /** Public media URL for a stored company logo (null-safe). */
+    private function companyLogoUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+        $normalized = trim($path);
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            return $normalized;
+        }
+        $normalized = ltrim($normalized, '/');
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+        $segments = explode('/', $normalized);
+        $encoded = array_map(static fn (string $segment) => rawurlencode($segment), $segments);
+
+        return '/api/media/public/'.implode('/', $encoded);
     }
 }

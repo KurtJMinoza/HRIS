@@ -425,9 +425,10 @@ export function resolveAdminStatusLabel(row) {
   if (rawStatus === 'holiday') return row.holiday_name || 'Holiday'
   if (row.is_rest_day_worked) return 'Rest Day Worked'
   if (rawStatus === 'rest' || row.is_rest_day) return 'Rest Day'
-  if (row.presence_label && (row.presence_issue === 'incomplete_pair' || row.presence_issue === 'correction_pending')) {
+  if (row.presence_label && (row.presence_issue === 'incomplete_pair' || row.presence_issue === 'invalid_pair' || row.presence_issue === 'correction_pending')) {
     return row.presence_label
   }
+  if (rawStatus === 'invalid') return row.presence_label || 'Invalid Shift'
   if (rawStatus === 'late') return row.late_label || 'Late'
   if (rawStatus === 'undertime') {
     return row.is_approved_undertime ? 'Undertime (Approved)' : 'Undertime (Unfiled)'
@@ -465,6 +466,7 @@ export function resolveEmployeeStatusLabel(row) {
     return 'Leave'
   }
   if (row.presence_label) return row.presence_label
+  if (row.status === 'invalid' || row.presence_issue === 'invalid_pair') return 'Invalid Shift'
   if (isIncompleteAttendanceRecord(row)) return calendarIncompleteBadge(row)
   if (row.status === EMPTY_PLACEHOLDER) return EMPTY_PLACEHOLDER
   if (row.status === 'upcoming') return 'Upcoming'
@@ -486,7 +488,7 @@ export function resolveEmployeeStatusLabel(row) {
 
 export function isPendingAttentionRow(row) {
   if (row.status === 'incomplete') return true
-  if (row.presence_issue === 'incomplete_pair') return true
+  if (row.presence_issue === 'incomplete_pair' || row.presence_issue === 'invalid_pair') return true
   if (row.presence_issue === 'correction_pending') return true
   if (row.has_correction && row.correction_approved === false && row.correction_id) return true
   return false
@@ -494,7 +496,7 @@ export function isPendingAttentionRow(row) {
 
 export function isPendingEmployeeRow(row) {
   if (row.status === 'incomplete') return true
-  if (row.presence_issue === 'incomplete_pair') return true
+  if (row.presence_issue === 'incomplete_pair' || row.presence_issue === 'invalid_pair') return true
   if (row.presence_issue === 'correction_pending') return true
   if (row.presence_filing?.status === 'pending') return true
   return false

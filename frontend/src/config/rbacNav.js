@@ -46,6 +46,12 @@ const pathToPermissions = {
   '/admin/attendance-corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/overtime': ['overtime.view'],
+  '/admin/leave-credits': [
+    'can_access_reports_module',
+    'can_view_subordinate_reports',
+    'can_view_all_reports',
+    'reports.view',
+  ],
   '/admin/my-dashboard': [],
   '/admin/my-schedule': ['view-my-schedule', 'request-schedule'],
   '/admin/my-leave': [],

@@ -462,7 +462,7 @@ class User extends Authenticatable
             'monthly_salary' => 'decimal:2',
             'hourly_rate' => 'decimal:2',
             'salary_effectivity_date' => 'date',
-            'leave_credits' => 'integer',
+            'leave_credits' => 'float',
             'leave_credits_reset_date' => 'date',
             'leave_credits_initialized_at' => 'datetime',
         ];
