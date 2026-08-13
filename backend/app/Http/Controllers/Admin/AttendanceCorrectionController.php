@@ -215,6 +215,7 @@ class AttendanceCorrectionController extends Controller
 
         $hasHalfDayLeave = false;
         $halfType = null;
+        $halfDayTime = null;
         $undertimeLeave = null;
 
         foreach ($leaves as $leave) {
@@ -227,6 +228,7 @@ class AttendanceCorrectionController extends Controller
             if ($leave->type === 'half_day') {
                 $hasHalfDayLeave = true;
                 $halfType = $leave->half_type;
+                $halfDayTime = $leave->half_day_time ? substr((string) $leave->half_day_time, 0, 5) : null;
 
                 continue;
             }
@@ -240,23 +242,25 @@ class AttendanceCorrectionController extends Controller
         }
 
         // 2a) If there is an approved half-day leave, only allow attendance in the working half.
-        if ($hasHalfDayLeave && $timeIn && $timeOut) {
-            $noon = Carbon::parse($date.' 12:00:00', $tz);
-            if ($halfType === 'am') {
-                // AM half: employee is on leave in the morning, works only afternoon.
-                if ($timeIn->lessThan($noon)) {
-                    throw ValidationException::withMessages([
-                        'time_in' => ['For AM half-day leave, time in must be at or after 12:00 PM.'],
-                    ]);
-                }
-            } elseif ($halfType === 'pm') {
-                // PM half: employee works morning only. Use time-of-day so night shift (e.g. 06:00 next day) is allowed.
-                if ($timeOut->format('H:i') > '12:00') {
-                    throw ValidationException::withMessages([
-                        'time_out' => ['For PM half-day leave, time out must be at or before 12:00 PM.'],
-                    ]);
-                }
-            }
+        if ($hasHalfDayLeave && $timeIn && $timeOut && is_array($daySchedule) && $halfType !== null && $halfType !== '') {
+            AttendanceStatusService::assertHalfDayLeaveClockAllowed(
+                $date,
+                $daySchedule,
+                (string) $halfType,
+                AttendanceLog::TYPE_CLOCK_IN,
+                $timeIn,
+                $tz,
+                $halfDayTime
+            );
+            AttendanceStatusService::assertHalfDayLeaveClockAllowed(
+                $date,
+                $daySchedule,
+                (string) $halfType,
+                AttendanceLog::TYPE_CLOCK_OUT,
+                $timeOut,
+                $tz,
+                $halfDayTime
+            );
         }
 
         // 3) If there is an approved undertime for this date, enforce that manual time_out matches the approved time.

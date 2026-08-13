@@ -7530,6 +7530,17 @@ export async function getLeaveCreditHistory(employeeId) {
   return data
 }
 
+export async function getHalfDayPreview({ date, half_type } = {}) {
+  const query = new URLSearchParams()
+  if (date) query.set('date', date)
+  if (half_type) query.set('half_type', half_type)
+  const path = `/leave/halfday-preview${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load half-day schedule preview')
+  return data
+}
+
 /**
  * Get half-day availability flags (morning/afternoon clock-ins) for a specific date.
  * Used to enable/disable AM/PM half-day options in the employee leave form.

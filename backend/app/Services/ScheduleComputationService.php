@@ -451,6 +451,188 @@ class ScheduleComputationService
     }
 
     /**
+     * Wall-clock instant after N paid work minutes from shift start (skips unpaid breaks).
+     */
+    public function wallClockAfterPaidMinutes(string $dateKey, array $daySchedule, int $targetPaidMinutes, ?string $tz = null): ?Carbon
+    {
+        if ($targetPaidMinutes <= 0) {
+            return $this->scheduledStart($dateKey, $daySchedule, $tz);
+        }
+
+        if (($daySchedule['shift_type'] ?? 'fixed') === 'split') {
+            return $this->wallClockAfterPaidMinutesSplit($dateKey, $daySchedule, $targetPaidMinutes, $tz);
+        }
+
+        $start = $this->scheduledStart($dateKey, $daySchedule, $tz);
+        $end = $this->scheduledEnd($dateKey, $daySchedule, $tz);
+        if (! $start || ! $end) {
+            return null;
+        }
+
+        $breaks = $this->breakWindows($dateKey, $daySchedule, $tz);
+        usort($breaks, fn (array $a, array $b): int => $a['start']->timestamp <=> $b['start']->timestamp);
+
+        $cursor = $start->copy();
+        $remaining = $targetPaidMinutes;
+
+        while ($remaining > 0 && $cursor->lessThan($end)) {
+            $nextBreak = null;
+            foreach ($breaks as $break) {
+                if ($break['start']->greaterThan($cursor)) {
+                    if ($nextBreak === null || $break['start']->lessThan($nextBreak['start'])) {
+                        $nextBreak = $break;
+                    }
+                }
+            }
+
+            $segmentEnd = $nextBreak ? $nextBreak['start']->copy() : $end->copy();
+            if ($segmentEnd->greaterThan($end)) {
+                $segmentEnd = $end->copy();
+            }
+
+            $available = (int) $cursor->diffInMinutes($segmentEnd);
+            if ($available <= 0) {
+                if ($nextBreak && ! ($nextBreak['is_paid'] ?? false)) {
+                    $cursor = $nextBreak['end']->copy();
+                } else {
+                    break;
+                }
+
+                continue;
+            }
+
+            if ($remaining <= $available) {
+                return $cursor->copy()->addMinutes($remaining);
+            }
+
+            $remaining -= $available;
+            $cursor = $segmentEnd->copy();
+
+            if ($nextBreak && ! ($nextBreak['is_paid'] ?? false)) {
+                $cursor = $nextBreak['end']->copy();
+            }
+        }
+
+        return $cursor->lessThanOrEqualTo($end) ? $cursor : $end->copy();
+    }
+
+    private function wallClockAfterPaidMinutesSplit(string $dateKey, array $daySchedule, int $targetPaidMinutes, ?string $tz = null): ?Carbon
+    {
+        $blocks = $daySchedule['work_blocks'] ?? [];
+        if (! is_array($blocks) || $blocks === []) {
+            return $this->wallClockAfterPaidMinutes(
+                $dateKey,
+                array_merge($daySchedule, ['shift_type' => 'fixed']),
+                $targetPaidMinutes,
+                $tz
+            );
+        }
+
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        usort($blocks, fn (array $a, array $b): int => strcmp((string) ($a['start'] ?? ''), (string) ($b['start'] ?? '')));
+
+        $remaining = $targetPaidMinutes;
+        foreach ($blocks as $block) {
+            $startText = $this->normalizeTime($block['start'] ?? null);
+            $endText = $this->normalizeTime($block['end'] ?? null);
+            if ($startText === null || $endText === null) {
+                continue;
+            }
+
+            $blockStart = Carbon::parse($dateKey.' '.$startText, $tz);
+            $blockEnd = Carbon::parse($dateKey.' '.$endText, $tz);
+            if ($blockEnd->lessThanOrEqualTo($blockStart)) {
+                $blockEnd->addDay();
+            }
+
+            $available = (int) $blockStart->diffInMinutes($blockEnd);
+            if ($available <= 0) {
+                continue;
+            }
+
+            if ($remaining <= $available) {
+                return $blockStart->copy()->addMinutes($remaining);
+            }
+
+            $remaining -= $available;
+        }
+
+        $last = end($blocks);
+
+        return $last
+            ? Carbon::parse($dateKey.' '.substr((string) ($last['end'] ?? '00:00'), 0, 5), $tz)
+            : null;
+    }
+
+    /**
+     * Half-day leave windows derived from the employee's assigned schedule for a date.
+     *
+     * @return array<string, mixed>
+     */
+    public function halfDayLeaveWindows(string $dateKey, array $daySchedule, ?string $tz = null): array
+    {
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $summary = $this->summarize($dateKey, $daySchedule, $tz);
+        $required = (int) ($summary['required_minutes'] ?? 0);
+        $halfPaid = $this->halfDayThreshold($daySchedule, $required);
+        $start = $summary['start'];
+        $end = $summary['end'];
+        $shiftType = $daySchedule['shift_type'] ?? 'fixed';
+        $hasFixedTimes = ! empty($daySchedule['in']) && ! empty($daySchedule['out']);
+        $isFlexible = $shiftType === 'flexible' && ! $hasFixedTimes;
+
+        $splitAt = ($start && $required > 0 && ! $isFlexible)
+            ? $this->wallClockAfterPaidMinutes($dateKey, $daySchedule, $halfPaid, $tz)
+            : null;
+        $amWorkStart = $splitAt?->copy();
+        if ($amWorkStart && $start && $end) {
+            foreach ($this->breakWindows($dateKey, $daySchedule, $tz) as $break) {
+                if (($break['is_paid'] ?? false)) {
+                    continue;
+                }
+                if ($amWorkStart->greaterThanOrEqualTo($break['start']) && $amWorkStart->lessThan($break['end'])) {
+                    $amWorkStart = $break['end']->copy();
+                    break;
+                }
+            }
+        }
+
+        $formatTime = static fn (?Carbon $at): ?string => $at?->copy()->timezone($tz)->format('H:i');
+
+        return [
+            'date' => $dateKey,
+            'shift_type' => $shiftType,
+            'required_paid_minutes' => $required,
+            'half_paid_minutes' => $halfPaid,
+            'scheduled_start' => $formatTime($start),
+            'scheduled_end' => $formatTime($end),
+            'split_at' => $formatTime($splitAt),
+            'split_at_iso' => $splitAt?->copy()->timezone($tz)->toIso8601String(),
+            'is_flexible' => $isFlexible,
+            'am' => [
+                'label' => 'Leave first half, work second half',
+                'work_start' => $formatTime($amWorkStart),
+                'work_end' => $formatTime($end),
+                'earliest_clock_in' => $formatTime($amWorkStart),
+                'latest_clock_out' => $formatTime($end),
+                'suggested_half_day_time' => $formatTime($amWorkStart),
+                'leave_paid_minutes' => $halfPaid,
+                'work_paid_minutes' => max(0, $required - $halfPaid),
+            ],
+            'pm' => [
+                'label' => 'Work first half, leave second half',
+                'work_start' => $formatTime($start),
+                'work_end' => $formatTime($splitAt),
+                'earliest_clock_in' => $formatTime($start),
+                'latest_clock_out' => $formatTime($splitAt),
+                'suggested_half_day_time' => $formatTime($splitAt),
+                'leave_paid_minutes' => $halfPaid,
+                'work_paid_minutes' => max(0, $required - $halfPaid),
+            ],
+        ];
+    }
+
+    /**
      * Build per-day schedule array from a WorkingSchedule model.
      * Used by controllers that need to pass a day config to compute().
      */

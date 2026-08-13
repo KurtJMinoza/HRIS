@@ -319,7 +319,7 @@ class AttendanceController extends Controller
      * - Full-day leave (vacation/sick/emergency/other) blocks all attendance.
      * - Half Day (half_day + half_type):
      *   - AM half (leave morning, work afternoon): prevent first time-in before 12:00 PM.
-     *   - PM half (work morning, leave afternoon): prevent time-out before scheduled shift end.
+     *   - PM half (work morning, leave afternoon): prevent time-out after 12:00 PM.
      * - Undertime leave does not block attendance; it only affects reports.
      *
      * @throws ValidationException
@@ -348,41 +348,23 @@ class AttendanceController extends Controller
             }
 
             if ($leave->type === 'half_day') {
-                $halfType = $leave->half_type;
+                $halfType = (string) ($leave->half_type ?? '');
+                $dayKey = self::DAY_KEYS[(int) now($tz)->format('w')];
+                $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($user, $today);
+                $daySchedule = is_array($effectiveSchedule) ? ($effectiveSchedule[$dayKey] ?? null) : null;
 
-                if ($halfType === 'am' && $attendanceType === AttendanceLog::TYPE_CLOCK_IN) {
-                    // AM half: employee is on leave for the morning and works only the afternoon.
-                    // Block first time-in before 12:00 PM so they can only start in the afternoon.
-                    $noon = Carbon::parse($today.' 12:00:00', $tz);
-                    if ($now->lessThan($noon)) {
-                        throw ValidationException::withMessages([
-                            'type' => ['Attendance not allowed before 12:00 PM for AM half-day leave.'],
-                        ]);
-                    }
+                if (is_array($daySchedule) && $halfType !== '') {
+                    AttendanceStatusService::assertHalfDayLeaveClockAllowed(
+                        $today,
+                        $daySchedule,
+                        $halfType,
+                        $attendanceType,
+                        $now,
+                        $tz,
+                        $leave->half_day_time ? substr((string) $leave->half_day_time, 0, 5) : null
+                    );
                 }
 
-                if (in_array($halfType, ['am', 'pm'], true) && $attendanceType === AttendanceLog::TYPE_CLOCK_OUT) {
-                    // For both AM and PM half-day:
-                    // Business rule: do NOT allow early clock-out before scheduled shift end
-                    // (e.g. 17:00) unless a separate undertime is approved.
-
-                    $schedule = $user->schedule;
-                    if (is_array($schedule) && $schedule !== []) {
-                        $dayKey = self::DAY_KEYS[(int) now($tz)->format('w')];
-                        $daySchedule = $schedule[$dayKey] ?? null;
-                        if (is_array($daySchedule)) {
-                            $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($today, $daySchedule, $tz);
-                            if ($scheduledEnd instanceof Carbon && $now->lessThan($scheduledEnd)) {
-                                $endTimeStr = $this->formatTimeInAttendanceTz($scheduledEnd);
-                                throw ValidationException::withMessages([
-                                    'type' => ["Logout is not allowed yet. Your shift ends at {$endTimeStr}."],
-                                ]);
-                            }
-                        }
-                    }
-                }
-
-                // For half-day leave we never fully block attendance; continue checking other records if any.
                 continue;
             }
 

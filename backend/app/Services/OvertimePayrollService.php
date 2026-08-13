@@ -57,20 +57,8 @@ class OvertimePayrollService
             });
         }
 
-        if (($companyId !== null && $companyId > 0 && Schema::hasColumn('overtimes', 'company_id'))
-            || ($assignmentId !== null && $assignmentId > 0 && Schema::hasColumn('overtimes', 'assignment_id'))) {
-            $query->where(function (Builder $q) use ($companyId, $assignmentId): void {
-                if ($companyId !== null && $companyId > 0 && Schema::hasColumn('overtimes', 'company_id')) {
-                    $q->where('company_id', $companyId);
-                }
-                if ($assignmentId !== null && $assignmentId > 0 && Schema::hasColumn('overtimes', 'assignment_id')) {
-                    $method = ($companyId !== null && $companyId > 0 && Schema::hasColumn('overtimes', 'company_id'))
-                        ? 'orWhere'
-                        : 'where';
-                    $q->{$method}('assignment_id', $assignmentId);
-                }
-            });
-        }
+        // ponytail: org columns on overtime rows are filing-time context only. Payroll eligibility
+        // is user_id + date + approved status; do not exclude OT after company/assignment transfers.
 
         return $query;
     }
@@ -586,17 +574,6 @@ class OvertimePayrollService
 
         $byKey = [];
         foreach ($query->get() as $ot) {
-            $assignmentId = (int) ($ot->assignment_id ?? 0);
-            $expectedAssignmentId = $assignmentIdsByUser[(int) $ot->user_id] ?? null;
-            $companyMatches = $companyId !== null
-                && $companyId > 0
-                && (int) ($ot->company_id ?? 0) === $companyId;
-            $assignmentMatches = $expectedAssignmentId !== null
-                && $expectedAssignmentId > 0
-                && $assignmentId === $expectedAssignmentId;
-            if ($companyId !== null && $companyId > 0 && ! $companyMatches && ! $assignmentMatches) {
-                continue;
-            }
             $d = $ot->date instanceof Carbon
                 ? $ot->date->toDateString()
                 : Carbon::parse((string) $ot->date)->toDateString();

@@ -168,13 +168,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/employee/presence-filings/{id}', [PresenceFilingController::class, 'destroy']);
     Route::get('/leave/my', [EmployeeLeaveController::class, 'my']);
     Route::get('/leave/halfday-availability', [EmployeeLeaveController::class, 'halfdayAvailability']);
+    Route::get('/leave/halfday-preview', [EmployeeLeaveController::class, 'halfdayPreview']);
     Route::get('/leave/undertime-preview', [EmployeeLeaveController::class, 'undertimePreview']);
     Route::get('/leave/paid-leave-preview', [EmployeeLeaveController::class, 'paidLeavePreview']);
     Route::get('/leave/validate-range', [EmployeeLeaveController::class, 'validateLeaveDateRange']);
     Route::get('/me/organization-assignments', [EmployeeLeaveController::class, 'organizationAssignments']);
     Route::post('/leave', [EmployeeLeaveController::class, 'apply']);
-    Route::post('/leave/{id}/document', [EmployeeLeaveController::class, 'uploadDocument']);
-    Route::delete('/leave/{id}', [EmployeeLeaveController::class, 'destroy']);
+    Route::post('/leave/{id}/document', [EmployeeLeaveController::class, 'uploadDocument'])->whereNumber('id');
+    Route::delete('/leave/{id}', [EmployeeLeaveController::class, 'destroy'])->whereNumber('id');
     Route::get('/overtime/request-context', [EmployeeOvertimeController::class, 'requestContext']);
     Route::get('/employee/overtime/form-context', [EmployeeOvertimeController::class, 'formContext']);
     Route::get('/employee/overtime/requests', [EmployeeOvertimeController::class, 'myRequestsTable']);

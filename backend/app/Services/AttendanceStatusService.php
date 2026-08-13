@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Overtime;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Attendance lateness and half-day computation.
@@ -58,6 +59,134 @@ class AttendanceStatusService
         }
 
         return (int) config('attendance.half_day_regular_minutes', 240);
+    }
+
+    /**
+     * Schedule-based half-day leave windows for filing, attendance, and payroll.
+     *
+     * @return array<string, mixed>
+     */
+    public static function halfDayLeaveWindows(string $dateKey, array $daySchedule, ?string $tz = null): array
+    {
+        return app(ScheduleComputationService::class)->halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+    }
+
+    /**
+     * Default half-day boundary time for filing (work start for AM, leave start for PM).
+     */
+    public static function suggestedHalfDayTime(array $windows, string $halfType): ?string
+    {
+        $t = strtolower(trim($halfType));
+        if ($t !== 'am' && $t !== 'pm') {
+            return null;
+        }
+
+        $side = $windows[$t] ?? [];
+
+        return $side['suggested_half_day_time']
+            ?? ($t === 'pm' ? ($side['latest_clock_out'] ?? null) : ($side['earliest_clock_in'] ?? null));
+    }
+
+    /**
+     * Validate filed half-day time against schedule-derived work window for the half type.
+     *
+     * @throws ValidationException
+     */
+    public static function validateHalfDayLeaveTime(
+        string $dateKey,
+        array $daySchedule,
+        string $halfType,
+        string $halfDayTime,
+        ?string $tz = null
+    ): void {
+        $windows = self::halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        if ($windows['is_flexible'] ?? false) {
+            return;
+        }
+
+        $t = strtolower(trim($halfType));
+        $side = $t === 'am' ? ($windows['am'] ?? []) : ($windows['pm'] ?? []);
+        $min = $side['earliest_clock_in'] ?? null;
+        $max = $side['latest_clock_out'] ?? null;
+        $time = substr(trim($halfDayTime), 0, 5);
+
+        if ($min && $time < $min) {
+            throw ValidationException::withMessages([
+                'half_day_time' => ["Half-day time must be at or after {$min} for this schedule."],
+            ]);
+        }
+        if ($max && $time > $max) {
+            throw ValidationException::withMessages([
+                'half_day_time' => ["Half-day time must be at or before {$max} for this schedule."],
+            ]);
+        }
+    }
+
+    /**
+     * Enforce clock-in/out against schedule-derived half-day leave windows.
+     *
+     * @throws ValidationException
+     */
+    public static function assertHalfDayLeaveClockAllowed(
+        string $dateKey,
+        array $daySchedule,
+        string $halfType,
+        string $attendanceType,
+        Carbon $now,
+        ?string $tz = null,
+        ?string $filedHalfDayTime = null
+    ): void {
+        $windows = self::halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        if ($windows['is_flexible'] ?? false) {
+            return;
+        }
+
+        $side = strtolower(trim($halfType)) === 'am' ? ($windows['am'] ?? []) : ($windows['pm'] ?? []);
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
+        $now = $now->copy()->timezone($tz);
+        $filed = $filedHalfDayTime ? substr(trim($filedHalfDayTime), 0, 5) : null;
+
+        if ($attendanceType === 'clock_in') {
+            $earliest = (strtolower(trim($halfType)) === 'am' && $filed)
+                ? $filed
+                : ($side['earliest_clock_in'] ?? null);
+            if ($earliest) {
+                $boundary = Carbon::parse($dateKey.' '.$earliest, $tz);
+                if ($now->lessThan($boundary)) {
+                    throw ValidationException::withMessages([
+                        'type' => ["Attendance not allowed before {$boundary->format('g:i A')} for this half-day leave."],
+                    ]);
+                }
+            }
+
+            return;
+        }
+
+        if ($attendanceType !== 'clock_out') {
+            return;
+        }
+
+        $latest = (strtolower(trim($halfType)) === 'pm' && $filed)
+            ? $filed
+            : ($side['latest_clock_out'] ?? null);
+        if ($latest && strtolower(trim($halfType)) === 'pm') {
+            $boundary = Carbon::parse($dateKey.' '.$latest, $tz);
+            if ($now->greaterThan($boundary)) {
+                throw ValidationException::withMessages([
+                    'type' => ["Clock-out must be at or before {$boundary->format('g:i A')} for this half-day leave."],
+                ]);
+            }
+        }
+
+        $shiftEnd = $windows['scheduled_end'] ?? null;
+        if ($shiftEnd && strtolower(trim($halfType)) === 'am') {
+            $scheduledEnd = self::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+            if ($scheduledEnd instanceof Carbon && $now->lessThan($scheduledEnd)) {
+                throw ValidationException::withMessages([
+                    'type' => ["Logout is not allowed yet. Your shift ends at {$scheduledEnd->format('g:i A')}."],
+                ]);
+            }
+        }
     }
 
     /**

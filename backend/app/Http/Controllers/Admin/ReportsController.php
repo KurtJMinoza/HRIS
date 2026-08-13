@@ -989,31 +989,26 @@ class ReportsController extends Controller
                 $isOnLeaveApproved = $leaveInfo && $leaveInfo['status'] === LeaveRequest::STATUS_APPROVED;
                 $leaveTypeApproved = $leaveInfo['type'] ?? null;
 
-                if ($isOnLeaveApproved) {
-                    if ($leaveTypeApproved === 'half_day') {
-                        // Half-day leave uses strict attendance: status is Half Day,
-                        // but total hours come only from actual clock-in/out logs.
-                        $status = 'halfday';
-                        $isHalfday = true;
-                    } elseif ($leaveTypeApproved === 'undertime') {
-                        $status = 'undertime';
-                        if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
-                            $requiredMins = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
-                            $utTime = $leaveInfo['undertime_time'] ?? null;
-                            $computedUt = ($requiredMins > 0 && $utTime)
-                                ? $this->computeUndertimeMinutesFromEarlyOut($dateKey, $todaySchedule, (string) $utTime, $attendanceTz)
-                                : null;
-                            if ($requiredMins > 0 && $computedUt !== null) {
-                                $undertimeMinutes = $computedUt;
-                                $effectiveWorkedMinutes = max(0, $requiredMins - $computedUt);
-                            } elseif ($requiredMins > 0) {
-                                // Fallback: do not assume 0.5 day; keep required minutes as baseline if time is missing.
-                                $effectiveWorkedMinutes = $requiredMins;
-                            }
+                $isHalfDayLeaveApproved = $isOnLeaveApproved && $leaveTypeApproved === 'half_day';
+
+                if ($isOnLeaveApproved && $leaveTypeApproved === 'undertime') {
+                    $status = 'undertime';
+                    if ($todaySchedule && ! empty($todaySchedule['in']) && ! empty($todaySchedule['out'])) {
+                        $requiredMins = AttendanceStatusService::getRequiredWorkingMinutes($dateKey, $todaySchedule, $attendanceTz);
+                        $utTime = $leaveInfo['undertime_time'] ?? null;
+                        $computedUt = ($requiredMins > 0 && $utTime)
+                            ? $this->computeUndertimeMinutesFromEarlyOut($dateKey, $todaySchedule, (string) $utTime, $attendanceTz)
+                            : null;
+                        if ($requiredMins > 0 && $computedUt !== null) {
+                            $undertimeMinutes = $computedUt;
+                            $effectiveWorkedMinutes = max(0, $requiredMins - $computedUt);
+                        } elseif ($requiredMins > 0) {
+                            // Fallback: do not assume 0.5 day; keep required minutes as baseline if time is missing.
+                            $effectiveWorkedMinutes = $requiredMins;
                         }
-                    } else {
-                        $status = 'leave';
                     }
+                } elseif ($isOnLeaveApproved && ! $isHalfDayLeaveApproved) {
+                    $status = 'leave';
                 } elseif ($holidayOnDate !== null) {
                     $status = 'holiday';
                 } elseif ($isRestDayRow) {
@@ -1119,11 +1114,13 @@ class ReportsController extends Controller
                             && ! $isHalfday;
 
                         // Status precedence for detailed attendance:
-                        // - Leave-based statuses are handled above.
-                        // - Half Day overrides Present.
+                        // - Approved half-day leave filing overrides tardiness half-day.
                         // - Undertime overrides Late/Present when undertime minutes exist.
                         // - Late overrides Present when clock-in is beyond grace.
-                        if ($isHalfday) {
+                        if ($isHalfDayLeaveApproved) {
+                            $status = 'halfday';
+                            $isHalfday = true;
+                        } elseif ($isHalfday) {
                             $status = 'halfday';
                         } elseif ($isUndertime) {
                             $status = 'undertime';
@@ -1149,6 +1146,11 @@ class ReportsController extends Controller
                     }
                 } elseif ($effectiveTimeIn || $effectiveTimeOut) {
                     $status = 'present';
+                }
+
+                if ($isHalfDayLeaveApproved && in_array($status, ['—', 'absent'], true)) {
+                    $status = 'halfday';
+                    $isHalfday = true;
                 }
 
                 $correctionMeta = $this->pickCorrectionMetaRow($correctionsByKey, $correctionKey);

@@ -161,6 +161,24 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame(26500.0, $out['total_pay']);
     }
 
+    public function test_regular_pay_attendance_label_uses_day_split_units(): void
+    {
+        $service = app(PayslipService::class);
+        $label = $service->regularPayAttendanceLabel([
+            'daily_rate' => 525.0,
+            'daily_computation_earning_lines' => [
+                [
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'minutes_worked' => (9 * 8 * 60) + (3 * 60),
+                    'amount' => 4921.88,
+                ],
+            ],
+        ]);
+
+        $this->assertSame('9 days, 3 hrs 0 mins', $label);
+    }
+
     private function payslipServiceWithoutConstructor(): PayslipService
     {
         return (new ReflectionClass(PayslipService::class))->newInstanceWithoutConstructor();

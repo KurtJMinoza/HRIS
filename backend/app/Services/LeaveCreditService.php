@@ -349,7 +349,9 @@ class LeaveCreditService
         $startStr = $startDate instanceof Carbon ? $startDate->toDateString() : (string) $startDate;
         $endStr = $endDate instanceof Carbon ? $endDate->toDateString() : (string) $endDate;
         if ($t === 'half_day') {
-            return in_array($startStr, $this->billableWorkingDatesForUser($user, $startStr, $startStr), true) ? 0.5 : 0.0;
+            $workingDays = $this->billableWorkingDatesForUser($user, $startStr, $endStr);
+
+            return count($workingDays) * 0.5;
         }
 
         return count($this->billableWorkingDatesForUser($user, $startStr, $endStr));
@@ -365,7 +367,14 @@ class LeaveCreditService
             return 0;
         }
         if ($t === 'half_day') {
-            return 0.5;
+            $start = $startDate instanceof Carbon ? $startDate->copy()->startOfDay() : Carbon::parse((string) $startDate)->startOfDay();
+            $end = $endDate instanceof Carbon ? $endDate->copy()->startOfDay() : Carbon::parse((string) $endDate)->startOfDay();
+            if ($end->lessThan($start)) {
+                return 0.0;
+            }
+            $days = max(1, (int) $start->diffInDays($end) + 1);
+
+            return $days * 0.5;
         }
         $start = $startDate instanceof Carbon ? $startDate->copy()->startOfDay() : Carbon::parse((string) $startDate)->startOfDay();
         $end = $endDate instanceof Carbon ? $endDate->copy()->startOfDay() : Carbon::parse((string) $endDate)->startOfDay();

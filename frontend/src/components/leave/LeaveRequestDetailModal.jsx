@@ -535,6 +535,11 @@ export function LeaveRequestDetailModal({
                       <p className="text-[15px] font-bold text-foreground">Half day</p>
                       <p className="font-bold text-foreground">
                         {leave.half_type === 'am' ? 'AM' : leave.half_type === 'pm' ? 'PM' : '—'}
+                        {leave.half_day_time ? (
+                          <span className="ml-2 font-mono text-sm font-semibold tabular-nums">
+                            {formatTimeHM(leave.half_day_time)}
+                          </span>
+                        ) : null}
                       </p>
                     </div>
                   ) : null}

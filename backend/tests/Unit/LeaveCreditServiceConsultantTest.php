@@ -134,7 +134,7 @@ class LeaveCreditServiceConsultantTest extends TestCase
         $service = $this->service(allowPaidLeave: true);
 
         $this->assertSame(0.5, $service->billableCreditDaysFromFields('half_day', '2026-08-10', '2026-08-10'));
-        $this->assertSame(0.5, $service->billableCreditDaysFromFields('HALF_DAY', '2026-08-10', '2026-08-12'));
+        $this->assertSame(1.5, $service->billableCreditDaysFromFields('HALF_DAY', '2026-08-10', '2026-08-12'));
     }
 
     public function test_full_day_leave_bills_one_credit_per_day(): void

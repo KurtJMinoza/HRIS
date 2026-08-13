@@ -692,6 +692,54 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(540, (int) ($otLine['minutes_worked'] ?? 0));
     }
 
+    public function test_approved_ot_pays_after_company_assignment_transfer(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        config(['payroll.ot_payable_basis' => 'approved']);
+
+        $effectiveSchedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'tue' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'sat' => null,
+        ];
+
+        $user = User::factory()->create([
+            'company_id' => 5,
+            'daily_rate' => 800,
+            'schedule' => $effectiveSchedule,
+        ]);
+
+        Overtime::create([
+            'user_id' => $user->id,
+            'company_id' => 3,
+            'assignment_id' => 397,
+            'date' => '2026-08-06',
+            'schedule_end' => '17:00:00',
+            'expected_end_time' => '19:30:00',
+            'computed_minutes' => 150,
+            'computed_hours' => 2.50,
+            'ph_ot_rule' => 'ORD',
+            'status' => Overtime::STATUS_APPROVED,
+        ]);
+
+        $from = Carbon::parse('2026-08-01', 'Asia/Manila');
+        $to = Carbon::parse('2026-08-10', 'Asia/Manila');
+        $computed = app(PayrollComputationService::class)->computeEmployeePayroll($user, $from, $to, 800.0, [
+            'company_id' => 5,
+        ]);
+
+        $summary = $computed['summary'] ?? [];
+        $this->assertSame(2.5, (float) ($summary['overtime_total_hours'] ?? 0));
+        $this->assertGreaterThan(0.0, (float) ($summary['overtime_total_amount'] ?? 0));
+    }
+
     public function test_regular_pay_units_show_zero_days_for_partial_work(): void
     {
         $service = app(PayslipService::class);
@@ -1436,6 +1484,123 @@ class PolicyEngineTest extends TestCase
             $unpaidAssignment->forceDelete();
             $paidComponent->forceDelete();
             $unpaidComponent->forceDelete();
+        }
+    }
+
+    public function test_half_day_paid_leave_pays_half_daily_rate_and_half_allowance_unit(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $workday = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_period_minutes' => 0,
+            'early_timeout_minutes' => null,
+            'overtime_buffer_minutes' => 15,
+        ];
+        $schedule = [
+            'sun' => null,
+            'mon' => $workday,
+            'tue' => $workday,
+            'wed' => $workday,
+            'thu' => $workday,
+            'fri' => $workday,
+            'sat' => $workday,
+        ];
+
+        $user = User::factory()->create([
+            'monthly_salary' => 26000,
+            'schedule' => $schedule,
+            'is_active' => true,
+            'leave_credits' => 14,
+            'hire_date' => '2020-01-01',
+        ]);
+        $component = PayComponent::create([
+            'name' => 'Allowance Half Day',
+            'code' => 'ALLOWANCE_HALF_'.$user->id,
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Fixed Allowance',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'default_value' => 2600,
+            'is_taxable' => true,
+            'is_proratable' => true,
+            'is_active' => true,
+        ]);
+        $assignment = EmployeeCompensationComponent::create([
+            'user_id' => $user->id,
+            'pay_component_id' => $component->id,
+            'name' => 'Allowance Half Day',
+            'code' => 'ALLOWANCE_HALF_'.$user->id,
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => 'Fixed Allowance',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'value' => 2600,
+            'is_taxable' => true,
+            'is_proratable' => true,
+            'is_active' => true,
+        ]);
+
+        try {
+            LeaveRequest::create([
+                'user_id' => $user->id,
+                'type' => 'half_day',
+                'half_type' => 'pm',
+                'start_date' => '2026-05-04',
+                'end_date' => '2026-05-04',
+                'status' => LeaveRequest::STATUS_APPROVED,
+                'reviewed_at' => Carbon::parse('2026-05-03 09:00', 'Asia/Manila')->utc(),
+                'leave_credits_charged' => 0.5,
+                'leave_unpaid_credit_days' => 0,
+            ]);
+
+            foreach (['2026-05-05', '2026-05-06', '2026-05-07', '2026-05-08', '2026-05-09'] as $dateKey) {
+                AttendanceLog::create([
+                    'user_id' => $user->id,
+                    'type' => AttendanceLog::TYPE_CLOCK_IN,
+                    'verified_at' => Carbon::parse("{$dateKey} 08:00", 'Asia/Manila')->utc(),
+                ]);
+                AttendanceLog::create([
+                    'user_id' => $user->id,
+                    'type' => AttendanceLog::TYPE_CLOCK_OUT,
+                    'verified_at' => Carbon::parse("{$dateKey} 17:00", 'Asia/Manila')->utc(),
+                ]);
+            }
+
+            $payroll = app(PayrollComputationService::class)->computeEmployeePayroll(
+                $user->fresh(),
+                Carbon::parse('2026-05-04', 'Asia/Manila'),
+                Carbon::parse('2026-05-09', 'Asia/Manila'),
+                null,
+                [
+                    'pay_period_start' => '2026-05-04',
+                    'pay_period_end' => '2026-05-09',
+                    'selected_pay_date' => '2026-05-15',
+                ]
+            );
+
+            $halfDayRow = collect($payroll['days'] ?? [])->first(fn ($d) => ($d['date'] ?? null) === '2026-05-04');
+            $this->assertNotNull($halfDayRow);
+            $this->assertSame('halfday', $halfDayRow['status'] ?? null);
+            $dailyRate = (float) ($payroll['summary']['daily_rate'] ?? 0);
+            $this->assertGreaterThan(0, $dailyRate);
+            $this->assertEqualsWithDelta($dailyRate * 0.5, (float) ($halfDayRow['regular_pay'] ?? 0), 0.02);
+
+            $allowanceLine = collect($payroll['summary']['payslip_earning_lines'] ?? [])
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance Half Day');
+            $this->assertNotNull($allowanceLine);
+            $this->assertSame(0.5, (float) data_get($allowanceLine, 'allowance_proration.approved_paid_leave_day_units'));
+            $this->assertSame(5.0, (float) data_get($allowanceLine, 'allowance_proration.present_day_units'));
+            $this->assertSame(5.5, (float) data_get($allowanceLine, 'allowance_proration.payable_day_units'));
+        } finally {
+            DeductionScheduleSetting::query()
+                ->where('deduction_key', 'pay_component:'.$component->id)
+                ->delete();
+            $assignment->forceDelete();
+            $component->forceDelete();
         }
     }
 

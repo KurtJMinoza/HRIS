@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Services\AttendanceStatusService;
 use App\Services\ScheduleComputationService;
 use Carbon\Carbon;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class ScheduleComputationServiceTest extends TestCase
@@ -243,5 +245,65 @@ class ScheduleComputationServiceTest extends TestCase
         $this->assertEquals(510, $result['actual_worked_minutes']);
         $this->assertEquals(480, $result['payable_minutes']);
         $this->assertEquals('present', $result['status']);
+    }
+
+    public function test_half_day_leave_windows_follow_schedule_not_noon(): void
+    {
+        $tz = 'Asia/Manila';
+        $dateKey = '2026-06-25';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+            'expected_paid_minutes' => 480,
+        ];
+
+        $windows = $this->service->halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+
+        $this->assertSame('12:00', $windows['split_at']);
+        $this->assertSame(240, $windows['half_paid_minutes']);
+        $this->assertSame('13:00', $windows['am']['earliest_clock_in']);
+        $this->assertSame('12:00', $windows['pm']['latest_clock_out']);
+        $this->assertSame('13:00', $windows['am']['suggested_half_day_time']);
+        $this->assertSame('12:00', $windows['pm']['suggested_half_day_time']);
+    }
+
+    public function test_half_day_filed_time_overrides_pm_clock_out_boundary(): void
+    {
+        $tz = 'Asia/Manila';
+        $dateKey = '2026-06-25';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+            'expected_paid_minutes' => 480,
+        ];
+
+        $at1130 = Carbon::parse($dateKey.' 11:30', $tz);
+        AttendanceStatusService::assertHalfDayLeaveClockAllowed(
+            $dateKey,
+            $daySchedule,
+            'pm',
+            'clock_out',
+            $at1130,
+            $tz,
+            '11:30'
+        );
+
+        $at1201 = Carbon::parse($dateKey.' 12:01', $tz);
+        $this->expectException(ValidationException::class);
+        AttendanceStatusService::assertHalfDayLeaveClockAllowed(
+            $dateKey,
+            $daySchedule,
+            'pm',
+            'clock_out',
+            $at1201,
+            $tz,
+            '11:30'
+        );
     }
 }

@@ -678,12 +678,13 @@ class AttendanceMonitoringController extends Controller
                 $isOnLeave = $leaveInfo !== null;
                 $leaveType = $leaveInfo['type'] ?? null;
                 $isApprovedUndertime = $isOnLeave && $leaveType === 'undertime';
+                $isHalfDayLeave = $isOnLeave && $leaveType === 'half_day';
                 $holidayOnDate = ! $isOnLeave
                     ? $this->payrollComputation->getHolidayForUserDate($employee, $dateKey)
                     : null;
 
-                if ($isOnLeave && ! $isApprovedUndertime) {
-                    $status = $leaveType === 'half_day' ? 'halfday' : 'leave';
+                if ($isOnLeave && ! $isApprovedUndertime && ! $isHalfDayLeave) {
+                    $status = 'leave';
                 } elseif ($holidayOnDate !== null) {
                     $status = 'holiday';
                 } elseif ($isRestDayRow) {
@@ -753,7 +754,9 @@ class AttendanceMonitoringController extends Controller
                         }
 
                         $isUndertime = $undertimeMinutes !== null && $undertimeMinutes > 0;
-                        if ($isHalfDay) {
+                        if ($isHalfDayLeave) {
+                            $status = 'halfday';
+                        } elseif ($isHalfDay) {
                             $status = 'halfday';
                         } elseif ($isUndertime) {
                             $status = 'undertime';
@@ -767,6 +770,10 @@ class AttendanceMonitoringController extends Controller
                     if ($isWorkday || $isRestDayRow) {
                         $status = 'present';
                     }
+                }
+
+                if ($isHalfDayLeave && in_array($status, ['—', 'absent'], true)) {
+                    $status = 'halfday';
                 }
 
                 if ($effectiveTimeIn && ! $effectiveTimeOut) {
