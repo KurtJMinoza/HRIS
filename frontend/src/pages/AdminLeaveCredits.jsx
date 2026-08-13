@@ -5,6 +5,8 @@ import {
   ArrowUpFromLine,
   Building2,
   CalendarClock,
+  CalendarDays,
+  Hash,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -55,6 +57,7 @@ import {
   appModalDialogContentClass,
 } from '@/lib/appModalStyles'
 import { isAdminHrUser } from '@/lib/hrRoutes'
+import { attendanceFilterInputClass, attendanceSelectContentClass, attendanceSelectItemClass, attendanceSelectTriggerClass } from '@/lib/attendanceUiClasses'
 import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 20
@@ -152,7 +155,7 @@ function StatusBadge({ row }) {
   const meta = STATUS_META[rowStatus(row)] || STATUS_META.not_eligible
   const Icon = meta.icon
   return (
-    <Badge variant="outline" className={cn('gap-1 whitespace-nowrap text-[11px] font-semibold', meta.className)}>
+    <Badge variant="outline" className={cn('gap-1 whitespace-nowrap text-xs font-semibold', meta.className)}>
       <Icon className="size-3" aria-hidden />
       {meta.label}
     </Badge>
@@ -186,7 +189,7 @@ function BalanceCell({ row, compact = false }) {
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted dark:bg-white/10" aria-hidden>
         <div className={cn('h-full rounded-full transition-[width]', meterClass)} style={{ width: `${pct}%` }} />
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+      <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
         <span>Usable {formatNumber(usable)}</span>
         {pending > 0 ? <span>Reserved {formatNumber(pending)}</span> : null}
       </div>
@@ -216,6 +219,52 @@ function ActionIconButton({ label, icon: Icon, onClick, disabled = false, tone =
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">{label}</TooltipContent>
     </Tooltip>
+  )
+}
+
+function EmployeeAvatar({ row, className = 'size-9 text-[11px]' }) {
+  const [failed, setFailed] = useState(false)
+  const avatarUrl = row?.avatar_url || row?.photo_url
+
+  if (!avatarUrl || failed) {
+    return (
+      <span className={cn('flex shrink-0 items-center justify-center rounded-lg bg-brand/10 font-bold text-brand ring-1 ring-brand/15', className)}>
+        {String(row?.name || '?').trim().charAt(0).toUpperCase()}
+      </span>
+    )
+  }
+
+  return (
+    <img
+      src={avatarUrl}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={cn('shrink-0 rounded-lg bg-muted object-cover ring-1 ring-border/70', className)}
+    />
+  )
+}
+
+function OrgLogo({ option, className = 'size-5 rounded-md' }) {
+  const [failed, setFailed] = useState(false)
+  const url = option?.logo_url
+
+  if (!url || failed) {
+    return (
+      <span className={cn('flex shrink-0 items-center justify-center bg-muted/70 text-[10px] font-bold text-muted-foreground ring-1 ring-border/50', className)}>
+        {String(option?.name || '?').trim().charAt(0).toUpperCase()}
+      </span>
+    )
+  }
+
+  return (
+    <img
+      src={url}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={cn('shrink-0 bg-card object-contain ring-1 ring-border/50', className)}
+    />
   )
 }
 
@@ -326,6 +375,10 @@ export default function AdminLeaveCredits() {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [companyId, setCompanyId] = useState('')
+  const [branchId, setBranchId] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
+  const [filterOptions, setFilterOptions] = useState({ companies: [], branches: [], departments: [] })
   const [page, setPage] = useState(1)
   const [adjustEmployee, setAdjustEmployee] = useState(null)
   const [adjustmentMode, setAdjustmentMode] = useState('add')
@@ -345,9 +398,16 @@ export default function AdminLeaveCredits() {
     setScheduleLoading(true)
     setError('')
     try {
-      const data = await getLeaveCreditsReport()
+      const data = await getLeaveCreditsReport({ companyId, branchId, departmentId })
       setRows(Array.isArray(data?.employees) ? data.employees : [])
       setAnnualAllocation(Number(data?.annual_allocation ?? 14))
+      if (data?.filters) {
+        setFilterOptions({
+          companies: Array.isArray(data.filters.companies) ? data.filters.companies : [],
+          branches: Array.isArray(data.filters.branches) ? data.filters.branches : [],
+          departments: Array.isArray(data.filters.departments) ? data.filters.departments : [],
+        })
+      }
       if (data?.recharge_schedule) {
         setSchedule(data.recharge_schedule)
         setScheduleMonth(String(data.recharge_schedule.reset_month ?? 1))
@@ -359,11 +419,30 @@ export default function AdminLeaveCredits() {
       setLoading(false)
       setScheduleLoading(false)
     }
-  }, [])
+  }, [companyId, branchId, departmentId])
 
   useEffect(() => {
     loadRows()
   }, [loadRows])
+
+  // Keep dependent org filters valid when a parent scope narrows the available options.
+  useEffect(() => {
+    setBranchId((current) => {
+      if (!current) return current
+      const allowed = (filterOptions.branches || []).filter((b) => !companyId || String(b.company_id) === String(companyId))
+      return allowed.some((b) => String(b.id) === String(current)) ? current : ''
+    })
+  }, [companyId, filterOptions.branches])
+
+  useEffect(() => {
+    setDepartmentId((current) => {
+      if (!current) return current
+      const allowed = (filterOptions.departments || []).filter((d) =>
+        (!companyId || String(d.company_id) === String(companyId)) &&
+        (!branchId || String(d.branch_id) === String(branchId)))
+      return allowed.some((d) => String(d.id) === String(current)) ? current : ''
+    })
+  }, [companyId, branchId, filterOptions.departments])
 
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase()
@@ -378,10 +457,16 @@ export default function AdminLeaveCredits() {
 
   useEffect(() => {
     setPage(1)
-  }, [search, statusFilter])
+  }, [search, statusFilter, companyId, branchId, departmentId])
 
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
   const visibleRows = filteredRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  const companyOptions = filterOptions.companies || []
+  const branchOptions = (filterOptions.branches || []).filter((b) => !companyId || String(b.company_id) === String(companyId))
+  const departmentOptions = (filterOptions.departments || []).filter((d) =>
+    (!companyId || String(d.company_id) === String(companyId)) &&
+    (!branchId || String(d.branch_id) === String(branchId)))
 
   const stats = useMemo(() => {
     const eligible = rows.filter((row) => row.eligible_for_paid_leave_pool)
@@ -413,22 +498,22 @@ export default function AdminLeaveCredits() {
   async function submitAdjustment() {
     if (!adjustEmployee || !canAdjust) return
     if (!parsedAmount) {
-      toast.error('Enter a whole number greater than zero.')
+      toast({ title: 'Enter a whole number greater than zero.', variant: 'error' })
       return
     }
     const reason = adjustmentReason.trim()
     if (!reason) {
-      toast.error('A reason is required for the audit trail.')
+      toast({ title: 'A reason is required for the audit trail.', variant: 'error' })
       return
     }
     setAdjustmentSaving(true)
     try {
       await adjustEmployeeLeaveCredits(adjustEmployee.employee_id, { delta: signedDelta, reason })
-      toast.success('Leave credits updated.')
       setAdjustEmployee(null)
       await loadRows()
+      toast({ title: 'Leave credits updated.', description: `${adjustEmployee?.name || 'Employee'} balance adjusted to ${formatNumber(projectedBalance)} credits.`, variant: 'success' })
     } catch (requestError) {
-      toast.error(requestError?.message || 'Failed to update leave credits.')
+      toast({ title: requestError?.message || 'Failed to update leave credits.', variant: 'error' })
     } finally {
       setAdjustmentSaving(false)
     }
@@ -442,7 +527,7 @@ export default function AdminLeaveCredits() {
       const data = await getLeaveCreditHistory(row.employee_id)
       setHistoryData(data)
     } catch (requestError) {
-      toast.error(requestError?.message || 'Failed to load leave credit history.')
+      toast({ title: requestError?.message || 'Failed to load leave credit history.', variant: 'error' })
       setHistoryEmployee(null)
     } finally {
       setHistoryLoading(false)
@@ -476,12 +561,15 @@ export default function AdminLeaveCredits() {
       }
       setScheduleOpen(false)
       const recharged = Number(data?.recharged_employees || 0)
-      toast.success(recharged > 0
-        ? `Recharge schedule saved. ${recharged} employee${recharged === 1 ? '' : 's'} recharged.`
-        : 'Recharge schedule saved.')
+      toast({
+        title: recharged > 0
+          ? `Recharge schedule saved. ${recharged} employee${recharged === 1 ? '' : 's'} recharged.`
+          : 'Recharge schedule saved.',
+        variant: 'success',
+      })
       await loadRows()
     } catch (requestError) {
-      toast.error(requestError?.message || 'Failed to update the recharge schedule.')
+      toast({ title: requestError?.message || 'Failed to update the recharge schedule.', variant: 'error' })
     } finally {
       setScheduleSaving(false)
     }
@@ -575,28 +663,67 @@ export default function AdminLeaveCredits() {
               {filteredRows.length.toLocaleString()} of {rows.length.toLocaleString()} employees
             </p>
           </div>
-          <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-2 @md:flex-row @md:items-center dark:border-white/10 dark:bg-white/[0.025]">
+          <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-2 @2xl:flex-row @2xl:items-center dark:border-white/10 dark:bg-white/[0.025]">
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search employee, code, department, branch, or company"
-                className="h-9 border-border/60 bg-card pl-9 shadow-none dark:border-white/10"
+                className={attendanceFilterInputClass}
               />
             </div>
-            <div className="flex items-center gap-2">
-              <Filter className="hidden size-4 shrink-0 text-muted-foreground @md:block" aria-hidden />
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="h-9 w-full border-border/60 bg-card shadow-none @md:w-52 dark:border-white/10">
-                  <SelectValue placeholder="Filter by status" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Filter className="hidden size-4 shrink-0 text-muted-foreground @lg:block" aria-hidden />
+              <Select value={companyId} onValueChange={setCompanyId}>
+                <SelectTrigger className={cn(attendanceSelectTriggerClass, 'h-9 w-full @2xl:w-44')}>
+                  <SelectValue placeholder="All companies" />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All balances</SelectItem>
-                  <SelectItem value="healthy">Healthy balance</SelectItem>
-                  <SelectItem value="low_balance">Low balance</SelectItem>
-                  <SelectItem value="no_balance">No balance</SelectItem>
-                  <SelectItem value="not_eligible">Not eligible</SelectItem>
+                <SelectContent className={attendanceSelectContentClass}>
+                  {companyOptions.map((option) => (
+                    <SelectItem key={option.id} value={String(option.id)} className={cn(attendanceSelectItemClass, 'gap-2.5 py-2 pl-2 pr-8')}>
+                      <OrgLogo option={option} />
+                      <span className="truncate">{option.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={branchId} onValueChange={setBranchId} disabled={!branchOptions.length}>
+                <SelectTrigger className={cn(attendanceSelectTriggerClass, 'h-9 w-full @2xl:w-44')}>
+                  <SelectValue placeholder="All branches" />
+                </SelectTrigger>
+                <SelectContent className={attendanceSelectContentClass}>
+                  {branchOptions.map((option) => (
+                    <SelectItem key={option.id} value={String(option.id)} className={cn(attendanceSelectItemClass, 'gap-2.5 py-2 pl-2 pr-8')}>
+                      <OrgLogo option={option} />
+                      <span className="truncate">{option.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={departmentId} onValueChange={setDepartmentId} disabled={!departmentOptions.length}>
+                <SelectTrigger className={cn(attendanceSelectTriggerClass, 'h-9 w-full @2xl:w-48')}>
+                  <SelectValue placeholder="All departments" />
+                </SelectTrigger>
+                <SelectContent className={attendanceSelectContentClass}>
+                  {departmentOptions.map((option) => (
+                    <SelectItem key={option.id} value={String(option.id)} className={cn(attendanceSelectItemClass, 'gap-2.5 py-2 pl-2 pr-8')}>
+                      <OrgLogo option={option} />
+                      <span className="truncate">{option.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className={cn(attendanceSelectTriggerClass, 'h-9 w-full @2xl:w-40')}>
+                  <SelectValue placeholder="All balances" />
+                </SelectTrigger>
+                <SelectContent className={attendanceSelectContentClass}>
+                  <SelectItem value="all" className={attendanceSelectItemClass}>All balances</SelectItem>
+                  <SelectItem value="healthy" className={attendanceSelectItemClass}>Healthy balance</SelectItem>
+                  <SelectItem value="low_balance" className={attendanceSelectItemClass}>Low balance</SelectItem>
+                  <SelectItem value="no_balance" className={attendanceSelectItemClass}>No balance</SelectItem>
+                  <SelectItem value="not_eligible" className={attendanceSelectItemClass}>Not eligible</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -612,15 +739,15 @@ export default function AdminLeaveCredits() {
 
         <CardContent className="p-0">
           <div className="hidden overflow-x-auto md:block">
-            <Table className="min-w-[1030px] table-fixed text-xs">
+            <Table className="min-w-[1200px] table-fixed text-sm">
               <colgroup>
+                <col className="w-[22%]" />
                 <col className="w-[20%]" />
-                <col className="w-[20%]" />
-                <col className="w-[18%]" />
+                <col className="w-[16%]" />
                 <col className="w-[17%]" />
-                <col className="w-[9%]" />
-                <col className="w-[12%]" />
-                <col className="w-[10%]" />
+                <col className="w-[8%]" />
+                <col className="w-[11%]" />
+                <col className="w-[6%]" />
               </colgroup>
               <TableHeader>
                 <TableRow className="border-b border-border/70 bg-muted/30 hover:bg-muted/30 dark:border-white/10 dark:bg-white/[0.035]">
@@ -645,22 +772,20 @@ export default function AdminLeaveCredits() {
                   visibleRows.map((row, rowIndex) => (
                     <TableRow key={row.employee_id} className={cn('border-b border-border/55 transition-colors hover:bg-brand/[0.035] dark:border-white/8 dark:hover:bg-white/[0.035]', rowIndex % 2 ? 'bg-muted/[0.18] dark:bg-white/[0.012]' : 'bg-card')}>
                       <TableCell className="px-3 py-3.5 align-middle">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-[11px] font-bold text-brand ring-1 ring-brand/15">
-                            {String(row.name || '?').trim().charAt(0).toUpperCase()}
-                          </span>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <EmployeeAvatar row={row} className="size-9 text-[11px]" />
                           <div className="min-w-0">
                             <p className="truncate font-semibold text-foreground">{row.name || 'Unnamed employee'}</p>
-                            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{row.employee_code || `Employee #${row.employee_id}`}</p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">{row.employee_code || `Employee #${row.employee_id}`}</p>
                           </div>
                         </div>
                       </TableCell>
                       <TableCell className="px-3 py-3.5 align-middle">
                         <div className="flex min-w-0 items-start gap-2">
-                          <Building2 className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                          <Building2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
                           <div className="min-w-0">
                             <p className="truncate text-foreground">{row.department_name || 'No department'}</p>
-                            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{[row.branch_name, row.company_name].filter(Boolean).join(' / ') || 'No branch or company'}</p>
+                            <p className="mt-0.5 truncate text-xs text-muted-foreground">{[row.branch_name, row.company_name].filter(Boolean).join(' / ') || 'No branch or company'}</p>
                           </div>
                         </div>
                       </TableCell>
@@ -668,7 +793,7 @@ export default function AdminLeaveCredits() {
                         <Badge variant={row.eligible_for_paid_leave_pool ? 'outline' : 'secondary'} className={cn('text-[10px] font-semibold', row.eligible_for_paid_leave_pool && 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300')}>
                           {row.eligible_for_paid_leave_pool ? 'Eligible' : 'Not eligible'}
                         </Badge>
-                        <p className="mt-1 max-w-44 truncate text-[10px] text-muted-foreground" title={row.status_summary || undefined}>
+                        <p className="mt-1 max-w-48 truncate text-xs text-muted-foreground" title={row.status_summary || undefined}>
                           {row.eligible_for_paid_leave_pool ? `Service date: ${formatDate(row.service_anchor_date || row.hire_date)}` : 'Regular status + 1 year required'}
                         </p>
                       </TableCell>
@@ -677,7 +802,7 @@ export default function AdminLeaveCredits() {
                         <span className={cn('font-semibold', Number(row.pending_reserved_days) > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground')}>
                           {formatNumber(row.pending_reserved_days)}
                         </span>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">days</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">days</p>
                       </TableCell>
                       <TableCell className="px-3 py-3.5 align-middle"><StatusBadge row={row} /></TableCell>
                       <TableCell className="px-3 py-3.5 text-right align-middle">
@@ -709,10 +834,8 @@ export default function AdminLeaveCredits() {
               visibleRows.map((row) => (
                 <div key={row.employee_id} className="space-y-4 p-4 transition-colors active:bg-muted/30">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-xs font-bold text-brand ring-1 ring-brand/15">
-                        {String(row.name || '?').trim().charAt(0).toUpperCase()}
-                      </span>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <EmployeeAvatar row={row} className="size-10 text-xs" />
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-foreground">{row.name || 'Unnamed employee'}</p>
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">{row.employee_code || `Employee #${row.employee_id}`}</p>
@@ -754,7 +877,7 @@ export default function AdminLeaveCredits() {
       </Card>
 
       <Dialog open={scheduleOpen} onOpenChange={(open) => !open && !scheduleSaving && setScheduleOpen(false)}>
-        <DialogContent className={appModalDialogContentClass({ size: 'sm' })} innerClassName={APP_MODAL_INNER_FLUSH}>
+        <DialogContent className={appModalDialogContentClass({ size: 'sm', className: 'max-w-[min(100vw-1.25rem,40rem)] sm:max-w-[min(100vw-2rem,40rem)]' })} innerClassName={APP_MODAL_INNER_FLUSH}>
           <AppModalHeader className="bg-brand/[0.035]">
             <div className="flex items-start gap-3">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-brand/15">
@@ -781,12 +904,18 @@ export default function AdminLeaveCredits() {
               <div className="space-y-2">
                 <Label htmlFor="leave-recharge-month" className="text-sm font-semibold">Month</Label>
                 <Select value={scheduleMonth} onValueChange={handleScheduleMonthChange}>
-                  <SelectTrigger id="leave-recharge-month" className="h-11 border-border/70 bg-card shadow-none">
+                  <SelectTrigger
+                    id="leave-recharge-month"
+                    className="data-[size=default]:h-12 h-12 w-full rounded-xl border-border/70 bg-card px-4 text-sm font-semibold shadow-sm transition-colors hover:border-brand/40 hover:bg-muted/40 focus-visible:border-brand focus-visible:ring-brand/15 dark:bg-input/30 dark:hover:bg-input/50 [&_svg:not([class*='text-'])]:text-brand/70"
+                  >
+                    <CalendarDays className="size-4" aria-hidden />
                     <SelectValue placeholder="Select month" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-xl border-brand/10 p-1.5 shadow-lg">
                     {RECHARGE_MONTHS.map((month, index) => (
-                      <SelectItem key={month} value={String(index + 1)}>{month}</SelectItem>
+                      <SelectItem key={month} value={String(index + 1)} className="rounded-lg py-2.5 pl-3 pr-8 text-sm font-medium focus:bg-brand/[0.08] focus:text-foreground">
+                        {month}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -795,12 +924,18 @@ export default function AdminLeaveCredits() {
               <div className="space-y-2">
                 <Label htmlFor="leave-recharge-day" className="text-sm font-semibold">Day</Label>
                 <Select value={scheduleDay} onValueChange={setScheduleDay}>
-                  <SelectTrigger id="leave-recharge-day" className="h-11 border-border/70 bg-card shadow-none">
+                  <SelectTrigger
+                    id="leave-recharge-day"
+                    className="data-[size=default]:h-12 h-12 w-full rounded-xl border-border/70 bg-card px-4 text-sm font-semibold shadow-sm transition-colors hover:border-brand/40 hover:bg-muted/40 focus-visible:border-brand focus-visible:ring-brand/15 dark:bg-input/30 dark:hover:bg-input/50 [&_svg:not([class*='text-'])]:text-brand/70"
+                  >
+                    <Hash className="size-4" aria-hidden />
                     <SelectValue placeholder="Select day" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="rounded-xl border-brand/10 p-1.5 shadow-lg">
                     {Array.from({ length: daysInMonth(scheduleMonth) }, (_, index) => index + 1).map((day) => (
-                      <SelectItem key={day} value={String(day)}>{day}</SelectItem>
+                      <SelectItem key={day} value={String(day)} className="rounded-lg py-2.5 pl-3 pr-8 text-sm font-semibold tabular-nums focus:bg-brand/[0.08] focus:text-foreground">
+                        {String(day).padStart(2, '0')}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

@@ -1935,17 +1935,69 @@ class ReportsController extends Controller
 
             return response()->json(['message' => 'Forbidden.'], 403);
         }
-        $query = User::query()
+        $baseQuery = User::query()
             ->reportableEmployees()
             ->active()
             ->with([
-                'departmentRelation:id,name',
-                'company:id,name',
-                'branch:id,name',
+                'departmentRelation:id,name,company_id,branch_id',
+                'departmentRelation.company:id,name,logo',
+                'company:id,name,logo',
+                'branch:id,name,company_id',
+                'branch.company:id,name,logo',
             ])
             ->orderByLastName();
         if ($scopedEmployeeIds !== null) {
-            $query->whereIn('id', $scopedEmployeeIds);
+            $baseQuery->whereIn('id', $scopedEmployeeIds);
+        }
+
+        // Full-scope option lists (before org filters) so the dropdowns always reflect
+        // every company / branch / department available to the viewer.
+        $scopeUsers = (clone $baseQuery)->get([
+            'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',
+            'leave_credits', 'employment_status', 'hire_date',
+        ]);
+        $companies = $scopeUsers
+            ->filter(fn (User $u) => $u->company !== null)
+            ->map(fn (User $u) => [
+                'id' => (int) $u->company->id,
+                'name' => $u->company->name,
+                'logo_url' => $this->companyLogoUrl($u->company->logo),
+            ])
+            ->unique('id')->sortBy('name')->values()->all();
+        $branches = $scopeUsers
+            ->filter(fn (User $u) => $u->branch !== null)
+            ->map(fn (User $u) => [
+                'id' => (int) $u->branch->id,
+                'name' => $u->branch->name,
+                'company_id' => $u->branch->company_id !== null ? (int) $u->branch->company_id : null,
+                'logo_url' => $this->companyLogoUrl($u->branch->company?->logo),
+            ])
+            ->unique('id')->sortBy('name')->values()->all();
+        $departments = $scopeUsers
+            ->filter(fn (User $u) => $u->departmentRelation !== null)
+            ->map(fn (User $u) => [
+                'id' => (int) $u->departmentRelation->id,
+                'name' => $u->departmentRelation->name,
+                'company_id' => $u->departmentRelation->company_id !== null ? (int) $u->departmentRelation->company_id : null,
+                'branch_id' => $u->departmentRelation->branch_id !== null ? (int) $u->departmentRelation->branch_id : null,
+                'logo_url' => $this->companyLogoUrl($u->departmentRelation->company?->logo),
+            ])
+            ->unique('id')->sortBy('name')->values()->all();
+
+        // Server-side organization filters.
+        $companyId = $request->integer('company_id');
+        $branchId = $request->integer('branch_id');
+        $departmentId = $request->integer('department_id');
+
+        $query = clone $baseQuery;
+        if ($companyId) {
+            $query->where('company_id', $companyId);
+        }
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+        if ($departmentId) {
+            $query->where('department_id', $departmentId);
         }
         $users = $query->get([
             'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',
@@ -1977,6 +2029,7 @@ class ReportsController extends Controller
                 'employee_id' => $u->id,
                 'employee_code' => $u->employee_code,
                 'name' => $u->name,
+                'avatar_url' => $u->profile_image_url,
                 'department_name' => $u->departmentRelation?->name,
                 'company_name' => $u->company?->name,
                 'branch_name' => $u->branch?->name,
@@ -2002,6 +2055,11 @@ class ReportsController extends Controller
         return response()->json([
             'annual_allocation' => $annual,
             'recharge_schedule' => LeaveCreditService::rechargeScheduleApiPayload(),
+            'filters' => [
+                'companies' => $companies,
+                'branches' => $branches,
+                'departments' => $departments,
+            ],
             'employees' => $employees,
         ]);
     }
@@ -2186,5 +2244,25 @@ class ReportsController extends Controller
             'scoped_employee_ids' => null,
             'forbidden_reason' => $reason,
         ]);
+    }
+
+    /** Public media URL for a stored company logo (null-safe). */
+    private function companyLogoUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+        $normalized = trim($path);
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            return $normalized;
+        }
+        $normalized = ltrim($normalized, '/');
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+        $segments = explode('/', $normalized);
+        $encoded = array_map(static fn (string $segment) => rawurlencode($segment), $segments);
+
+        return '/api/media/public/'.implode('/', $encoded);
     }
 }

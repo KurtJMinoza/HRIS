@@ -133,7 +133,7 @@ class LeaveCreditService
         return $date->day(min($maxDay, $schedule['reset_day']))->startOfDay();
     }
 
-    public static function nextAnnualResetDate(?Carbon\CarbonInterface $lastResetDate = null): Carbon
+    public static function nextAnnualResetDate(?\Carbon\CarbonInterface $lastResetDate = null): Carbon
     {
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
         $today = Carbon::now($tz)->startOfDay();

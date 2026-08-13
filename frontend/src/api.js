@@ -7487,8 +7487,13 @@ export async function adjustEmployeeLeaveCredits(employeeId, body) {
 }
 
 /** HR reports: leave credit balances per scoped employee. */
-export async function getLeaveCreditsReport() {
-  const res = await authenticatedFetch('/admin/reports/leave-credits')
+export async function getLeaveCreditsReport(params = {}) {
+  const query = new URLSearchParams()
+  if (params?.companyId) query.set('company_id', params.companyId)
+  if (params?.branchId) query.set('branch_id', params.branchId)
+  if (params?.departmentId) query.set('department_id', params.departmentId)
+  const qs = query.toString()
+  const res = await authenticatedFetch(`/admin/reports/leave-credits${qs ? `?${qs}` : ''}`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load leave credits report')
   return data
