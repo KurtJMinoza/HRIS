@@ -176,6 +176,23 @@ function EmploymentTypeSelector({ idPrefix, options, selected, loading, onChange
   )
 }
 
+function EmploymentRuleGroup({ idPrefix, title, mode, selected, options, loading, onModeChange, onTypesChange }) {
+  return (
+    <div className="space-y-2">
+      <PolicySelect id={`${idPrefix}-rule`} label={title} value={mode} options={WORKED_EMPLOYMENT_TYPE_OPTIONS} onChange={onModeChange} />
+      {mode === 'selected_employment_types' ? (
+        <EmploymentTypeSelector
+          idPrefix={idPrefix}
+          options={options}
+          selected={selected}
+          loading={loading}
+          onChange={onTypesChange}
+        />
+      ) : null}
+    </div>
+  )
+}
+
 function HolidayChecklist({ idPrefix, title, holidays, selected, loading, onChange }) {
   const availableIds = new Set(holidays.map((holiday) => Number(holiday.id)))
   const selectedIds = selected.map(Number).filter((id) => availableIds.has(id))
@@ -295,12 +312,6 @@ export function HolidayPayPolicyCard({
       ? 'ignore_coverage'
       : 'respect_coverage'
 
-  const unworkedEmploymentValue =
-    holidayPolicy.regular_unworked.employment_type_mode === 'selected_employment_types' ||
-    holidayPolicy.special_unworked.employment_type_mode === 'selected_employment_types'
-      ? 'selected_employment_types'
-      : 'all_employment_types'
-
   const workedEmploymentValue =
     holidayPolicy.regular_worked.employment_type_rule === 'selected_employment_types' ||
     holidayPolicy.special_worked.employment_type_rule === 'selected_employment_types'
@@ -347,26 +358,12 @@ export function HolidayPayPolicyCard({
     )
   }
 
-  const setUnworkedEmploymentTypes = (value) => {
-    setBoth([
-      [['regular_unworked', 'eligible_employment_types'], value],
-      [['special_unworked', 'eligible_employment_types'], value],
-    ])
-  }
-
   const setWorkedEmploymentTypes = (value) => {
     setBoth([
       [['regular_worked', 'eligible_employment_types'], value],
       [['special_worked', 'eligible_employment_types'], value],
     ])
   }
-
-  const selectedUnworkedEmploymentTypes = Array.from(
-    new Set([
-      ...holidayPolicy.regular_unworked.eligible_employment_types,
-      ...holidayPolicy.special_unworked.eligible_employment_types,
-    ]),
-  )
 
   const selectedWorkedEmploymentTypes = Array.from(
     new Set([
@@ -541,7 +538,7 @@ export function HolidayPayPolicyCard({
 
         <PolicyStepSection number="3." title="Unworked pay rules">
           <div className="grid gap-5 lg:grid-cols-[1fr_0.9fr]">
-            <div className="space-y-3">
+            <div className="space-y-4">
               <PolicySelect
                 id="regular-unworked-policy"
                 label="Regular holiday pay policy"
@@ -549,27 +546,32 @@ export function HolidayPayPolicyCard({
                 options={REGULAR_UNWORKED_OPTIONS}
                 onChange={(value) => onPolicyChange(['regular_unworked', 'holiday_selection_mode'], value)}
               />
-              <PolicySelect
-                id="unworked-employment-rule"
-                label="Employment type rule"
-                value={unworkedEmploymentValue}
-                options={WORKED_EMPLOYMENT_TYPE_OPTIONS}
-                onChange={(value) =>
-                  setBoth([
-                    [['regular_unworked', 'employment_type_mode'], value],
-                    [['special_unworked', 'employment_type_mode'], value],
-                  ])
-                }
-              />
-              {unworkedEmploymentValue === 'selected_employment_types' ? (
-                <EmploymentTypeSelector
-                  idPrefix="unworked-employment-type"
+
+              <div className="space-y-3 border-t border-border/60 pt-4">
+                <EmploymentRuleGroup
+                  idPrefix="regular-unworked-employment-type"
+                  title="Regular working holiday — employment types"
+                  mode={holidayPolicy.regular_unworked.employment_type_mode}
+                  selected={holidayPolicy.regular_unworked.eligible_employment_types}
                   options={employmentTypes}
-                  selected={selectedUnworkedEmploymentTypes}
                   loading={employmentTypesLoading}
-                  onChange={setUnworkedEmploymentTypes}
+                  onModeChange={(value) => onPolicyChange(['regular_unworked', 'employment_type_mode'], value)}
+                  onTypesChange={(value) => onPolicyChange(['regular_unworked', 'eligible_employment_types'], value)}
                 />
-              ) : null}
+                {specialUnworkedEnabled ? (
+                  <EmploymentRuleGroup
+                    idPrefix="special-unworked-employment-type"
+                    title="Special non-working holiday — employment types"
+                    mode={holidayPolicy.special_unworked.employment_type_mode}
+                    selected={holidayPolicy.special_unworked.eligible_employment_types}
+                    options={employmentTypes}
+                    loading={employmentTypesLoading}
+                    onModeChange={(value) => onPolicyChange(['special_unworked', 'employment_type_mode'], value)}
+                    onTypesChange={(value) => onPolicyChange(['special_unworked', 'eligible_employment_types'], value)}
+                  />
+                ) : null}
+              </div>
+
               <CoverageBehaviourCards
                 idPrefix="unworked-coverage-behaviour"
                 value={unworkedCoverageValue}
