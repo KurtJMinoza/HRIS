@@ -317,10 +317,11 @@ class LeaveController extends Controller
     {
         $validated = $request->validate([
             'user_id' => ['required', 'integer', 'exists:users,id'],
-            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other'],
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,half_day,undertime'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'half_type' => ['nullable', 'string', 'in:am,pm'],
+            'undertime_time' => ['nullable', 'date_format:H:i'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'bypass_rest_days' => ['sometimes', 'boolean'],
             'rest_day_bypass_reason' => ['required_if:bypass_rest_days,true', 'nullable', 'string', 'min:10', 'max:2000'],
@@ -355,6 +356,16 @@ class LeaveController extends Controller
             if (empty($validated['half_type'])) {
                 return response()->json([
                     'message' => 'Half day type (AM or PM) is required.',
+                ], 422);
+            }
+        }
+
+        if ($validated['type'] === 'undertime') {
+            // Undertime is time-based and must always be a single calendar date.
+            $validated['end_date'] = $validated['start_date'];
+            if (empty($validated['undertime_time'])) {
+                return response()->json([
+                    'message' => 'Approved early-out time is required for undertime leave.',
                 ], 422);
             }
         }
@@ -424,6 +435,7 @@ class LeaveController extends Controller
             'start_date' => $validated['start_date'],
             'end_date' => $validated['end_date'],
             'half_type' => $validated['type'] === 'half_day' ? ($validated['half_type'] ?? null) : null,
+            'undertime_time' => $validated['type'] === 'undertime' ? ($validated['undertime_time'] ?? null) : null,
             'notes' => $validated['notes'] ?? null,
             'status' => LeaveRequest::STATUS_PENDING,
             'approval_stage' => $stage,

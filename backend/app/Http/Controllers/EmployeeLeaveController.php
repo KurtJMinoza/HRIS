@@ -599,7 +599,7 @@ class EmployeeLeaveController extends Controller
         $user = $this->refreshUserForScheduleCheck($request->user());
 
         $validated = $request->validate([
-            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other'],
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,half_day,undertime'],
             'start_date' => ['required', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'except_leave_request_id' => ['nullable', 'integer'],
@@ -700,7 +700,7 @@ class EmployeeLeaveController extends Controller
         }
 
         $validated = $request->validate([
-            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other'],
+            'type' => ['required', 'string', 'max:50', 'in:vacation,sick,emergency,other,half_day,undertime'],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'undertime_time' => ['nullable', 'date_format:H:i'],

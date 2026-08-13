@@ -129,6 +129,29 @@ class LeaveCreditServiceConsultantTest extends TestCase
         $this->assertFalse($service->eligibleForPaidLeavePool($regular));
     }
 
+    public function test_half_day_bills_half_a_credit(): void
+    {
+        $service = $this->service(allowPaidLeave: true);
+
+        $this->assertSame(0.5, $service->billableCreditDaysFromFields('half_day', '2026-08-10', '2026-08-10'));
+        $this->assertSame(0.5, $service->billableCreditDaysFromFields('HALF_DAY', '2026-08-10', '2026-08-12'));
+    }
+
+    public function test_full_day_leave_bills_one_credit_per_day(): void
+    {
+        $service = $this->service(allowPaidLeave: true);
+
+        $this->assertSame(3.0, $service->billableCreditDaysFromFields('vacation', '2026-08-10', '2026-08-12'));
+        $this->assertSame(1.0, $service->billableCreditDaysFromFields('sick', '2026-08-10', '2026-08-10'));
+    }
+
+    public function test_undertime_bills_no_credits(): void
+    {
+        $service = $this->service(allowPaidLeave: true);
+
+        $this->assertSame(0.0, $service->billableCreditDaysFromFields('undertime', '2026-08-10', '2026-08-10'));
+    }
+
     private function service(bool $allowPaidLeave): LeaveCreditService
     {
         $resolver = $this->createMock(EmploymentPayrollPolicyResolver::class);

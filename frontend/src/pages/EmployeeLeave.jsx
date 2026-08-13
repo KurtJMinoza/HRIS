@@ -173,7 +173,7 @@ function computeLeaveDurationDays(leave) {
 function billableCreditDaysForForm(form) {
   const t = String(form?.type || '').toLowerCase()
   if (t === 'undertime') return 0
-  if (t === 'half_day') return 1
+  if (t === 'half_day') return 0.5
   if (!form?.start_date || !form?.end_date) return 0
   const s = new Date(`${form.start_date}T12:00:00`)
   const e = new Date(`${form.end_date}T12:00:00`)

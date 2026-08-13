@@ -127,6 +127,7 @@ const LEAVE_TYPES = [
   { value: 'vacation', label: 'Vacation' },
   { value: 'sick', label: 'Sick' },
   { value: 'emergency', label: 'Emergency' },
+  { value: 'half_day', label: 'Half day' },
   { value: 'other', label: 'Other' },
 ]
 
@@ -205,7 +206,7 @@ const leaveFileModalCloseClass =
 function billableCreditDaysForForm(form) {
   const t = String(form?.type || '').toLowerCase()
   if (t === 'undertime') return 0
-  if (t === 'half_day') return 1
+  if (t === 'half_day') return 0.5
   if (!form?.start_date || !form?.end_date) return 0
   const s = new Date(`${form.start_date}T12:00:00`)
   const e = new Date(`${form.end_date}T12:00:00`)
@@ -2639,7 +2640,15 @@ export default function AdminLeave() {
                   <select
                     id="add-type"
                     value={addForm.type}
-                    onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value }))}
+                    onChange={(e) => {
+                      const t = e.target.value
+                      setAddForm((f) => ({
+                        ...f,
+                        type: t,
+                        end_date: t === 'half_day' ? f.start_date : f.end_date,
+                        half_type: t === 'half_day' ? f.half_type : '',
+                      }))
+                    }}
                     className={adminLeaveModalSelectClass}
                   >
                     {LEAVE_TYPES.map((t) => (
@@ -2659,8 +2668,8 @@ export default function AdminLeave() {
                       required
                     >
                       <option value="">Select option</option>
-                      <option value="am">AM Half Day (work morning, leave afternoon)</option>
-                      <option value="pm">PM Half Day (leave morning, work afternoon)</option>
+                      <option value="am">AM Half Day (leave morning, work afternoon)</option>
+                      <option value="pm">PM Half Day (work morning, leave afternoon)</option>
                     </select>
                   </div>
                 ) : null}
@@ -2674,8 +2683,15 @@ export default function AdminLeave() {
                         id="add-start"
                         type="date"
                         required
-                        value={addForm.start_date}
-                        onChange={(e) => setAddForm((f) => ({ ...f, start_date: e.target.value }))}
+value={addForm.start_date}
+                      onChange={(e) => {
+                        const d = e.target.value
+                        setAddForm((f) => ({
+                          ...f,
+                          start_date: d,
+                          end_date: f.type === 'half_day' ? d : f.end_date,
+                        }))
+                      }}
                         className={cn(adminLeaveModalFieldClass, 'h-[3.75rem] px-3 pb-2.5 pt-6 sm:h-[4.25rem] sm:px-4 sm:pb-3 sm:pt-7 [color-scheme:light] dark:[color-scheme:dark]')}
                       />
                     </div>

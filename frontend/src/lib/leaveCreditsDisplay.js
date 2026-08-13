@@ -41,7 +41,7 @@ function pluralCreditLabel(value) {
 
 function inferredCreditDaysFromLeave(leave) {
   const type = String(leave?.type || '').toLowerCase()
-  if (type === 'half_day') return 1
+  if (type === 'half_day') return 0.5
 
   const durationMatch = String(leave?.duration || '').match(/(\d+(?:\.\d+)?)/)
   if (durationMatch) {

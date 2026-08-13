@@ -34,6 +34,11 @@ class LeaveCreditTransaction extends Model
         'leave_type_context',
     ];
 
+    protected $casts = [
+        'delta' => 'float',
+        'balance_after' => 'float',
+    ];
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

@@ -4011,8 +4011,7 @@ class PayrollComputationService
                 $d = $cursor->toDateString();
                 if ($d >= $from->toDateString() && $d <= $to->toDateString()) {
                     $k = $leave->user_id.'|'.$d;
-                    $halfRaw = is_string($leave->half_type) ? strtolower(trim($leave->half_type)) : '';
-                    $dayFraction = ($halfRaw !== '' && str_contains($halfRaw, 'half')) ? 0.5 : 1.0;
+                    $dayFraction = ((string) $leave->type === 'half_day') ? 0.5 : 1.0;
                     $leaveItemsByUserDate[$k][] = [
                         'id' => $leave->id,
                         'type' => (string) ($leave->type ?? 'leave'),
@@ -4021,8 +4020,8 @@ class PayrollComputationService
                         'end_date' => $leave->end_date->toDateString(),
                         'half_type' => $leave->half_type ? (string) $leave->half_type : null,
                         'notes' => is_string($leave->notes) && trim($leave->notes) !== '' ? mb_substr(trim($leave->notes), 0, 480) : null,
-                        'leave_credits_charged' => $leave->leave_credits_charged !== null ? (int) $leave->leave_credits_charged : null,
-                        'leave_unpaid_credit_days' => $leave->leave_unpaid_credit_days !== null ? (int) $leave->leave_unpaid_credit_days : null,
+                        'leave_credits_charged' => $leave->leave_credits_charged !== null ? (float) $leave->leave_credits_charged : null,
+                        'leave_unpaid_credit_days' => $leave->leave_unpaid_credit_days !== null ? (float) $leave->leave_unpaid_credit_days : null,
                         'pending_approval' => (bool) $leave->pending_approval,
                         'day_fraction' => $dayFraction,
                         'request_span_days' => $totalSpanDays,

@@ -324,7 +324,7 @@ class LeaveCreditService
         return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::ProjectBased;
     }
 
-    public function billableCreditDays(LeaveRequest $leave): int
+    public function billableCreditDays(LeaveRequest $leave): float
     {
         $user = User::query()->find($leave->user_id);
         if (! $user) {
@@ -337,7 +337,7 @@ class LeaveCreditService
     /**
      * Credit-consuming days from the employee schedule (excludes scheduled rest days in range).
      */
-    public function billableCreditDaysForUser(User $user, string $type, $startDate, $endDate): int
+    public function billableCreditDaysForUser(User $user, string $type, $startDate, $endDate): float
     {
         $t = strtolower(trim($type));
         if ($t === 'undertime') {
@@ -349,13 +349,13 @@ class LeaveCreditService
         $startStr = $startDate instanceof Carbon ? $startDate->toDateString() : (string) $startDate;
         $endStr = $endDate instanceof Carbon ? $endDate->toDateString() : (string) $endDate;
         if ($t === 'half_day') {
-            return in_array($startStr, $this->billableWorkingDatesForUser($user, $startStr, $startStr), true) ? 1 : 0;
+            return in_array($startStr, $this->billableWorkingDatesForUser($user, $startStr, $startStr), true) ? 0.5 : 0.0;
         }
 
         return count($this->billableWorkingDatesForUser($user, $startStr, $endStr));
     }
 
-    public function billableCreditDaysFromFields(string $type, $startDate, $endDate): int
+    public function billableCreditDaysFromFields(string $type, $startDate, $endDate): float
     {
         $t = strtolower(trim($type));
         if ($t === 'undertime') {
@@ -365,7 +365,7 @@ class LeaveCreditService
             return 0;
         }
         if ($t === 'half_day') {
-            return 1;
+            return 0.5;
         }
         $start = $startDate instanceof Carbon ? $startDate->copy()->startOfDay() : Carbon::parse((string) $startDate)->startOfDay();
         $end = $endDate instanceof Carbon ? $endDate->copy()->startOfDay() : Carbon::parse((string) $endDate)->startOfDay();
@@ -424,7 +424,7 @@ class LeaveCreditService
         $scheduledReset = self::annualResetDateForYear($today->year, $tz);
 
         // Ineligible with a positive pool still needs normalize under lock.
-        if (! $this->eligibleForPaidLeavePool($user) && (int) $user->leave_credits > 0) {
+        if (! $this->eligibleForPaidLeavePool($user) && (float) $user->leave_credits > 0) {
             return false;
         }
 
@@ -497,7 +497,7 @@ class LeaveCreditService
         }
 
         $allocation = self::annualAllocation();
-        $prev = (int) $locked->leave_credits;
+        $prev = (float) $locked->leave_credits;
         $eligible = $this->eligibleForPaidLeavePool($locked);
         $newBalance = $eligible ? $allocation : 0;
         $locked->leave_credits = $newBalance;
@@ -530,7 +530,7 @@ class LeaveCreditService
         if ($this->eligibleForPaidLeavePool($locked)) {
             return false;
         }
-        $current = (int) $locked->leave_credits;
+        $current = (float) $locked->leave_credits;
         if ($current <= 0) {
             return false;
         }
@@ -574,7 +574,7 @@ class LeaveCreditService
             return false;
         }
 
-        $current = (int) $locked->leave_credits;
+        $current = (float) $locked->leave_credits;
         if ($current >= $allocation) {
             return false;
         }
@@ -690,7 +690,7 @@ class LeaveCreditService
                 return;
             }
             $allocation = self::annualAllocation();
-            $prev = (int) $locked->leave_credits;
+            $prev = (float) $locked->leave_credits;
             if ($prev === $allocation) {
                 return;
             }
@@ -710,7 +710,7 @@ class LeaveCreditService
         });
     }
 
-    public function getAvailableCredits(int $userId): int
+    public function getAvailableCredits(int $userId): float
     {
         $this->ensureAnnualRechargeForUserId($userId);
         $user = User::query()->find($userId);
@@ -718,14 +718,14 @@ class LeaveCreditService
             return 0;
         }
 
-        return (int) ($user->leave_credits ?? 0);
+        return (float) ($user->leave_credits ?? 0);
     }
 
     /**
      * Sum billable credit days for pending leave (excludes a specific request id when editing flow).
      * Pending requests from employees without a paid pool do not reserve credits.
      */
-    public function sumPendingBillableDays(int $userId, ?int $exceptLeaveRequestId = null): int
+    public function sumPendingBillableDays(int $userId, ?int $exceptLeaveRequestId = null): float
     {
         $user = User::query()
             ->select(['id', 'employment_status', 'hire_date', 'leave_credits'])
@@ -743,12 +743,12 @@ class LeaveCreditService
             $q->where('id', '!=', $exceptLeaveRequestId);
         }
 
-        return (int) $q->get()->sum(
+        return (float) $q->get()->sum(
             fn (LeaveRequest $l) => $this->billableCreditDaysForUser($user, (string) $l->type, $l->start_date, $l->end_date)
         );
     }
 
-    public function getEffectiveAvailableForNewRequest(int $userId, int $newRequestDays, ?int $exceptLeaveRequestId = null): int
+    public function getEffectiveAvailableForNewRequest(int $userId, int $newRequestDays, ?int $exceptLeaveRequestId = null): float
     {
         return $this->getAvailableCredits($userId) - $this->sumPendingBillableDays($userId, $exceptLeaveRequestId) - $newRequestDays;
     }
@@ -771,10 +771,11 @@ class LeaveCreditService
 
         $billable = $this->billableCreditDaysForUser($user, $type, $startDate, $endDate);
         $consumes = $this->consumesCredits($type);
+        $isHalfDay = strtolower(trim($type)) === 'half_day';
 
         $annual = self::annualAllocation();
         $eligible = $this->eligibleForPaidLeavePool($user);
-        $remaining = $eligible ? (int) ($user->leave_credits ?? 0) : 0;
+        $remaining = $eligible ? (float) ($user->leave_credits ?? 0) : 0;
         $pendingReserved = $this->sumPendingBillableDays((int) $user->id, $exceptLeaveRequestId);
         $effectiveAvailable = max(0, $remaining - $pendingReserved);
 
@@ -804,18 +805,26 @@ class LeaveCreditService
                 $messageDetail = 'Paid leave credits apply to Regular employees with one full year since Hire Date, or eligible consultants when paid leave is enabled in Employment policy.';
             }
         } elseif ($paidDays >= $billable && $billable > 0) {
-            $message = 'This leave will be paid using your leave credits.';
-            $messageDetail =
-                $billable === 1
+            $message = $isHalfDay
+                ? 'This half-day leave will be paid using your leave credits.'
+                : 'This leave will be paid using your leave credits.';
+            $messageDetail = $isHalfDay
+                ? 'Half a credit (0.5) will be deducted when the request is approved.'
+                : ($billable === 1
                     ? '1 credit will be deducted when the request is approved.'
-                    : "{$billable} credits will be deducted when the request is approved (one per paid working day).";
+                    : "{$billable} credits will be deducted when the request is approved (one per paid working day).");
         } elseif ($paidDays > 0 && $unpaidDays > 0) {
             $message = 'Part of this leave will be paid; the rest will be unpaid.';
-            $messageDetail =
-                "{$paidDays} day(s) paid from credits; {$unpaidDays} day(s) unpaid (no credits left for those days).";
+            $messageDetail = $isHalfDay
+                ? 'One half-day is paid from your pool; the other half will be unpaid (not enough credits left).'
+                : "{$paidDays} day(s) paid from credits; {$unpaidDays} day(s) unpaid (no credits left for those days).";
         } elseif ($unpaidDays > 0) {
-            $message = 'This leave will be unpaid (no credits left).';
-            $messageDetail = 'Your balance is 0 after pending requests, so no salary is paid for these days.';
+            $message = $isHalfDay
+                ? 'This half-day leave will be unpaid (no credits left).'
+                : 'This leave will be unpaid (no credits left).';
+            $messageDetail = $isHalfDay
+                ? 'Your balance is not enough after pending requests, so this half day will be unpaid.'
+                : 'Your balance is 0 after pending requests, so no salary is paid for these days.';
         }
 
         return [
@@ -865,7 +874,7 @@ class LeaveCreditService
             }
 
             $allocation = self::annualAllocation();
-            $current = (int) $locked->leave_credits;
+            $current = (float) $locked->leave_credits;
             if ($current >= $allocation) {
                 return;
             }
@@ -915,7 +924,7 @@ class LeaveCreditService
             }
 
             $allocation = self::annualAllocation();
-            $current = (int) $locked->leave_credits;
+            $current = (float) $locked->leave_credits;
             if ($current >= $allocation) {
                 if (Schema::hasColumn('users', 'leave_credits_initialized_at')) {
                     $locked->leave_credits_initialized_at = now();
@@ -990,7 +999,7 @@ class LeaveCreditService
             }
 
             $pendingOther = $this->sumPendingBillableDays((int) $leave->user_id, (int) $leave->id);
-            $current = (int) $user->leave_credits;
+            $current = (float) $user->leave_credits;
             $available = max(0, $current - $pendingOther);
 
             // Intended paid working-day slots: normal path respects pending reservations; force path caps at on-hand balance.
@@ -1079,7 +1088,7 @@ class LeaveCreditService
             return true;
         }
 
-        $paidSlots = (int) ($charged ?? 0);
+        $paidSlots = (float) ($charged ?? 0);
         if ($paidSlots <= 0) {
             return false;
         }
@@ -1124,7 +1133,7 @@ class LeaveCreditService
     /**
      * Alias: deduct credits (e.g. manual correction flows).
      */
-    public function deductCredits(int $userId, int $daysUsed, string $leaveType, string $reason, ?User $actor = null): int
+    public function deductCredits(int $userId, int $daysUsed, string $leaveType, string $reason, ?User $actor = null): float
     {
         if ($daysUsed <= 0) {
             throw ValidationException::withMessages([
@@ -1143,7 +1152,7 @@ class LeaveCreditService
                     'leave_credits' => ['Employee is not eligible for paid leave credits.'],
                 ]);
             }
-            $current = (int) $user->leave_credits;
+            $current = (float) $user->leave_credits;
             if ($current < $daysUsed) {
                 throw ValidationException::withMessages([
                     'leave_credits' => ['Insufficient leave credits. Employee has '.$current.' remaining.'],
@@ -1170,12 +1179,12 @@ class LeaveCreditService
         });
     }
 
-    public function addLeaveCredits(int $userId, int $daysAdded, string $reason, ?User $actor = null): int
+    public function addLeaveCredits(int $userId, int $daysAdded, string $reason, ?User $actor = null): float
     {
         return $this->addCredits($userId, $daysAdded, $reason, $actor);
     }
 
-    public function addCredits(int $userId, int $daysAdded, string $reason, ?User $actor = null): int
+    public function addCredits(int $userId, int $daysAdded, string $reason, ?User $actor = null): float
     {
         if ($daysAdded <= 0) {
             throw ValidationException::withMessages([
@@ -1194,7 +1203,7 @@ class LeaveCreditService
                     'leave_credits' => ['Employee is not eligible for paid leave credits; HR adjustment blocked.'],
                 ]);
             }
-            $newBalance = (int) $user->leave_credits + $daysAdded;
+            $newBalance = (float) $user->leave_credits + $daysAdded;
             $user->leave_credits = $newBalance;
             $user->save();
 
@@ -1218,7 +1227,7 @@ class LeaveCreditService
     /**
      * HR manual adjustment (positive or negative delta).
      */
-    public function adjustLeaveCredits(int $userId, int $signedDelta, string $reason, ?User $actor = null): int
+    public function adjustLeaveCredits(int $userId, float $signedDelta, string $reason, ?User $actor = null): float
     {
         if ($signedDelta === 0) {
             throw ValidationException::withMessages([
@@ -1237,7 +1246,7 @@ class LeaveCreditService
                     'leave_credits' => ['Employee is not eligible for paid leave credits; HR adjustment blocked.'],
                 ]);
             }
-            $newBalance = max(0, (int) $user->leave_credits + $signedDelta);
+            $newBalance = max(0, (float) $user->leave_credits + $signedDelta);
             $user->leave_credits = $newBalance;
             $user->save();
 
@@ -1368,7 +1377,7 @@ class LeaveCreditService
                 $consultant = $this->isConsultantEmployment($user);
                 $consultantPaidLeavePolicy = $consultant && $this->consultantPaidLeaveAllowedByPolicy($user);
                 $oneYear = $this->hasCompletedOneYearOfService($user);
-                $remaining = $eligible ? (int) ($user->leave_credits ?? 0) : 0;
+                $remaining = $eligible ? (float) ($user->leave_credits ?? 0) : 0;
                 // Keep profile card hot-path lightweight by default: pending-reserved
                 // calculation scans pending leave requests and is deferred unless explicitly requested.
                 $pendingReserved = $includePendingReservedDays ? $this->sumPendingBillableDays((int) $user->id) : 0;

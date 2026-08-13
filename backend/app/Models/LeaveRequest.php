@@ -75,8 +75,8 @@ class LeaveRequest extends Model
             'second_approved_at' => 'datetime',
             'rejected_at' => 'datetime',
             'document_paths' => 'array',
-            'leave_credits_charged' => 'integer',
-            'leave_unpaid_credit_days' => 'integer',
+            'leave_credits_charged' => 'float',
+            'leave_unpaid_credit_days' => 'float',
             'rest_day_bypass' => 'boolean',
             'rest_day_bypass_at' => 'datetime',
         ];

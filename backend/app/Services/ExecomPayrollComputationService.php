@@ -830,7 +830,7 @@ class ExecomPayrollComputationService
         }
 
         // Fallback when status resolver returns null: credit-charged leave counts as paid.
-        $charged = (int) ($leave->leave_credits_charged ?? 0);
+        $charged = (float) ($leave->leave_credits_charged ?? 0);
 
         return $charged > 0;
     }
