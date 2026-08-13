@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\EmploymentStatus;
 use App\Models\LeaveCreditTransaction;
+use App\Models\LeaveCreditSetting;
 use App\Models\LeaveRequest;
 use App\Models\User;
 use App\Support\LeaveScheduleSupport;
@@ -32,8 +33,8 @@ use Illuminate\Validation\ValidationException;
  * service**: **0** credits (not eligible yet). Only **Regular + ≥1 year** (or eligible consultant)
  * receive the annual pool.
  *
- * **Annual pool:** configurable via leave.annual_allocation (default 14). **January 1** full reset
- * for eligible employees; unused credits do not carry over (not cumulative).
+ * **Annual pool:** configurable via leave.annual_allocation (default 14). The annual reset date is
+ * configurable in Leave Credits settings and defaults to January 1; unused credits do not carry over.
  *
  * **Regularization / employment updates:** once the employee is Regular **and** has completed
  * one full year from Hire Date, the balance is normalized to the
@@ -43,6 +44,9 @@ class LeaveCreditService
 {
     /** Keep aligned with {@see config('cache.profile_ttl_minutes')} (max 5m) to limit cache churn. */
     private const SUMMARY_CACHE_TTL_MINUTES = 5;
+    private const SCHEDULE_CACHE_KEY = 'leave:credit:schedule:v1';
+    private const DEFAULT_RESET_MONTH = 1;
+    private const DEFAULT_RESET_DAY = 1;
 
     public function __construct(
         private readonly HolidayService $holidayService,
@@ -52,7 +56,7 @@ class LeaveCreditService
     private static function summaryCacheKey(int $userId, bool $includePendingReservedDays = false): string
     {
         // Include annual allocation so raising 7→14 busts stale 7/7 summary rows automatically.
-        return 'leave:balance:'.$userId.':summary:v4:a'.self::annualAllocation().':pending:'.($includePendingReservedDays ? '1' : '0');
+        return 'leave:balance:'.$userId.':summary:v5:a'.self::annualAllocation().':r'.self::rechargeScheduleKey().':pending:'.($includePendingReservedDays ? '1' : '0');
     }
 
     public function forgetSummaryCacheForUser(int $userId): void
@@ -63,6 +67,8 @@ class LeaveCreditService
             Cache::forget('leave:balance:'.$userId.':summary:v3:a'.$annual.':pending:1');
             Cache::forget('leave:balance:'.$userId.':summary:v4:a'.$annual.':pending:0');
             Cache::forget('leave:balance:'.$userId.':summary:v4:a'.$annual.':pending:1');
+            Cache::forget('leave:balance:'.$userId.':summary:v5:a'.$annual.':r1-1:pending:0');
+            Cache::forget('leave:balance:'.$userId.':summary:v5:a'.$annual.':r1-1:pending:1');
         }
         Cache::forget('leave:balance:'.$userId.':summary:v2:pending:0');
         Cache::forget('leave:balance:'.$userId.':summary:v2:pending:1');
@@ -75,10 +81,119 @@ class LeaveCreditService
         return max(0, (int) config('leave.annual_allocation', 14));
     }
 
+    /**
+     * Annual reset month/day. The database setting is intentionally read through a short cache because
+     * leave summaries are loaded throughout the employee and filing workflows.
+     *
+     * @return array{reset_month: int, reset_day: int}
+     */
+    public static function rechargeSchedule(): array
+    {
+        return Cache::remember(self::SCHEDULE_CACHE_KEY, now()->addMinutes(10), function (): array {
+            $month = self::DEFAULT_RESET_MONTH;
+            $day = self::DEFAULT_RESET_DAY;
+
+            if (Schema::hasTable('leave_credit_settings')) {
+                $setting = LeaveCreditSetting::query()->first();
+                if ($setting) {
+                    $month = (int) ($setting->reset_month ?: $month);
+                    $day = (int) ($setting->reset_day ?: $day);
+                }
+            }
+
+            $month = min(12, max(1, $month));
+            $maxDay = Carbon::create(2001, $month, 1)->daysInMonth;
+
+            return [
+                'reset_month' => $month,
+                'reset_day' => min($maxDay, max(1, $day)),
+            ];
+        });
+    }
+
+    public static function forgetRechargeScheduleCache(): void
+    {
+        Cache::forget(self::SCHEDULE_CACHE_KEY);
+    }
+
+    public static function rechargeScheduleKey(): string
+    {
+        $schedule = self::rechargeSchedule();
+
+        return $schedule['reset_month'].'-'.$schedule['reset_day'];
+    }
+
+    public static function annualResetDateForYear(int $year, ?string $timezone = null): Carbon
+    {
+        $tz = $timezone ?: config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $schedule = self::rechargeSchedule();
+        $date = Carbon::create($year, $schedule['reset_month'], 1, 0, 0, 0, $tz)->startOfDay();
+        $maxDay = $date->daysInMonth;
+
+        return $date->day(min($maxDay, $schedule['reset_day']))->startOfDay();
+    }
+
+    public static function nextAnnualResetDate(?Carbon\CarbonInterface $lastResetDate = null): Carbon
+    {
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $today = Carbon::now($tz)->startOfDay();
+        $candidate = self::annualResetDateForYear($today->year, $tz);
+
+        $last = $lastResetDate
+            ? Carbon::parse($lastResetDate->toDateTimeString(), $tz)->startOfDay()
+            : null;
+
+        if ($candidate->lessThan($today) || ($last && $last->greaterThanOrEqualTo($candidate))) {
+            $candidate = self::annualResetDateForYear($today->year + 1, $tz);
+        }
+
+        return $candidate;
+    }
+
+    /** @return array<string, mixed> */
+    public static function rechargeScheduleApiPayload(): array
+    {
+        $schedule = self::rechargeSchedule();
+        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $next = self::nextAnnualResetDate();
+
+        return [
+            ...$schedule,
+            'label' => self::rechargeScheduleLabel(),
+            'policy' => self::annualRechargePolicyCopy(),
+            'next_reset_date' => $next->toDateString(),
+            'next_reset_display' => 'Next recharge on '.$next->format('M j, Y'),
+            'timezone' => $tz,
+        ];
+    }
+
+    private static function rechargeScheduleLabel(): string
+    {
+        $schedule = self::rechargeSchedule();
+        $date = Carbon::create(2001, $schedule['reset_month'], $schedule['reset_day']);
+
+        return $date->format('F').' '.self::ordinalDay((int) $date->day);
+    }
+
+    private static function ordinalDay(int $day): string
+    {
+        $suffix = 'th';
+        if ($day % 100 < 11 || $day % 100 > 13) {
+            $suffix = match ($day % 10) {
+                1 => 'st',
+                2 => 'nd',
+                3 => 'rd',
+                default => 'th',
+            };
+        }
+
+        return $day.$suffix;
+    }
+
     /** Human-readable copy for profile / leave UI. */
     public static function annualRechargePolicyCopy(): string
     {
-        return 'Recharges on January 1st every year (full reset; unused credits do not carry over).';
+        return 'Recharges on '.self::rechargeScheduleLabel().' every year (full reset; unused credits do not carry over).';
     }
 
     public static function lastAnnualRechargeDisplay(?\Carbon\CarbonInterface $date): ?string
@@ -269,7 +384,7 @@ class LeaveCreditService
      */
     public function ensureAnnualRechargeForUser(User $user): bool
     {
-        // ponytail: filing called this under row lock every time; skip when Jan-1 stamp is current and normalize is a no-op.
+        // Filing calls this often; skip the locked pass when the configured reset is not due and normalization is a no-op.
         if ($this->canSkipLockedRechargePass($user)) {
             $this->initializeLeaveCreditsForRegularEmployeeIfEligible($user, null, 'lazy_recharge');
 
@@ -305,22 +420,23 @@ class LeaveCreditService
     private function canSkipLockedRechargePass(User $user): bool
     {
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $startOfYear = Carbon::now($tz)->startOfYear()->toDateString();
-        if ($user->leave_credits_reset_date === null) {
-            return false;
-        }
-
-        $reset = Carbon::parse($user->leave_credits_reset_date, $tz)->toDateString();
-        if ($reset < $startOfYear) {
-            return false;
-        }
+        $today = Carbon::now($tz)->startOfDay();
+        $scheduledReset = self::annualResetDateForYear($today->year, $tz);
 
         // Ineligible with a positive pool still needs normalize under lock.
         if (! $this->eligibleForPaidLeavePool($user) && (int) $user->leave_credits > 0) {
             return false;
         }
 
-        return true;
+        if ($today->lessThan($scheduledReset)) {
+            return true;
+        }
+
+        if ($user->leave_credits_reset_date === null) {
+            return false;
+        }
+
+        return Carbon::parse($user->leave_credits_reset_date, $tz)->startOfDay()->greaterThanOrEqualTo($scheduledReset);
     }
 
     public function ensureAnnualRechargeForUserId(int $userId): bool
@@ -334,14 +450,12 @@ class LeaveCreditService
     }
 
     /**
-     * Scheduled job: recharge all users who are still on a prior year's balance.
+     * Scheduled job: recharge all users whose configured annual reset is due.
      *
      * @return int Number of users recharged
      */
     public function rechargeAllUsersDueForNewYear(?User $actor = null): int
     {
-        $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $startOfYear = Carbon::now($tz)->startOfYear();
         $count = 0;
 
         User::query()->orderBy('id')->chunkById(200, function ($users) use ($actor, &$count) {
@@ -367,12 +481,17 @@ class LeaveCreditService
     private function applyAnnualRechargeIfDueLocked(User $locked, ?User $actor): bool
     {
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $startOfYear = Carbon::now($tz)->startOfYear()->startOfDay();
+        $today = Carbon::now($tz)->startOfDay();
+        $scheduledReset = self::annualResetDateForYear($today->year, $tz);
         $resetDate = $locked->leave_credits_reset_date;
 
+        if ($today->lessThan($scheduledReset)) {
+            return false;
+        }
+
         if ($resetDate !== null) {
-            $last = Carbon::parse($resetDate)->startOfDay();
-            if ($last->greaterThanOrEqualTo($startOfYear)) {
+            $last = Carbon::parse($resetDate, $tz)->startOfDay();
+            if ($last->greaterThanOrEqualTo($scheduledReset)) {
                 return false;
             }
         }
@@ -382,7 +501,7 @@ class LeaveCreditService
         $eligible = $this->eligibleForPaidLeavePool($locked);
         $newBalance = $eligible ? $allocation : 0;
         $locked->leave_credits = $newBalance;
-        $locked->leave_credits_reset_date = $startOfYear->toDateString();
+        $locked->leave_credits_reset_date = $scheduledReset->toDateString();
         $locked->save();
 
         LeaveCreditTransaction::create([
@@ -391,8 +510,8 @@ class LeaveCreditService
             'delta' => $newBalance - $prev,
             'balance_after' => $newBalance,
             'reason' => $eligible
-                ? 'Annual recharge (January 1) — balance set to '.$allocation.' paid-leave credits'
-                : 'Annual recharge (January 1) — no paid-leave pool (probationary or under one year since Hire Date)',
+                ? 'Annual recharge ('.$scheduledReset->format('M j').') - balance set to '.$allocation.' paid-leave credits'
+                : 'Annual recharge ('.$scheduledReset->format('M j').') - no paid-leave pool (probationary or under one year since Hire Date)',
             'leave_request_id' => null,
             'actor_id' => $actor?->id,
             'leave_type_context' => null,
@@ -520,8 +639,7 @@ class LeaveCreditService
     }
 
     /**
-     * Eligible employees should always have a Jan 1 reset stamp for UI:
-     * "Recharged on Jan 1, 2026".
+     * Eligible employees should have a reset stamp for UI once the configured reset date is due.
      *
      * @internal Called with row lock
      */
@@ -532,22 +650,25 @@ class LeaveCreditService
         }
 
         $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-        $startOfYear = Carbon::now($tz)->startOfYear()->startOfDay()->toDateString();
+        $today = Carbon::now($tz)->startOfDay();
+        $scheduledReset = self::annualResetDateForYear($today->year, $tz);
+        if ($today->lessThan($scheduledReset)) {
+            return false;
+        }
+        $scheduledResetDate = $scheduledReset->toDateString();
         $current = $locked->leave_credits_reset_date
             ? Carbon::parse($locked->leave_credits_reset_date, $tz)->toDateString()
             : null;
 
-        if ($current === $startOfYear) {
+        if ($current === $scheduledResetDate) {
             return false;
         }
 
-        // Missing or stale prior-year stamp with no recharge due yet — keep display on this year's Jan 1
-        // only when still missing. Prior-year dates are handled by applyAnnualRechargeIfDueLocked.
         if ($current !== null) {
             return false;
         }
 
-        $locked->leave_credits_reset_date = $startOfYear;
+        $locked->leave_credits_reset_date = $scheduledResetDate;
         $locked->save();
 
         return true;
@@ -806,7 +927,12 @@ class LeaveCreditService
 
             $locked->leave_credits = $allocation;
             if (Schema::hasColumn('users', 'leave_credits_reset_date') && $locked->leave_credits_reset_date === null) {
-                $locked->leave_credits_reset_date = Carbon::now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->startOfYear()->toDateString();
+                $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+                $today = Carbon::now($tz)->startOfDay();
+                $scheduledReset = self::annualResetDateForYear($today->year, $tz);
+                if ($today->greaterThanOrEqualTo($scheduledReset)) {
+                    $locked->leave_credits_reset_date = $scheduledReset->toDateString();
+                }
             }
             if (Schema::hasColumn('users', 'leave_credits_initialized_at')) {
                 $locked->leave_credits_initialized_at = now();
@@ -1217,6 +1343,8 @@ class LeaveCreditService
                         'reset_date' => null,
                         'last_recharged_display' => null,
                         'recharge_policy' => self::annualRechargePolicyCopy(),
+                        'next_reset_date' => self::nextAnnualResetDate()->toDateString(),
+                        'next_recharge_display' => 'Next recharge on '.self::nextAnnualResetDate()->format('M j, Y'),
                         'pending_reserved_days' => 0,
                         'effective_available' => 0,
                         'eligible_for_paid_leave_pool' => false,
@@ -1290,8 +1418,12 @@ class LeaveCreditService
                 $resetDate = $user->leave_credits_reset_date;
                 if ($eligible && $resetDate === null) {
                     $tz = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-                    $resetDate = Carbon::now($tz)->startOfYear()->startOfDay();
+                    $scheduledReset = self::annualResetDateForYear(Carbon::now($tz)->year, $tz);
+                    if (Carbon::now($tz)->startOfDay()->greaterThanOrEqualTo($scheduledReset)) {
+                        $resetDate = $scheduledReset;
+                    }
                 }
+                $nextReset = self::nextAnnualResetDate($resetDate);
 
                 return [
                     'remaining' => $remaining,
@@ -1299,6 +1431,8 @@ class LeaveCreditService
                     'reset_date' => $resetDate?->toDateString(),
                     'last_recharged_display' => self::lastAnnualRechargeDisplay($resetDate),
                     'recharge_policy' => self::annualRechargePolicyCopy(),
+                    'next_reset_date' => $nextReset->toDateString(),
+                    'next_recharge_display' => 'Next recharge on '.$nextReset->format('M j, Y'),
                     'pending_reserved_days' => $pendingReserved,
                     'effective_available' => $effectiveAvailable,
                     'eligible_for_paid_leave_pool' => $eligible,

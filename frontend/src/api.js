@@ -7494,6 +7494,37 @@ export async function getLeaveCreditsReport() {
   return data
 }
 
+/** HR: get the recurring annual leave-credit recharge schedule. */
+export async function getLeaveCreditSettings() {
+  const res = await authenticatedFetch('/admin/reports/leave-credits/settings')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load leave credit settings')
+  return data
+}
+
+/** HR: update the recurring annual leave-credit recharge month/day. */
+export async function updateLeaveCreditSettings(payload) {
+  const res = await authenticatedFetch('/admin/reports/leave-credits/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      reset_month: Number(payload?.reset_month),
+      reset_day: Number(payload?.reset_day),
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update leave credit settings')
+  return data
+}
+
+/** HR reports: leave-credit audit history for one scoped employee. */
+export async function getLeaveCreditHistory(employeeId) {
+  const res = await authenticatedFetch(`/admin/reports/leave-credits/${employeeId}/history`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load leave credit history')
+  return data
+}
+
 /**
  * Get half-day availability flags (morning/afternoon clock-ins) for a specific date.
  * Used to enable/disable AM/PM half-day options in the employee leave form.

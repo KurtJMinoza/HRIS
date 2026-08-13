@@ -76,6 +76,13 @@ export const adminNavItems = [
       { to: '/admin/corrections', end: false, label: 'Attendance Corrections', icon: ClipboardList },
       { to: '/admin/overtime', end: false, label: 'Overtime', icon: Timer },
       { to: '/admin/leave', end: false, label: 'Leave', icon: CalendarOff },
+      {
+        to: '/admin/leave-credits',
+        end: false,
+        label: 'Leave Credits',
+        icon: CalendarRange,
+        requiredPermissions: ['can_access_reports_module', 'can_view_subordinate_reports', 'can_view_all_reports', 'reports.view'],
+      },
       { to: '/admin/holiday', end: false, label: 'Holidays', icon: Calendar },
       { to: '/admin/geofencing', end: false, label: 'Geofencing', icon: MapPinned },
     ],

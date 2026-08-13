@@ -393,7 +393,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/reports/detailed/export', [ReportsController::class, 'queueDetailedExport']);
             Route::get('/admin/reports/detailed/export/{id}/status', [ReportsController::class, 'detailedExportStatus']);
             Route::get('/admin/reports/leave-credits', [ReportsController::class, 'leaveCredits']);
+            Route::get('/admin/reports/leave-credits/settings', [ReportsController::class, 'leaveCreditSettings']);
+            Route::get('/admin/reports/leave-credits/{id}/history', [ReportsController::class, 'leaveCreditHistory'])->whereNumber('id');
         });
+        Route::patch('/admin/reports/leave-credits/settings', [ReportsController::class, 'updateLeaveCreditSettings'])
+            ->middleware('permission:settings.manage|employees.edit');
 
         Route::middleware('permission:recruitment.view')->group(function () {
             Route::get('/admin/recruitment/meta', [RecruitmentController::class, 'meta']);

@@ -30,8 +30,8 @@ return [
     |
     | Default paid-leave credits per calendar year for employees who are Regular and have at least
     | one year of service (hire-date based). Probationary employees have 0 pool credits; leave may
-    | still be filed as unpaid. January 1 resets eligible balances to this value (unused credits do
-    | not carry over). HR manual adjustments may change users.leave_credits when eligible.
+    | still be filed as unpaid. The annual reset month/day is managed in Leave Credits settings;
+    | unused credits do not carry over. HR manual adjustments may change users.leave_credits when eligible.
     |
     */
     'annual_allocation' => (int) env('LEAVE_ANNUAL_CREDITS', 14),
@@ -45,7 +45,7 @@ return [
 
     /*
     | When true, approving a contract renewal (non-probation regularization path) resets leave credits
-    | to the annual allocation. Default false: only January 1 and eligibility rules apply.
+    | to the annual allocation. Default false: only the configured annual reset and eligibility rules apply.
     */
     'reset_on_contract_renewal' => (bool) env('LEAVE_RESET_ON_CONTRACT_RENEWAL', false),
 

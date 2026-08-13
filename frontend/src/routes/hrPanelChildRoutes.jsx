@@ -45,6 +45,7 @@ const AdminDivisions = lazy(() => import('@/pages/AdminDivisions'))
 const AdminSectionUnits = lazy(() => import('@/pages/AdminSectionUnits'))
 const OrganizationsLayout = lazy(() => import('@/layouts/OrganizationsLayout').then((m) => ({ default: m.OrganizationsLayout })))
 const AdminLeave = lazy(() => import('@/pages/AdminLeave'))
+const AdminLeaveCredits = lazy(() => import('@/pages/AdminLeaveCredits'))
 const AdminHoliday = lazy(() => import('@/pages/AdminHoliday'))
 const AdminOvertime = lazy(() => import('@/pages/AdminOvertime'))
 const AdminRecruitment = lazy(() => import('@/pages/AdminRecruitment'))
@@ -116,6 +117,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-di-legacy" path="divisions" element={<Navigate to="../organizations/divisions" replace />} />,
   <Route key="hr-su-legacy" path="sections-units" element={<Navigate to="../organizations/sections" replace />} />,
   <Route key="hr-le" path="leave" element={withSuspense(<AdminLeave />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-leave-credits" path="leave-credits" element={withSuspense(<AdminLeaveCredits />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ho" path="holiday" element={withSuspense(<AdminHoliday />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ov" path="overtime" element={withSuspense(<AdminOvertime />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-notifications" path="notifications" element={withSuspense(<NotificationsCenter />, <DataTableRouteFallback titleWidth="w-64" />)} />,

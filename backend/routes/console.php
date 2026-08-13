@@ -61,7 +61,7 @@ Schedule::call(function () {
     ProcessEmployeeStatusTransitionsJob::dispatchSync($today);
 })->dailyAt('01:00')->timezone(config('attendance.timezone', 'Asia/Manila'));
 
-// Leave credits: annual January 1 recharge (safe to run daily; only users still on a prior year are updated)
+// Leave credits: configured annual recharge (safe to run daily; only users whose reset is due are updated)
 Schedule::call(function () {
     app(LeaveCreditService::class)->rechargeAllUsersDueForNewYear(null);
 })->dailyAt('00:05')->timezone(config('attendance.timezone', 'Asia/Manila'));
@@ -100,7 +100,7 @@ Artisan::command('loans:process-due-installments {date? : Reference date (Y-m-d)
 
 Artisan::command('leave:reset-annual-credits {--force : Run without confirmation}', function () {
     if (! $this->option('force')) {
-        $this->warn('Recharges leave credits for users whose last reset is before the current calendar year (January 1 policy).');
+        $this->warn('Recharges leave credits for users whose configured annual reset date is due.');
         if (! $this->confirm('Continue?', false)) {
             return 0;
         }
@@ -109,7 +109,7 @@ Artisan::command('leave:reset-annual-credits {--force : Run without confirmation
     $this->info("Recharged {$n} user(s).");
 
     return 0;
-})->purpose('Apply annual leave credit recharge for the new calendar year (writes audit rows)');
+})->purpose('Apply the configured annual leave credit recharge (writes audit rows)');
 
 Artisan::command('payroll:cleanup-orphaned-assignments', function () {
     if (! Schema::hasTable('employee_compensation_components')) {
