@@ -2588,6 +2588,7 @@ class PayslipService
         }
         $summary = $this->withPayslipSalaryDisplay($summary, $out);
         $summary = $this->normalizeAttendancePayBreakdownDetails($summary);
+        $summary = $this->attachRegularPayAfterReductionsDisplay($summary);
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
             $summary
@@ -3505,6 +3506,7 @@ class PayslipService
             $regularPayPresentDays,
             $dailyRate
         );
+        $summary = $this->attachRegularPayAfterReductionsDisplay($summary);
         $earningLines = ($isExecomSnapshot || $isConsultantSnapshot)
             ? (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [])
             : array_merge(
@@ -3828,6 +3830,47 @@ class PayslipService
             $breakdown['total_deduction_units_label'] = '—';
             $summary['attendance_pay_breakdown'] = $breakdown;
         }
+
+        return $summary;
+    }
+
+    /**
+     * Display-only: Regular pay (present-day gross) minus attendance reductions.
+     * Does not change computed payroll amounts or totals.
+     *
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    private function attachRegularPayAfterReductionsDisplay(array $summary): array
+    {
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : null;
+        if (! is_array($breakdown) || empty($breakdown['available'])) {
+            return $summary;
+        }
+
+        $regularLine = null;
+        foreach (['daily_computation_earning_lines', 'payslip_earning_lines'] as $key) {
+            foreach (is_array($summary[$key] ?? null) ? $summary[$key] : [] as $line) {
+                if (is_array($line) && $this->isRegularPayLine($line)) {
+                    $regularLine = $line;
+                    break 2;
+                }
+            }
+        }
+        if (! is_array($regularLine)) {
+            return $summary;
+        }
+
+        $hasGrossDisplay = is_numeric($regularLine['display_amount'] ?? null);
+        $grossDisplay = round((float) ($hasGrossDisplay ? $regularLine['display_amount'] : ($regularLine['amount'] ?? 0)), 2);
+        $reductions = round((float) ($breakdown['total_deduction'] ?? 0), 2);
+        // display_amount is present-day gross; computed amount is already net of these reductions.
+        $breakdown['regular_pay_after_reductions'] = $hasGrossDisplay
+            ? round($grossDisplay - $reductions, 2)
+            : $grossDisplay;
+        $summary['attendance_pay_breakdown'] = $breakdown;
 
         return $summary;
     }

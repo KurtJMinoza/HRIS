@@ -15,6 +15,16 @@ function attendanceDeduction(v) {
   return amount > 0 ? `-${peso(amount)}` : peso(0)
 }
 
+function regularPayAfterReductions(line, attendanceBreakdown) {
+  const stored = Number(attendanceBreakdown?.regular_pay_after_reductions)
+  if (Number.isFinite(stored)) return stored
+  const reductions = Number(attendanceBreakdown?.total_deduction || 0)
+  if (line?.display_amount != null && Number.isFinite(Number(line.display_amount))) {
+    return Number(line.display_amount) - reductions
+  }
+  return Number(line?.amount || 0)
+}
+
 /**
  * Units are normalized on the backend (PayslipService::formatUnitsAndAmount).
  * The preview modal displays the backend-provided value to stay identical with PDF.
@@ -435,6 +445,16 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                                 {attendanceBreakdown?.total_deduction_units_label || 'Deducted above'}
                               </td>
                               <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]/75">{attendanceDeduction(attendanceBreakdown?.total_deduction)}</td>
+                            </tr>
+                            <tr className="border-b border-emerald-100 bg-slate-50/45">
+                              <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/75">Total regular pay</td>
+                              <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
+                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]/75">
+                                {regularPayAfterReductions(line, attendanceBreakdown).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </td>
                             </tr>
                           </>
                         ) : null}

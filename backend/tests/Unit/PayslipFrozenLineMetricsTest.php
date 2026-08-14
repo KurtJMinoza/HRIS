@@ -229,6 +229,10 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame($netAmount, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
         $this->assertGreaterThan($netAmount, $displayAmount);
         $this->assertGreaterThan(0.0, $totalDeduction);
+        $this->assertSame(
+            round($displayAmount - $totalDeduction, 2),
+            round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2)
+        );
     }
 
     public function test_payslip_totals_snap_daily_rate_rounding_to_semi_monthly(): void
