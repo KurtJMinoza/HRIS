@@ -520,11 +520,6 @@
                       @endif
                     @endforeach
                     <tr class="attendance-total">
-                      <td class="attendance-label">Total attendance reductions</td>
-                      <td class="units">{{ $attendanceBreakdown['total_deduction_units_label'] ?? 'Deducted above' }}</td>
-                      <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
-                    </tr>
-                    <tr class="attendance-total">
                       <td class="attendance-label">Total regular pay</td>
                       <td class="units">—</td>
                       <td class="num">{{ $formatMoney($regularPayAfterReductions($line)) }}</td>
@@ -553,11 +548,6 @@
                         </tr>
                       @endif
                     @endforeach
-                    <tr class="attendance-total">
-                      <td class="attendance-label">Total attendance reductions</td>
-                      <td class="units">{{ $attendanceBreakdown['total_deduction_units_label'] ?? 'Deducted above' }}</td>
-                      <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
-                    </tr>
                     <tr class="attendance-total">
                       <td class="attendance-label">Total regular pay</td>
                       <td class="units">—</td>

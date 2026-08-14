@@ -440,13 +440,6 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                               </tr>
                             ))}
                             <tr className="border-b border-emerald-100 bg-slate-50/45">
-                              <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/75">Total attendance reductions</td>
-                              <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">
-                                {attendanceBreakdown?.total_deduction_units_label || 'Deducted above'}
-                              </td>
-                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]/75">{attendanceDeduction(attendanceBreakdown?.total_deduction)}</td>
-                            </tr>
-                            <tr className="border-b border-emerald-100 bg-slate-50/45">
                               <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/75">Total regular pay</td>
                               <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
                               <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]/75">
