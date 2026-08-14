@@ -356,6 +356,51 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame(2.0, (float) ($absenceRow['count'] ?? 0));
     }
 
+    public function test_payslip_scheduled_days_include_unworked_special_holiday(): void
+    {
+        $snapshot = [
+            'daily_rate' => 500,
+            'summary' => [
+                'daily_rate' => 500,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 1000,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 0,
+                ],
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'holiday',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 500,
+                    'holiday' => ['name' => 'Kadayawan Festival', 'type' => 'special'],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $absenceRow = null;
+        foreach ($breakdown['rows'] ?? [] as $row) {
+            if (is_array($row) && ($row['key'] ?? '') === 'absence') {
+                $absenceRow = $row;
+                break;
+            }
+        }
+
+        $this->assertSame(2, (int) ($breakdown['scheduled_days_count'] ?? 0));
+        $this->assertSame(0.0, (float) ($absenceRow['count'] ?? -1));
+    }
+
     private function payslipServiceWithoutConstructor(): PayslipService
     {
         return (new ReflectionClass(PayslipService::class))->newInstanceWithoutConstructor();

@@ -3680,12 +3680,13 @@ class PayslipService
                 continue;
             }
 
-            // Premium holiday pay is rendered separately from ordinary Regular pay.
+            $scheduledDays++;
+
+            // Holiday premium is a separate earning line; keep the day in scheduled
+            // workdays, but do not treat it as a Regular pay late/absence/undertime.
             if (max(0.0, (float) ($day['holiday_premium_pay'] ?? 0)) > 0.0001) {
                 continue;
             }
-
-            $scheduledDays++;
             $status = strtolower(trim((string) ($day['status'] ?? '')));
             if ($status === 'absent') {
                 $absenceMinutes += $requiredMinutes;
