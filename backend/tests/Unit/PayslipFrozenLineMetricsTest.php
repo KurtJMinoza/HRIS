@@ -309,6 +309,53 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame(17258.0, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
     }
 
+    public function test_payslip_absences_units_use_scheduled_workdays(): void
+    {
+        $snapshot = [
+            'daily_rate' => 500,
+            'summary' => [
+                'daily_rate' => 500,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 1000,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'absent',
+                    'is_rest_day' => false,
+                    'required_minutes' => 540,
+                ],
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'absent',
+                    'is_rest_day' => true,
+                    'required_minutes' => 0,
+                ],
+                [
+                    'date' => '2026-08-12',
+                    'status' => 'absent',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $absenceRow = null;
+        foreach ($normalized['summary']['attendance_pay_breakdown']['rows'] ?? [] as $row) {
+            if (is_array($row) && ($row['key'] ?? '') === 'absence') {
+                $absenceRow = $row;
+                break;
+            }
+        }
+
+        $this->assertSame('2 days', $absenceRow['details'] ?? null);
+        $this->assertSame(2.0, (float) ($absenceRow['count'] ?? 0));
+    }
+
     private function payslipServiceWithoutConstructor(): PayslipService
     {
         return (new ReflectionClass(PayslipService::class))->newInstanceWithoutConstructor();

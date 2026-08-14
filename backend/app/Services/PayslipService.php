@@ -3604,8 +3604,10 @@ class PayslipService
             $key = strtolower(trim((string) ($row['key'] ?? '')));
             if ($key === 'scheduled_regular_days' && is_numeric($row['count'] ?? null)) {
                 $row['details'] = $this->formatAttendanceDayCount((float) $row['count']);
+            } elseif ($key === 'absence' && is_numeric($row['count'] ?? null)) {
+                $row['details'] = $this->formatAttendanceDayCount((float) $row['count']);
             } elseif (
-                in_array($key, ['late', 'half_day', 'absence', 'undertime'], true)
+                in_array($key, ['late', 'half_day', 'undertime'], true)
                 && is_numeric($row['minutes'] ?? null)
             ) {
                 $row['details'] = $this->formatAttendanceDuration((int) round((float) $row['minutes']));
@@ -3687,7 +3689,7 @@ class PayslipService
             $status = strtolower(trim((string) ($day['status'] ?? '')));
             if ($status === 'absent') {
                 $absenceMinutes += $requiredMinutes;
-                $absenceDays += min(1.0, $requiredMinutes / (8 * 60));
+                $absenceDays += 1.0;
             }
 
             $dayLateMinutes = max(0, (int) ($day['late_deduction_minutes'] ?? 0));
@@ -3761,7 +3763,7 @@ class PayslipService
                 [
                     'key' => 'absence',
                     'label' => 'Absences',
-                    'details' => $formatAttendanceUnits($absenceMinutes),
+                    'details' => $this->formatAttendanceDayCount($absenceDays),
                     'count' => $absenceDays,
                     'minutes' => $absenceMinutes,
                     'amount' => $absenceAmount,
