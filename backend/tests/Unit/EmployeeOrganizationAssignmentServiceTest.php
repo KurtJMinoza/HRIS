@@ -44,7 +44,9 @@ class EmployeeOrganizationAssignmentServiceTest extends TestCase
     public function test_shared_assignment_across_companies_saves_successfully(): void
     {
         [$companyA, $companyB, $departmentB] = $this->seedTwoCompanyDepartments();
+        $supervisor = $this->employeeInCompany($companyA);
         $employee = $this->employeeInCompany($companyA);
+        $employee->forceFill(['supervisor_id' => (int) $supervisor->id])->save();
 
         $service = app(EmployeeOrganizationAssignmentService::class);
         $created = $service->assignToLegacyUnit(
@@ -57,6 +59,7 @@ class EmployeeOrganizationAssignmentServiceTest extends TestCase
         $this->assertCount(1, $created['assignments']);
         $this->assertSame(1, $created['added_count']);
         $this->assertSame((int) $companyA->id, (int) $employee->fresh()->company_id);
+        $this->assertNull($created['assignments'][0]->immediate_leader_id);
         $this->assertTrue(
             EmployeeOrganizationAssignment::query()
                 ->active()

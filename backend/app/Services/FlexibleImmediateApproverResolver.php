@@ -76,7 +76,7 @@ class FlexibleImmediateApproverResolver
         $fallbackToParent = (bool) ($workflowSetting['fallback_to_parent_approver'] ?? false);
         $primaryAssignment = $this->selectedAssignmentFor($subject, $context);
         $employeeImmediateLeaderId = $this->employeeImmediateLeaderId($subject, $primaryAssignment);
-        $sectionDirectoryProbe = $this->probeSectionDirectoryLeadership($subject, $hierarchy);
+        $sectionDirectoryProbe = $this->probeSectionDirectoryLeadership($subject, $hierarchy, $context);
         $directlyAssignedToDepartment = $this->isDirectDepartmentAssignment($subject, $primaryAssignment, $hierarchy);
 
         $this->log($context, 'resolver start', [
@@ -612,6 +612,15 @@ class FlexibleImmediateApproverResolver
     private function resolveAssignedTeamLeader(User $subject, array $skipIds, array $context): ?array
     {
         $teamLeaderId = (int) ($subject->assigned_team_leader_id ?? 0);
+        if ($this->usesDestinationOrgLeaders($subject, $context)) {
+            $this->log($context, 'assigned team leader lookup skipped', [
+                'requester_assigned_team_leader_id' => $teamLeaderId > 0 ? $teamLeaderId : null,
+                'team_leader_found' => false,
+                'skip_reason' => 'shared_assignment_uses_destination_org_leaders',
+            ]);
+
+            return null;
+        }
         if ($teamLeaderId <= 0) {
             $this->log($context, 'assigned team leader lookup skipped', [
                 'requester_assigned_team_leader_id' => null,
@@ -665,7 +674,7 @@ class FlexibleImmediateApproverResolver
         array $skipIds,
         array $context,
     ): ?array {
-        $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $subject->section_unit_id ?? 0);
+        $sectionUnitId = $this->hierarchySectionUnitId($subject, $hierarchy, $context);
         if ($sectionUnitId <= 0) {
             $this->log($context, 'section/unit directory lookup skipped — no section_unit_id on employee', [
                 'skip_reason' => 'no_section_unit_assigned',
@@ -847,6 +856,10 @@ class FlexibleImmediateApproverResolver
 
     private function employeeImmediateLeaderId(User $subject, ?EmployeeOrganizationAssignment $assignment): ?int
     {
+        if ($assignment && ! $assignment->is_primary) {
+            return null;
+        }
+
         $assignmentLeaderId = (int) ($assignment?->immediate_leader_id ?? 0);
         if ($assignmentLeaderId > 0) {
             return $assignmentLeaderId;
@@ -857,9 +870,35 @@ class FlexibleImmediateApproverResolver
         return $supervisorId > 0 ? $supervisorId : null;
     }
 
-    private function probeSectionDirectoryLeadership(User $subject, array $hierarchy): array
+    /**
+     * Shared/acting assignments approve through the destination unit, not the
+     * employee's primary supervisor, team leader, or leftover section.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function usesDestinationOrgLeaders(User $subject, array $context = []): bool
     {
-        $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $subject->section_unit_id ?? 0);
+        $assignment = $this->selectedAssignmentFor($subject, $context);
+
+        return $assignment !== null && ! $assignment->is_primary;
+    }
+
+    /**
+     * @param  array<string, int|null>  $hierarchy
+     * @param  array<string, mixed>  $context
+     */
+    private function hierarchySectionUnitId(User $subject, array $hierarchy, array $context = []): int
+    {
+        if ($this->usesDestinationOrgLeaders($subject, $context)) {
+            return (int) ($hierarchy['section_unit'] ?? 0);
+        }
+
+        return (int) ($hierarchy['section_unit'] ?? $subject->section_unit_id ?? 0);
+    }
+
+    private function probeSectionDirectoryLeadership(User $subject, array $hierarchy, array $context = []): array
+    {
+        $sectionUnitId = $this->hierarchySectionUnitId($subject, $hierarchy, $context);
         if ($sectionUnitId <= 0) {
             return [
                 'section_unit_head_id' => null,
@@ -935,7 +974,12 @@ class FlexibleImmediateApproverResolver
         bool $directDepartmentAssignment = false,
     ): ?array {
         $departmentId = (int) ($hierarchy['department'] ?? $subject->department_id ?? 0);
-        $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $subject->section_unit_id ?? 0);
+        $sectionUnitId = $this->hierarchySectionUnitId($subject, $hierarchy, $context);
+
+        if ($assignment && ! $assignment->is_primary) {
+            $departmentId = (int) ($hierarchy['department'] ?? $assignment->department_id ?? 0);
+            $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $assignment->section_unit_id ?? 0);
+        }
 
         if ($departmentId <= 0 && $sectionUnitId > 0) {
             $departmentId = (int) (SectionUnit::query()->whereKey($sectionUnitId)->value('department_id') ?? 0);
@@ -1136,6 +1180,10 @@ class FlexibleImmediateApproverResolver
     ): bool {
         $departmentId = (int) ($hierarchy['department'] ?? $subject->department_id ?? 0);
         $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $subject->section_unit_id ?? 0);
+        if ($assignment && ! $assignment->is_primary) {
+            $departmentId = (int) ($hierarchy['department'] ?? $assignment->department_id ?? 0);
+            $sectionUnitId = (int) ($hierarchy['section_unit'] ?? $assignment->section_unit_id ?? 0);
+        }
 
         if ($departmentId <= 0 || $sectionUnitId > 0) {
             return false;
@@ -1389,6 +1437,18 @@ class FlexibleImmediateApproverResolver
             return $hierarchy;
         }
 
+        $replaceFromAssignment = ! $assignment->is_primary || (int) ($context['assignment_id'] ?? 0) === (int) $assignment->id;
+        if ($replaceFromAssignment) {
+            $hierarchy = [
+                'section_unit' => null,
+                'department' => null,
+                'division' => null,
+                'branch' => null,
+                'area' => null,
+                'company' => null,
+            ];
+        }
+
         foreach (['company', 'area', 'branch', 'division', 'department', 'section_unit'] as $key) {
             $column = $key.'_id';
             if ($assignment->{$column}) {
@@ -1405,7 +1465,7 @@ class FlexibleImmediateApproverResolver
             $legacyType = trim((string) ($unit->legacy_source_type ?? ''));
             $legacyId = (int) ($unit->legacy_source_id ?? 0);
             if ($legacyType !== '' && $legacyId > 0 && in_array($legacyType, self::HIERARCHY_ORDER, true)) {
-                $hierarchy[$legacyType] = $hierarchy[$legacyType] ?? $legacyId;
+                $hierarchy[$legacyType] = $hierarchy[$legacyType] ?: $legacyId;
             }
             $unit = $unit->parent;
         }
