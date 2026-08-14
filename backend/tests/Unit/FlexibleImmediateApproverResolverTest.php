@@ -1551,6 +1551,8 @@ class FlexibleImmediateApproverResolverTest extends TestCase
         $branchB = Branch::query()->create(['name' => 'Shared Branch '.Str::random(5), 'company_id' => (int) $companyB->id]);
         $primaryHead = $this->user(['company_id' => (int) $companyA->id]);
         $sharedHead = $this->user(['company_id' => (int) $companyA->id]);
+        $primarySupervisor = $this->user(['company_id' => (int) $companyA->id]);
+        $primaryTeamLeader = $this->user(['company_id' => (int) $companyA->id]);
         $employee = $this->user(['company_id' => (int) $companyA->id, 'branch_id' => (int) $branchA->id]);
 
         $primaryDepartment = Department::query()->create([
@@ -1565,7 +1567,20 @@ class FlexibleImmediateApproverResolverTest extends TestCase
             'branch_id' => (int) $branchB->id,
             'department_head_id' => (int) $sharedHead->id,
         ]);
-        $employee->forceFill(['department_id' => (int) $primaryDepartment->id])->save();
+        $primarySection = SectionUnit::query()->create([
+            'name' => 'Primary Section '.Str::random(5),
+            'company_id' => (int) $companyA->id,
+            'branch_id' => (int) $branchA->id,
+            'department_id' => (int) $primaryDepartment->id,
+            'section_unit_head_id' => (int) $primarySupervisor->id,
+            'status' => 'active',
+        ]);
+        $employee->forceFill([
+            'department_id' => (int) $primaryDepartment->id,
+            'section_unit_id' => (int) $primarySection->id,
+            'supervisor_id' => (int) $primarySupervisor->id,
+            'assigned_team_leader_id' => (int) $primaryTeamLeader->id,
+        ])->save();
 
         $primaryUnit = $this->unit('Primary Department', null, [
             'legacy_source_type' => 'department',
@@ -1585,6 +1600,7 @@ class FlexibleImmediateApproverResolverTest extends TestCase
             'company_id' => (int) $companyA->id,
             'branch_id' => (int) $branchA->id,
             'department_id' => (int) $primaryDepartment->id,
+            'section_unit_id' => (int) $primarySection->id,
             'is_primary' => true,
             'effective_from' => null,
             'effective_to' => null,
@@ -1598,6 +1614,7 @@ class FlexibleImmediateApproverResolverTest extends TestCase
             'branch_id' => (int) $branchB->id,
             'department_id' => (int) $sharedDepartment->id,
             'is_primary' => false,
+            'immediate_leader_id' => (int) $primarySupervisor->id,
             'effective_from' => null,
             'effective_to' => null,
             'is_active' => true,

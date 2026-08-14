@@ -3382,7 +3382,7 @@ class PayrollComputationService
             $status = strtolower(trim((string) ($day['status'] ?? '')));
             // Attendance module source of truth: only actual present/worked days count toward
             // regular-pay day display. Leave may be compensated, but is not a "present day".
-            if ($status !== 'worked') {
+            if (! in_array($status, ['worked', 'halfday'], true)) {
                 continue;
             }
             if ($dayIsScheduledRestDay) {

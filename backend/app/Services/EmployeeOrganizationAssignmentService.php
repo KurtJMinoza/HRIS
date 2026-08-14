@@ -151,7 +151,7 @@ class EmployeeOrganizationAssignmentService
                         'department_id' => $context['department_id'],
                         'section_unit_id' => $context['section_unit_id'],
                         'is_primary' => false,
-                        'immediate_leader_id' => $user->supervisor_id ? (int) $user->supervisor_id : null,
+                        'immediate_leader_id' => null,
                         'effective_from' => now()->toDateString(),
                         'effective_to' => null,
                         'is_active' => true,

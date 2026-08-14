@@ -289,9 +289,11 @@ class FinalizePayrollService
                         ]
                     );
                     $summary = is_array($computed['summary'] ?? null) ? $computed['summary'] : [];
-                    $lineTotals = $this->payslipService->payslipLineTotalsFromSnapshot([
+                    $lineTotals = $this->payslipService->payslipDisplayTotalsFromSnapshot([
                         'summary' => $summary,
                         'daily_rate' => $computed['daily_rate'] ?? null,
+                        'daily_rate_divisor_days' => $computed['daily_rate_divisor_days'] ?? null,
+                        'monthly_basic_salary' => $computed['basic_salary_used'] ?? null,
                         'daily_computation_days' => is_array($computed['days'] ?? null) ? $computed['days'] : [],
                     ]);
                     $gross = $lineTotals['gross_pay'];
@@ -334,7 +336,7 @@ class FinalizePayrollService
                         'daily_rate' => $dailyRate,
                         'basic_pay' => $basicPay,
                         'actual_days_worked' => $actualDaysWorked,
-                        'total_attendance' => $this->totalAttendanceLabelForSummary($summary, $viewSummary),
+                        'total_attendance' => $this->totalAttendanceLabelForSummary($summary, $viewSummary, $viewSnapshot),
                         'daily_computation_earning_lines' => $dailyEarningLines,
                         'attendance_display_summary' => $attendanceDisplaySummary,
                         'gross_pay' => $gross,
@@ -368,7 +370,9 @@ class FinalizePayrollService
                         'daily_rate' => $dailyRate,
                         'basic_pay' => $basicPay,
                         'actual_days_worked' => $actualDaysWorked,
-                        'total_attendance' => $this->totalAttendanceLabelForSummary($summary),
+                        'total_attendance' => $this->totalAttendanceLabelForSummary(
+                            array_merge($summary, ['daily_computation_days' => is_array($computed['days'] ?? null) ? $computed['days'] : []]),
+                        ),
                         'daily_computation_earning_lines' => $dailyEarningLines,
                         'attendance_display_summary' => $attendanceDisplaySummary,
                         'gross_pay' => $gross,
@@ -763,7 +767,7 @@ class FinalizePayrollService
                 'daily_rate' => round((float) ($summary['daily_rate'] ?? 0), 2),
                 'basic_pay' => round((float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)), 2),
                 'actual_days_worked' => round((float) ($summary['actual_days_worked'] ?? 0), 2),
-                'total_attendance' => $this->totalAttendanceLabelForSummary($summary, $viewSummary),
+                'total_attendance' => $this->totalAttendanceLabelForSummary($summary, $viewSummary, $viewSnapshot),
                 'daily_computation_earning_lines' => is_array($viewSummary['daily_computation_earning_lines'] ?? null)
                     ? array_values($viewSummary['daily_computation_earning_lines'])
                     : [],
@@ -2995,11 +2999,21 @@ class FinalizePayrollService
      * @param  array<string, mixed>  $summary
      * @param  array<string, mixed>  $viewSummary
      */
-    private function totalAttendanceLabelForSummary(array $summary, array $viewSummary = []): ?string
+    private function totalAttendanceLabelForSummary(array $summary, array $viewSummary = [], array $viewSnapshot = []): ?string
     {
+        if ($this->summaryLooksLikeConsultant($summary, $viewSummary)) {
+            return null;
+        }
         $merged = $summary;
         if (is_array($viewSummary['daily_computation_earning_lines'] ?? null)) {
             $merged['daily_computation_earning_lines'] = $viewSummary['daily_computation_earning_lines'];
+        }
+        if (is_array($viewSummary['attendance_display_summary'] ?? null)) {
+            $merged['attendance_display_summary'] = $viewSummary['attendance_display_summary'];
+        }
+        $dailyDays = $viewSnapshot['daily_computation_days'] ?? $viewSummary['daily_computation_days'] ?? null;
+        if (is_array($dailyDays)) {
+            $merged['daily_computation_days'] = $dailyDays;
         }
 
         return $this->payslipService->regularPayAttendanceLabel($merged);
@@ -3049,6 +3063,27 @@ class FinalizePayrollService
         $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($user->employment_type ?? ''))));
 
         return $status === 'consultant' || $type === 'consultant';
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $viewSummary
+     */
+    private function summaryLooksLikeConsultant(array $summary, array $viewSummary = []): bool
+    {
+        foreach ([$viewSummary, $summary] as $src) {
+            if (! empty($src['consultant_fixed_payroll'])) {
+                return true;
+            }
+            foreach (['employment_status', 'employment_type'] as $key) {
+                $value = strtolower(trim(str_replace(['-', ' '], '_', (string) ($src[$key] ?? ''))));
+                if ($value === 'consultant') {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function assertFinalizeModuleGuards(PayrollBatchRun $run): void
