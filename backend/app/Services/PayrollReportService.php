@@ -459,14 +459,21 @@ class PayrollReportService
             ? $employee->display_name
             : trim((string) data_get($snapshot, 'employee.name', 'Employee '.$payslip->user_id));
 
+        $attendanceSummary = is_array($viewSnapshot['summary'] ?? null)
+            ? (array) $viewSnapshot['summary']
+            : $summary;
+        if (is_array($viewSnapshot['daily_computation_days'] ?? null)) {
+            $attendanceSummary['daily_computation_days'] = $viewSnapshot['daily_computation_days'];
+        } elseif (is_array($snapshot['daily_computation_days'] ?? null)) {
+            $attendanceSummary['daily_computation_days'] = $snapshot['daily_computation_days'];
+        }
+
         return array_merge($earnings, $deductions, $detailedDeductions['amounts'], [
             'employee_name' => $name !== '' ? $name : 'Employee '.$payslip->user_id,
             'employee_sort_key' => $employee instanceof User ? $employee->employeeListingSortKey() : mb_strtolower($name),
-            'total_attendance' => $this->payslipService->regularPayAttendanceLabel(
-                is_array($viewSnapshot['summary'] ?? null)
-                    ? (array) $viewSnapshot['summary']
-                    : $summary
-            ) ?? '—',
+            'total_attendance' => $this->isConsultantRow($employee, $summary)
+                ? '—'
+                : ($this->payslipService->regularPayAttendanceLabel($attendanceSummary) ?? '—'),
             'deduction_details' => $detailedDeductions['amounts'],
             'deduction_detail_labels' => $detailedDeductions['labels'],
             'gross_earnings' => round((float) $metrics['gross_pay'], 2),
@@ -674,6 +681,29 @@ class PayrollReportService
         }
 
         return $candidate;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function isConsultantRow(?User $employee, array $summary): bool
+    {
+        if (! empty($summary['consultant_fixed_payroll'])) {
+            return true;
+        }
+        foreach (['employment_status', 'employment_type'] as $key) {
+            $value = strtolower(trim(str_replace(['-', ' '], '_', (string) ($summary[$key] ?? ''))));
+            if ($value === 'consultant') {
+                return true;
+            }
+        }
+        if (! $employee instanceof User) {
+            return false;
+        }
+        $status = strtolower(trim(str_replace(['-', ' '], '_', (string) ($employee->employment_status ?? ''))));
+        $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($employee->employment_type ?? ''))));
+
+        return $status === 'consultant' || $type === 'consultant';
     }
 
     private function filename(Company $company, PayrollBatchRun $run, bool $deductionOnly = false): string

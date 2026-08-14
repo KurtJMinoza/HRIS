@@ -161,22 +161,148 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame(26500.0, $out['total_pay']);
     }
 
-    public function test_regular_pay_attendance_label_uses_day_split_units(): void
+    public function test_regular_pay_attendance_label_uses_present_day_count(): void
     {
         $service = app(PayslipService::class);
         $label = $service->regularPayAttendanceLabel([
             'daily_rate' => 525.0,
+            'attendance_display_summary' => [
+                'presence_days_count' => 13,
+                'working_days_count' => 13,
+                'lines' => [],
+            ],
             'daily_computation_earning_lines' => [
                 [
                     'key' => 'daily:regular_pay',
                     'label' => 'Regular pay',
-                    'minutes_worked' => (9 * 8 * 60) + (3 * 60),
+                    'minutes_worked' => (12 * 8 * 60) + (6 * 60) + 30,
                     'amount' => 4921.88,
                 ],
             ],
         ]);
 
-        $this->assertSame('9 days, 3 hrs 0 mins', $label);
+        $this->assertSame('13 days', $label);
+    }
+
+    public function test_regular_pay_display_amount_shows_present_day_gross_only(): void
+    {
+        $snapshot = [
+            'daily_rate' => 582.69,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 582.69,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 15150,
+                'semi_monthly_basic_salary' => 7575,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 7429.30,
+                ]],
+            ],
+            'daily_computation_days' => array_fill(0, 13, [
+                'date' => '2026-07-26',
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'regular_day_minutes' => 450,
+                'regular_night_minutes' => 0,
+                'required_minutes' => 480,
+                'undertime_deduction_minutes' => 30,
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 450,
+                    'rate' => 72.83625,
+                    'amount' => 546.27,
+                ]],
+            ]),
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+        $totalDeduction = (float) ($normalized['summary']['attendance_pay_breakdown']['total_deduction'] ?? 0);
+        $netAmount = round((float) ($line['amount'] ?? 0), 2);
+        $displayAmount = round((float) ($line['display_amount'] ?? 0), 2);
+
+        $this->assertSame('13 days', $line['units'] ?? null);
+        $this->assertSame(7575.0, $displayAmount);
+        $this->assertSame($netAmount, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
+        $this->assertSame($netAmount, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
+        $this->assertGreaterThan($netAmount, $displayAmount);
+        $this->assertGreaterThan(0.0, $totalDeduction);
+    }
+
+    public function test_payslip_totals_snap_daily_rate_rounding_to_semi_monthly(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 18000,
+                'semi_monthly_basic_salary' => 9000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 9000.03,
+                    'minutes_worked' => 13 * 8 * 60,
+                    'hourly_rate' => 692.31 / 8,
+                ]],
+            ],
+            'daily_computation_days' => array_fill(0, 13, [
+                'date' => '2026-07-26',
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'regular_day_minutes' => 480,
+                'regular_night_minutes' => 0,
+                'required_minutes' => 480,
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 480,
+                    'rate' => 692.31 / 8,
+                    'amount' => 692.31,
+                ]],
+            ]),
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame(9000.0, round((float) ($line['display_amount'] ?? 0), 2));
+        $this->assertSame(9000.0, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
+        $this->assertSame(9000.0, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
+
+        $displayTotals = app(PayslipService::class)->payslipDisplayTotalsFromSnapshot($snapshot);
+        $this->assertSame(9000.0, $displayTotals['gross_pay']);
+        $this->assertSame(9000.0, $displayTotals['net_pay']);
+    }
+
+    public function test_consultant_payslip_does_not_double_count_basic_pay_in_gross(): void
+    {
+        $snapshot = [
+            'summary' => [
+                'consultant_fixed_payroll' => true,
+                'employment_status' => 'consultant',
+                'basic_pay_this_period' => 23158,
+                'payslip_earning_lines' => [
+                    ['key' => 'consultant_basic_pay', 'label' => 'Basic Pay', 'amount' => 23158],
+                    ['key' => 'daily:regular_pay', 'label' => 'Basic Pay', 'amount' => 23158],
+                    ['key' => 'pay_component:allowance', 'label' => 'ALLOWANCE', 'component_code' => 'ALLOWANCE', 'amount' => 10000],
+                ],
+                'daily_computation_earning_lines' => [
+                    ['key' => 'daily:regular_pay', 'label' => 'Regular pay', 'amount' => 23158],
+                ],
+                'payslip_deduction_lines' => [],
+                'payslip_custom_deduction_lines' => [
+                    ['key' => 'lending', 'label' => 'LENDING SALARY DEDUCTION EVERY 15 AND 30', 'amount' => 15900],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+
+        $this->assertSame(33158.0, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
+        $this->assertSame(17258.0, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
     }
 
     private function payslipServiceWithoutConstructor(): PayslipService

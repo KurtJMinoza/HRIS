@@ -1522,6 +1522,9 @@ export default function AdminFinalizePayrollPage() {
                         const payslipIdNum = Number(row.payslip_id ?? 0)
                         const canSendRow = periodFinalized && payslipIdNum > 0 && isSendablePayslipStatus(row.status)
                         const rowIsSent = Boolean(row.is_sent || row.delivered_at)
+                        const isConsultantRow = Boolean(row?.consultant_fixed_payroll)
+                          || String(row?.employment_status || '').toLowerCase().replace(/[-\s]+/g, '_') === 'consultant'
+                          || String(row?.employment_type || '').toLowerCase().replace(/[-\s]+/g, '_') === 'consultant'
 
                         return (
                         <TableRow
@@ -1584,7 +1587,7 @@ export default function AdminFinalizePayrollPage() {
                             {formatPeso(row.daily_rate)}
                           </TableCell>
                           <TableCell className="py-2.5 px-2 text-sm font-medium text-foreground/90">
-                            {row.total_attendance || '—'}
+                            {isConsultantRow ? '—' : (row.total_attendance || '—')}
                           </TableCell>
                           <TableCell className="py-2.5 px-2 text-right align-middle">
                             <div className="flex flex-col items-end gap-1">
@@ -1600,7 +1603,7 @@ export default function AdminFinalizePayrollPage() {
                                   View breakdown
                                 </button>
                               </div>
-                              {Number(row.actual_days_worked || 0) <= 0 && Number(row.basic_salary || 0) > 0 ? (
+                              { !isConsultantRow && Number(row.actual_days_worked || 0) <= 0 && Number(row.basic_salary || 0) > 0 ? (
                                 <div className="text-[11px] font-medium leading-tight text-amber-700 dark:text-amber-300">No attendance in selected period</div>
                               ) : null}
                             </div>

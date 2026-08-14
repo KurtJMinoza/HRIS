@@ -108,9 +108,9 @@ final class PayslipStoredSnapshotViewPayload
                 'daily_rate_divisor_days' => (int) ($summary['daily_rate_divisor_days'] ?? data_get($snapshot, 'daily_rate_divisor_days', 0)),
             ],
             'amounts' => [
-                'gross_pay' => (float) ($metrics['gross_pay'] ?? ($payslip->gross_pay ?? 0)),
+                'gross_pay' => (float) ($summary['display_gross_pay'] ?? $metrics['gross_pay'] ?? ($payslip->gross_pay ?? 0)),
                 'total_deductions' => (float) ($metrics['total_deductions'] ?? ($payslip->total_deductions ?? 0)),
-                'net_pay' => (float) ($metrics['net_pay'] ?? ($payslip->net_pay ?? 0)),
+                'net_pay' => (float) ($summary['display_net_pay'] ?? $metrics['net_pay'] ?? ($payslip->net_pay ?? 0)),
                 'taxable_total_this_period' => (float) ($payslip->taxable_total_this_period ?? 0),
                 'non_taxable_total_this_period' => (float) ($payslip->non_taxable_total_this_period ?? 0),
                 'ytd_gross' => (float) ($payslip->ytd_gross ?? 0),
@@ -130,6 +130,8 @@ final class PayslipStoredSnapshotViewPayload
                 'basic_salary_schedule_factor' => (float) ($summary['basic_salary_schedule_factor'] ?? 0),
                 'monthly_basic_salary' => (float) ($summary['monthly_basic_salary'] ?? 0),
                 'semi_monthly_basic_salary' => (float) ($summary['semi_monthly_basic_salary'] ?? 0),
+                'display_gross_pay' => isset($summary['display_gross_pay']) ? (float) $summary['display_gross_pay'] : null,
+                'display_net_pay' => isset($summary['display_net_pay']) ? (float) $summary['display_net_pay'] : null,
                 'payslip_earning_lines' => is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
                 'daily_computation_earning_lines' => $dailyEarningLines,
                 'attendance_display_summary' => is_array($summary['attendance_display_summary'] ?? null)

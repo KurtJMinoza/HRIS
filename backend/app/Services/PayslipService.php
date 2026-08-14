@@ -907,9 +907,9 @@ class PayslipService
                 'daily_rate_divisor_days' => (int) ($summary['daily_rate_divisor_days'] ?? ($snapshot['daily_rate_divisor_days'] ?? 0)),
             ],
             'amounts' => [
-                'gross_pay' => (float) ($attrs['gross_pay'] ?? 0),
+                'gross_pay' => (float) ($summary['display_gross_pay'] ?? $attrs['gross_pay'] ?? 0),
                 'total_deductions' => (float) ($attrs['total_deductions'] ?? 0),
-                'net_pay' => (float) ($attrs['net_pay'] ?? 0),
+                'net_pay' => (float) ($summary['display_net_pay'] ?? $attrs['net_pay'] ?? 0),
                 'taxable_total_this_period' => (float) ($attrs['taxable_total_this_period'] ?? 0),
                 'non_taxable_total_this_period' => (float) ($attrs['non_taxable_total_this_period'] ?? 0),
                 'ytd_gross' => (float) ($attrs['ytd_gross'] ?? 0),
@@ -929,6 +929,8 @@ class PayslipService
                 'basic_salary_schedule_factor' => (float) ($summary['basic_salary_schedule_factor'] ?? 0),
                 'monthly_basic_salary' => (float) ($summary['monthly_basic_salary'] ?? ($snapshot['monthly_basic_salary'] ?? 0)),
                 'semi_monthly_basic_salary' => (float) ($summary['semi_monthly_basic_salary'] ?? 0),
+                'display_gross_pay' => isset($summary['display_gross_pay']) ? (float) $summary['display_gross_pay'] : null,
+                'display_net_pay' => isset($summary['display_net_pay']) ? (float) $summary['display_net_pay'] : null,
                 'payslip_earning_lines' => is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
                 'daily_computation_earning_lines' => $dailyEarningLines,
                 'attendance_display_summary' => is_array($summary['attendance_display_summary'] ?? null)
@@ -1361,6 +1363,25 @@ class PayslipService
     }
 
     /**
+     * UI totals for Finalize Payroll / payslip preview. Snaps daily-rate ₱0.03 gaps
+     * to semi-monthly Regular pay display; does not rewrite stored payroll amounts.
+     *
+     * @return array{gross_pay: float, total_deductions: float, net_pay: float}
+     */
+    public function payslipDisplayTotalsFromSnapshot(array $snapshot): array
+    {
+        $normalized = $this->normalizeSnapshotForPayslipPdf($snapshot);
+        $computed = $this->payslipLineTotalsFromNormalizedSnapshot($normalized);
+        $summary = is_array($normalized['summary'] ?? null) ? $normalized['summary'] : [];
+
+        return [
+            'gross_pay' => round((float) ($summary['display_gross_pay'] ?? $computed['gross_pay']), 2),
+            'total_deductions' => $computed['total_deductions'],
+            'net_pay' => round((float) ($summary['display_net_pay'] ?? $computed['net_pay']), 2),
+        ];
+    }
+
+    /**
      * Reconcile a saved payslip row with the rendered payslip line totals.
      *
      * @return array{gross_pay: float, total_deductions: float, net_pay: float, changed: bool}
@@ -1436,13 +1457,21 @@ class PayslipService
      */
     public function payslipTotalsForDisplay(Payslip $payslip): array
     {
-        $metrics = $this->frozenPayslipLineMetrics($payslip);
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot) || $snapshot === []) {
+            $metrics = $this->frozenPayslipLineMetrics($payslip);
 
-        return [
-            'gross_pay' => $metrics['gross_pay'],
-            'total_deductions' => $metrics['total_deductions'],
-            'net_pay' => $metrics['net_pay'],
-        ];
+            return [
+                'gross_pay' => $metrics['gross_pay'],
+                'total_deductions' => $metrics['total_deductions'],
+                'net_pay' => $metrics['net_pay'],
+            ];
+        }
+
+        return $this->payslipDisplayTotalsFromSnapshot($snapshot);
     }
 
     /**
@@ -3114,6 +3143,38 @@ class PayslipService
     }
 
     /**
+     * Payslip totals: use Regular pay display_amount only when it is a daily-rate
+     * rounding gap (≤ ₱0.10). Late/undertime gaps stay on computed amounts.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     */
+    private function sumPayslipLineDisplayAmounts(array $lines): float
+    {
+        $total = 0.0;
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            if (! empty($line['exempted'])) {
+                continue;
+            }
+            $amount = $line['amount'] ?? $line['resolved_amount'] ?? null;
+            if (! is_numeric($amount)) {
+                continue;
+            }
+            $computed = max(0.0, (float) $amount);
+            $display = is_numeric($line['display_amount'] ?? null) ? (float) $line['display_amount'] : null;
+            if ($display !== null && abs($display - $computed) <= 0.10) {
+                $total += max(0.0, $display);
+            } else {
+                $total += $computed;
+            }
+        }
+
+        return round($total, 2);
+    }
+
+    /**
      * Ensure payslip government deduction lines and summary totals honor employee exemption settings.
      * Draft preview uses live computation; finalize freezes a snapshot — this keeps both aligned.
      *
@@ -3352,19 +3413,22 @@ class PayslipService
             $out['daily_computation_days'] = [];
         }
 
+        $regularPayPresentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyComputationDays);
         $summary['payslip_earning_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_earning_lines'] ?? [],
             'Earning',
             false,
             false,
-            $regularHourlyRate
+            $regularHourlyRate,
+            $regularPayPresentDays
         );
         $summary['daily_computation_earning_lines'] = $this->normalizePayslipLineList(
             $summary['daily_computation_earning_lines'] ?? [],
             'Daily computation earning',
             false,
             false,
-            $regularHourlyRate
+            $regularHourlyRate,
+            $regularPayPresentDays
         );
         if ($isExecomSnapshot) {
             $summary = $this->sanitizeExecomPayslipSummary($summary);
@@ -3435,6 +3499,28 @@ class PayslipService
             $summary,
             $dailyComputationDays,
             $isExecomSnapshot || $isConsultantSnapshot
+        );
+        $summary = $this->applyRegularPayDisplayAmounts(
+            $summary,
+            $regularPayPresentDays,
+            $dailyRate
+        );
+        $earningLines = ($isExecomSnapshot || $isConsultantSnapshot)
+            ? (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [])
+            : array_merge(
+                is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [],
+                is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : []
+            );
+        $deductionLines = array_merge(
+            is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
+            is_array($summary['payslip_custom_deduction_lines'] ?? null) ? $summary['payslip_custom_deduction_lines'] : []
+        );
+        $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts(
+            $this->deduplicatePayslipLines(array_values(array_filter($earningLines, 'is_array')))
+        );
+        $summary['display_net_pay'] = round(
+            (float) $summary['display_gross_pay'] - $this->sumPayslipLineAmounts($deductionLines),
+            2
         );
 
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
@@ -3688,8 +3774,99 @@ class PayslipService
                 ],
             ],
             'total_deduction' => round($lateAmount + $halfDayAmount + $absenceAmount + $undertimeAmount, 2),
-            'note' => 'Attendance reductions are already included in Regular pay and are shown here for detail only.',
+            'total_deduction_units_label' => '—',
+            'note' => 'Attendance reductions are deducted from Regular pay above.',
         ];
+    }
+
+    /**
+     * Payslip-only: show Regular pay at full present-day gross. Payroll line amount stays net.
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    private function applyRegularPayDisplayAmounts(array $summary, ?int $presentDays, float $dailyRate): array
+    {
+        if ($presentDays === null || $presentDays <= 0 || $dailyRate <= 0.0001) {
+            return $summary;
+        }
+
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? array_values($summary['daily_computation_earning_lines'])
+            : [];
+        if ($lines === []) {
+            return $summary;
+        }
+
+        $updated = false;
+        foreach ($lines as $idx => $line) {
+            if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                continue;
+            }
+
+            $netAmount = round((float) ($line['amount'] ?? 0), 2);
+            if ($netAmount <= 0) {
+                continue;
+            }
+
+            $lines[$idx]['display_amount'] = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
+            $lines[$idx]['computed_amount'] = $netAmount;
+            $updated = true;
+            break;
+        }
+
+        if (! $updated) {
+            return $summary;
+        }
+
+        $summary['daily_computation_earning_lines'] = $lines;
+
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : null;
+        if (is_array($breakdown)) {
+            $breakdown['note'] = 'Attendance reductions are deducted from Regular pay above.';
+            $breakdown['total_deduction_units_label'] = '—';
+            $summary['attendance_pay_breakdown'] = $breakdown;
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Present-day Regular pay gross for display only.
+     * Uses monthly / divisor so 13 × daily does not lose ₱0.03 vs semi-monthly
+     * (582.69 × 13 = 7,574.97, while 15,150 × 13 / 26 = 7,575.00).
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    private function regularPayGrossDisplayAmount(array $summary, int $presentDays, float $dailyRate): float
+    {
+        $monthly = (float) ($summary['monthly_basic_salary'] ?? 0);
+        $semi = (float) ($summary['semi_monthly_basic_salary'] ?? 0);
+        $divisor = (float) ($summary['daily_rate_divisor_days'] ?? 0);
+        if ($divisor <= 0) {
+            $divisor = 26.0;
+        }
+
+        if ($monthly > 0.0001) {
+            return round($monthly * $presentDays / $divisor, 2);
+        }
+        if ($semi > 0.0001) {
+            return round($semi * 2.0 * $presentDays / $divisor, 2);
+        }
+
+        return round($presentDays * $dailyRate, 2);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isRegularPayLine(array $line): bool
+    {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? '')));
+
+        return str_contains($key, 'regular_pay') || $label === 'regular pay';
     }
 
     /**
@@ -4417,8 +4594,8 @@ class PayslipService
                 strtolower(trim((string) ($metadata['holiday_id'] ?? ''))),
                 strtolower(trim((string) ($metadata['holiday_date'] ?? ''))),
                 strtolower(trim((string) ($line['pay_component_id'] ?? ''))),
-                strtolower(trim((string) ($line['key'] ?? ''))),
                 strtolower(trim((string) ($line['label'] ?? $line['name'] ?? ''))),
+                number_format(round((float) ($line['amount'] ?? $line['resolved_amount'] ?? 0), 2), 2, '.', ''),
             ]);
             if (isset($seen[$key])) {
                 continue;
@@ -4919,7 +5096,8 @@ class PayslipService
         string $defaultLabel,
         bool $keepWithholdingWhenZero = false,
         bool $keepAllAmounts = false,
-        ?float $defaultRegularHourlyRate = null
+        ?float $defaultRegularHourlyRate = null,
+        ?int $regularPayPresentDays = null
     ): array {
         $rows = is_array($raw) ? $raw : [];
         $out = [];
@@ -4962,16 +5140,16 @@ class PayslipService
                 $minutesWorked = $this->parseLegacyUnitsToMinutes($unitsStr);
             }
 
-            // Regular-pay lines use day-split display ("X days, Y hrs Z mins") because
-            // they span multiple work days. All other lines use simple "X hrs Y mins".
-            // Explicit day-unit strings (leave / holiday "1 day") must stay day-based.
-            $usesDaySplitUnits = str_contains($lineKey, 'regular_pay');
+            // Regular-pay units show present-day count only (for example, "13 days").
+            // Late, undertime, and half-day reductions stay in the deduction breakdown; amounts
+            // still use minute-based payroll logic.
+            $usesPresentDayUnits = str_contains($lineKey, 'regular_pay');
             $hasExplicitDayUnits = $unitsStr !== null
                 && preg_match('/^\d+(?:\.\d+)?\s*days?$/i', $unitsStr) === 1
                 && ! $isWorkedHolidayLine;
             $formatted = $this->formatUnitsAndAmount($minutesWorked, $hourlyRate);
-            $unitsFromMinutes = $usesDaySplitUnits
-                ? ($this->formatPayslipUnitsFromMinutes($minutesWorked) ?? $formatted['units'])
+            $unitsFromMinutes = $usesPresentDayUnits
+                ? ($this->formatRegularPayPresentDaysUnits($regularPayPresentDays) ?? $formatted['units'])
                 : $formatted['units'];
             $amountFromMinutes = $formatted['amount'];
 
@@ -5160,18 +5338,21 @@ class PayslipService
 
     /**
      * Regular-pay attendance units for finalize payroll and payroll reports — same label as the payslip
-     * "Regular pay" row (for example, "9 days, 3 hrs 0 mins").
+     * "Regular pay" row (for example, "13 days").
      *
      * @param  array<string, mixed>  $summary
      */
     public function regularPayAttendanceLabel(array $summary): ?string
     {
+        $dailyDays = $this->cleanDailyComputationDays($summary['daily_computation_days'] ?? null);
+        $presentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyDays);
+        if ($presentDays !== null && $presentDays > 0) {
+            return $this->formatRegularPayPresentDaysUnits($presentDays);
+        }
+
         $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])
             : [];
-        $dailyRate = (float) ($summary['daily_rate'] ?? 0);
-        $defaultHourlyRate = $dailyRate > 0 ? $dailyRate / 8.0 : null;
-
         foreach ($lines as $line) {
             if (! is_array($line)) {
                 continue;
@@ -5184,28 +5365,77 @@ class PayslipService
             }
 
             $units = trim((string) ($line['units'] ?? ''));
-            if ($units !== '') {
+            if ($units !== '' && preg_match('/^\d+(?:\.\d+)?\s*days?$/i', $units) === 1) {
                 return $this->sanitizePayslipText($units) ?: null;
-            }
-
-            $minutesWorked = is_numeric($line['minutes_worked'] ?? null)
-                ? (int) round((float) $line['minutes_worked'])
-                : null;
-            $hourlyRate = is_numeric($line['hourly_rate'] ?? null) ? (float) $line['hourly_rate'] : $defaultHourlyRate;
-            $amount = (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0);
-
-            if (($minutesWorked === null || $minutesWorked <= 0) && $hourlyRate !== null && $hourlyRate > 0 && $amount > 0) {
-                $minutesWorked = (int) round(($amount / $hourlyRate) * 60.0);
-            }
-
-            if ($minutesWorked !== null && $minutesWorked > 0) {
-                return $this->formatPayslipUnitsFromMinutes($minutesWorked);
             }
 
             return null;
         }
 
         return null;
+    }
+
+    /**
+     * Present-day count for regular-pay unit display only — not used for payroll amounts.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  list<array<string, mixed>>  $dailyDays
+     */
+    private function resolveRegularPayPresentDaysCount(array $summary, array $dailyDays = []): ?int
+    {
+        if ($dailyDays !== []) {
+            $count = 0;
+            foreach ($dailyDays as $day) {
+                if (! is_array($day)) {
+                    continue;
+                }
+
+                $status = strtolower(trim((string) ($day['status'] ?? '')));
+                if (! in_array($status, ['worked', 'halfday'], true)) {
+                    continue;
+                }
+                if ((bool) ($day['is_rest_day'] ?? false)) {
+                    continue;
+                }
+
+                $regularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
+                if ($regularMinutes <= 0 && (int) ($day['worked_minutes'] ?? 0) <= 0) {
+                    continue;
+                }
+
+                $count++;
+            }
+
+            if ($count > 0) {
+                return $count;
+            }
+        }
+
+        $ads = is_array($summary['attendance_display_summary'] ?? null)
+            ? $summary['attendance_display_summary']
+            : null;
+        if ($ads !== null) {
+            $presenceDays = (int) ($ads['presence_days_count'] ?? 0);
+            if ($presenceDays > 0) {
+                return $presenceDays;
+            }
+
+            $workingDays = (int) ($ads['working_days_count'] ?? 0);
+            if ($workingDays > 0) {
+                return $workingDays;
+            }
+        }
+
+        return null;
+    }
+
+    private function formatRegularPayPresentDaysUnits(?int $days): ?string
+    {
+        if ($days === null || $days <= 0) {
+            return null;
+        }
+
+        return $this->formatAttendanceDayCount((float) $days);
     }
 
     /**

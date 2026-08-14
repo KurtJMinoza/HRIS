@@ -804,9 +804,12 @@ class PayslipController extends Controller
                     // Live computation is the base response, but generated/frozen earning lines
                     // (including 13TH_MONTH_PAY) and their totals must come from the refreshed draft.
                     $live['summary']['payslip_earning_lines'] = data_get($storedSnapshot, 'summary.payslip_earning_lines', []);
-                    $live['amounts']['gross_pay'] = $storedMetrics['gross_pay'];
+                    $live['summary']['daily_computation_earning_lines'] = data_get($storedSnapshot, 'summary.daily_computation_earning_lines', $live['summary']['daily_computation_earning_lines'] ?? []);
+                    $live['summary']['display_gross_pay'] = data_get($storedSnapshot, 'summary.display_gross_pay');
+                    $live['summary']['display_net_pay'] = data_get($storedSnapshot, 'summary.display_net_pay');
+                    $live['amounts']['gross_pay'] = data_get($storedSnapshot, 'summary.display_gross_pay', $storedMetrics['gross_pay']);
                     $live['amounts']['total_deductions'] = $storedMetrics['total_deductions'];
-                    $live['amounts']['net_pay'] = $storedMetrics['net_pay'];
+                    $live['amounts']['net_pay'] = data_get($storedSnapshot, 'summary.display_net_pay', $storedMetrics['net_pay']);
                     $live['snapshot'] = $storedSnapshot;
                 } catch (\Throwable $e) {
                     Log::warning('Payslip view: draft snapshot refresh failed', [
