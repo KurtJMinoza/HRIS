@@ -637,7 +637,7 @@ export function HolidayPayPolicyCard({
               Applied when evaluating unworked regular holiday pay, and special non-working unworked pay when enabled.
             </p>
           </div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
             <ToggleRow
               id="previous-workday-required"
               checked={holidayPolicy.attendance.require_previous_workday_presence !== false}
@@ -645,7 +645,16 @@ export function HolidayPayPolicyCard({
                 onPolicyChange(['attendance', 'require_previous_workday_presence'], Boolean(checked))
               }
               label="Require attendance on the preceding workday"
-              hint="Must be present or on paid leave on the last workday before the holiday."
+              hint="Must be present (clock-in and clock-out) on the last workday before the holiday."
+            />
+            <ToggleRow
+              id="previous-workday-paid-leave"
+              checked={holidayPolicy.attendance.paid_leave_qualifies_previous_workday !== false}
+              onCheckedChange={(checked) =>
+                onPolicyChange(['attendance', 'paid_leave_qualifies_previous_workday'], Boolean(checked))
+              }
+              label="Allow paid leave on the preceding workday"
+              hint="Approved paid leave on the last workday before the holiday also qualifies."
             />
             <ToggleRow
               id="following-workday-required"
@@ -654,7 +663,16 @@ export function HolidayPayPolicyCard({
                 onPolicyChange(['attendance', 'require_following_workday_presence'], Boolean(checked))
               }
               label="Require attendance on the following workday"
-              hint="Must be present or on paid leave on the first workday after the holiday."
+              hint="Must be present (clock-in and clock-out) on the first workday after the holiday."
+            />
+            <ToggleRow
+              id="following-workday-paid-leave"
+              checked={holidayPolicy.attendance.paid_leave_qualifies_following_workday !== false}
+              onCheckedChange={(checked) =>
+                onPolicyChange(['attendance', 'paid_leave_qualifies_following_workday'], Boolean(checked))
+              }
+              label="Allow paid leave on the following workday"
+              hint="Approved paid leave on the first workday after the holiday also qualifies."
             />
             <ToggleRow
               id="successive-holiday-rule"
