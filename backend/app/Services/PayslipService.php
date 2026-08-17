@@ -3144,14 +3144,16 @@ class PayslipService
     }
 
     /**
-     * Payslip totals: use Regular pay display_amount only when it is a daily-rate
-     * rounding gap (≤ ₱0.10). Late/undertime gaps stay on computed amounts.
+     * Payslip totals: Regular pay contributes present-day gross after attendance reductions
+     * (late/undertime only). Absences and approved paid half-day leave are not deducted here.
      *
      * @param  list<array<string, mixed>>  $lines
+     * @param  array<string, mixed>|null  $attendanceBreakdown
      */
-    private function sumPayslipLineDisplayAmounts(array $lines): float
+    private function sumPayslipLineDisplayAmounts(array $lines, ?array $attendanceBreakdown = null): float
     {
         $total = 0.0;
+        $regularHandled = false;
         foreach ($lines as $line) {
             if (! is_array($line)) {
                 continue;
@@ -3165,6 +3167,23 @@ class PayslipService
             }
             $computed = max(0.0, (float) $amount);
             $display = is_numeric($line['display_amount'] ?? null) ? (float) $line['display_amount'] : null;
+
+            if (! $regularHandled && $this->isRegularPayLine($line)) {
+                $regularHandled = true;
+                $afterReductions = is_array($attendanceBreakdown)
+                    && is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
+                    ? (float) $attendanceBreakdown['regular_pay_after_reductions']
+                    : null;
+                if ($afterReductions !== null) {
+                    $total += max(0.0, $afterReductions);
+                    continue;
+                }
+                if ($display !== null) {
+                    $total += max(0.0, $display);
+                    continue;
+                }
+            }
+
             if ($display !== null && abs($display - $computed) <= 0.10) {
                 $total += max(0.0, $display);
             } else {
@@ -3517,8 +3536,12 @@ class PayslipService
             is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
             is_array($summary['payslip_custom_deduction_lines'] ?? null) ? $summary['payslip_custom_deduction_lines'] : []
         );
+        $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : null;
         $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts(
-            $this->deduplicatePayslipLines(array_values(array_filter($earningLines, 'is_array')))
+            $this->deduplicatePayslipLines(array_values(array_filter($earningLines, 'is_array'))),
+            $attendanceBreakdown
         );
         $summary['display_net_pay'] = round(
             (float) $summary['display_gross_pay'] - $this->sumPayslipLineAmounts($deductionLines),
@@ -3665,6 +3688,7 @@ class PayslipService
         $lateMinutes = 0;
         $halfDayCount = 0;
         $halfDayMinutes = 0;
+        $halfDayDeductionMinutes = 0;
         $absenceDays = 0.0;
         $absenceMinutes = 0;
         $undertimeCount = 0;
@@ -3693,10 +3717,30 @@ class PayslipService
                 $absenceDays += 1.0;
             }
 
+            // Approved paid half-day leave: informational only (pay is on Leave adjustments).
+            // Do not also deduct the leave half from Regular pay.
+            if ($status === 'halfday') {
+                $leaveHalfMinutes = 0;
+                foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+                    if (! is_array($entry)) {
+                        continue;
+                    }
+                    $component = strtolower(trim((string) ($entry['component'] ?? '')));
+                    if (in_array($component, ['paid_leave', 'paid_leave_daily_flat'], true)) {
+                        $leaveHalfMinutes += max(0, (int) ($entry['minutes'] ?? 0));
+                    }
+                }
+                if ($leaveHalfMinutes <= 0) {
+                    $leaveHalfMinutes = (int) round($requiredMinutes / 2);
+                }
+                $halfDayCount++;
+                $halfDayMinutes += $leaveHalfMinutes;
+            }
+
             $dayLateMinutes = max(0, (int) ($day['late_deduction_minutes'] ?? 0));
             $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
             $tardinessLabel = (string) ($day['tardiness_label'] ?? '');
-            if ($tardinessStatus === 'half_day') {
+            if ($status !== 'halfday' && $tardinessStatus === 'half_day') {
                 $paidRegularMinutes = max(
                     0,
                     (int) ($day['paid_regular_minutes'] ?? ((int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)))
@@ -3704,6 +3748,7 @@ class PayslipService
                 $halfDayMinutesForDay = max($dayLateMinutes, max(0, $requiredMinutes - $paidRegularMinutes));
                 $halfDayCount++;
                 $halfDayMinutes += $halfDayMinutesForDay;
+                $halfDayDeductionMinutes += $halfDayMinutesForDay;
             } elseif ($tardinessStatus === 'late' && $tardinessLabel !== '') {
                 $labelMinutes = 0;
                 if (preg_match('/(\d+)\s*hour(?:s)?(?:\s+(\d+)\s*minute(?:s)?)?/i', $tardinessLabel, $hoursMatch) === 1) {
@@ -3713,20 +3758,21 @@ class PayslipService
                 }
                 $dayLateMinutes = max($dayLateMinutes, $labelMinutes);
             }
-            if ($tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
+            if ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
                 $lateCount++;
                 $lateMinutes += $dayLateMinutes;
             }
 
             $dayUndertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
-            if ($dayUndertimeMinutes > 0) {
+            if ($status !== 'halfday' && $dayUndertimeMinutes > 0) {
                 $undertimeCount++;
                 $undertimeMinutes += $dayUndertimeMinutes;
             }
         }
 
         $lateAmount = round(($lateMinutes / 60.0) * $hourlyRate, 2);
-        $halfDayAmount = round(($halfDayMinutes / 60.0) * $hourlyRate, 2);
+        $halfDayDeductionAmount = round(($halfDayDeductionMinutes / 60.0) * $hourlyRate, 2);
+        $halfDayDisplayAmount = round(($halfDayMinutes / 60.0) * $hourlyRate, 2);
         $absenceAmount = round(($absenceMinutes / 60.0) * $hourlyRate, 2);
         $undertimeAmount = round(($undertimeMinutes / 60.0) * $hourlyRate, 2);
 
@@ -3759,7 +3805,7 @@ class PayslipService
                     'details' => $formatAttendanceUnits($halfDayMinutes),
                     'count' => $halfDayCount,
                     'minutes' => $halfDayMinutes,
-                    'amount' => $halfDayAmount,
+                    'amount' => $halfDayDisplayAmount,
                 ],
                 [
                     'key' => 'absence',
@@ -3778,9 +3824,9 @@ class PayslipService
                     'amount' => $undertimeAmount,
                 ],
             ],
-            'total_deduction' => round($lateAmount + $halfDayAmount + $absenceAmount + $undertimeAmount, 2),
+            'total_deduction' => round($lateAmount + $halfDayDeductionAmount + $undertimeAmount, 2),
             'total_deduction_units_label' => '—',
-            'note' => 'Attendance reductions are deducted from Regular pay above.',
+            'note' => 'Late and undertime reduce Regular pay. Absences and approved paid half-day leave are informational (leave pay is on Leave adjustments).',
         ];
     }
 
@@ -3829,7 +3875,7 @@ class PayslipService
             ? $summary['attendance_pay_breakdown']
             : null;
         if (is_array($breakdown)) {
-            $breakdown['note'] = 'Attendance reductions are deducted from Regular pay above.';
+            $breakdown['note'] = 'Late and undertime reduce Regular pay. Absences and approved paid half-day leave are informational (leave pay is on Leave adjustments).';
             $breakdown['total_deduction_units_label'] = '—';
             $summary['attendance_pay_breakdown'] = $breakdown;
         }
@@ -5015,7 +5061,9 @@ class PayslipService
             $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
 
             if (! $hasRegularPayComponent) {
-                if ($dayRegularMinutes <= 0 || $holidayPremiumPay > 0) {
+                // Leave-only halfday stores leave minutes on regular_* via mergeApprovedHalfDayLeaveCompensation.
+                // Those belong on Leave adjustments — never rebuild Regular pay from them.
+                if ($status === 'halfday' || $dayRegularMinutes <= 0 || $holidayPremiumPay > 0) {
                     continue;
                 }
             } elseif ($componentAmount <= 0.0001) {
@@ -5025,8 +5073,9 @@ class PayslipService
                 continue;
             }
 
+            // Prefer breakdown regular_pay minutes. Day regular_* on halfday includes leave minutes.
             $actualMinutesForDay = $componentMinutes > 0
-                ? min($componentMinutes, $dayRegularMinutes > 0 ? $dayRegularMinutes : $componentMinutes)
+                ? $componentMinutes
                 : $dayRegularMinutes;
 
             $actualRegularMinutes += $actualMinutesForDay;

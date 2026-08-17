@@ -812,6 +812,102 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(102, $line['minutes_worked'] ?? null);
     }
 
+    public function test_payslip_regular_pay_repair_excludes_leave_only_halfday_minutes(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'daily_rate_divisor_days' => 26,
+            'monthly_basic_salary' => 18000,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 18000,
+                'semi_monthly_basic_salary' => 9000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 692.31,
+                        'minutes_worked' => 480,
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'amount' => 1038.48,
+                        'units' => '1.5 days',
+                    ],
+                ],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-17',
+                    'status' => 'halfday',
+                    'is_rest_day' => false,
+                    // Leave half is merged into regular_* (480) even though only 240 is attendance.
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [
+                        ['component' => 'regular_pay', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16],
+                        ['component' => 'paid_leave', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16, 'leave_type' => 'half_day', 'day_fraction' => 0.5],
+                    ],
+                ],
+                [
+                    'date' => '2026-08-18',
+                    'status' => 'halfday',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 240,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [
+                        ['component' => 'paid_leave', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16, 'leave_type' => 'half_day', 'day_fraction' => 0.5],
+                    ],
+                ],
+                [
+                    'date' => '2026-08-20',
+                    'status' => 'halfday',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [
+                        ['component' => 'regular_pay', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16],
+                        ['component' => 'paid_leave', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16, 'leave_type' => 'half_day', 'day_fraction' => 0.5],
+                    ],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $lines = collect($normalized['summary']['daily_computation_earning_lines'] ?? []);
+        $regular = $lines->first(fn ($line) => ($line['key'] ?? null) === 'daily:regular_pay');
+        $leave = $lines->first(fn ($line) => str_contains(strtolower((string) ($line['label'] ?? '')), 'leave'));
+
+        $this->assertNotNull($regular);
+        $this->assertSame('2 days', $regular['units'] ?? null);
+        $this->assertSame(480, (int) ($regular['minutes_worked'] ?? 0));
+        $this->assertEqualsWithDelta(692.31, (float) ($regular['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1384.62, (float) ($regular['display_amount'] ?? 0), 0.02);
+        $this->assertNotNull($leave);
+        $this->assertSame('1.5 days', $leave['units'] ?? null);
+
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? []);
+        $halfDay = $rows->first(fn ($row) => ($row['key'] ?? null) === 'half_day');
+        $absence = $rows->first(fn ($row) => ($row['key'] ?? null) === 'absence');
+        $this->assertSame(3, (int) ($halfDay['count'] ?? 0));
+        $this->assertSame(720, (int) ($halfDay['minutes'] ?? 0));
+        $this->assertEqualsWithDelta(1038.47, (float) ($halfDay['amount'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta(0.0, (float) ($absence['amount'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta(0.0, (float) ($breakdown['total_deduction'] ?? -1), 0.01);
+        $this->assertEqualsWithDelta(1384.62, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(
+            1384.62 + 1038.48,
+            (float) ($normalized['summary']['display_gross_pay'] ?? 0),
+            0.05
+        );
+    }
+
     public function test_stored_payslip_snapshot_repair_excludes_holiday_premium_days_from_regular_pay(): void
     {
         $snapshot = [

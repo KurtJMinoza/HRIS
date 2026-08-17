@@ -12,17 +12,8 @@ function peso(v) {
 
 function attendanceDeduction(v) {
   const amount = Number(v || 0)
-  return amount > 0 ? `-${peso(amount)}` : peso(0)
-}
-
-function regularPayAfterReductions(line, attendanceBreakdown) {
-  const stored = Number(attendanceBreakdown?.regular_pay_after_reductions)
-  if (Number.isFinite(stored)) return stored
-  const reductions = Number(attendanceBreakdown?.total_deduction || 0)
-  if (line?.display_amount != null && Number.isFinite(Number(line.display_amount))) {
-    return Number(line.display_amount) - reductions
-  }
-  return Number(line?.amount || 0)
+  if (!Number.isFinite(amount) || amount <= 0) return peso(0)
+  return `-${peso(amount)}`
 }
 
 /**
@@ -415,7 +406,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                           <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">
                             {formatUnits(line?.minutes_worked, line?.units) || '-'}
                           </td>
-                          <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-medium tabular-nums text-[#0A0A0A]">
+                          <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-semibold tabular-nums text-[#0A0A0A]">
                             {Number(
                               isRegularPayLine && line?.display_amount != null
                                 ? line.display_amount
@@ -430,23 +421,20 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                               <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">
                                 {Number(attendanceBreakdown?.scheduled_days_count || 0)} {Number(attendanceBreakdown?.scheduled_days_count || 0) === 1 ? 'day' : 'days'}
                               </td>
-                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/60">-</td>
+                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/60">—</td>
                             </tr>
                             {attendanceRows.filter((row) => row?.key !== 'scheduled_regular_days').map((row, rowIdx) => (
                               <tr key={`attendance-detail-${row?.key || rowIdx}`} className="bg-slate-50/45">
                                 <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/70">{row?.label || 'Attendance adjustment'}</td>
-                                <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">{row?.details || '-'}</td>
+                                <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">{row?.details || '—'}</td>
                                 <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/70">{attendanceDeduction(row?.amount)}</td>
                               </tr>
                             ))}
                             <tr className="border-b border-emerald-100 bg-slate-50/45">
-                              <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/75">Total regular pay</td>
+                              <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/75">Total attendance reductions</td>
                               <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
                               <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]/75">
-                                {regularPayAfterReductions(line, attendanceBreakdown).toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}
+                                {attendanceDeduction(attendanceBreakdown?.total_deduction)}
                               </td>
                             </tr>
                           </>

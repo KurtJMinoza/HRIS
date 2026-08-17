@@ -93,17 +93,6 @@
 
     return $amount > 0 ? '-'.$formatMoney($amount) : $formatMoney(0);
   };
-  $regularPayAfterReductions = static function (array $line) use ($attendanceBreakdown): float {
-    if (is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)) {
-      return round((float) $attendanceBreakdown['regular_pay_after_reductions'], 2);
-    }
-    $reductions = (float) ($attendanceBreakdown['total_deduction'] ?? 0);
-    if (is_numeric($line['display_amount'] ?? null)) {
-      return round((float) $line['display_amount'] - $reductions, 2);
-    }
-
-    return round((float) ($line['amount'] ?? 0), 2);
-  };
 
   if (! $isExecomPayroll && ! $isConsultantPayroll && count($dailyEarnLines) === 0) {
     $fallback = [];
@@ -520,9 +509,9 @@
                       @endif
                     @endforeach
                     <tr class="attendance-total">
-                      <td class="attendance-label">Total regular pay</td>
+                      <td class="attendance-label">Total attendance reductions</td>
                       <td class="units">—</td>
-                      <td class="num">{{ $formatMoney($regularPayAfterReductions($line)) }}</td>
+                      <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
                     </tr>
                     @php($attendanceDetailsRendered = true)
                   @endif
@@ -549,9 +538,9 @@
                       @endif
                     @endforeach
                     <tr class="attendance-total">
-                      <td class="attendance-label">Total regular pay</td>
+                      <td class="attendance-label">Total attendance reductions</td>
                       <td class="units">—</td>
-                      <td class="num">{{ $formatMoney($regularPayAfterReductions($line)) }}</td>
+                      <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
                     </tr>
                     @php($attendanceDetailsRendered = true)
                   @endif

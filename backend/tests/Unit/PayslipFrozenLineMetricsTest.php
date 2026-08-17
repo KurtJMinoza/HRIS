@@ -225,13 +225,14 @@ class PayslipFrozenLineMetricsTest extends TestCase
 
         $this->assertSame('13 days', $line['units'] ?? null);
         $this->assertSame(7575.0, $displayAmount);
-        $this->assertSame($netAmount, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
-        $this->assertSame($netAmount, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
+        $afterReductions = round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2);
+        $this->assertSame($afterReductions, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
+        $this->assertSame($afterReductions, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
         $this->assertGreaterThan($netAmount, $displayAmount);
         $this->assertGreaterThan(0.0, $totalDeduction);
         $this->assertSame(
             round($displayAmount - $totalDeduction, 2),
-            round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2)
+            $afterReductions
         );
     }
 
