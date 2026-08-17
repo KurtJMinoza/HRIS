@@ -184,7 +184,7 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame('13 days', $label);
     }
 
-    public function test_regular_pay_display_amount_shows_present_day_gross_only(): void
+    public function test_regular_pay_display_amount_keeps_present_day_gross_and_shows_payable_total(): void
     {
         $snapshot = [
             'daily_rate' => 582.69,
@@ -221,18 +221,97 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
         $totalDeduction = (float) ($normalized['summary']['attendance_pay_breakdown']['total_deduction'] ?? 0);
         $netAmount = round((float) ($line['amount'] ?? 0), 2);
-        $displayAmount = round((float) ($line['display_amount'] ?? 0), 2);
 
         $this->assertSame('13 days', $line['units'] ?? null);
-        $this->assertSame(7575.0, $displayAmount);
+        $this->assertEqualsWithDelta(7101.53, $netAmount, 0.02);
+        $this->assertSame(7575.0, round((float) ($line['display_amount'] ?? 0), 2));
         $afterReductions = round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2);
+        $this->assertSame($netAmount, $afterReductions);
         $this->assertSame($afterReductions, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
         $this->assertSame($afterReductions, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
-        $this->assertGreaterThan($netAmount, $displayAmount);
         $this->assertGreaterThan(0.0, $totalDeduction);
-        $this->assertSame(
-            round($displayAmount - $totalDeduction, 2),
-            $afterReductions
+    }
+
+    public function test_regular_pay_headline_keeps_four_present_days_and_breakdown_uses_payable_total(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'units' => '4 days',
+                    'amount' => 2769.23,
+                    'display_amount' => 2769.23,
+                ]],
+            ],
+            'daily_computation_days' => array_merge([
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => 86.53875,
+                        'amount' => 692.31,
+                    ]],
+                ],
+            ], array_map(
+                static fn (string $date): array => [
+                    'date' => $date,
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 240,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'undertime_deduction_minutes' => 240,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 240,
+                        'rate' => 86.53875,
+                        'amount' => 346.16,
+                    ]],
+                ],
+                ['2026-08-12', '2026-08-17', '2026-08-20']
+            )),
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('4 days', $line['units'] ?? null);
+        $this->assertSame(1200, (int) ($line['minutes_worked'] ?? 0));
+        $this->assertEqualsWithDelta(1730.78, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(2769.23, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(
+            1730.78,
+            (float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0),
+            0.02
+        );
+        $this->assertEqualsWithDelta(
+            1730.78,
+            (float) ($normalized['summary']['display_gross_pay'] ?? 0),
+            0.02
+        );
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenLine = $frozen['summary']['daily_computation_earning_lines'][0] ?? null;
+        $this->assertSame('4 days', $frozenLine['units'] ?? null);
+        $this->assertEqualsWithDelta(1730.78, (float) ($frozenLine['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(2769.23, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(
+            1730.78,
+            (float) ($frozen['summary']['display_gross_pay'] ?? 0),
+            0.02
         );
     }
 

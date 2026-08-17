@@ -900,9 +900,9 @@ class PolicyEngineTest extends TestCase
         $this->assertEqualsWithDelta(1038.47, (float) ($halfDay['amount'] ?? 0), 0.05);
         $this->assertEqualsWithDelta(0.0, (float) ($absence['amount'] ?? 0), 0.05);
         $this->assertEqualsWithDelta(0.0, (float) ($breakdown['total_deduction'] ?? -1), 0.01);
-        $this->assertEqualsWithDelta(1384.62, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(692.31, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
         $this->assertEqualsWithDelta(
-            1384.62 + 1038.48,
+            692.31 + 1038.48,
             (float) ($normalized['summary']['display_gross_pay'] ?? 0),
             0.05
         );

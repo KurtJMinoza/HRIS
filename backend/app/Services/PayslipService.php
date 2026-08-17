@@ -2587,8 +2587,33 @@ class PayslipService
             $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
         $summary = $this->withPayslipSalaryDisplay($summary, $out);
+        $dailyComputationDays = $this->cleanDailyComputationDays($out['daily_computation_days'] ?? null);
+        $dailyRate = (float) ($summary['daily_rate'] ?? ($out['daily_rate'] ?? 0));
+        $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
+        $regularPayPresentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyComputationDays);
+        if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
+            $summary = $this->normalizeFrozenRegularPayLines(
+                $summary,
+                $dailyComputationDays,
+                $regularHourlyRate,
+                $regularPayPresentDays
+            );
+            if ($dailyComputationDays !== [] && ! is_array($summary['attendance_pay_breakdown'] ?? null)) {
+                $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
+                    $summary,
+                    $dailyComputationDays,
+                    false
+                );
+            }
+            $summary = $this->applyRegularPayDisplayAmounts(
+                $summary,
+                $regularPayPresentDays,
+                $dailyRate
+            );
+        }
         $summary = $this->normalizeAttendancePayBreakdownDetails($summary);
         $summary = $this->attachRegularPayAfterReductionsDisplay($summary);
+        $summary = $this->refreshRegularPayDisplayTotals($summary);
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
             $summary
@@ -3831,45 +3856,76 @@ class PayslipService
     }
 
     /**
-     * Payslip-only: show Regular pay at full present-day gross. Payroll line amount stays net.
+     * Keep the Regular-pay headline at present-day gross. The actual payable amount is shown in
+     * the attendance breakdown after late/half-day/undertime detail is applied.
      *
      * @param  array<string, mixed>  $summary
      */
     private function applyRegularPayDisplayAmounts(array $summary, ?float $presentDays, float $dailyRate): array
     {
-        if ($presentDays === null || $presentDays <= 0.0001 || $dailyRate <= 0.0001) {
-            return $summary;
+        $lineKeys = ['daily_computation_earning_lines', 'payslip_earning_lines'];
+        $hasLines = false;
+        foreach ($lineKeys as $lineKey) {
+            if (is_array($summary[$lineKey] ?? null) && $summary[$lineKey] !== []) {
+                $hasLines = true;
+                break;
+            }
         }
-
-        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
-            ? array_values($summary['daily_computation_earning_lines'])
-            : [];
-        if ($lines === []) {
+        if (! $hasLines) {
             return $summary;
         }
 
         $updated = false;
-        foreach ($lines as $idx => $line) {
-            if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+        $displayApplied = false;
+        foreach ($lineKeys as $lineKey) {
+            $lines = is_array($summary[$lineKey] ?? null)
+                ? array_values($summary[$lineKey])
+                : [];
+            if ($lines === []) {
                 continue;
             }
 
-            $netAmount = round((float) ($line['amount'] ?? 0), 2);
-            if ($netAmount <= 0) {
-                continue;
+            foreach ($lines as $idx => $line) {
+                if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                    continue;
+                }
+
+                $canShowPresentDayGross = $presentDays !== null
+                    && $presentDays > 0.0001
+                    && $dailyRate > 0.0001;
+
+                if (! $canShowPresentDayGross) {
+                    // Remove display-only values from older snapshots. The regular line's
+                    // minute-based amount is already the correct partial-day pay.
+                    if (array_key_exists('display_amount', $lines[$idx])) {
+                        unset($lines[$idx]['display_amount']);
+                        $updated = true;
+                    }
+                    if (array_key_exists('computed_amount', $lines[$idx])) {
+                        unset($lines[$idx]['computed_amount']);
+                        $updated = true;
+                    }
+
+                    continue;
+                }
+
+                $netAmount = round((float) ($line['amount'] ?? 0), 2);
+                if ($netAmount <= 0 || $displayApplied) {
+                    continue;
+                }
+
+                $lines[$idx]['display_amount'] = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
+                $lines[$idx]['computed_amount'] = $netAmount;
+                $updated = true;
+                $displayApplied = true;
             }
 
-            $lines[$idx]['display_amount'] = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
-            $lines[$idx]['computed_amount'] = $netAmount;
-            $updated = true;
-            break;
+            $summary[$lineKey] = $lines;
         }
 
         if (! $updated) {
             return $summary;
         }
-
-        $summary['daily_computation_earning_lines'] = $lines;
 
         $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
             ? $summary['attendance_pay_breakdown']
@@ -3884,7 +3940,7 @@ class PayslipService
     }
 
     /**
-     * Display-only: Regular pay (present-day gross) minus attendance reductions.
+     * Display-only: Regular pay (when full-day gross is available) minus attendance reductions.
      * Does not change computed payroll amounts or totals.
      *
      * @param  array<string, mixed>  $summary
@@ -3914,10 +3970,13 @@ class PayslipService
 
         $hasGrossDisplay = is_numeric($regularLine['display_amount'] ?? null);
         $grossDisplay = round((float) ($hasGrossDisplay ? $regularLine['display_amount'] : ($regularLine['amount'] ?? 0)), 2);
-        $reductions = round((float) ($breakdown['total_deduction'] ?? 0), 2);
-        // display_amount is present-day gross; computed amount is already net of these reductions.
-        $breakdown['regular_pay_after_reductions'] = $hasGrossDisplay
-            ? round($grossDisplay - $reductions, 2)
+        $computedAmount = round((float) ($regularLine['amount'] ?? 0), 2);
+        // Keep the headline at present-day gross, but make the breakdown's payable total use
+        // the minute-based computed amount. This also avoids cent drift from separately-rounded
+        // daily attendance deductions.
+        $hasPayableReduction = $hasGrossDisplay && $computedAmount + 0.005 < $grossDisplay;
+        $breakdown['regular_pay_after_reductions'] = $hasPayableReduction || ! $hasGrossDisplay
+            ? $computedAmount
             : $grossDisplay;
         $summary['attendance_pay_breakdown'] = $breakdown;
 
@@ -3948,6 +4007,115 @@ class PayslipService
         }
 
         return round($presentDays * $dailyRate, 2);
+    }
+
+    /**
+     * Repair only Regular-pay display fields for an already frozen snapshot. Payroll totals are
+     * still read from the stored line amount; this keeps old payslips from showing full-day pay
+     * after a short attendance day.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  list<array<string, mixed>>  $dailyDays
+     * @return array<string, mixed>
+     */
+    private function normalizeFrozenRegularPayLines(
+        array $summary,
+        array $dailyDays,
+        ?float $regularHourlyRate,
+        ?float $presentDays
+    ): array {
+        if ($dailyDays !== []) {
+            $summary = $this->repairRegularPayLineFromDailyComputationDays($summary, $dailyDays, $regularHourlyRate);
+        }
+
+        foreach (['daily_computation_earning_lines', 'payslip_earning_lines'] as $lineKey) {
+            $lines = is_array($summary[$lineKey] ?? null)
+                ? array_values($summary[$lineKey])
+                : [];
+            if ($lines === []) {
+                continue;
+            }
+
+            foreach ($lines as $index => $line) {
+                if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                    continue;
+                }
+
+                $minutesWorked = is_numeric($line['minutes_worked'] ?? null)
+                    ? (int) round((float) $line['minutes_worked'])
+                    : null;
+                if ($minutesWorked === null || $minutesWorked <= 0) {
+                    continue;
+                }
+
+                $hourlyRate = $regularHourlyRate;
+                if ($hourlyRate === null || ! is_finite($hourlyRate) || $hourlyRate <= 0) {
+                    $hourlyRate = is_numeric($line['hourly_rate'] ?? null)
+                        ? (float) $line['hourly_rate']
+                        : null;
+                }
+                $hasPresentDayDisplay = $presentDays !== null && $presentDays > 0.0001;
+                $lines[$index]['minutes_worked'] = $minutesWorked;
+                if ($hourlyRate !== null && is_finite($hourlyRate) && $hourlyRate > 0) {
+                    $lines[$index]['hourly_rate'] = $hourlyRate;
+                    $lines[$index]['amount'] = round(($minutesWorked / 60.0) * $hourlyRate, 2);
+                }
+                $lines[$index]['units'] = $hasPresentDayDisplay
+                    ? ($this->formatRegularPayPresentDaysUnits($presentDays) ?? $line['units'] ?? null)
+                    : $this->formatPayslipUnitsFromMinutes($minutesWorked);
+            }
+
+            $summary[$lineKey] = $lines;
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Recalculate view-only gross/net totals after a Regular-pay display correction.
+     *
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    private function refreshRegularPayDisplayTotals(array $summary): array
+    {
+        $earningLines = array_merge(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : [],
+            is_array($summary['payslip_earning_lines'] ?? null)
+                ? $summary['payslip_earning_lines']
+                : []
+        );
+        $hasRegularPay = false;
+        foreach ($earningLines as $line) {
+            if (is_array($line) && $this->isRegularPayLine($line)) {
+                $hasRegularPay = true;
+                break;
+            }
+        }
+        if (! $hasRegularPay) {
+            return $summary;
+        }
+
+        $deductionLines = array_merge(
+            is_array($summary['payslip_deduction_lines'] ?? null)
+                ? $summary['payslip_deduction_lines']
+                : [],
+            is_array($summary['payslip_custom_deduction_lines'] ?? null)
+                ? $summary['payslip_custom_deduction_lines']
+                : []
+        );
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : null;
+        $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts($earningLines, $breakdown);
+        $summary['display_net_pay'] = round(
+            (float) $summary['display_gross_pay'] - $this->sumPayslipLineAmounts($deductionLines),
+            2
+        );
+
+        return $summary;
     }
 
     /**
@@ -5221,7 +5389,7 @@ class PayslipService
             if (
                 ($hourlyRate === null || ! is_finite($hourlyRate) || $hourlyRate <= 0)
                 && $defaultRegularHourlyRate !== null
-                && str_contains($lineKey, 'regular_pay')
+                && (str_contains($lineKey, 'regular_pay') || strtolower($label) === 'regular pay')
             ) {
                 $hourlyRate = $defaultRegularHourlyRate;
             }
@@ -5236,16 +5404,21 @@ class PayslipService
                 $minutesWorked = $this->parseLegacyUnitsToMinutes($unitsStr);
             }
 
-            // Regular-pay units show present-day count only (for example, "13 days").
-            // Late, undertime, and half-day reductions stay in the deduction breakdown; amounts
-            // still use minute-based payroll logic.
-            $usesPresentDayUnits = str_contains($lineKey, 'regular_pay');
+            // The headline uses present-day units; the computed amount remains minute-based and
+            // is exposed through the attendance breakdown as Regular pay after reductions.
+            $isRegularPayLine = str_contains($lineKey, 'regular_pay') || strtolower($label) === 'regular pay';
+            $usesPresentDayUnits = $isRegularPayLine
+                && $regularPayPresentDays !== null
+                && $regularPayPresentDays > 0.0001;
             $hasExplicitDayUnits = $unitsStr !== null
                 && preg_match('/^\d+(?:\.\d+)?\s*days?$/i', $unitsStr) === 1
-                && ! $isWorkedHolidayLine;
+                && ! $isWorkedHolidayLine
+                && (! $isRegularPayLine || $usesPresentDayUnits);
             $formatted = $this->formatUnitsAndAmount($minutesWorked, $hourlyRate);
-            $unitsFromMinutes = $usesPresentDayUnits
-                ? ($this->formatRegularPayPresentDaysUnits($regularPayPresentDays) ?? $formatted['units'])
+            $unitsFromMinutes = $isRegularPayLine
+                ? ($usesPresentDayUnits
+                    ? ($this->formatRegularPayPresentDaysUnits($regularPayPresentDays) ?? $formatted['units'])
+                    : $this->formatPayslipUnitsFromMinutes($minutesWorked))
                 : $formatted['units'];
             $amountFromMinutes = $formatted['amount'];
 
@@ -5433,8 +5606,8 @@ class PayslipService
     }
 
     /**
-     * Regular-pay attendance units for finalize payroll and payroll reports — same label as the payslip
-     * "Regular pay" row (for example, "13 days").
+     * Regular-pay attendance units for finalize payroll and payroll reports, matching the payslip
+     * headline row. The detailed payable amount is reported separately in the breakdown.
      *
      * @param  array<string, mixed>  $summary
      */
@@ -5472,7 +5645,7 @@ class PayslipService
     }
 
     /**
-     * Present-day count for regular-pay unit display only — not used for payroll amounts.
+     * Present-day count for regular-pay display decisions only — not used for payroll amounts.
      * Each calendar day with attendance-backed regular_pay counts as 1 day (half-day included).
      * Leave-only halfdays (no attendance regular_pay) are excluded.
      *

@@ -195,7 +195,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
     }
 
     return Number(data?.amounts?.gross_pay ?? 0)
-  }, [data?.amounts?.gross_pay, displayEarnings, isConsultantPayroll, isExecomPayroll, summary?.display_gross_pay])
+  }, [data?.amounts?.gross_pay, displayEarnings, isConsultantPayroll, isExecomPayroll, summary])
 
   const displayedNetPay = useMemo(() => {
     const deductionTotal = allDeductions.reduce(
@@ -210,7 +210,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
     }
 
     return Number(data?.amounts?.net_pay ?? 0)
-  }, [allDeductions, data?.amounts?.net_pay, displayedGrossPay, isConsultantPayroll, isExecomPayroll, summary?.display_net_pay])
+  }, [allDeductions, data?.amounts?.net_pay, displayedGrossPay, isConsultantPayroll, isExecomPayroll, summary])
 
   const attendanceBreakdown = summary?.attendance_pay_breakdown && typeof summary.attendance_pay_breakdown === 'object'
     ? summary.attendance_pay_breakdown
@@ -437,6 +437,15 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                                 {attendanceDeduction(attendanceBreakdown?.total_deduction)}
                               </td>
                             </tr>
+                            {attendanceBreakdown?.regular_pay_after_reductions != null ? (
+                              <tr className="border-b border-emerald-100 bg-emerald-50/45">
+                                <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/80">Regular pay after reductions</td>
+                                <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">-</td>
+                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
+                                  {Number(attendanceBreakdown.regular_pay_after_reductions || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ) : null}
                           </>
                         ) : null}
                       </Fragment>

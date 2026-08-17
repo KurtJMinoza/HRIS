@@ -513,6 +513,13 @@
                       <td class="units">—</td>
                       <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
                     </tr>
+                    @if(array_key_exists('regular_pay_after_reductions', $attendanceBreakdown))
+                      <tr class="attendance-total">
+                        <td class="attendance-label">Regular pay after reductions</td>
+                        <td class="units">—</td>
+                        <td class="num">{{ $formatMoney($attendanceBreakdown['regular_pay_after_reductions'] ?? 0) }}</td>
+                      </tr>
+                    @endif
                     @php($attendanceDetailsRendered = true)
                   @endif
                 @endforeach
@@ -542,6 +549,13 @@
                       <td class="units">—</td>
                       <td class="num">{{ $formatDeduction($attendanceBreakdown['total_deduction'] ?? 0) }}</td>
                     </tr>
+                    @if(array_key_exists('regular_pay_after_reductions', $attendanceBreakdown))
+                      <tr class="attendance-total">
+                        <td class="attendance-label">Regular pay after reductions</td>
+                        <td class="units">—</td>
+                        <td class="num">{{ $formatMoney($attendanceBreakdown['regular_pay_after_reductions'] ?? 0) }}</td>
+                      </tr>
+                    @endif
                     @php($attendanceDetailsRendered = true)
                   @endif
                 @endforeach
