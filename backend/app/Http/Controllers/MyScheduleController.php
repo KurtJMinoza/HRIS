@@ -806,8 +806,12 @@ class MyScheduleController extends Controller
     protected function mapScheduleRequestRow(ScheduleRequest $request, User $actor): array
     {
         $request->loadMissing($this->requestRelations());
+        $approvalProgress = $this->mergeAuditRemarksIntoProgress(
+            $request,
+            $this->scheduleApprovalService->buildApprovalProgress($request)
+        );
 
-        return [
+        return array_merge([
             'id' => $request->id,
             'user_id' => $request->user_id,
             'request_kind' => $request->request_kind ?? ScheduleRequest::KIND_TEMPLATE,
@@ -828,10 +832,7 @@ class MyScheduleController extends Controller
             'filed_at' => $request->filed_at?->toIso8601String(),
             'created_at' => $request->created_at?->toIso8601String(),
             'rejection_note' => $request->rejection_note,
-            'approval_progress' => $this->mergeAuditRemarksIntoProgress(
-                $request,
-                $this->scheduleApprovalService->buildApprovalProgress($request)
-            ),
+            'approval_progress' => $approvalProgress,
             'approval_history' => $request->approvalAudits->map(function (ScheduleRequestApprovalAudit $audit) {
                 return [
                     'action' => $audit->action,
@@ -844,7 +845,7 @@ class MyScheduleController extends Controller
             'actor_can_approve' => $this->scheduleApprovalService->canApprove($actor, $request),
             'actor_can_reject' => $this->scheduleApprovalService->canReject($actor, $request),
             'actor_can_delete' => $this->canDeleteScheduleRequest($actor, $request),
-        ];
+        ], OrgApprovalWorkflowService::listApproverDisplayFieldsFromProgress($approvalProgress));
     }
 
     protected function canDeleteScheduleRequest(User $actor, ScheduleRequest $request): bool

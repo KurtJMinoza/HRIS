@@ -643,6 +643,7 @@ function EmployeeLeaveSelfService() {
         if (!cancelled) {
           setHalfdayPreview(null)
           setHalfdayPreviewError(e.message)
+          setAddForm((prev) => (prev.half_type || prev.half_day_time ? { ...prev, half_type: '', half_day_time: '' } : prev))
         }
       } finally {
         if (!cancelled) setHalfdayPreviewLoading(false)
@@ -1355,8 +1356,14 @@ function EmployeeLeaveSelfService() {
                     setAddForm((prev) => ({
                       ...prev,
                       type: value,
-                      end_date: value === 'undertime' ? prev.start_date : prev.end_date,
+                      end_date:
+                        value === 'undertime'
+                          ? prev.start_date
+                          : value === 'half_day'
+                            ? prev.end_date || prev.start_date
+                            : prev.end_date,
                       half_type: value === 'half_day' ? prev.half_type : '',
+                      half_day_time: value === 'half_day' ? prev.half_day_time : '',
                     }))
                   }
                 >
@@ -1382,17 +1389,8 @@ function EmployeeLeaveSelfService() {
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="emergency">
                       Emergency
                     </SelectItem>
-                    <SelectItem
-                      disabled
-                      value="half_day"
-                      className="rounded-lg px-4 py-3 text-base text-muted-foreground data-disabled:opacity-100"
-                    >
-                      <span className="flex w-full items-center justify-between gap-3">
-                        Half Day
-                        <span className="rounded-full border border-border/70 bg-muted px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                          Soon
-                        </span>
-                      </span>
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="half_day">
+                      Half Day
                     </SelectItem>
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="other">
                       Other
@@ -1440,7 +1438,18 @@ function EmployeeLeaveSelfService() {
                       <Input
                         type="date"
                         value={addForm.start_date}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                        onChange={(e) => {
+                          const d = e.target.value
+                          setAddForm((prev) => ({
+                            ...prev,
+                            start_date: d,
+                            // Keep half-day To in sync when it was empty or still on the previous From day.
+                            end_date:
+                              prev.type === 'half_day' && (!prev.end_date || prev.end_date === prev.start_date)
+                                ? d
+                                : prev.end_date,
+                          }))
+                        }}
                         className={cn(leaveModalFieldClass, 'h-[3.75rem] px-3 pb-2.5 pt-6 sm:h-[4.25rem] sm:px-4 sm:pb-3 sm:pt-7')}
                         required
                       />
@@ -1514,6 +1523,12 @@ function EmployeeLeaveSelfService() {
                   <Label htmlFor="half-type" className={leaveModalLabelClass}>
                     Half day type
                   </Label>
+                  <p className={leaveModalHintClass}>
+                    Choose which half of your shift you are taking as leave (0.5 credit).
+                  </p>
+                  {!addForm.start_date ? (
+                    <p className={leaveModalHintClass}>Select the leave date first so we can load your schedule windows.</p>
+                  ) : null}
                   <Select
                     value={addForm.half_type || undefined}
                     onValueChange={(value) =>
@@ -1523,10 +1538,11 @@ function EmployeeLeaveSelfService() {
                         half_day_time: '',
                       }))
                     }
+                    disabled={!addForm.start_date || halfdayPreviewLoading || Boolean(halfdayPreviewError) || !halfdayPreview?.windows}
                     required
                   >
                     <SelectTrigger id="half-type" className={cn(leaveModalFieldClass, 'w-full justify-between')}>
-                      <SelectValue placeholder="Select option" />
+                      <SelectValue placeholder={halfdayPreviewLoading ? 'Loading schedule…' : 'Select AM or PM'} />
                     </SelectTrigger>
                     <SelectContent
                       position="popper"
@@ -1534,13 +1550,21 @@ function EmployeeLeaveSelfService() {
                       className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
                     >
                       <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="am">
-                        AM Half Day (leave morning, work afternoon)
+                        {halfdayPreview?.windows?.am
+                          ? `AM — leave first half, work ${halfdayPreview.windows.am.work_start || '—'}–${halfdayPreview.windows.am.work_end || '—'}`
+                          : 'AM Half Day (leave morning, work afternoon)'}
                       </SelectItem>
                       <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="pm">
-                        PM Half Day (work morning, leave afternoon)
+                        {halfdayPreview?.windows?.pm
+                          ? `PM — work ${halfdayPreview.windows.pm.work_start || '—'}–${halfdayPreview.windows.pm.work_end || '—'}, leave second half`
+                          : 'PM Half Day (work morning, leave afternoon)'}
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                  {halfdayPreviewLoading ? (
+                    <p className={leaveModalHintClass}>Loading your schedule for this date...</p>
+                  ) : null}
+                  {halfdayPreviewError ? <p className="text-[13px] text-destructive">{halfdayPreviewError}</p> : null}
                   {addForm.half_type ? (
                     <div className="space-y-3">
                       <Label htmlFor="half-day-time" className={leaveModalLabelClass}>
@@ -1563,10 +1587,6 @@ function EmployeeLeaveSelfService() {
                       ) : null}
                     </div>
                   ) : null}
-                  {halfdayPreviewLoading ? (
-                    <p className={leaveModalHintClass}>Loading your schedule for this date...</p>
-                  ) : null}
-                  {halfdayPreviewError ? <p className="text-[13px] text-destructive">{halfdayPreviewError}</p> : null}
                   {halfdayPreview?.selected ? (
                     <p className="text-[13px] text-muted-foreground">
                       Per your schedule ({halfdayPreview.windows?.scheduled_start || '—'}–{halfdayPreview.windows?.scheduled_end || '—'}):

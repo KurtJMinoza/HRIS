@@ -826,7 +826,7 @@ class PresenceFilingController extends Controller
         $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
         $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
             OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
-            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+            $pageIds,
         );
         $finalApprovedIds = $this->finalApprovedAttendanceCorrectionIds($pageIds);
         $empRole = $this->hrRoleResolver->resolveForApprovalSubject($user);
@@ -1092,7 +1092,7 @@ class PresenceFilingController extends Controller
         $currentApprovals = $this->currentAttendanceCorrectionApprovalRecords($pageIds);
         $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
             OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
-            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+            $pageIds,
         );
         $finalApprovedIds = $this->finalApprovedAttendanceCorrectionIds($pageIds);
         $items = $paginator->getCollection()

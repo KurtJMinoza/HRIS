@@ -15,6 +15,7 @@ use App\Services\LeaveCreditService;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
+use App\Support\EmployeeScheduleResolver;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveModuleCache;
 use App\Support\LeaveScheduleSupport;
@@ -40,8 +41,6 @@ class EmployeeLeaveController extends Controller
         private readonly NotificationService $notificationService,
         private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
-
-    private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
     private function attendanceTimezone(): string
     {
@@ -241,6 +240,7 @@ class EmployeeLeaveController extends Controller
     {
         $fresh = User::query()
             ->select(['id', 'schedule', 'working_schedule_id'])
+            ->with('workingSchedule')
             ->where('id', $user->id)
             ->first();
 
@@ -248,16 +248,22 @@ class EmployeeLeaveController extends Controller
     }
 
     /**
+     * Day shift for leave/half-day checks — same source as My Schedule / admin leave
+     * ({@see EmployeeScheduleResolver}), not the legacy users.schedule JSON alone.
+     *
      * @return array|null Day schedule array or null when rest day / not configured.
      */
     private function getDayScheduleForDate(User $user, Carbon $date): ?array
     {
-        $schedule = $user->schedule;
-        if (! is_array($schedule) || $schedule === []) {
+        // Dated assignment first; if none covers this day, use the same current template My Schedule shows.
+        $resolved = EmployeeScheduleResolver::resolveForDate($user, $date);
+        if (! is_array($resolved) || $resolved === []) {
+            $resolved = EmployeeScheduleResolver::resolve($user);
+        }
+        if (! is_array($resolved) || $resolved === []) {
             return null;
         }
-        $dayKey = self::DAY_KEYS[(int) $date->format('w')];
-        $day = $schedule[$dayKey] ?? null;
+        $day = $resolved[EmployeeScheduleResolver::dayKeyForDate($date)] ?? null;
         if (! is_array($day) || $day === []) {
             return null;
         }
@@ -527,10 +533,18 @@ class EmployeeLeaveController extends Controller
         ]);
 
         $dateKey = Carbon::parse($validated['date'], $tz)->toDateString();
-        $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
+        $date = Carbon::parse($dateKey, $tz);
+        $daySchedule = $this->getDayScheduleForDate($user, $date);
         if (! $daySchedule) {
+            $resolved = EmployeeScheduleResolver::resolveForDate($user, $date)
+                ?? EmployeeScheduleResolver::resolve($user);
+            $hasTemplate = is_array($resolved) && $resolved !== [];
             throw ValidationException::withMessages([
-                'date' => ['No working schedule is assigned for the selected date.'],
+                'date' => [
+                    $hasTemplate
+                        ? 'Selected date is a rest day on your work schedule.'
+                        : 'No working schedule is assigned for the selected date.',
+                ],
             ]);
         }
 

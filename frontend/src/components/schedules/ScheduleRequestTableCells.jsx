@@ -2,6 +2,7 @@ import { CheckCircle2, Clock, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { normalizeApprovalHeadTitle, normalizeApprovalStatusLabel } from '@/lib/approvalText'
 import { reviewStatusBadgeClass } from '@/lib/presenceFilingTable'
+import { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 
 /**
  * Maps schedule request API rows to the same visual keys as correction-request badges.
@@ -28,8 +29,8 @@ export function ScheduleRequestStatusBadge({ item }) {
           ? String(item.display_status).trim()
           : fallbackScheduleStatusLabel(key)
       )
-  const currentApprover = String(item?.current_approver_name || item?.current_approver || currentStep?.approver_name || '').trim()
   const Icon = key === 'rejected' ? XCircle : key === 'hr_approved' ? CheckCircle2 : Clock
+  const approver = approverFromRequestRow(item)
   return (
     <div className="flex min-w-0 flex-col gap-1">
       <span
@@ -41,9 +42,9 @@ export function ScheduleRequestStatusBadge({ item }) {
         <Icon className="size-3.5 shrink-0 opacity-90" aria-hidden />
         <span className="line-clamp-2 text-left">{label}</span>
       </span>
-      {currentApprover ? (
-        <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={currentApprover}>
-          {currentApprover}
+      {approver.name ? (
+        <p className="line-clamp-1 text-[11px] leading-snug text-muted-foreground" title={approver.name}>
+          {approver.name}
         </p>
       ) : null}
     </div>

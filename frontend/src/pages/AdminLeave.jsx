@@ -106,7 +106,7 @@ import {
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
 import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
-import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
+import ApproverAvatarNameCell, { approverFromApprovalProgress, approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
@@ -470,13 +470,21 @@ export default function AdminLeave() {
     const currentStep = Array.isArray(leave.approval_progress)
       ? leave.approval_progress.find((step) => step?.status === 'current')
       : null
+    const fromProgress = approverFromApprovalProgress(leave.approval_progress)
     const currentStage = leave.current_stage || currentStep?.label || leave.current_step_name
     const normalizedStage = normalizeApprovalHeadTitle(currentStage)
-    const currentApprover = leave.current_approver || leave.current_approver_name || currentStep?.approver_name
+    const currentApprover =
+      leave.current_approver_name
+      || leave.current_approver
+      || leave.approved_by_name
+      || currentStep?.approver_name
+      || fromProgress.name
+      || null
     const currentApproverImage =
       leave.current_approver_profile_image
       || leave.current_approver_profile_image_url
       || currentStep?.profile_image_url
+      || fromProgress.imageUrl
       || null
     const displayStatus = leave.display_status || (
       String(leave.status || '').toLowerCase() === 'pending' && normalizedStage

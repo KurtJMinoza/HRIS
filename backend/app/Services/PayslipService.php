@@ -4988,7 +4988,8 @@ class PayslipService
 
         foreach ($days as $day) {
             $status = strtolower(trim((string) ($day['status'] ?? '')));
-            if ($status !== 'worked' || (bool) ($day['is_rest_day'] ?? false)) {
+            // halfday keeps the worked regular_pay slice; leave pay stays on the leave line.
+            if (! in_array($status, ['worked', 'halfday'], true) || (bool) ($day['is_rest_day'] ?? false)) {
                 continue;
             }
 

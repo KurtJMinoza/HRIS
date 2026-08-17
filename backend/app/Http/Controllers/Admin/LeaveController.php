@@ -148,9 +148,10 @@ class LeaveController extends Controller
         // (ensureRecordsForRequest per pending row was the 5–10s open cost).
         $currentApprovals = $this->currentLeaveApprovalRecords($pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all());
         $pageIds = $pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all();
+        // Always load last acted actors — approved rows may still have a nameless pending HR-pool step.
         $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
             OrgApprovalWorkflowService::MODULE_LEAVE,
-            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+            $pageIds,
         );
         $actorIsAdminHr = $this->hrRoleResolver->isAdminHrAccount($actor);
 
