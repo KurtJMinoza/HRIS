@@ -331,10 +331,12 @@ class PayslipFrozenLineMetricsTest extends TestCase
             'daily_computation_days' => [[
                 'date' => '2026-08-13',
                 'status' => 'worked',
+                'tardiness_status' => 'half_day',
                 'is_rest_day' => false,
                 'regular_day_minutes' => 240,
                 'regular_night_minutes' => 0,
                 'required_minutes' => 480,
+                'undertime_deduction_minutes' => 240,
                 'breakdown' => [[
                     'component' => 'regular_pay',
                     'minutes' => 240,

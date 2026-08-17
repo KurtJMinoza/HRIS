@@ -5658,9 +5658,9 @@ class PayslipService
 
     /**
      * Present-day count for regular-pay display decisions only — not used for payroll amounts.
-     * Undertime days still count as one present day; an explicitly partial day without undertime
-     * contributes its attendance-backed regular_pay fraction of the scheduled paid day.
-     * A 240-minute half-day on a 480-minute schedule therefore contributes 0.5 day.
+     * Clocked half-day classifications count as 0.5 day. Other undertime days still count as
+     * one present day; an explicitly partial day without either classification contributes its
+     * attendance-backed regular_pay fraction of the scheduled paid day.
      * Leave-only halfdays (no attendance regular_pay) are excluded.
      *
      * @param  array<string, mixed>  $summary
@@ -5685,6 +5685,12 @@ class PayslipService
                     $attendanceRegularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
                 }
                 if ($attendanceRegularMinutes <= 0) {
+                    continue;
+                }
+
+                $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
+                if ($status === 'halfday' || $tardinessStatus === 'half_day') {
+                    $units += 0.5;
                     continue;
                 }
 
