@@ -2598,7 +2598,7 @@ class PayslipService
                 $regularHourlyRate,
                 $regularPayPresentDays
             );
-            if ($dailyComputationDays !== [] && ! is_array($summary['attendance_pay_breakdown'] ?? null)) {
+            if ($dailyComputationDays !== []) {
                 $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
                     $summary,
                     $dailyComputationDays,
@@ -3823,6 +3823,7 @@ class PayslipService
                     'count' => $lateCount,
                     'minutes' => $lateMinutes,
                     'amount' => $lateAmount,
+                    'deduction_amount' => $lateAmount,
                 ],
                 [
                     'key' => 'half_day',
@@ -3831,6 +3832,9 @@ class PayslipService
                     'count' => $halfDayCount,
                     'minutes' => $halfDayMinutes,
                     'amount' => $halfDayDisplayAmount,
+                    'deduction_minutes' => $halfDayDeductionMinutes,
+                    'deduction_details' => $formatAttendanceUnits($halfDayDeductionMinutes),
+                    'deduction_amount' => $halfDayDeductionAmount,
                 ],
                 [
                     'key' => 'absence',
@@ -3839,6 +3843,7 @@ class PayslipService
                     'count' => $absenceDays,
                     'minutes' => $absenceMinutes,
                     'amount' => $absenceAmount,
+                    'deduction_amount' => 0.0,
                 ],
                 [
                     'key' => 'undertime',
@@ -3847,11 +3852,12 @@ class PayslipService
                     'count' => $undertimeCount,
                     'minutes' => $undertimeMinutes,
                     'amount' => $undertimeAmount,
+                    'deduction_amount' => $undertimeAmount,
                 ],
             ],
             'total_deduction' => round($lateAmount + $halfDayDeductionAmount + $undertimeAmount, 2),
             'total_deduction_units_label' => '—',
-            'note' => 'Late and undertime reduce Regular pay. Absences and approved paid half-day leave are informational (leave pay is on Leave adjustments).',
+            'note' => 'Half-day and absence amounts are attendance references. Only unpaid half-day, late, and undertime amounts are included in Total attendance reductions; paid half-day leave is included in Leave adjustments.',
         ];
     }
 
@@ -3931,7 +3937,7 @@ class PayslipService
             ? $summary['attendance_pay_breakdown']
             : null;
         if (is_array($breakdown)) {
-            $breakdown['note'] = 'Late and undertime reduce Regular pay. Absences and approved paid half-day leave are informational (leave pay is on Leave adjustments).';
+            $breakdown['note'] = 'Half-day and absence amounts are attendance references. Only unpaid half-day, late, and undertime amounts are included in Total attendance reductions; paid half-day leave is included in Leave adjustments.';
             $breakdown['total_deduction_units_label'] = '—';
             $summary['attendance_pay_breakdown'] = $breakdown;
         }

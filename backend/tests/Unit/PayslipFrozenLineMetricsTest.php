@@ -315,6 +315,135 @@ class PayslipFrozenLineMetricsTest extends TestCase
         );
     }
 
+    public function test_attendance_breakdown_displays_only_payable_reductions(): void
+    {
+        $regularRate = 692.31 / 8;
+        $halfDay = static function (string $date, bool $hasPaidLeave) use ($regularRate): array {
+            $breakdown = [];
+            if ($hasPaidLeave || $date === '2026-08-12') {
+                $breakdown[] = [
+                    'component' => 'regular_pay',
+                    'minutes' => 240,
+                    'rate' => $regularRate,
+                    'amount' => 346.16,
+                ];
+            }
+            if ($hasPaidLeave) {
+                $breakdown[] = [
+                    'component' => 'paid_leave',
+                    'minutes' => 240,
+                    'rate' => $regularRate,
+                    'amount' => 346.16,
+                ];
+            }
+
+            return [
+                'date' => $date,
+                'status' => $hasPaidLeave ? 'halfday' : 'worked',
+                'is_rest_day' => false,
+                'regular_day_minutes' => $hasPaidLeave ? 480 : 240,
+                'regular_night_minutes' => 0,
+                'required_minutes' => 480,
+                'tardiness_status' => $date === '2026-08-12' || $hasPaidLeave ? 'half_day' : null,
+                'tardiness_label' => $date === '2026-08-12' || $hasPaidLeave ? 'Half Day' : null,
+                'breakdown' => $breakdown,
+            ];
+        };
+
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'units' => '4 days',
+                        'amount' => 2769.23,
+                        'display_amount' => 2769.23,
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'units' => '1.5 days',
+                        'amount' => 1038.48,
+                    ],
+                ],
+                // Simulate the old frozen display fields. The view normalizer must rebuild
+                // attendance detail from the immutable daily rows.
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'total_deduction' => 346.16,
+                    'rows' => [],
+                ],
+            ],
+            'daily_computation_days' => array_merge(
+                [[
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => $regularRate,
+                        'amount' => 692.31,
+                    ]],
+                ]],
+                [
+                    $halfDay('2026-08-12', false),
+                    $halfDay('2026-08-17', true),
+                    $halfDay('2026-08-20', true),
+                    [
+                        'date' => '2026-08-18',
+                        'status' => 'halfday',
+                        'is_rest_day' => false,
+                        'regular_day_minutes' => 240,
+                        'regular_night_minutes' => 0,
+                        'required_minutes' => 480,
+                        'breakdown' => [[
+                            'component' => 'paid_leave',
+                            'minutes' => 240,
+                            'rate' => $regularRate,
+                            'amount' => 346.16,
+                        ]],
+                    ],
+                ],
+                array_map(
+                    static fn (int $day): array => [
+                        'date' => sprintf('2026-08-%02d', $day),
+                        'status' => 'absent',
+                        'is_rest_day' => false,
+                        'required_minutes' => 480,
+                    ],
+                    [13, 14, 15, 19, 21, 22, 24, 25]
+                )
+            ),
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertEqualsWithDelta(1384.62, (float) ($rows['half_day']['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(346.16, (float) ($rows['half_day']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(5538.48, (float) ($rows['absence']['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) ($rows['absence']['deduction_amount'] ?? -1), 0.01);
+        $this->assertEqualsWithDelta(346.16, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1730.78, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenBreakdown = $frozen['summary']['attendance_pay_breakdown'] ?? [];
+        $this->assertEqualsWithDelta(346.16, (float) ($frozenBreakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(346.16, (float) ($frozenBreakdown['rows'][2]['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1730.78, (float) ($frozenBreakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+    }
+
     public function test_payslip_totals_snap_daily_rate_rounding_to_semi_monthly(): void
     {
         $snapshot = [

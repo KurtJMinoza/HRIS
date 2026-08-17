@@ -16,6 +16,16 @@ function attendanceDeduction(v) {
   return `-${peso(amount)}`
 }
 
+function attendanceDetails(row) {
+  const details = String(row?.details || '—')
+  const deductionDetails = String(row?.deduction_details || '').trim()
+  const deductionAmount = Number(row?.deduction_amount || 0)
+  if (deductionDetails && deductionDetails !== details && Number.isFinite(deductionAmount) && deductionAmount > 0) {
+    return `${details} (${deductionDetails} deducted)`
+  }
+  return details
+}
+
 /**
  * Units are normalized on the backend (PayslipService::formatUnitsAndAmount).
  * The preview modal displays the backend-provided value to stay identical with PDF.
@@ -426,8 +436,8 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                             {attendanceRows.filter((row) => row?.key !== 'scheduled_regular_days').map((row, rowIdx) => (
                               <tr key={`attendance-detail-${row?.key || rowIdx}`} className="bg-slate-50/45">
                                 <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/70">{row?.label || 'Attendance adjustment'}</td>
-                                <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">{row?.details || '—'}</td>
-                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/70">{attendanceDeduction(row?.amount)}</td>
+                                <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">{attendanceDetails(row)}</td>
+                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/70">{attendanceDeduction(row?.deduction_amount ?? row?.amount)}</td>
                               </tr>
                             ))}
                             <tr className="border-b border-emerald-100 bg-slate-50/45">
@@ -444,6 +454,11 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                                 <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
                                   {Number(attendanceBreakdown.regular_pay_after_reductions || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </td>
+                              </tr>
+                            ) : null}
+                            {attendanceBreakdown?.note ? (
+                              <tr className="border-b border-slate-100 bg-slate-50/35">
+                                <td colSpan={3} className="px-6 py-1.5 text-[11px] leading-relaxed text-[#0A0A0A]/55">{attendanceBreakdown.note}</td>
                               </tr>
                             ) : null}
                           </>

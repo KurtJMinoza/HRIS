@@ -503,8 +503,8 @@
                       @if(($row['key'] ?? '') !== 'scheduled_regular_days')
                         <tr class="attendance-detail">
                           <td class="attendance-label">{{ $row['label'] ?? 'Attendance adjustment' }}</td>
-                          <td class="units">{{ $row['details'] ?? '—' }}</td>
-                          <td class="num">{{ $formatDeduction($row['amount'] ?? 0) }}</td>
+                          <td class="units">{{ $row['details'] ?? '—' }}@if(!empty($row['deduction_details']) && ($row['deduction_details'] ?? '') !== ($row['details'] ?? '') && (float) ($row['deduction_amount'] ?? 0) > 0) ({{ $row['deduction_details'] }} deducted)@endif</td>
+                          <td class="num">{{ $formatDeduction($row['deduction_amount'] ?? ($row['amount'] ?? 0)) }}</td>
                         </tr>
                       @endif
                     @endforeach
@@ -518,6 +518,11 @@
                         <td class="attendance-label">Regular pay after reductions</td>
                         <td class="units">—</td>
                         <td class="num">{{ $formatMoney($attendanceBreakdown['regular_pay_after_reductions'] ?? 0) }}</td>
+                      </tr>
+                    @endif
+                    @if(!empty($attendanceBreakdown['note']))
+                      <tr class="attendance-detail">
+                        <td colspan="3" class="attendance-label">{{ $attendanceBreakdown['note'] }}</td>
                       </tr>
                     @endif
                     @php($attendanceDetailsRendered = true)
@@ -539,8 +544,8 @@
                       @if(($row['key'] ?? '') !== 'scheduled_regular_days')
                         <tr class="attendance-detail">
                           <td class="attendance-label">{{ $row['label'] ?? 'Attendance adjustment' }}</td>
-                          <td class="units">{{ $row['details'] ?? '—' }}</td>
-                          <td class="num">{{ $formatDeduction($row['amount'] ?? 0) }}</td>
+                          <td class="units">{{ $row['details'] ?? '—' }}@if(!empty($row['deduction_details']) && ($row['deduction_details'] ?? '') !== ($row['details'] ?? '') && (float) ($row['deduction_amount'] ?? 0) > 0) ({{ $row['deduction_details'] }} deducted)@endif</td>
+                          <td class="num">{{ $formatDeduction($row['deduction_amount'] ?? ($row['amount'] ?? 0)) }}</td>
                         </tr>
                       @endif
                     @endforeach
@@ -554,6 +559,11 @@
                         <td class="attendance-label">Regular pay after reductions</td>
                         <td class="units">—</td>
                         <td class="num">{{ $formatMoney($attendanceBreakdown['regular_pay_after_reductions'] ?? 0) }}</td>
+                      </tr>
+                    @endif
+                    @if(!empty($attendanceBreakdown['note']))
+                      <tr class="attendance-detail">
+                        <td colspan="3" class="attendance-label">{{ $attendanceBreakdown['note'] }}</td>
                       </tr>
                     @endif
                     @php($attendanceDetailsRendered = true)
