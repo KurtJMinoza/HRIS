@@ -327,6 +327,7 @@ class LeaveController extends Controller
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'half_type' => ['nullable', 'string', 'in:am,pm'],
             'half_day_time' => ['nullable', 'date_format:H:i'],
+            'schedule_option_id' => ['nullable', 'integer', 'min:1'],
             'undertime_time' => ['nullable', 'date_format:H:i'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'bypass_rest_days' => ['sometimes', 'boolean'],
@@ -370,8 +371,13 @@ class LeaveController extends Controller
             $dayKey = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][(int) Carbon::parse($dateKey, $tz)->format('w')];
             $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($employee, $dateKey);
             $daySchedule = is_array($effectiveSchedule) ? ($effectiveSchedule[$dayKey] ?? null) : null;
+            $scheduleOptionId = isset($validated['schedule_option_id']) ? (int) $validated['schedule_option_id'] : null;
+            if (is_array($daySchedule) && $scheduleOptionId) {
+                $daySchedule = app(\App\Services\ScheduleComputationService::class)
+                    ->applyFlexibleShiftOption($daySchedule, $scheduleOptionId);
+            }
             $windows = is_array($daySchedule)
-                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz)
+                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz, $scheduleOptionId)
                 : ['is_flexible' => false];
             $halfDayTime = trim((string) ($validated['half_day_time'] ?? ''));
 
@@ -389,7 +395,8 @@ class LeaveController extends Controller
                             $daySchedule,
                             (string) $validated['half_type'],
                             $halfDayTime,
-                            $tz
+                            $tz,
+                            $scheduleOptionId
                         );
                     } catch (\Illuminate\Validation\ValidationException $e) {
                         return response()->json([
@@ -405,7 +412,8 @@ class LeaveController extends Controller
                         $daySchedule,
                         (string) $validated['half_type'],
                         $halfDayTime,
-                        $tz
+                        $tz,
+                        $scheduleOptionId
                     );
                 } catch (\Illuminate\Validation\ValidationException $e) {
                     return response()->json([

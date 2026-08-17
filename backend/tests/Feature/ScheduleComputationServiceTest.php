@@ -270,6 +270,56 @@ class ScheduleComputationServiceTest extends TestCase
         $this->assertSame('12:00', $windows['pm']['suggested_half_day_time']);
     }
 
+    public function test_half_day_leave_windows_include_flexible_shift_options(): void
+    {
+        $tz = 'Asia/Manila';
+        $dateKey = '2026-06-25';
+        $daySchedule = [
+            'shift_type' => 'flexible',
+            'schedule_type' => 'flexible',
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'expected_paid_minutes' => 480,
+            'flexible_shift_options' => [
+                [
+                    'matched_schedule_option_id' => 101,
+                    'matched_schedule_option_name' => 'Default',
+                    'in' => '08:00',
+                    'out' => '17:00',
+                    'break_start' => '12:00',
+                    'break_end' => '13:00',
+                    'expected_paid_minutes' => 480,
+                    'is_default' => true,
+                ],
+                [
+                    'matched_schedule_option_id' => 102,
+                    'matched_schedule_option_name' => 'Option 2',
+                    'in' => '12:00',
+                    'out' => '21:00',
+                    'break_start' => '17:00',
+                    'break_end' => '18:00',
+                    'expected_paid_minutes' => 480,
+                    'is_default' => false,
+                ],
+            ],
+        ];
+
+        $default = $this->service->halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        $this->assertTrue($default['has_flexible_options']);
+        $this->assertCount(2, $default['flexible_options']);
+        $this->assertSame(101, $default['selected_option_id']);
+        $this->assertSame('08:00', $default['scheduled_start']);
+        $this->assertSame('17:00', $default['scheduled_end']);
+
+        $option2 = $this->service->halfDayLeaveWindows($dateKey, $daySchedule, $tz, 102);
+        $this->assertSame(102, $option2['selected_option_id']);
+        $this->assertSame('12:00', $option2['scheduled_start']);
+        $this->assertSame('21:00', $option2['scheduled_end']);
+        $this->assertNotSame($default['am']['work_start'] ?? null, $option2['am']['work_start'] ?? null);
+    }
+
     public function test_half_day_filed_time_overrides_pm_clock_out_boundary(): void
     {
         $tz = 'Asia/Manila';

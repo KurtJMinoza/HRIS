@@ -66,9 +66,18 @@ class AttendanceStatusService
      *
      * @return array<string, mixed>
      */
-    public static function halfDayLeaveWindows(string $dateKey, array $daySchedule, ?string $tz = null): array
-    {
-        return app(ScheduleComputationService::class)->halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+    public static function halfDayLeaveWindows(
+        string $dateKey,
+        array $daySchedule,
+        ?string $tz = null,
+        ?int $scheduleOptionId = null
+    ): array {
+        return app(ScheduleComputationService::class)->halfDayLeaveWindows(
+            $dateKey,
+            $daySchedule,
+            $tz,
+            $scheduleOptionId
+        );
     }
 
     /**
@@ -97,9 +106,59 @@ class AttendanceStatusService
         array $daySchedule,
         string $halfType,
         string $halfDayTime,
-        ?string $tz = null
+        ?string $tz = null,
+        ?int $scheduleOptionId = null
     ): void {
-        $windows = self::halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        $time = substr(trim($halfDayTime), 0, 5);
+        $candidates = $scheduleOptionId !== null && $scheduleOptionId > 0
+            ? [$scheduleOptionId]
+            : [null];
+
+        // Admin/legacy filings may omit option id; accept time if it fits any clocked flexible option.
+        if ($candidates === [null]) {
+            $probe = self::halfDayLeaveWindows($dateKey, $daySchedule, $tz, null);
+            if (! empty($probe['has_flexible_options']) && is_array($probe['flexible_options'] ?? null)) {
+                foreach ($probe['flexible_options'] as $opt) {
+                    $id = (int) ($opt['id'] ?? 0);
+                    if ($id > 0) {
+                        $candidates[] = $id;
+                    }
+                }
+            }
+        }
+
+        $lastError = null;
+        foreach ($candidates as $optionId) {
+            try {
+                self::assertHalfDayTimeInWindows($dateKey, $daySchedule, $halfType, $time, $tz, $optionId);
+
+                return;
+            } catch (ValidationException $e) {
+                $lastError = $e;
+            }
+        }
+
+        if ($lastError) {
+            throw $lastError;
+        }
+    }
+
+    /**
+     * @throws ValidationException
+     */
+    private static function assertHalfDayTimeInWindows(
+        string $dateKey,
+        array $daySchedule,
+        string $halfType,
+        string $halfDayTime,
+        ?string $tz,
+        ?int $scheduleOptionId
+    ): void {
+        if ($scheduleOptionId !== null && $scheduleOptionId > 0) {
+            $daySchedule = app(ScheduleComputationService::class)
+                ->applyFlexibleShiftOption($daySchedule, $scheduleOptionId);
+        }
+        $windows = self::halfDayLeaveWindows($dateKey, $daySchedule, $tz, $scheduleOptionId);
         if ($windows['is_flexible'] ?? false) {
             return;
         }
@@ -108,14 +167,13 @@ class AttendanceStatusService
         $side = $t === 'am' ? ($windows['am'] ?? []) : ($windows['pm'] ?? []);
         $min = $side['earliest_clock_in'] ?? null;
         $max = $side['latest_clock_out'] ?? null;
-        $time = substr(trim($halfDayTime), 0, 5);
 
-        if ($min && $time < $min) {
+        if ($min && $halfDayTime < $min) {
             throw ValidationException::withMessages([
                 'half_day_time' => ["Half-day time must be at or after {$min} for this schedule."],
             ]);
         }
-        if ($max && $time > $max) {
+        if ($max && $halfDayTime > $max) {
             throw ValidationException::withMessages([
                 'half_day_time' => ["Half-day time must be at or before {$max} for this schedule."],
             ]);

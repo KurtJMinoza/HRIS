@@ -371,7 +371,8 @@ class EmployeeLeaveController extends Controller
         string $dateKey,
         string $halfType,
         string $halfDayTime,
-        string $tz
+        string $tz,
+        ?int $scheduleOptionId = null
     ): void {
         $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
         if (! $daySchedule) {
@@ -380,7 +381,14 @@ class EmployeeLeaveController extends Controller
             ]);
         }
 
-        AttendanceStatusService::validateHalfDayLeaveTime($dateKey, $daySchedule, $halfType, $halfDayTime, $tz);
+        AttendanceStatusService::validateHalfDayLeaveTime(
+            $dateKey,
+            $daySchedule,
+            $halfType,
+            $halfDayTime,
+            $tz,
+            $scheduleOptionId
+        );
     }
 
     /**
@@ -530,6 +538,7 @@ class EmployeeLeaveController extends Controller
         $validated = $request->validate([
             'date' => ['required', 'date'],
             'half_type' => ['nullable', 'string', 'in:am,pm'],
+            'schedule_option_id' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $dateKey = Carbon::parse($validated['date'], $tz)->toDateString();
@@ -548,7 +557,8 @@ class EmployeeLeaveController extends Controller
             ]);
         }
 
-        $windows = AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        $scheduleOptionId = isset($validated['schedule_option_id']) ? (int) $validated['schedule_option_id'] : null;
+        $windows = AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz, $scheduleOptionId);
         $halfType = strtolower(trim((string) ($validated['half_type'] ?? '')));
         $selected = $halfType === 'am' || $halfType === 'pm' ? ($windows[$halfType] ?? null) : null;
 
@@ -559,6 +569,7 @@ class EmployeeLeaveController extends Controller
             'suggested_time' => $selected
                 ? AttendanceStatusService::suggestedHalfDayTime($windows, $halfType)
                 : null,
+            'schedule_option_id' => $windows['selected_option_id'] ?? $scheduleOptionId,
         ]);
     }
 
@@ -794,6 +805,7 @@ class EmployeeLeaveController extends Controller
             // For half-day leave we require which half of the day is worked.
             'half_type' => ['nullable', 'string', 'in:am,pm'],
             'half_day_time' => ['nullable', 'date_format:H:i'],
+            'schedule_option_id' => ['nullable', 'integer', 'min:1'],
             'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
         ]);
 
@@ -836,8 +848,9 @@ class EmployeeLeaveController extends Controller
             $userForSchedule = $this->refreshUserForScheduleCheck($user);
             $dateKey = Carbon::parse($validated['start_date'], $tz)->toDateString();
             $daySchedule = $this->getDayScheduleForDate($userForSchedule, Carbon::parse($dateKey, $tz));
+            $scheduleOptionId = isset($validated['schedule_option_id']) ? (int) $validated['schedule_option_id'] : null;
             $windows = is_array($daySchedule)
-                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz)
+                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz, $scheduleOptionId)
                 : ['is_flexible' => false];
             $halfDayTime = trim((string) ($validated['half_day_time'] ?? ''));
 
@@ -847,9 +860,23 @@ class EmployeeLeaveController extends Controller
                         'half_day_time' => ['Half-day time is required for your assigned schedule.'],
                     ]);
                 }
-                $this->validateHalfDayTimeOrThrow($userForSchedule, $dateKey, (string) $halfType, $halfDayTime, $tz);
+                $this->validateHalfDayTimeOrThrow(
+                    $userForSchedule,
+                    $dateKey,
+                    (string) $halfType,
+                    $halfDayTime,
+                    $tz,
+                    $scheduleOptionId
+                );
             } elseif ($halfDayTime !== '') {
-                $this->validateHalfDayTimeOrThrow($userForSchedule, $dateKey, (string) $halfType, $halfDayTime, $tz);
+                $this->validateHalfDayTimeOrThrow(
+                    $userForSchedule,
+                    $dateKey,
+                    (string) $halfType,
+                    $halfDayTime,
+                    $tz,
+                    $scheduleOptionId
+                );
             }
         }
 

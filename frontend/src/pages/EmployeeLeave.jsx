@@ -357,6 +357,7 @@ function EmployeeLeaveSelfService() {
     undertime_time: '',
     half_type: '',
     half_day_time: '',
+    schedule_option_id: '',
     reason: '',
     supportingFiles: [],
   })
@@ -441,6 +442,7 @@ function EmployeeLeaveSelfService() {
     if (!isSingleDate && !addForm.end_date) return true
     if (isUndertime && !addForm.undertime_time) return true
     if (isHalfDay && !addForm.half_type) return true
+    if (isHalfDay && halfdayPreview?.windows?.has_flexible_options && !addForm.schedule_option_id) return true
     if (isHalfDay && !halfdayPreview?.windows?.is_flexible && !addForm.half_day_time) return true
     return false
   })()
@@ -633,13 +635,23 @@ function EmployeeLeaveSelfService() {
         const data = await getHalfDayPreview({
           date: addForm.start_date,
           half_type: addForm.half_type || undefined,
+          schedule_option_id: addForm.schedule_option_id || undefined,
         })
-        if (!cancelled) setHalfdayPreview(data)
+        if (cancelled) return
+        setHalfdayPreview(data)
+        const selectedId = data?.windows?.selected_option_id ?? data?.schedule_option_id ?? null
+        if (data?.windows?.has_flexible_options && selectedId && !addForm.schedule_option_id) {
+          setAddForm((prev) => (prev.schedule_option_id ? prev : { ...prev, schedule_option_id: String(selectedId) }))
+        }
       } catch (e) {
         if (!cancelled) {
           setHalfdayPreview(null)
           setHalfdayPreviewError(e.message)
-          setAddForm((prev) => (prev.half_type || prev.half_day_time ? { ...prev, half_type: '', half_day_time: '' } : prev))
+          setAddForm((prev) =>
+            prev.half_type || prev.half_day_time || prev.schedule_option_id
+              ? { ...prev, half_type: '', half_day_time: '', schedule_option_id: '' }
+              : prev,
+          )
         }
       } finally {
         if (!cancelled) setHalfdayPreviewLoading(false)
@@ -649,7 +661,7 @@ function EmployeeLeaveSelfService() {
     return () => {
       cancelled = true
     }
-  }, [isHalfDay, addForm.start_date, addForm.half_type])
+  }, [isHalfDay, addForm.start_date, addForm.half_type, addForm.schedule_option_id])
 
   useEffect(() => {
     if (!isHalfDay || !addForm.half_type || !halfdayPreview?.suggested_time) return
@@ -657,7 +669,7 @@ function EmployeeLeaveSelfService() {
       ...prev,
       half_day_time: halfdayPreview.suggested_time,
     }))
-  }, [isHalfDay, addForm.half_type, halfdayPreview?.suggested_time])
+  }, [isHalfDay, addForm.half_type, addForm.schedule_option_id, halfdayPreview?.suggested_time])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -690,6 +702,10 @@ function EmployeeLeaveSelfService() {
     if (hd) {
       if (!addForm.half_type) {
         setAddError('Please choose morning leave or afternoon leave.')
+        return
+      }
+      if (halfdayPreview?.windows?.has_flexible_options && !addForm.schedule_option_id) {
+        setAddError('Please choose which flexible shift you will work that day.')
         return
       }
       if (!halfdayPreview?.windows?.is_flexible && !addForm.half_day_time) {
@@ -734,6 +750,9 @@ function EmployeeLeaveSelfService() {
             end_date: addForm.start_date,
             half_type: addForm.half_type,
             ...(addForm.half_day_time ? { half_day_time: addForm.half_day_time } : {}),
+            ...(addForm.schedule_option_id
+              ? { schedule_option_id: Number(addForm.schedule_option_id) }
+              : {}),
             ...(reasonOpt ? { reason: reasonOpt } : {}),
             ...assignmentPayload,
           }
@@ -762,6 +781,7 @@ function EmployeeLeaveSelfService() {
         undertime_time: '',
         half_type: '',
         half_day_time: '',
+        schedule_option_id: '',
         reason: '',
         supportingFiles: [],
       })
@@ -815,6 +835,7 @@ function EmployeeLeaveSelfService() {
       undertime_time: '',
       half_type: '',
       half_day_time: '',
+      schedule_option_id: '',
       reason: '',
       supportingFiles: [],
     })
@@ -1358,6 +1379,7 @@ function EmployeeLeaveSelfService() {
                           : prev.end_date,
                       half_type: value === 'half_day' ? prev.half_type : '',
                       half_day_time: value === 'half_day' ? prev.half_day_time : '',
+                      schedule_option_id: value === 'half_day' ? prev.schedule_option_id : '',
                     }))
                   }
                 >
@@ -1426,6 +1448,9 @@ function EmployeeLeaveSelfService() {
                           ...prev,
                           start_date: d,
                           end_date: d,
+                          ...(prev.type === 'half_day'
+                            ? { half_type: '', half_day_time: '', schedule_option_id: '' }
+                            : {}),
                         }))
                       }}
                       className={leaveModalFieldClass}
@@ -1510,15 +1535,61 @@ function EmployeeLeaveSelfService() {
 
               {addForm.type === 'half_day' ? (
                 <div className="space-y-3">
+                  {!addForm.start_date ? (
+                    <p className={leaveModalHintClass}>Select the leave date first so we can load your schedule windows.</p>
+                  ) : null}
+                  {halfdayPreview?.windows?.has_flexible_options ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="half-schedule-option" className={leaveModalLabelClass}>
+                        Which shift will you work today?
+                      </Label>
+                      <p className={leaveModalHintClass}>
+                        Your schedule has multiple flexible options. Morning/afternoon leave windows follow the shift you pick.
+                      </p>
+                      <Select
+                        value={addForm.schedule_option_id || undefined}
+                        onValueChange={(value) =>
+                          setAddForm((prev) => ({
+                            ...prev,
+                            schedule_option_id: value,
+                            half_type: '',
+                            half_day_time: '',
+                          }))
+                        }
+                        disabled={!addForm.start_date || halfdayPreviewLoading || Boolean(halfdayPreviewError)}
+                        required
+                      >
+                        <SelectTrigger id="half-schedule-option" className={cn(leaveModalFieldClass, 'w-full justify-between')}>
+                          <SelectValue placeholder={halfdayPreviewLoading ? 'Loading shifts…' : 'Select shift option'} />
+                        </SelectTrigger>
+                        <SelectContent
+                          position="popper"
+                          align="start"
+                          className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
+                        >
+                          {(halfdayPreview.windows.flexible_options || []).map((opt) => (
+                            <SelectItem
+                              key={opt.id}
+                              className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground"
+                              value={String(opt.id)}
+                            >
+                              {opt.name}
+                              {opt.scheduled_start && opt.scheduled_end
+                                ? ` (${opt.scheduled_start}–${opt.scheduled_end})`
+                                : ''}
+                              {opt.is_default ? ' · Default' : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                   <Label htmlFor="half-type" className={leaveModalLabelClass}>
                     Which half are you taking as leave?
                   </Label>
                   <p className={leaveModalHintClass}>
                     Pick the half of your shift that is leave (0.5 credit). The other half is the part you work.
                   </p>
-                  {!addForm.start_date ? (
-                    <p className={leaveModalHintClass}>Select the leave date first so we can load your schedule windows.</p>
-                  ) : null}
                   <Select
                     value={addForm.half_type || undefined}
                     onValueChange={(value) =>
@@ -1528,7 +1599,13 @@ function EmployeeLeaveSelfService() {
                         half_day_time: '',
                       }))
                     }
-                    disabled={!addForm.start_date || halfdayPreviewLoading || Boolean(halfdayPreviewError) || !halfdayPreview?.windows}
+                    disabled={
+                      !addForm.start_date ||
+                      halfdayPreviewLoading ||
+                      Boolean(halfdayPreviewError) ||
+                      !halfdayPreview?.windows ||
+                      (halfdayPreview?.windows?.has_flexible_options && !addForm.schedule_option_id)
+                    }
                     required
                   >
                     <SelectTrigger id="half-type" className={cn(leaveModalFieldClass, 'w-full justify-between')}>

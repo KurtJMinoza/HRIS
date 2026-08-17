@@ -567,11 +567,104 @@ class ScheduleComputationService
     /**
      * Half-day leave windows derived from the employee's assigned schedule for a date.
      *
+     * Multi-option flexible shifts include each option's AM/PM windows so the employee
+     * can pick which shift they will work that day.
+     *
      * @return array<string, mixed>
      */
-    public function halfDayLeaveWindows(string $dateKey, array $daySchedule, ?string $tz = null): array
-    {
+    public function halfDayLeaveWindows(
+        string $dateKey,
+        array $daySchedule,
+        ?string $tz = null,
+        ?int $scheduleOptionId = null
+    ): array {
         $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $resolvedSchedule = $this->applyFlexibleShiftOption($daySchedule, $scheduleOptionId);
+        $windows = $this->computeHalfDayLeaveWindows($dateKey, $resolvedSchedule, $tz);
+
+        $flexibleOptions = [];
+        $rawOptions = $daySchedule['flexible_shift_options'] ?? null;
+        if (is_array($rawOptions)) {
+            foreach ($rawOptions as $opt) {
+                if (! is_array($opt)) {
+                    continue;
+                }
+                $optionId = (int) ($opt['matched_schedule_option_id'] ?? $opt['id'] ?? 0);
+                if ($optionId <= 0 || empty($opt['in']) || empty($opt['out'])) {
+                    continue;
+                }
+                $optSchedule = $this->applyFlexibleShiftOption($daySchedule, $optionId);
+                $optWindows = $this->computeHalfDayLeaveWindows($dateKey, $optSchedule, $tz);
+                $flexibleOptions[] = [
+                    'id' => $optionId,
+                    'name' => (string) ($opt['matched_schedule_option_name'] ?? $opt['option_name'] ?? ('Option '.$optionId)),
+                    'is_default' => (bool) ($opt['is_default'] ?? false),
+                    'scheduled_start' => $optWindows['scheduled_start'] ?? null,
+                    'scheduled_end' => $optWindows['scheduled_end'] ?? null,
+                    'split_at' => $optWindows['split_at'] ?? null,
+                    'am' => $optWindows['am'] ?? null,
+                    'pm' => $optWindows['pm'] ?? null,
+                ];
+            }
+        }
+
+        $selectedOptionId = (int) ($resolvedSchedule['matched_schedule_option_id'] ?? $scheduleOptionId ?? 0);
+        if ($selectedOptionId <= 0 && $flexibleOptions !== []) {
+            $default = collect($flexibleOptions)->firstWhere('is_default', true) ?? $flexibleOptions[0];
+            $selectedOptionId = (int) ($default['id'] ?? 0);
+        }
+
+        $windows['has_flexible_options'] = count($flexibleOptions) > 1;
+        $windows['flexible_options'] = $flexibleOptions;
+        $windows['selected_option_id'] = $selectedOptionId > 0 ? $selectedOptionId : null;
+
+        return $windows;
+    }
+
+    /**
+     * Merge a flexible shift option onto the day schedule (keeps the full options list).
+     *
+     * @param  array<string, mixed>  $daySchedule
+     * @return array<string, mixed>
+     */
+    public function applyFlexibleShiftOption(array $daySchedule, ?int $optionId): array
+    {
+        if ($optionId === null || $optionId <= 0) {
+            return $daySchedule;
+        }
+
+        $options = $daySchedule['flexible_shift_options'] ?? null;
+        if (! is_array($options) || $options === []) {
+            return $daySchedule;
+        }
+
+        foreach ($options as $opt) {
+            if (! is_array($opt)) {
+                continue;
+            }
+            $id = (int) ($opt['matched_schedule_option_id'] ?? $opt['id'] ?? 0);
+            if ($id !== $optionId) {
+                continue;
+            }
+
+            return array_merge($daySchedule, $opt, [
+                'shift_type' => $daySchedule['shift_type'] ?? ($opt['shift_type'] ?? 'flexible'),
+                'schedule_type' => $daySchedule['schedule_type'] ?? ($opt['schedule_type'] ?? 'flexible'),
+                'flexible_shift_options' => $options,
+                'matched_schedule_option_id' => $id,
+                'matched_schedule_option_name' => $opt['matched_schedule_option_name'] ?? $opt['option_name'] ?? null,
+            ]);
+        }
+
+        return $daySchedule;
+    }
+
+    /**
+     * @param  array<string, mixed>  $daySchedule
+     * @return array<string, mixed>
+     */
+    private function computeHalfDayLeaveWindows(string $dateKey, array $daySchedule, string $tz): array
+    {
         $summary = $this->summarize($dateKey, $daySchedule, $tz);
         $required = (int) ($summary['required_minutes'] ?? 0);
         $halfPaid = $this->halfDayThreshold($daySchedule, $required);
