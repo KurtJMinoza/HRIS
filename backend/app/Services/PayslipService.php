@@ -5658,8 +5658,9 @@ class PayslipService
 
     /**
      * Present-day count for regular-pay display decisions only — not used for payroll amounts.
-     * Each calendar day contributes its attendance-backed regular_pay fraction of the scheduled
-     * paid day. A 240-minute half-day on a 480-minute schedule therefore contributes 0.5 day.
+     * Undertime days still count as one present day; an explicitly partial day without undertime
+     * contributes its attendance-backed regular_pay fraction of the scheduled paid day.
+     * A 240-minute half-day on a 480-minute schedule therefore contributes 0.5 day.
      * Leave-only halfdays (no attendance regular_pay) are excluded.
      *
      * @param  array<string, mixed>  $summary
@@ -5684,6 +5685,15 @@ class PayslipService
                     $attendanceRegularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
                 }
                 if ($attendanceRegularMinutes <= 0) {
+                    continue;
+                }
+
+                // Undertime is deducted separately, but the employee was present for the day.
+                // Keep the Regular pay headline at one day while the payable amount stays
+                // minute-based in the breakdown.
+                $undertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
+                if ($undertimeMinutes > 0 || $status === 'undertime') {
+                    $units += 1.0;
                     continue;
                 }
 
