@@ -805,8 +805,8 @@ class PolicyEngineTest extends TestCase
         $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
 
         $this->assertSame('Regular pay', $line['label'] ?? null);
-        $this->assertSame('1 day', $line['units'] ?? null);
-        $this->assertSame(800.0, $line['display_amount'] ?? null);
+        $this->assertSame('0.21 day', $line['units'] ?? null);
+        $this->assertSame(170.0, $line['display_amount'] ?? null);
         $this->assertSame(170.0, $line['amount'] ?? null);
         $this->assertSame(170.0, $line['computed_amount'] ?? null);
         $this->assertSame(102, $line['minutes_worked'] ?? null);
@@ -884,10 +884,10 @@ class PolicyEngineTest extends TestCase
         $leave = $lines->first(fn ($line) => str_contains(strtolower((string) ($line['label'] ?? '')), 'leave'));
 
         $this->assertNotNull($regular);
-        $this->assertSame('2 days', $regular['units'] ?? null);
+        $this->assertSame('1 day', $regular['units'] ?? null);
         $this->assertSame(480, (int) ($regular['minutes_worked'] ?? 0));
         $this->assertEqualsWithDelta(692.31, (float) ($regular['amount'] ?? 0), 0.02);
-        $this->assertEqualsWithDelta(1384.62, (float) ($regular['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(692.31, (float) ($regular['display_amount'] ?? 0), 0.02);
         $this->assertNotNull($leave);
         $this->assertSame('1.5 days', $leave['units'] ?? null);
 

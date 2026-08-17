@@ -222,9 +222,9 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $totalDeduction = (float) ($normalized['summary']['attendance_pay_breakdown']['total_deduction'] ?? 0);
         $netAmount = round((float) ($line['amount'] ?? 0), 2);
 
-        $this->assertSame('13 days', $line['units'] ?? null);
+        $this->assertSame('12.19 days', $line['units'] ?? null);
         $this->assertEqualsWithDelta(7101.53, $netAmount, 0.02);
-        $this->assertSame(7575.0, round((float) ($line['display_amount'] ?? 0), 2));
+        $this->assertSame(7101.53, round((float) ($line['display_amount'] ?? 0), 2));
         $afterReductions = round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2);
         $this->assertSame($netAmount, $afterReductions);
         $this->assertSame($afterReductions, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
@@ -232,7 +232,7 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertGreaterThan(0.0, $totalDeduction);
     }
 
-    public function test_regular_pay_headline_keeps_four_present_days_and_breakdown_uses_payable_total(): void
+    public function test_regular_pay_headline_uses_fractional_present_days_and_breakdown_uses_payable_total(): void
     {
         $snapshot = [
             'daily_rate' => 692.31,
@@ -288,10 +288,10 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
         $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
 
-        $this->assertSame('4 days', $line['units'] ?? null);
+        $this->assertSame('2.5 days', $line['units'] ?? null);
         $this->assertSame(1200, (int) ($line['minutes_worked'] ?? 0));
         $this->assertEqualsWithDelta(1730.78, (float) ($line['amount'] ?? 0), 0.02);
-        $this->assertEqualsWithDelta(2769.23, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1730.78, (float) ($line['display_amount'] ?? 0), 0.02);
         $this->assertEqualsWithDelta(
             1730.78,
             (float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0),
@@ -305,14 +305,51 @@ class PayslipFrozenLineMetricsTest extends TestCase
 
         $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
         $frozenLine = $frozen['summary']['daily_computation_earning_lines'][0] ?? null;
-        $this->assertSame('4 days', $frozenLine['units'] ?? null);
+        $this->assertSame('2.5 days', $frozenLine['units'] ?? null);
         $this->assertEqualsWithDelta(1730.78, (float) ($frozenLine['amount'] ?? 0), 0.02);
-        $this->assertEqualsWithDelta(2769.23, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1730.78, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
         $this->assertEqualsWithDelta(
             1730.78,
             (float) ($frozen['summary']['display_gross_pay'] ?? 0),
             0.02
         );
+    }
+
+    public function test_regular_pay_half_day_is_displayed_as_fractional_day(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 346.16,
+                ]],
+            ],
+            'daily_computation_days' => [[
+                'date' => '2026-08-13',
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'regular_day_minutes' => 240,
+                'regular_night_minutes' => 0,
+                'required_minutes' => 480,
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 240,
+                    'rate' => 86.53875,
+                    'amount' => 346.16,
+                ]],
+            ]],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('0.5 day', $line['units'] ?? null);
+        $this->assertEqualsWithDelta(346.16, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(346.16, (float) ($line['display_amount'] ?? 0), 0.02);
     }
 
     public function test_attendance_breakdown_displays_only_payable_reductions(): void

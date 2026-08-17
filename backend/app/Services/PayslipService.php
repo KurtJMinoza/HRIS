@@ -3675,7 +3675,7 @@ class PayslipService
         $rounded = round(max(0.0, $days), 2);
         $display = rtrim(rtrim(number_format($rounded, 2, '.', ''), '0'), '.');
 
-        return $display.' '.($rounded === 1.0 ? 'day' : 'days');
+        return $display.' '.($rounded > 0.0 && $rounded <= 1.0 ? 'day' : 'days');
     }
 
     private function formatAttendanceDuration(int $minutes): string
@@ -3862,8 +3862,8 @@ class PayslipService
     }
 
     /**
-     * Keep the Regular-pay headline at present-day gross. The actual payable amount is shown in
-     * the attendance breakdown after late/half-day/undertime detail is applied.
+     * Keep the Regular-pay headline at attendance-day gross, including fractional days. The
+     * actual payable amount is shown in the attendance breakdown after detail is applied.
      *
      * @param  array<string, mixed>  $summary
      */
@@ -4003,6 +4003,12 @@ class PayslipService
         $divisor = (float) ($summary['daily_rate_divisor_days'] ?? 0);
         if ($divisor <= 0) {
             $divisor = 26.0;
+        }
+
+        // Fractional attendance units must reconcile to the minute-based Regular pay line.
+        // Keep the monthly/divisor formula for whole-day display to preserve its cent rounding.
+        if (abs($presentDays - round($presentDays)) > 0.0001) {
+            return round($presentDays * $dailyRate, 2);
         }
 
         if ($monthly > 0.0001) {
@@ -5652,7 +5658,8 @@ class PayslipService
 
     /**
      * Present-day count for regular-pay display decisions only — not used for payroll amounts.
-     * Each calendar day with attendance-backed regular_pay counts as 1 day (half-day included).
+     * Each calendar day contributes its attendance-backed regular_pay fraction of the scheduled
+     * paid day. A 240-minute half-day on a 480-minute schedule therefore contributes 0.5 day.
      * Leave-only halfdays (no attendance regular_pay) are excluded.
      *
      * @param  array<string, mixed>  $summary
@@ -5680,7 +5687,10 @@ class PayslipService
                     continue;
                 }
 
-                $units += 1.0;
+                // Legacy frozen days may not have required_minutes; standardize those to
+                // the 8-hour paid-day basis used by Regular pay.
+                $requiredMinutes = max(1, (int) ($day['required_minutes'] ?? 480));
+                $units += min(1.0, $attendanceRegularMinutes / $requiredMinutes);
             }
 
             if ($units > 0.0001) {
