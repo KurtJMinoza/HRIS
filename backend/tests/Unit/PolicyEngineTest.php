@@ -1702,8 +1702,8 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(240, (int) ($regularLine['minutes_worked'] ?? 0));
         $this->assertEqualsWithDelta(0.5, (float) ($payroll['summary']['actual_days_worked'] ?? 0), 0.01);
         $ads = $payroll['summary']['attendance_display_summary'] ?? [];
-        $this->assertEqualsWithDelta(0.5, (float) ($ads['working_days_count'] ?? 0), 0.01);
-        $this->assertEqualsWithDelta(0.5, (float) ($ads['presence_days_count'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(1.0, (float) ($ads['working_days_count'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(1.0, (float) ($ads['presence_days_count'] ?? 0), 0.01);
         $this->assertEqualsWithDelta(4.0, (float) ($ads['total_regular_hours'] ?? 0), 0.01);
     }
 

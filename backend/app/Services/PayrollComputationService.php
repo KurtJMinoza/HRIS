@@ -3464,11 +3464,8 @@ class PayrollComputationService
                 continue;
             }
 
-            $requiredMinutes = (int) ($day['required_minutes'] ?? 0);
-            if ($requiredMinutes <= 0) {
-                $requiredMinutes = 8 * 60;
-            }
-            $dayUnit = min(1.0, $attendanceRegularMinutes / $requiredMinutes);
+            // Present calendar day = 1 unit on Regular pay (half-day worked still counts as 1 day).
+            $dayUnit = 1.0;
 
             $totalMinutesAllPresence += $attendanceRegularMinutes;
             $presenceDayUnits += $dayUnit;

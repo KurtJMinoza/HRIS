@@ -5424,7 +5424,8 @@ class PayslipService
 
     /**
      * Present-day count for regular-pay unit display only — not used for payroll amounts.
-     * Uses attendance-backed regular_pay minutes (leave-only halfdays are excluded).
+     * Each calendar day with attendance-backed regular_pay counts as 1 day (half-day included).
+     * Leave-only halfdays (no attendance regular_pay) are excluded.
      *
      * @param  array<string, mixed>  $summary
      * @param  list<array<string, mixed>>  $dailyDays
@@ -5451,11 +5452,7 @@ class PayslipService
                     continue;
                 }
 
-                $requiredMinutes = (int) ($day['required_minutes'] ?? 0);
-                if ($requiredMinutes <= 0) {
-                    $requiredMinutes = 8 * 60;
-                }
-                $units += min(1.0, $attendanceRegularMinutes / $requiredMinutes);
+                $units += 1.0;
             }
 
             if ($units > 0.0001) {
