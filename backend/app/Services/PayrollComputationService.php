@@ -1921,7 +1921,6 @@ class PayrollComputationService
         $dailyBreakdownMinutes = [];
         $dailyBreakdownDays = [];
         $dailyBreakdownDayUnits = [];
-        $dailyBreakdownLeaveHalfDayOnly = [];
         foreach ($days as $d) {
             $dayTotalPay = (float) ($d['total_pay'] ?? 0);
             $regularPaidMinutes = (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0));
@@ -1970,7 +1969,8 @@ class PayrollComputationService
                 $workedRegularMinutes = (int) collect($dayBreakdown)
                     ->filter(fn ($entry) => strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay')
                     ->sum(fn ($entry) => max(0, (int) ($entry['minutes'] ?? 0)));
-                if ($workedRegularMinutes <= 0) {
+                // Leave-only halfday has no regular_pay component; do not treat paid_leave minutes as worked.
+                if ($workedRegularMinutes <= 0 && $dayStatus === 'worked') {
                     $workedRegularMinutes = $regularPaidMinutes;
                 }
                 if ($workedRegularMinutes > 0) {
@@ -2003,8 +2003,6 @@ class PayrollComputationService
                     if ($fraction > 0) {
                         $dailyBreakdownDayUnits[$component] = (float) ($dailyBreakdownDayUnits[$component] ?? 0) + $fraction;
                         $dailyBreakdownDays[$component] = ($dailyBreakdownDays[$component] ?? 0) + 1;
-                        $isHalf = $leaveType === 'half_day';
-                        $dailyBreakdownLeaveHalfDayOnly[$component] = ($dailyBreakdownLeaveHalfDayOnly[$component] ?? true) && $isHalf;
                     }
                 } elseif ($mins > 0) {
                     $dailyBreakdownDays[$component] = ($dailyBreakdownDays[$component] ?? 0) + 1;
@@ -2051,7 +2049,7 @@ class PayrollComputationService
         // above). $actualWorkedDayUnits still counts those days as "present", so using it for the Regular pay *units*
         // mislabels rows (e.g. "5 days" while amount is 4 × daily rate). Derive day-equivalent from amount ÷ daily rate.
         $dailyComputationEarningLines = collect($dailyBreakdownTotals)
-            ->map(function (float $amount, string $component) use ($componentLabelMap, $componentSortRank, $dailyBreakdownMinutes, $dailyBreakdownDays, $dailyBreakdownDayUnits, $dailyBreakdownLeaveHalfDayOnly, $dailyRate, $attendanceDisplaySummary): array {
+            ->map(function (float $amount, string $component) use ($componentLabelMap, $componentSortRank, $dailyBreakdownMinutes, $dailyBreakdownDays, $dailyBreakdownDayUnits, $dailyRate, $attendanceDisplaySummary): array {
                 $mins = (int) ($dailyBreakdownMinutes[$component] ?? 0);
                 $dayCount = (int) ($dailyBreakdownDays[$component] ?? 0);
 
@@ -2097,12 +2095,6 @@ class PayrollComputationService
                     : round($amount, 2);
 
                 $label = $componentLabelMap[$component] ?? Str::headline(str_replace('_', ' ', $component));
-                if (
-                    in_array($component, ['paid_leave', 'paid_leave_daily_flat'], true)
-                    && ($dailyBreakdownLeaveHalfDayOnly[$component] ?? false)
-                ) {
-                    $label = 'Leave adjustments (half day)';
-                }
 
                 return [
                     'key' => 'daily:'.$component,
@@ -3410,6 +3402,28 @@ class PayrollComputationService
     }
 
     /**
+     * Attendance-backed regular minutes from the day breakdown (excludes paid leave minutes).
+     */
+    private function attendanceBackedRegularPayMinutes(array $day): int
+    {
+        $minutes = 0;
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                continue;
+            }
+            if ((float) ($entry['amount'] ?? 0) <= 0.0001) {
+                continue;
+            }
+            $minutes += max(0, (int) ($entry['minutes'] ?? 0));
+        }
+
+        return $minutes;
+    }
+
+    /**
      * @param  array<int, array<string, mixed>>  $days
      * @param  array<string, mixed>  $effectiveSchedule
      * @return array<string, mixed>
@@ -3417,7 +3431,8 @@ class PayrollComputationService
     private function buildAttendanceDisplaySummary(array $days, array $effectiveSchedule, string $tz): array
     {
         $lines = [];
-        $presenceDays = 0;
+        $presenceDayUnits = 0.0;
+        $regularRateDayUnits = 0.0;
         $totalMinutesRegularRateDays = 0;
         $totalMinutesAllPresence = 0;
 
@@ -3430,28 +3445,33 @@ class PayrollComputationService
             // Schedule module = single source of truth for rest days.
             $dayCfgForRestCheck = $effectiveSchedule[$dayKey] ?? null;
             $dayIsScheduledRestDay = ($day['is_rest_day'] ?? false) === true || $dayCfgForRestCheck === null;
-            $dayHasActualAttendance = (int) ($day['worked_minutes'] ?? 0) > 0;
+            $status = strtolower(trim((string) ($day['status'] ?? '')));
+            $attendanceRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
+            // Leave-only halfday/leave sets regular_* from paid_leave; that is not attendance presence.
+            if ($attendanceRegularMinutes <= 0 && $status === 'worked') {
+                $attendanceRegularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
+            }
+            $dayHasActualAttendance = $attendanceRegularMinutes > 0 || (int) ($day['worked_minutes'] ?? 0) > 0;
             if ($dayIsScheduledRestDay && ! $dayHasActualAttendance) {
                 continue;
             }
-            $status = strtolower(trim((string) ($day['status'] ?? '')));
-            // Attendance module source of truth: only actual present/worked days count toward
-            // regular-pay day display. Leave may be compensated, but is not a "present day".
-            if (! in_array($status, ['worked', 'halfday'], true)) {
+            // Regular-pay day display: attendance-backed regular_pay only (not leave credits).
+            if ($attendanceRegularMinutes <= 0) {
                 continue;
             }
             if ($dayIsScheduledRestDay) {
                 // Present on a rest day is treated as premium/rest-day work, not ordinary regular day.
                 continue;
             }
-            $regularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
-            // Only attendance-backed regular minutes.
-            if ($regularMinutes <= 0) {
-                continue;
-            }
 
-            $totalMinutesAllPresence += $regularMinutes;
-            $presenceDays++;
+            $requiredMinutes = (int) ($day['required_minutes'] ?? 0);
+            if ($requiredMinutes <= 0) {
+                $requiredMinutes = 8 * 60;
+            }
+            $dayUnit = min(1.0, $attendanceRegularMinutes / $requiredMinutes);
+
+            $totalMinutesAllPresence += $attendanceRegularMinutes;
+            $presenceDayUnits += $dayUnit;
 
             // Worked SH: full rate on holiday line. Unworked RH/SH: holiday-only pay.
             if ($this->dayIsPremiumHolidayExcludedFromRegularAttendanceSummary($day)
@@ -3467,12 +3487,13 @@ class PayrollComputationService
                 'date' => $dateKey,
                 'shift' => $shift,
             ];
-            $totalMinutesRegularRateDays += $regularMinutes;
+            $totalMinutesRegularRateDays += $attendanceRegularMinutes;
+            $regularRateDayUnits += $dayUnit;
         }
 
         return [
-            'working_days_count' => count($lines),
-            'presence_days_count' => $presenceDays,
+            'working_days_count' => round($regularRateDayUnits, 4),
+            'presence_days_count' => round($presenceDayUnits, 4),
             'lines' => $lines,
             'total_regular_hours' => round($totalMinutesRegularRateDays / 60, 2),
             'total_presence_regular_hours' => round($totalMinutesAllPresence / 60, 2),

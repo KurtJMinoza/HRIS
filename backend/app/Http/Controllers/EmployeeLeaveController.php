@@ -822,14 +822,14 @@ class EmployeeLeaveController extends Controller
         }
 
         if ($type === 'half_day') {
+            // Half-day leave is always a single calendar date (0.5 credit).
+            $validated['end_date'] = $validated['start_date'];
+
             $halfType = $validated['half_type'] ?? null;
             if ($halfType === null || $halfType === '') {
                 throw ValidationException::withMessages([
-                    'half_type' => ['Half day type (AM or PM) is required.'],
+                    'half_type' => ['Please choose morning leave or afternoon leave.'],
                 ]);
-            }
-            if (empty($validated['end_date'])) {
-                $validated['end_date'] = $validated['start_date'];
             }
 
             $tz = $this->attendanceTimezone();

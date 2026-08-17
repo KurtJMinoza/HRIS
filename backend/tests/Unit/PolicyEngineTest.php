@@ -1595,7 +1595,7 @@ class PolicyEngineTest extends TestCase
             $leaveLine = collect($payroll['summary']['daily_computation_earning_lines'] ?? [])
                 ->first(fn ($line) => str_contains(strtolower((string) ($line['label'] ?? '')), 'leave adjustment'));
             $this->assertNotNull($leaveLine);
-            $this->assertSame('Leave adjustments (half day)', $leaveLine['label'] ?? null);
+            $this->assertSame('Leave adjustments', $leaveLine['label'] ?? null);
             $this->assertSame('0.5 days', $leaveLine['units'] ?? null);
             $this->assertEqualsWithDelta($dailyRate * 0.5, (float) ($leaveLine['amount'] ?? 0), 0.05);
 
@@ -1701,6 +1701,10 @@ class PolicyEngineTest extends TestCase
         $this->assertEqualsWithDelta($dailyRate * 0.5, (float) ($leaveLine['amount'] ?? 0), 0.05);
         $this->assertSame(240, (int) ($regularLine['minutes_worked'] ?? 0));
         $this->assertEqualsWithDelta(0.5, (float) ($payroll['summary']['actual_days_worked'] ?? 0), 0.01);
+        $ads = $payroll['summary']['attendance_display_summary'] ?? [];
+        $this->assertEqualsWithDelta(0.5, (float) ($ads['working_days_count'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(0.5, (float) ($ads['presence_days_count'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(4.0, (float) ($ads['total_regular_hours'] ?? 0), 0.01);
     }
 
     private function tablesExist(): bool

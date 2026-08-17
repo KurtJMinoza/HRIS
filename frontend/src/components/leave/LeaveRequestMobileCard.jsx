@@ -22,6 +22,7 @@ import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
 import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
+import { halfDayTypeListLabel } from '@/lib/halfDayLeaveLabels'
 import { requestModuleCompactButtonClass } from '@/lib/requestModuleTable'
 
 function supportingDocUrls(leave) {
@@ -110,9 +111,7 @@ function durationLabel(leave) {
     return minutes !== null ? `${minutes} min` : '—'
   }
   if (type === 'half_day') {
-    if (leave.half_type === 'am') return 'Half day (AM)'
-    if (leave.half_type === 'pm') return 'Half day (PM)'
-    return 'Half day'
+    return halfDayTypeListLabel(leave.half_type)
   }
   if (!leave.start_date || !leave.end_date) return '—'
   try {

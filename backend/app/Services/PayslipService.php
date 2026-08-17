@@ -3491,8 +3491,8 @@ class PayslipService
             }
         }
         $ads['lines'] = array_values($cleanLines);
-        $ads['working_days_count'] = (int) ($ads['working_days_count'] ?? 0);
-        $ads['presence_days_count'] = (int) ($ads['presence_days_count'] ?? $ads['working_days_count'] ?? 0);
+        $ads['working_days_count'] = round((float) ($ads['working_days_count'] ?? 0), 4);
+        $ads['presence_days_count'] = round((float) ($ads['presence_days_count'] ?? $ads['working_days_count'] ?? 0), 4);
         $ads['total_regular_hours'] = (float) ($ads['total_regular_hours'] ?? 0);
         $ads['total_presence_regular_hours'] = (float) ($ads['total_presence_regular_hours'] ?? $ads['total_regular_hours'] ?? 0);
         $summary['attendance_display_summary'] = $ads;
@@ -3789,9 +3789,9 @@ class PayslipService
      *
      * @param  array<string, mixed>  $summary
      */
-    private function applyRegularPayDisplayAmounts(array $summary, ?int $presentDays, float $dailyRate): array
+    private function applyRegularPayDisplayAmounts(array $summary, ?float $presentDays, float $dailyRate): array
     {
-        if ($presentDays === null || $presentDays <= 0 || $dailyRate <= 0.0001) {
+        if ($presentDays === null || $presentDays <= 0.0001 || $dailyRate <= 0.0001) {
             return $summary;
         }
 
@@ -3885,7 +3885,7 @@ class PayslipService
      *
      * @param  array<string, mixed>  $summary
      */
-    private function regularPayGrossDisplayAmount(array $summary, int $presentDays, float $dailyRate): float
+    private function regularPayGrossDisplayAmount(array $summary, float $presentDays, float $dailyRate): float
     {
         $monthly = (float) ($summary['monthly_basic_salary'] ?? 0);
         $semi = (float) ($summary['semi_monthly_basic_salary'] ?? 0);
@@ -5144,7 +5144,7 @@ class PayslipService
         bool $keepWithholdingWhenZero = false,
         bool $keepAllAmounts = false,
         ?float $defaultRegularHourlyRate = null,
-        ?int $regularPayPresentDays = null
+        ?float $regularPayPresentDays = null
     ): array {
         $rows = is_array($raw) ? $raw : [];
         $out = [];
@@ -5424,37 +5424,42 @@ class PayslipService
 
     /**
      * Present-day count for regular-pay unit display only — not used for payroll amounts.
+     * Uses attendance-backed regular_pay minutes (leave-only halfdays are excluded).
      *
      * @param  array<string, mixed>  $summary
      * @param  list<array<string, mixed>>  $dailyDays
      */
-    private function resolveRegularPayPresentDaysCount(array $summary, array $dailyDays = []): ?int
+    private function resolveRegularPayPresentDaysCount(array $summary, array $dailyDays = []): ?float
     {
         if ($dailyDays !== []) {
-            $count = 0;
+            $units = 0.0;
             foreach ($dailyDays as $day) {
                 if (! is_array($day)) {
                     continue;
                 }
 
-                $status = strtolower(trim((string) ($day['status'] ?? '')));
-                if (! in_array($status, ['worked', 'halfday'], true)) {
-                    continue;
-                }
                 if ((bool) ($day['is_rest_day'] ?? false)) {
                     continue;
                 }
 
-                $regularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
-                if ($regularMinutes <= 0 && (int) ($day['worked_minutes'] ?? 0) <= 0) {
+                $attendanceRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
+                $status = strtolower(trim((string) ($day['status'] ?? '')));
+                if ($attendanceRegularMinutes <= 0 && $status === 'worked') {
+                    $attendanceRegularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
+                }
+                if ($attendanceRegularMinutes <= 0) {
                     continue;
                 }
 
-                $count++;
+                $requiredMinutes = (int) ($day['required_minutes'] ?? 0);
+                if ($requiredMinutes <= 0) {
+                    $requiredMinutes = 8 * 60;
+                }
+                $units += min(1.0, $attendanceRegularMinutes / $requiredMinutes);
             }
 
-            if ($count > 0) {
-                return $count;
+            if ($units > 0.0001) {
+                return round($units, 4);
             }
         }
 
@@ -5462,27 +5467,51 @@ class PayslipService
             ? $summary['attendance_display_summary']
             : null;
         if ($ads !== null) {
-            $presenceDays = (int) ($ads['presence_days_count'] ?? 0);
-            if ($presenceDays > 0) {
-                return $presenceDays;
+            $workingDays = (float) ($ads['working_days_count'] ?? 0);
+            if ($workingDays > 0.0001) {
+                return round($workingDays, 4);
             }
 
-            $workingDays = (int) ($ads['working_days_count'] ?? 0);
-            if ($workingDays > 0) {
-                return $workingDays;
+            $presenceDays = (float) ($ads['presence_days_count'] ?? 0);
+            if ($presenceDays > 0.0001) {
+                return round($presenceDays, 4);
             }
         }
 
         return null;
     }
 
-    private function formatRegularPayPresentDaysUnits(?int $days): ?string
+    /**
+     * Attendance-backed regular minutes from the day breakdown (excludes paid leave minutes).
+     *
+     * @param  array<string, mixed>  $day
+     */
+    private function attendanceBackedRegularPayMinutes(array $day): int
     {
-        if ($days === null || $days <= 0) {
+        $minutes = 0;
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                continue;
+            }
+            if ((float) ($entry['amount'] ?? 0) <= 0.0001) {
+                continue;
+            }
+            $minutes += max(0, (int) ($entry['minutes'] ?? 0));
+        }
+
+        return $minutes;
+    }
+
+    private function formatRegularPayPresentDaysUnits(?float $days): ?string
+    {
+        if ($days === null || $days <= 0.0001) {
             return null;
         }
 
-        return $this->formatAttendanceDayCount((float) $days);
+        return $this->formatAttendanceDayCount($days);
     }
 
     /**

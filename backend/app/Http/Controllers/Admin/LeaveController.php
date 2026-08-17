@@ -357,9 +357,12 @@ class LeaveController extends Controller
         $type = $validated['type'];
 
         if ($validated['type'] === 'half_day') {
+            // Half-day leave is always a single calendar date (0.5 credit).
+            $validated['end_date'] = $validated['start_date'];
+
             if (empty($validated['half_type'])) {
                 return response()->json([
-                    'message' => 'Half day type (AM or PM) is required.',
+                    'message' => 'Please choose morning leave or afternoon leave.',
                 ], 422);
             }
 
@@ -2151,12 +2154,14 @@ class LeaveController extends Controller
         }
 
         if ($leave->type === 'half_day') {
-            $days = max(1, (int) $leave->start_date->diffInDays($leave->end_date) + 1);
-            $total = round($days * 0.5, 1);
-            $label = $leave->half_type ? ' ('.strtoupper((string) $leave->half_type).')' : '';
-            $suffix = $days > 1 ? " across {$days} days" : '';
+            $half = strtolower((string) ($leave->half_type ?? ''));
+            $label = match ($half) {
+                'am' => ' (Morning leave)',
+                'pm' => ' (Afternoon leave)',
+                default => '',
+            };
 
-            return $total.' day'.($total === 1.0 ? '' : 's').$label.$suffix;
+            return '0.5 day'.$label;
         }
 
         if ($leave->type === 'undertime') {

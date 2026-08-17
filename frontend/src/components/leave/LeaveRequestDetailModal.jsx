@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils'
 import { normalizeApprovalHeadTitle, normalizeApprovalStatusLabel, sanitizeApprovalDisplayText } from '@/lib/approvalText'
 import { leaveReviewErrorMessage } from '@/lib/leaveReviewDeepLink'
+import { halfDayTypeShortLabel } from '@/lib/halfDayLeaveLabels'
 
 function formatDateTime(iso) {
   if (!iso) return '—'
@@ -86,7 +87,7 @@ function formatDurationSummary(leave) {
   if (!leave?.start_date || !leave?.end_date) return '—'
   const { type, half_type } = leave
   if (type === 'half_day') {
-    const label = half_type === 'am' ? 'AM' : half_type === 'pm' ? 'PM' : ''
+    const label = halfDayTypeShortLabel(half_type)
     return `0.5 day${label ? ` (${label})` : ''}`
   }
   if (type === 'undertime') {
@@ -532,9 +533,9 @@ export function LeaveRequestDetailModal({
                   ) : null}
                   {leave.type === 'half_day' ? (
                     <div className="flex min-h-14 items-center justify-between gap-4 py-4">
-                      <p className="text-[15px] font-bold text-foreground">Half day</p>
+                      <p className="text-[15px] font-bold text-foreground">Half taken as leave</p>
                       <p className="font-bold text-foreground">
-                        {leave.half_type === 'am' ? 'AM' : leave.half_type === 'pm' ? 'PM' : '—'}
+                        {halfDayTypeShortLabel(leave.half_type) || '—'}
                         {leave.half_day_time ? (
                           <span className="ml-2 font-mono text-sm font-semibold tabular-nums">
                             {formatTimeHM(leave.half_day_time)}

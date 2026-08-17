@@ -610,7 +610,7 @@ class ScheduleComputationService
             'split_at_iso' => $splitAt?->copy()->timezone($tz)->toIso8601String(),
             'is_flexible' => $isFlexible,
             'am' => [
-                'label' => 'Leave first half, work second half',
+                'label' => 'Morning leave — off first half, work second half',
                 'work_start' => $formatTime($amWorkStart),
                 'work_end' => $formatTime($end),
                 'earliest_clock_in' => $formatTime($amWorkStart),
@@ -620,7 +620,7 @@ class ScheduleComputationService
                 'work_paid_minutes' => max(0, $required - $halfPaid),
             ],
             'pm' => [
-                'label' => 'Work first half, leave second half',
+                'label' => 'Afternoon leave — work first half, off second half',
                 'work_start' => $formatTime($start),
                 'work_end' => $formatTime($splitAt),
                 'earliest_clock_in' => $formatTime($start),
