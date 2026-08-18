@@ -310,6 +310,97 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertFalse($frozenRowsByKey->has('attendance_adjustment'));
     }
 
+    public function test_worked_regular_holiday_keeps_its_regular_pay_day(): void
+    {
+        $regularDay = static fn (string $date): array => [
+            'date' => $date,
+            'status' => 'worked',
+            'is_rest_day' => false,
+            'regular_day_minutes' => 480,
+            'regular_night_minutes' => 0,
+            'required_minutes' => 480,
+            'breakdown' => [[
+                'component' => 'regular_pay',
+                'minutes' => 480,
+                'rate' => 76.9225,
+                'amount' => 615.38,
+            ]],
+        ];
+        $snapshot = [
+            'daily_rate' => 615.38,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 615.38,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 16000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 2461.52,
+                    ],
+                    [
+                        'key' => 'daily:holiday_premium',
+                        'label' => 'Regular Holiday - Worked Pay: REGULAR HOLIDAY',
+                        'amount' => 615.38,
+                    ],
+                ],
+            ],
+            'daily_computation_days' => [
+                $regularDay('2026-08-10'),
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 615.38,
+                    'holiday' => ['name' => 'REGULAR HOLIDAY', 'type' => 'regular'],
+                    'breakdown' => [
+                        [
+                            'component' => 'regular_pay',
+                            'minutes' => 480,
+                            'rate' => 76.9225,
+                            'amount' => 615.38,
+                        ],
+                        [
+                            'component' => 'holiday_premium',
+                            'minutes' => 480,
+                            'rate' => 76.9225,
+                            'amount' => 615.38,
+                        ],
+                    ],
+                ],
+                $regularDay('2026-08-12'),
+                $regularDay('2026-08-13'),
+                [
+                    'date' => '2026-08-14',
+                    'status' => 'absent',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('4 days', $line['units'] ?? null);
+        $this->assertEqualsWithDelta(2461.52, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(2461.52, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(615.38, (float) ($normalized['summary']['daily_computation_earning_lines'][1]['amount'] ?? 0), 0.02);
+        $this->assertFalse($rowsByKey->has('attendance_adjustment'));
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenLine = $frozen['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('4 days', $frozenLine['units'] ?? null);
+        $this->assertEqualsWithDelta(2461.52, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
+    }
+
     public function test_regular_pay_undertime_keeps_full_present_days_and_breakdown_uses_payable_total(): void
     {
         $snapshot = [

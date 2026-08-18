@@ -5808,13 +5808,15 @@ class PayslipService
                     continue;
                 }
 
-                // A worked holiday is paid by its own holiday-premium earning line. Its
-                // scheduled minutes must never add another Regular pay day to the headline.
-                if (max(0.0, (float) ($day['holiday_premium_pay'] ?? 0)) > 0.0001) {
+                $attendanceRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
+                $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+                // Special holiday work is paid entirely on its holiday line. A worked regular
+                // holiday, however, has a paid 1.00x regular_pay component plus its premium.
+                // Only the former must be excluded from the Regular pay headline.
+                if ($attendanceRegularMinutes <= 0 && $holidayPremiumPay > 0.0001) {
                     continue;
                 }
 
-                $attendanceRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
                 $status = strtolower(trim((string) ($day['status'] ?? '')));
                 if ($attendanceRegularMinutes <= 0 && $status === 'worked') {
                     $attendanceRegularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
