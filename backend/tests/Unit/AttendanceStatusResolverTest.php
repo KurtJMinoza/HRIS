@@ -102,6 +102,44 @@ class AttendanceStatusResolverTest extends TestCase
         $this->assertSame(0, $result['overtime_minutes']);
     }
 
+    public function test_exact_half_day_clock_pair_is_half_day_not_undertime(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-08-15';
+        $nowTz = Carbon::parse('2026-08-15 18:00:00', $tz);
+
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_minutes' => 5,
+        ];
+
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-15 08:00:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-15 12:00:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['sat' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_HALFDAY, $result['status']);
+        $this->assertSame(240, $result['effective_worked_minutes']);
+        $this->assertSame(240, $result['undertime_minutes']);
+    }
+
     public function test_raw_overtime_without_approval_stays_undertime_when_early_out(): void
     {
         $tz = config('attendance.timezone', 'Asia/Manila');

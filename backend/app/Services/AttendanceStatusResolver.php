@@ -12,7 +12,7 @@ use Carbon\Carbon;
  * Single source of truth for calendar/day attendance status.
  *
  * Priority (after holiday / leave / rest):
- * Missing clock-out → Absent → Undertime → Late → Present with approved/payable OT → Present.
+ * Missing clock-out → Absent → Half Day → Undertime → Late → Present with approved/payable OT → Present.
  *
  * {@see STATUS_PRESENT_WITH_OT} requires approved_ot_hours or payable_ot_hours from an approved OT request.
  * Raw/rendered/unapproved OT minutes alone never change the status badge.
@@ -406,6 +406,19 @@ class AttendanceStatusResolver
             return $hasTimeIn ? self::STATUS_PRESENT : self::STATUS_ABSENT;
         }
 
+        // A completed pair at or below the schedule's half-day paid threshold is Half Day,
+        // including fixed, split, and flexible/multi-option schedules. The schedule engine owns
+        // the required minutes, break windows, and matched flexible option calculation.
+        if ($hasTimeIn && $hasTimeOut && $this->completedPairIsHalfDay(
+            $dateKey,
+            $daySchedule,
+            $effectiveTimeIn,
+            $effectiveTimeOut,
+            $nowTz->getTimezone()->getName(),
+        )) {
+            return self::STATUS_HALFDAY;
+        }
+
         if ($metrics['clock_in_status'] === 'half_day') {
             return self::STATUS_HALFDAY;
         }
@@ -451,6 +464,35 @@ class AttendanceStatusResolver
         }
 
         return $metrics['clock_in_status'] === 'late' ? self::STATUS_LATE : self::STATUS_PRESENT;
+    }
+
+    private function completedPairIsHalfDay(
+        string $dateKey,
+        array $daySchedule,
+        mixed $effectiveTimeIn,
+        mixed $effectiveTimeOut,
+        string $tz,
+    ): bool {
+        if ($effectiveTimeIn === null || $effectiveTimeOut === null) {
+            return false;
+        }
+
+        $timeIn = $effectiveTimeIn instanceof Carbon
+            ? $effectiveTimeIn->copy()->timezone($tz)
+            : Carbon::parse($effectiveTimeIn, $tz)->timezone($tz);
+        $timeOut = $effectiveTimeOut instanceof Carbon
+            ? $effectiveTimeOut->copy()->timezone($tz)
+            : Carbon::parse($effectiveTimeOut, $tz)->timezone($tz);
+
+        $computed = app(ScheduleComputationService::class)->compute(
+            $dateKey,
+            $daySchedule,
+            $timeIn,
+            $timeOut,
+            $tz,
+        );
+
+        return ($computed['status'] ?? null) === 'half_day';
     }
 
     /**

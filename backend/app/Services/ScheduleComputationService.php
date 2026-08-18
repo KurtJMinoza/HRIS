@@ -866,7 +866,7 @@ class ScheduleComputationService
         $status = 'present';
         if ($actualWorkedMinutes <= 0) {
             $status = 'absent';
-        } elseif ($payableMinutes < $halfDayThreshold) {
+        } elseif ($payableMinutes <= $halfDayThreshold) {
             $status = 'half_day';
         } elseif ($lateMinutes > 0 && $undertimeMinutes > 0) {
             $status = 'late_undertime';
@@ -918,7 +918,7 @@ class ScheduleComputationService
         $status = 'present';
         if ($actualWorkedMinutes <= 0) {
             $status = 'absent';
-        } elseif ($payableMinutes < $halfDayThreshold) {
+        } elseif ($payableMinutes <= $halfDayThreshold) {
             $status = 'half_day';
         } elseif ($deficit > 0) {
             $status = 'undertime';
@@ -965,7 +965,7 @@ class ScheduleComputationService
         $status = 'present';
         if ($actualWorkedMinutes <= 0) {
             $status = 'absent';
-        } elseif ($payableMinutes < $halfDayThreshold) {
+        } elseif ($payableMinutes <= $halfDayThreshold) {
             $status = 'half_day';
         } elseif ($undertime > 0) {
             $status = 'undertime';

@@ -93,6 +93,31 @@ class ScheduleComputationServiceTest extends TestCase
         $this->assertEquals('present', $result['status']);
     }
 
+    public function test_exact_half_day_fixed_shift_is_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+        ];
+
+        $result = $this->service->compute(
+            '2026-08-15',
+            $daySchedule,
+            Carbon::parse('2026-08-15 08:00:00', $tz),
+            Carbon::parse('2026-08-15 12:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(480, $result['scheduled_paid_minutes']);
+        $this->assertSame(240, $result['payable_minutes']);
+        $this->assertSame(240, $result['half_day_threshold_minutes']);
+        $this->assertSame('half_day', $result['status']);
+    }
+
     public function test_overnight_shift_10pm_to_7am(): void
     {
         $tz = 'Asia/Manila';
@@ -245,6 +270,59 @@ class ScheduleComputationServiceTest extends TestCase
         $this->assertEquals(510, $result['actual_worked_minutes']);
         $this->assertEquals(480, $result['payable_minutes']);
         $this->assertEquals('present', $result['status']);
+    }
+
+    public function test_exact_half_day_flexible_shift_is_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '07:00',
+            'out' => '22:00',
+            'shift_type' => 'flexible',
+            'flexible_required_minutes' => 480,
+            'expected_paid_minutes' => 480,
+        ];
+
+        $result = $this->service->compute(
+            '2026-06-25',
+            $daySchedule,
+            Carbon::parse('2026-06-25 09:00:00', $tz),
+            Carbon::parse('2026-06-25 13:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(480, $result['scheduled_paid_minutes']);
+        $this->assertSame(240, $result['payable_minutes']);
+        $this->assertSame(240, $result['half_day_threshold_minutes']);
+        $this->assertSame('half_day', $result['status']);
+    }
+
+    public function test_exact_half_day_split_shift_is_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '18:00',
+            'shift_type' => 'split',
+            'work_blocks' => [
+                ['start' => '08:00', 'end' => '12:00'],
+                ['start' => '14:00', 'end' => '18:00'],
+            ],
+            'expected_paid_minutes' => 480,
+        ];
+
+        $result = $this->service->compute(
+            '2026-06-25',
+            $daySchedule,
+            Carbon::parse('2026-06-25 08:00:00', $tz),
+            Carbon::parse('2026-06-25 14:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(480, $result['scheduled_paid_minutes']);
+        $this->assertSame(240, $result['payable_minutes']);
+        $this->assertSame(240, $result['half_day_threshold_minutes']);
+        $this->assertSame('half_day', $result['status']);
     }
 
     public function test_half_day_leave_windows_follow_schedule_not_noon(): void
