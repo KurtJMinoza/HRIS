@@ -1273,11 +1273,20 @@ class DeductionScheduleService
             : [];
         $monthlyAmount = round(max(0.0, (float) ($line['computed_amount'] ?? 0)), 2);
         $monthlyDivisor = max(1.0, (float) ($allowanceMeta['monthly_divisor_days'] ?? 0));
-        $payableDayUnits = max(0.0, (float) ($allowanceMeta['payable_day_units'] ?? $allowanceMeta['worked_day_units'] ?? 0));
+        $basePayableDayUnits = max(0.0, (float) ($allowanceMeta['payable_day_units'] ?? $allowanceMeta['worked_day_units'] ?? 0));
         $unpaidAbsentDays = max(0.0, (float) ($allowanceMeta['unpaid_absent_days'] ?? 0));
         $presentDays = max(0.0, (float) ($allowanceMeta['present_day_units'] ?? 0));
         $approvedPaidLeaveDays = max(0.0, (float) ($allowanceMeta['approved_paid_leave_day_units'] ?? 0));
+        $approvedUnpaidLeaveDays = max(0.0, (float) ($allowanceMeta['approved_unpaid_leave_day_units'] ?? 0));
         $approvedCorrectionDays = max(0.0, (float) ($allowanceMeta['approved_correction_day_units'] ?? 0));
+        $includePaidLeave = $this->allowanceProrationIncludesLeave($line, true);
+        $includeUnpaidLeave = $this->allowanceProrationIncludesLeave($line, false);
+        $excludedPaidLeaveDays = $includePaidLeave ? 0.0 : $approvedPaidLeaveDays;
+        $excludedUnpaidLeaveDays = $includeUnpaidLeave ? 0.0 : $approvedUnpaidLeaveDays;
+        $payableDayUnits = max(
+            0.0,
+            $basePayableDayUnits - $excludedPaidLeaveDays + ($includeUnpaidLeave ? $approvedUnpaidLeaveDays : 0.0)
+        );
         $scheduleFactor = max(0.0, min(1.0, $scheduleFactor));
         $isApplicable = $scheduleFactor > 0.0;
 
@@ -1290,7 +1299,13 @@ class DeductionScheduleService
         $periodDailyRate = $perPeriodAmount > 0.0 ? round($perPeriodAmount / $periodScheduledDays, 6) : 0.0;
         $scheduledBaseForRun = $perPeriodAmount;
         $amountByPayableDays = round($periodDailyRate * $payableDayUnits, 2);
-        $unpaidAbsenceDeduction = $isApplicable ? round($periodDailyRate * $unpaidAbsentDays, 2) : 0.0;
+        $unpaidAbsenceDeductionDays = max(
+            0.0,
+            $unpaidAbsentDays - ($includeUnpaidLeave ? $approvedUnpaidLeaveDays : 0.0)
+        );
+        $unpaidAbsenceDeduction = $isApplicable ? round($periodDailyRate * $unpaidAbsenceDeductionDays, 2) : 0.0;
+        $paidLeaveDeduction = $isApplicable ? round($periodDailyRate * $excludedPaidLeaveDays, 2) : 0.0;
+        $unpaidLeaveDeduction = $isApplicable ? round($periodDailyRate * $excludedUnpaidLeaveDays, 2) : 0.0;
         $originalProratedBeforeSchedule = $amountByPayableDays;
         $amount = $isApplicable ? $amountByPayableDays : 0.0;
         $scheduleDivisor = ($isApplicable && $scheduleFactor > 0.0)
@@ -1312,10 +1327,20 @@ class DeductionScheduleService
             'scheduled_base_for_run_before_absence_deduction' => $scheduledBaseForRun,
             'payable_days_base_amount' => $amountByPayableDays,
             'unpaid_absence_deduction' => $unpaidAbsenceDeduction,
+            'paid_leave_deduction' => $paidLeaveDeduction,
+            'unpaid_leave_deduction' => $unpaidLeaveDeduction,
+            'total_attendance_deduction' => $isApplicable ? round(max(0.0, $scheduledBaseForRun - $amount), 2) : 0.0,
             'unpaid_absent_days' => round($unpaidAbsentDays, 6),
+            'unpaid_absence_deduction_day_units' => round($unpaidAbsenceDeductionDays, 6),
+            'base_payable_day_units' => round($basePayableDayUnits, 6),
             'payable_day_units' => round($payableDayUnits, 6),
             'present_day_units' => round($presentDays, 6),
             'approved_paid_leave_day_units' => round($approvedPaidLeaveDays, 6),
+            'approved_unpaid_leave_day_units' => round($approvedUnpaidLeaveDays, 6),
+            'include_paid_leave' => $includePaidLeave,
+            'include_unpaid_leave' => $includeUnpaidLeave,
+            'excluded_paid_leave_day_units' => round($excludedPaidLeaveDays, 6),
+            'excluded_unpaid_leave_day_units' => round($excludedUnpaidLeaveDays, 6),
             'approved_correction_day_units' => round($approvedCorrectionDays, 6),
             'proration_basis' => 'payable_days',
             'monthly_divisor_days' => round($monthlyDivisor, 4),
@@ -1333,6 +1358,33 @@ class DeductionScheduleService
             'final_allowance_after_schedule_adjustment' => $amount,
             'amount' => $amount,
         ];
+    }
+
+    /**
+     * Catalog settings apply to every assignment of a pay component. Assignment metadata is
+     * retained as a fallback for legacy or custom component lines without a catalog record.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function allowanceProrationIncludesLeave(array $line, bool $paidLeave): bool
+    {
+        $key = $paidLeave
+            ? 'allowance_proration_include_paid_leave'
+            : 'allowance_proration_include_unpaid_leave';
+        $catalogMetadata = is_array($line['pay_component_metadata'] ?? null)
+            ? $line['pay_component_metadata']
+            : [];
+        if (array_key_exists($key, $catalogMetadata)) {
+            return filter_var($catalogMetadata[$key], FILTER_VALIDATE_BOOLEAN);
+        }
+
+        $assignmentMetadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if (array_key_exists($key, $assignmentMetadata)) {
+            return filter_var($assignmentMetadata[$key], FILTER_VALIDATE_BOOLEAN);
+        }
+
+        // Leave does not earn an attendance-prorated allowance unless HR turns it on.
+        return false;
     }
 
     private function logAllowanceProration(
@@ -1395,8 +1447,14 @@ class DeductionScheduleService
             'allowance_base_before_proration' => $allowanceProration['allowance_base_before_proration'] ?? null,
             'scheduled_base_for_run_before_absence_deduction' => $allowanceProration['scheduled_base_for_run_before_absence_deduction'] ?? null,
             'unpaid_absence_deduction' => $allowanceProration['unpaid_absence_deduction'] ?? null,
+            'paid_leave_deduction' => $allowanceProration['paid_leave_deduction'] ?? null,
+            'unpaid_leave_deduction' => $allowanceProration['unpaid_leave_deduction'] ?? null,
+            'total_attendance_deduction' => $allowanceProration['total_attendance_deduction'] ?? null,
             'unpaid_absent_days' => $allowanceProration['unpaid_absent_days'] ?? null,
             'unpaid_absent_day_units' => $allowanceProration['unpaid_absent_days'] ?? null,
+            'approved_unpaid_leave_days' => $allowanceProration['approved_unpaid_leave_day_units'] ?? null,
+            'include_paid_leave' => $allowanceProration['include_paid_leave'] ?? null,
+            'include_unpaid_leave' => $allowanceProration['include_unpaid_leave'] ?? null,
             'payable_day_units' => $allowanceProration['payable_day_units'] ?? null,
             'final_payable_days' => $allowanceProration['payable_day_units'] ?? null,
             'present_days' => $allowanceProration['present_day_units'] ?? null,

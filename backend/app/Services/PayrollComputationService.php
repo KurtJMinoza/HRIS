@@ -2585,8 +2585,9 @@ class PayrollComputationService
 
     /**
      * For each scheduled workday in the pay period (non-rest with required minutes > 0),
-     * credit a full 1.0 day-unit unless the day is an unpaid absence. Paid leave, approved
-     * corrections, and valid attendance all count as a whole payable day regardless of
+     * retain attendance and approved leave day-units for component-specific proration.
+     * Per-component leave settings determine whether a leave unit is payable.
+     * Valid attendance is not reduced by
      * tardiness, undertime, or early timeout — allowance proration is day-based, so lateness
      * is deducted from Regular pay hours only, never from the allowance proration.
      *
@@ -2608,6 +2609,8 @@ class PayrollComputationService
         $nonDeductibleDays = 0.0;
         $presentDays = 0.0;
         $approvedPaidLeaveDays = 0.0;
+        $approvedUnpaidLeaveDays = 0.0;
+        $unpaidAbsenceWithoutLeaveDays = 0.0;
         $approvedCorrectionDays = 0.0;
         $attendanceCounted = [];
         $attendanceExcluded = [];
@@ -2649,7 +2652,17 @@ class PayrollComputationService
                 ? (bool) ($resolution['unpaid_absent_day'] ?? false)
                 : ! (bool) ($d['allowance_attendance_valid'] ?? false);
             if ($isUnpaidAbsent) {
-                $unpaidAbsentDays += 1.0;
+                $isApprovedUnpaidLeave = $resolution !== null
+                    && (bool) data_get($resolution, 'sources.approved_unpaid_leave', false);
+                $unpaidDayUnit = $isApprovedUnpaidLeave
+                    ? max(0.0, min(1.0, (float) ($resolution['leave_day_unit'] ?? 1.0)))
+                    : 1.0;
+                $unpaidAbsentDays += $unpaidDayUnit;
+                if ($isApprovedUnpaidLeave) {
+                    $approvedUnpaidLeaveDays += $unpaidDayUnit;
+                } else {
+                    $unpaidAbsenceWithoutLeaveDays += $unpaidDayUnit;
+                }
                 if ($dateKey !== '') {
                     $row = [
                         'date' => $dateKey,
@@ -2659,6 +2672,7 @@ class PayrollComputationService
                             ? (string) ($resolution['reason'] ?? 'unpaid_absence')
                             : (string) ($d['allowance_attendance_reason'] ?? 'unpaid_absence'),
                         'sources' => $resolution['sources'] ?? ($d['allowance_attendance_sources'] ?? []),
+                        'leave_day_unit' => $isApprovedUnpaidLeave ? round($unpaidDayUnit, 6) : null,
                     ];
                     $attendanceExcluded[] = $row;
                     $unpaidAbsences[] = $row;
@@ -2708,6 +2722,8 @@ class PayrollComputationService
                 'payable_day_units' => round($payableDays, 6),
                 'present_day_units' => round($presentDays, 6),
                 'approved_paid_leave_day_units' => round($approvedPaidLeaveDays, 6),
+                'approved_unpaid_leave_day_units' => round($approvedUnpaidLeaveDays, 6),
+                'unpaid_absence_without_leave_day_units' => round($unpaidAbsenceWithoutLeaveDays, 6),
                 'approved_correction_day_units' => round($approvedCorrectionDays, 6),
                 'unpaid_absent_days' => round($unpaidAbsentDays, 6),
                 'non_deductible_days' => round($nonDeductibleDays, 6),
@@ -2725,9 +2741,9 @@ class PayrollComputationService
     }
 
     /**
-     * Centralized payable-day resolver for proratable allowances/components.
-     * Present/corrected/paid-leave days are payable; only scheduled workdays with no payable
-     * signal are unpaid absences. Hours worked, tardiness, and undertime are deliberately ignored.
+     * Centralized attendance and leave-day resolver for proratable allowances/components.
+     * Present and corrected days are payable. Each component later decides whether a paid or
+     * unpaid leave day is payable. Hours worked, tardiness, and undertime are ignored.
      *
      * @return array<string, mixed>
      */
@@ -2781,6 +2797,7 @@ class PayrollComputationService
                 'scheduled_deductible_day' => true,
                 'payable_day' => $isPaidLeave,
                 'unpaid_absent_day' => ! $isPaidLeave,
+                'leave_day_unit' => $payableDayUnit,
                 'payable_day_unit' => $isPaidLeave ? $payableDayUnit : 0.0,
                 'reason' => $isPaidLeave ? 'approved_paid_leave' : 'approved_unpaid_leave',
                 'sources' => array_merge($attendance['sources'] ?? [], [

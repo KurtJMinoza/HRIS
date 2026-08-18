@@ -208,6 +208,8 @@ class PayComponentController extends Controller
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
             'is_active' => ['sometimes', 'boolean'],
             'metadata' => ['nullable', 'array'],
+            'metadata.allowance_proration_include_paid_leave' => ['nullable', 'boolean'],
+            'metadata.allowance_proration_include_unpaid_leave' => ['nullable', 'boolean'],
             'metadata.default_hourly_rate' => ['nullable', 'numeric', 'min:0'],
             'metadata.default_hours' => ['nullable', 'numeric', 'min:0', 'max:744'],
             'metadata.default_days' => ['nullable', 'numeric', 'min:0', 'max:31'],
