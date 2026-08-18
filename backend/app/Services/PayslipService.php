@@ -3930,7 +3930,23 @@ class PayslipService
                     continue;
                 }
 
-                $lines[$idx]['display_amount'] = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
+                $displayAmount = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
+                $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+                    ? $summary['attendance_pay_breakdown']
+                    : [];
+                $scheduledDays = max(0.0, (float) ($attendanceBreakdown['scheduled_days_count'] ?? 0));
+                if (
+                    max(0.0, (float) ($attendanceBreakdown['total_deduction'] ?? 0)) <= 0.0001
+                    && $scheduledDays > 0.0001
+                    && $presentDays + 0.0001 < $scheduledDays
+                ) {
+                    // A partial attendance period with no late/half-day/undertime reduction
+                    // already has its payable Regular pay amount. Avoid inventing a display-only
+                    // deduction just to reconcile monthly/divisor rounding.
+                    $displayAmount = $netAmount;
+                }
+
+                $lines[$idx]['display_amount'] = $displayAmount;
                 $lines[$idx]['computed_amount'] = $netAmount;
                 $updated = true;
                 $displayApplied = true;
@@ -5789,6 +5805,12 @@ class PayslipService
                 }
 
                 if ((bool) ($day['is_rest_day'] ?? false)) {
+                    continue;
+                }
+
+                // A worked holiday is paid by its own holiday-premium earning line. Its
+                // scheduled minutes must never add another Regular pay day to the headline.
+                if (max(0.0, (float) ($day['holiday_premium_pay'] ?? 0)) > 0.0001) {
                     continue;
                 }
 

@@ -232,6 +232,84 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertGreaterThan(0.0, $totalDeduction);
     }
 
+    public function test_worked_holiday_is_not_counted_as_a_regular_pay_day(): void
+    {
+        $regularDay = static fn (string $date): array => [
+            'date' => $date,
+            'status' => 'worked',
+            'is_rest_day' => false,
+            'regular_day_minutes' => 480,
+            'regular_night_minutes' => 0,
+            'required_minutes' => 480,
+            'breakdown' => [[
+                'component' => 'regular_pay',
+                'minutes' => 480,
+                'rate' => 76.9225,
+                'amount' => 615.38,
+            ]],
+        ];
+        $snapshot = [
+            'daily_rate' => 615.38,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 615.38,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 16000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 1846.14,
+                    ],
+                    [
+                        'key' => 'daily:holiday_premium',
+                        'label' => 'Special Holiday - Worked Pay: KADAWAYAN',
+                        'amount' => 799.99,
+                    ],
+                ],
+            ],
+            'daily_computation_days' => [
+                $regularDay('2026-08-12'),
+                $regularDay('2026-08-13'),
+                $regularDay('2026-08-14'),
+                [
+                    'date' => '2026-08-15',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 799.99,
+                    'breakdown' => [[
+                        'component' => 'holiday_premium',
+                        'minutes' => 480,
+                        'rate' => 99.99875,
+                        'amount' => 799.99,
+                    ]],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('3 days', $line['units'] ?? null);
+        $this->assertEqualsWithDelta(1846.14, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1846.14, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) ($breakdown['total_deduction'] ?? 0), 0.001);
+        $this->assertFalse($rowsByKey->has('attendance_adjustment'));
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenLine = $frozen['summary']['daily_computation_earning_lines'][0] ?? null;
+        $frozenRowsByKey = collect($frozen['summary']['attendance_pay_breakdown']['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('3 days', $frozenLine['units'] ?? null);
+        $this->assertEqualsWithDelta(1846.14, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
+        $this->assertFalse($frozenRowsByKey->has('attendance_adjustment'));
+    }
+
     public function test_regular_pay_undertime_keeps_full_present_days_and_breakdown_uses_payable_total(): void
     {
         $snapshot = [
