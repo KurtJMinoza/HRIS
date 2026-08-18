@@ -3766,14 +3766,24 @@ class PayslipService
             $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
             $tardinessLabel = (string) ($day['tardiness_label'] ?? '');
             if ($status !== 'halfday' && $tardinessStatus === 'half_day') {
-                $paidRegularMinutes = max(
-                    0,
-                    (int) ($day['paid_regular_minutes'] ?? ((int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)))
-                );
+                $paidRegularMinutes = max(0, (int) ($day['paid_regular_minutes'] ?? 0));
+                if ($paidRegularMinutes <= 0) {
+                    $paidRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
+                }
+                if ($paidRegularMinutes <= 0) {
+                    $paidRegularMinutes = max(
+                        0,
+                        (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)
+                    );
+                }
+
+                // The Regular pay headline already includes 0.5 day for an explicit half-day.
+                // Only time below that included half-day belongs in the attendance reduction.
+                $halfDayBaselineMinutes = (int) round($requiredMinutes / 2.0);
                 $halfDayMinutesForDay = max($dayLateMinutes, max(0, $requiredMinutes - $paidRegularMinutes));
                 $halfDayCount++;
                 $halfDayMinutes += $halfDayMinutesForDay;
-                $halfDayDeductionMinutes += $halfDayMinutesForDay;
+                $halfDayDeductionMinutes += max(0, $halfDayBaselineMinutes - $paidRegularMinutes);
             } elseif ($tardinessStatus === 'late' && $tardinessLabel !== '') {
                 $labelMinutes = 0;
                 if (preg_match('/(\d+)\s*hour(?:s)?(?:\s+(\d+)\s*minute(?:s)?)?/i', $tardinessLabel, $hoursMatch) === 1) {
@@ -3857,7 +3867,7 @@ class PayslipService
             ],
             'total_deduction' => round($lateAmount + $halfDayDeductionAmount + $undertimeAmount, 2),
             'total_deduction_units_label' => '—',
-            'note' => 'Half-day and absence amounts are attendance references. Only unpaid half-day, late, and undertime amounts are included in Total attendance reductions; paid half-day leave is included in Leave adjustments.',
+            'note' => 'Half-day and absence amounts are attendance references. Only the shortfall below the included half-day unit, plus late and undertime, is included in Total attendance reductions; paid half-day leave is included in Leave adjustments.',
         ];
     }
 
@@ -3937,7 +3947,7 @@ class PayslipService
             ? $summary['attendance_pay_breakdown']
             : null;
         if (is_array($breakdown)) {
-            $breakdown['note'] = 'Half-day and absence amounts are attendance references. Only unpaid half-day, late, and undertime amounts are included in Total attendance reductions; paid half-day leave is included in Leave adjustments.';
+            $breakdown['note'] = 'Half-day and absence amounts are attendance references. Only the shortfall below the included half-day unit, plus late and undertime, is included in Total attendance reductions; paid half-day leave is included in Leave adjustments.';
             $breakdown['total_deduction_units_label'] = '—';
             $summary['attendance_pay_breakdown'] = $breakdown;
         }
@@ -3984,9 +3994,112 @@ class PayslipService
         $breakdown['regular_pay_after_reductions'] = $hasPayableReduction || ! $hasGrossDisplay
             ? $computedAmount
             : $grossDisplay;
+        if ($hasGrossDisplay) {
+            $breakdown = $this->reconcileAttendancePayBreakdown(
+                $breakdown,
+                max(0.0, round($grossDisplay - $computedAmount, 2))
+            );
+        }
         $summary['attendance_pay_breakdown'] = $breakdown;
 
         return $summary;
+    }
+
+    /**
+     * Keep display-only attendance reduction rows equal to the Regular pay headline less the
+     * payable Regular pay amount. Payroll values are never changed here.
+     *
+     * @param  array<string, mixed>  $breakdown
+     * @return array<string, mixed>
+     */
+    private function reconcileAttendancePayBreakdown(array $breakdown, float $targetDeduction): array
+    {
+        $rows = is_array($breakdown['rows'] ?? null)
+            ? array_values($breakdown['rows'])
+            : [];
+        $rows = array_values(array_filter($rows, static function ($row): bool {
+            if (! is_array($row)) {
+                return true;
+            }
+
+            return strtolower(trim((string) ($row['key'] ?? ''))) !== 'attendance_adjustment';
+        }));
+        $adjustableKeys = ['half_day', 'undertime', 'late'];
+        $indicesByKey = [];
+        $currentDeduction = 0.0;
+
+        foreach ($rows as $index => $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            $key = strtolower(trim((string) ($row['key'] ?? '')));
+            if (! in_array($key, $adjustableKeys, true)) {
+                continue;
+            }
+
+            $amount = max(0.0, (float) ($row['deduction_amount'] ?? 0));
+            $rows[$index]['deduction_amount'] = $amount;
+            $currentDeduction += $amount;
+            if ($amount > 0.0001) {
+                $indicesByKey[$key][] = $index;
+            }
+        }
+
+        $targetDeduction = round(max(0.0, $targetDeduction), 2);
+        $difference = round($targetDeduction - $currentDeduction, 2);
+
+        if (abs($difference) >= 0.005) {
+            foreach ($adjustableKeys as $key) {
+                $indexes = $indicesByKey[$key] ?? [];
+                while ($indexes !== [] && abs($difference) >= 0.005) {
+                    $index = array_pop($indexes);
+                    $amount = max(0.0, (float) ($rows[$index]['deduction_amount'] ?? 0));
+
+                    if ($difference > 0) {
+                        $rows[$index]['deduction_amount'] = round($amount + $difference, 2);
+                        $difference = 0.0;
+
+                        break 2;
+                    }
+
+                    $reduction = min($amount, abs($difference));
+                    $rows[$index]['deduction_amount'] = round($amount - $reduction, 2);
+                    $difference = round($difference + $reduction, 2);
+                }
+            }
+        }
+
+        if ($difference > 0.005) {
+            // Legacy rows can occasionally lack a usable late/half-day/undertime category.
+            // Preserve the exact display reconciliation instead of leaving a conflicting total.
+            $rows[] = [
+                'key' => 'attendance_adjustment',
+                'label' => 'Attendance adjustment',
+                'details' => '—',
+                'count' => null,
+                'minutes' => null,
+                'amount' => $difference,
+                'deduction_amount' => $difference,
+            ];
+        }
+
+        $totalDeduction = 0.0;
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($row['key'] ?? '')));
+            if (in_array($key, $adjustableKeys, true) || $key === 'attendance_adjustment') {
+                $totalDeduction += max(0.0, (float) ($row['deduction_amount'] ?? 0));
+            }
+        }
+
+        $breakdown['rows'] = array_values($rows);
+        $breakdown['total_deduction'] = round($totalDeduction, 2);
+        $breakdown['total_deduction_units_label'] = '—';
+
+        return $breakdown;
     }
 
     /**
@@ -5658,9 +5771,9 @@ class PayslipService
 
     /**
      * Present-day count for regular-pay display decisions only — not used for payroll amounts.
-     * Clocked half-day classifications count as 0.5 day. Other undertime days still count as
-     * one present day; an explicitly partial day without either classification contributes its
-     * attendance-backed regular_pay fraction of the scheduled paid day.
+     * Clocked half-day classifications count as 0.5 day. Every other clocked regular-pay day,
+     * including late and undertime days, counts as one present day. The payable amount remains
+     * minute-based in the detailed breakdown.
      * Leave-only halfdays (no attendance regular_pay) are excluded.
      *
      * @param  array<string, mixed>  $summary
@@ -5694,19 +5807,9 @@ class PayslipService
                     continue;
                 }
 
-                // Undertime is deducted separately, but the employee was present for the day.
-                // Keep the Regular pay headline at one day while the payable amount stays
-                // minute-based in the breakdown.
-                $undertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
-                if ($undertimeMinutes > 0 || $status === 'undertime') {
-                    $units += 1.0;
-                    continue;
-                }
-
-                // Legacy frozen days may not have required_minutes; standardize those to
-                // the 8-hour paid-day basis used by Regular pay.
-                $requiredMinutes = max(1, (int) ($day['required_minutes'] ?? 480));
-                $units += min(1.0, $attendanceRegularMinutes / $requiredMinutes);
+                // Late and undertime reduce the minute-based payable amount only. They do not
+                // turn a clocked workday into a fractional Regular pay day in the headline.
+                $units += 1.0;
             }
 
             if ($units > 0.0001) {
