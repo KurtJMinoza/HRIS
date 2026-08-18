@@ -503,7 +503,12 @@
                       @if(($row['key'] ?? '') !== 'scheduled_regular_days')
                         <tr class="attendance-detail">
                           <td class="attendance-label">{{ $row['label'] ?? 'Attendance adjustment' }}</td>
+                          @php($isHalfDayDeduction = ($row['key'] ?? '') === 'half_day' && !empty($row['deduction_details']) && (float) ($row['deduction_amount'] ?? 0) > 0)
+                          @if($isHalfDayDeduction)
+                            <td class="units">{{ $row['deduction_details'] }} deducted</td>
+                          @else
                           <td class="units">{{ $row['details'] ?? '—' }}@if(!empty($row['deduction_details']) && ($row['deduction_details'] ?? '') !== ($row['details'] ?? '') && (float) ($row['deduction_amount'] ?? 0) > 0) ({{ $row['deduction_details'] }} deducted)@endif</td>
+                          @endif
                           <td class="num">{{ $formatDeduction($row['deduction_amount'] ?? ($row['amount'] ?? 0)) }}</td>
                         </tr>
                       @endif
@@ -544,7 +549,12 @@
                       @if(($row['key'] ?? '') !== 'scheduled_regular_days')
                         <tr class="attendance-detail">
                           <td class="attendance-label">{{ $row['label'] ?? 'Attendance adjustment' }}</td>
+                          @php($isHalfDayDeduction = ($row['key'] ?? '') === 'half_day' && !empty($row['deduction_details']) && (float) ($row['deduction_amount'] ?? 0) > 0)
+                          @if($isHalfDayDeduction)
+                            <td class="units">{{ $row['deduction_details'] }} deducted</td>
+                          @else
                           <td class="units">{{ $row['details'] ?? '—' }}@if(!empty($row['deduction_details']) && ($row['deduction_details'] ?? '') !== ($row['details'] ?? '') && (float) ($row['deduction_amount'] ?? 0) > 0) ({{ $row['deduction_details'] }} deducted)@endif</td>
+                          @endif
                           <td class="num">{{ $formatDeduction($row['deduction_amount'] ?? ($row['amount'] ?? 0)) }}</td>
                         </tr>
                       @endif

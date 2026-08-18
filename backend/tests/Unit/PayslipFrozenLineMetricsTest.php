@@ -590,6 +590,96 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertEqualsWithDelta(1012.50, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
     }
 
+    public function test_severe_undertime_does_not_create_a_half_day_or_late_deduction(): void
+    {
+        $hourlyRate = 769.23 / 8;
+        $snapshot = [
+            'daily_rate' => 769.23,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 769.23,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 20000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 991.99,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'tardiness_status' => 'late',
+                    'tardiness_label' => '30 Minutes late',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 10,
+                    'regular_night_minutes' => 0,
+                    'paid_regular_minutes' => 10,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 0,
+                    'undertime_deduction_minutes' => 470,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 10,
+                        'rate' => $hourlyRate,
+                        'amount' => 16.03,
+                    ]],
+                ],
+                [
+                    'date' => '2026-08-12',
+                    'status' => 'worked',
+                    'tardiness_status' => 'on_time',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'paid_regular_minutes' => 480,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 0,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => $hourlyRate,
+                        'amount' => 769.23,
+                    ]],
+                ],
+                [
+                    'date' => '2026-08-13',
+                    'status' => 'worked',
+                    'tardiness_status' => 'half_day',
+                    'tardiness_label' => 'Half Day',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 129,
+                    'regular_night_minutes' => 0,
+                    'paid_regular_minutes' => 129,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 0,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 129,
+                        'rate' => $hourlyRate,
+                        'amount' => 206.73,
+                    ]],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(0, (int) ($rows['late']['minutes'] ?? -1));
+        $this->assertSame(470, (int) ($rows['undertime']['minutes'] ?? 0));
+        $this->assertSame(111, (int) ($rows['half_day']['minutes'] ?? 0));
+        $this->assertSame('1 hr 51 mins', $rows['half_day']['details'] ?? null);
+        $this->assertSame(111, (int) ($rows['half_day']['deduction_minutes'] ?? 0));
+        $this->assertEqualsWithDelta(177.88, (float) ($rows['half_day']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(931.09, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(991.99, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+    }
+
     public function test_regular_pay_late_day_keeps_one_day_display_units(): void
     {
         $snapshot = [

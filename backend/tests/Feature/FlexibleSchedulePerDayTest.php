@@ -280,6 +280,59 @@ class FlexibleSchedulePerDayTest extends TestCase
         $this->assertSame('present', $result['status']);
     }
 
+    public function test_short_completed_pair_is_undertime_for_each_matched_flexible_option(): void
+    {
+        $service = new ScheduleComputationService;
+        $tz = 'Asia/Manila';
+        $date = '2026-08-10';
+
+        foreach ([
+            ['id' => 101, 'name' => 'Morning', 'in' => '08:00', 'out' => '08:10'],
+            ['id' => 102, 'name' => 'Afternoon', 'in' => '12:00', 'out' => '12:10'],
+        ] as $case) {
+            $result = $service->compute(
+                $date,
+                $this->multiOptionMonday(),
+                Carbon::parse($date.' '.$case['in'], $tz),
+                Carbon::parse($date.' '.$case['out'], $tz),
+                $tz,
+            );
+
+            $this->assertSame($case['id'], $result['matched_schedule_option_id']);
+            $this->assertSame($case['name'], $result['matched_schedule_option_name']);
+            $this->assertSame(10, $result['actual_worked_minutes']);
+            $this->assertSame(480, $result['scheduled_paid_minutes']);
+            $this->assertSame(470, $result['undertime_minutes']);
+            $this->assertSame('undertime', $result['status']);
+        }
+    }
+
+    public function test_exact_half_day_pair_is_half_day_for_each_matched_flexible_option(): void
+    {
+        $service = new ScheduleComputationService;
+        $tz = 'Asia/Manila';
+        $date = '2026-08-10';
+
+        foreach ([
+            ['id' => 101, 'name' => 'Morning', 'in' => '08:00', 'out' => '12:00'],
+            ['id' => 102, 'name' => 'Afternoon', 'in' => '12:00', 'out' => '16:00'],
+        ] as $case) {
+            $result = $service->compute(
+                $date,
+                $this->multiOptionMonday(),
+                Carbon::parse($date.' '.$case['in'], $tz),
+                Carbon::parse($date.' '.$case['out'], $tz),
+                $tz,
+            );
+
+            $this->assertSame($case['id'], $result['matched_schedule_option_id']);
+            $this->assertSame($case['name'], $result['matched_schedule_option_name']);
+            $this->assertSame(240, $result['payable_minutes']);
+            $this->assertSame(240, $result['half_day_threshold_minutes']);
+            $this->assertSame('half_day', $result['status']);
+        }
+    }
+
     public function test_late_afternoon_shift_is_not_late_against_morning_option(): void
     {
         $service = new ScheduleComputationService;

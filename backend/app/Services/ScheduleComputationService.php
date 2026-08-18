@@ -866,7 +866,10 @@ class ScheduleComputationService
         $status = 'present';
         if ($actualWorkedMinutes <= 0) {
             $status = 'absent';
-        } elseif ($payableMinutes <= $halfDayThreshold) {
+        // A completed pair is an automatic half day only when it reaches the
+        // schedule's exact half-day unit. A shorter pair is undertime, not an
+        // unapproved half day.
+        } elseif ($halfDayThreshold > 0 && $payableMinutes === $halfDayThreshold) {
             $status = 'half_day';
         } elseif ($lateMinutes > 0 && $undertimeMinutes > 0) {
             $status = 'late_undertime';
@@ -918,7 +921,7 @@ class ScheduleComputationService
         $status = 'present';
         if ($actualWorkedMinutes <= 0) {
             $status = 'absent';
-        } elseif ($payableMinutes <= $halfDayThreshold) {
+        } elseif ($halfDayThreshold > 0 && $payableMinutes === $halfDayThreshold) {
             $status = 'half_day';
         } elseif ($deficit > 0) {
             $status = 'undertime';
@@ -965,7 +968,7 @@ class ScheduleComputationService
         $status = 'present';
         if ($actualWorkedMinutes <= 0) {
             $status = 'absent';
-        } elseif ($payableMinutes <= $halfDayThreshold) {
+        } elseif ($halfDayThreshold > 0 && $payableMinutes === $halfDayThreshold) {
             $status = 'half_day';
         } elseif ($undertime > 0) {
             $status = 'undertime';

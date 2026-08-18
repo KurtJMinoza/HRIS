@@ -118,6 +118,65 @@ class ScheduleComputationServiceTest extends TestCase
         $this->assertSame('half_day', $result['status']);
     }
 
+    public function test_short_completed_shifts_are_undertime_not_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $dateKey = '2026-08-11';
+        $cases = [
+            [
+                'schedule' => [
+                    'in' => '08:00',
+                    'out' => '17:00',
+                    'break_start' => '12:00',
+                    'break_end' => '13:00',
+                    'shift_type' => 'fixed',
+                ],
+                'time_in' => '08:00',
+                'time_out' => '08:10',
+            ],
+            [
+                'schedule' => [
+                    'in' => '07:00',
+                    'out' => '22:00',
+                    'shift_type' => 'flexible',
+                    'flexible_required_minutes' => 480,
+                    'expected_paid_minutes' => 480,
+                ],
+                'time_in' => '09:00',
+                'time_out' => '09:10',
+            ],
+            [
+                'schedule' => [
+                    'in' => '08:00',
+                    'out' => '18:00',
+                    'shift_type' => 'split',
+                    'work_blocks' => [
+                        ['start' => '08:00', 'end' => '12:00'],
+                        ['start' => '14:00', 'end' => '18:00'],
+                    ],
+                    'expected_paid_minutes' => 480,
+                ],
+                'time_in' => '08:00',
+                'time_out' => '08:10',
+            ],
+        ];
+
+        foreach ($cases as $case) {
+            $result = $this->service->compute(
+                $dateKey,
+                $case['schedule'],
+                Carbon::parse($dateKey.' '.$case['time_in'], $tz),
+                Carbon::parse($dateKey.' '.$case['time_out'], $tz),
+                $tz,
+            );
+
+            $this->assertSame(10, $result['actual_worked_minutes']);
+            $this->assertSame(480, $result['scheduled_paid_minutes']);
+            $this->assertSame(470, $result['undertime_minutes']);
+            $this->assertSame('undertime', $result['status']);
+        }
+    }
+
     public function test_overnight_shift_10pm_to_7am(): void
     {
         $tz = 'Asia/Manila';

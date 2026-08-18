@@ -406,7 +406,8 @@ class AttendanceStatusResolver
             return $hasTimeIn ? self::STATUS_PRESENT : self::STATUS_ABSENT;
         }
 
-        // A completed pair at or below the schedule's half-day paid threshold is Half Day,
+        // A completed pair exactly at the schedule's half-day paid threshold is Half Day.
+        // Anything shorter remains undertime unless the clock-in itself is a half-day arrival.
         // including fixed, split, and flexible/multi-option schedules. The schedule engine owns
         // the required minutes, break windows, and matched flexible option calculation.
         if ($hasTimeIn && $hasTimeOut && $this->completedPairIsHalfDay(

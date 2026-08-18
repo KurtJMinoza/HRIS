@@ -20,6 +20,9 @@ function attendanceDetails(row) {
   const details = String(row?.details || '—')
   const deductionDetails = String(row?.deduction_details || '').trim()
   const deductionAmount = Number(row?.deduction_amount || 0)
+  if (row?.key === 'half_day' && deductionDetails && Number.isFinite(deductionAmount) && deductionAmount > 0) {
+    return `${deductionDetails} deducted`
+  }
   if (deductionDetails && deductionDetails !== details && Number.isFinite(deductionAmount) && deductionAmount > 0) {
     return `${details} (${deductionDetails} deducted)`
   }

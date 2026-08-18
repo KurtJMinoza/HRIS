@@ -3712,7 +3712,7 @@ class PayslipService
         $lateCount = 0;
         $lateMinutes = 0;
         $halfDayCount = 0;
-        $halfDayMinutes = 0;
+        $halfDayReferenceMinutes = 0;
         $halfDayDeductionMinutes = 0;
         $absenceDays = 0.0;
         $absenceMinutes = 0;
@@ -3759,7 +3759,7 @@ class PayslipService
                     $leaveHalfMinutes = (int) round($requiredMinutes / 2);
                 }
                 $halfDayCount++;
-                $halfDayMinutes += $leaveHalfMinutes;
+                $halfDayReferenceMinutes += $leaveHalfMinutes;
             }
 
             $dayLateMinutes = max(0, (int) ($day['late_deduction_minutes'] ?? 0));
@@ -3780,11 +3780,20 @@ class PayslipService
                 // The Regular pay headline already includes 0.5 day for an explicit half-day.
                 // Only time below that included half-day belongs in the attendance reduction.
                 $halfDayBaselineMinutes = (int) round($requiredMinutes / 2.0);
-                $halfDayMinutesForDay = max($dayLateMinutes, max(0, $requiredMinutes - $paidRegularMinutes));
+                $halfDayShortfallMinutes = max(0, $halfDayBaselineMinutes - $paidRegularMinutes);
                 $halfDayCount++;
-                $halfDayMinutes += $halfDayMinutesForDay;
-                $halfDayDeductionMinutes += max(0, $halfDayBaselineMinutes - $paidRegularMinutes);
-            } elseif ($tardinessStatus === 'late' && $tardinessLabel !== '') {
+                $halfDayDeductionMinutes += $halfDayShortfallMinutes;
+                if ($halfDayShortfallMinutes <= 0) {
+                    $halfDayReferenceMinutes += $halfDayBaselineMinutes;
+                }
+            } elseif (
+                ! array_key_exists('late_deduction_minutes', $day)
+                && $tardinessStatus === 'late'
+                && $tardinessLabel !== ''
+            ) {
+                // Current daily payroll rows carry the actual applied late deduction.
+                // Fall back to a legacy label only when that metric was never stored, so
+                // the label cannot double count minutes already captured by undertime.
                 $labelMinutes = 0;
                 if (preg_match('/(\d+)\s*hour(?:s)?(?:\s+(\d+)\s*minute(?:s)?)?/i', $tardinessLabel, $hoursMatch) === 1) {
                     $labelMinutes = ((int) $hoursMatch[1] * 60) + (int) ($hoursMatch[2] ?? 0);
@@ -3807,7 +3816,12 @@ class PayslipService
 
         $lateAmount = round(($lateMinutes / 60.0) * $hourlyRate, 2);
         $halfDayDeductionAmount = round(($halfDayDeductionMinutes / 60.0) * $hourlyRate, 2);
-        $halfDayDisplayAmount = round(($halfDayMinutes / 60.0) * $hourlyRate, 2);
+        // When a half-day has a payable shortage, show that shortage only. Paid
+        // half-day leave remains informational through Leave adjustments.
+        $halfDayDisplayMinutes = $halfDayDeductionMinutes > 0
+            ? $halfDayDeductionMinutes
+            : $halfDayReferenceMinutes;
+        $halfDayDisplayAmount = round(($halfDayDisplayMinutes / 60.0) * $hourlyRate, 2);
         $absenceAmount = round(($absenceMinutes / 60.0) * $hourlyRate, 2);
         $undertimeAmount = round(($undertimeMinutes / 60.0) * $hourlyRate, 2);
 
@@ -3838,9 +3852,9 @@ class PayslipService
                 [
                     'key' => 'half_day',
                     'label' => 'Half day',
-                    'details' => $formatAttendanceUnits($halfDayMinutes),
+                    'details' => $formatAttendanceUnits($halfDayDisplayMinutes),
                     'count' => $halfDayCount,
-                    'minutes' => $halfDayMinutes,
+                    'minutes' => $halfDayDisplayMinutes,
                     'amount' => $halfDayDisplayAmount,
                     'deduction_minutes' => $halfDayDeductionMinutes,
                     'deduction_details' => $formatAttendanceUnits($halfDayDeductionMinutes),
@@ -4040,7 +4054,9 @@ class PayslipService
 
             return strtolower(trim((string) ($row['key'] ?? ''))) !== 'attendance_adjustment';
         }));
-        $adjustableKeys = ['half_day', 'undertime', 'late'];
+        // Preserve a specific half-day shortage before allocating a display-only
+        // rounding cent to a general late/undertime deduction.
+        $adjustableKeys = ['late', 'undertime', 'half_day'];
         $indicesByKey = [];
         $currentDeduction = 0.0;
 
@@ -4073,14 +4089,18 @@ class PayslipService
                     $amount = max(0.0, (float) ($rows[$index]['deduction_amount'] ?? 0));
 
                     if ($difference > 0) {
-                        $rows[$index]['deduction_amount'] = round($amount + $difference, 2);
+                        $reconciledAmount = round($amount + $difference, 2);
+                        $rows[$index]['deduction_amount'] = $reconciledAmount;
+                        $rows[$index]['amount'] = $reconciledAmount;
                         $difference = 0.0;
 
                         break 2;
                     }
 
                     $reduction = min($amount, abs($difference));
-                    $rows[$index]['deduction_amount'] = round($amount - $reduction, 2);
+                    $reconciledAmount = round($amount - $reduction, 2);
+                    $rows[$index]['deduction_amount'] = $reconciledAmount;
+                    $rows[$index]['amount'] = $reconciledAmount;
                     $difference = round($difference + $reduction, 2);
                 }
             }
