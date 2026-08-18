@@ -1045,7 +1045,11 @@ class PayslipService
      * Persist the same live draft computation used by the payslip page back onto the draft row.
      * Finalization uses this to freeze the visible draft values, not an older capped snapshot.
      */
-    public function refreshDraftPayslipFromLiveComputation(Payslip $payslip, User $employee): Payslip
+    public function refreshDraftPayslipFromLiveComputation(
+        Payslip $payslip,
+        User $employee,
+        ?array $liveComputation = null,
+    ): Payslip
     {
         if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
             return $payslip;
@@ -1080,7 +1084,7 @@ class PayslipService
         ]);
 
         $periodInput = $this->periodInputFromPayslip($payslip);
-        $live = $this->computePayrollForEmployee(
+        $live = $liveComputation ?? $this->computePayrollForEmployee(
             $employee,
             $payslip->payroll_period_id !== null ? (int) $payslip->payroll_period_id : null,
             'draft',
@@ -2632,7 +2636,11 @@ class PayslipService
      *
      * @return array<string, mixed>
      */
-    public function snapshotForPayslipRender(Payslip $payslip, User $employee): array
+    public function snapshotForPayslipRender(
+        Payslip $payslip,
+        User $employee,
+        bool $allowLiveRecomputation = true,
+    ): array
     {
         $snapshotRaw = $payslip->snapshot ?? [];
         $payrollModule = $this->normalizePayrollModule((string) ($payslip->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
@@ -2642,7 +2650,7 @@ class PayslipService
         // EXECOM drafts are fixed-basic + gated extras from generation/recompute. Live-rerunning
         // every list/preview request can drop OT/holiday when the daily engine is unavailable and
         // makes batch MetricCards flip (e.g. net 217,681.41 → 217,050.40). Use the stored snapshot.
-        if (! $isLocked && ! $isExecom) {
+        if ($allowLiveRecomputation && ! $isLocked && ! $isExecom) {
             try {
                 $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
                 $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
@@ -2679,7 +2687,7 @@ class PayslipService
         }
 
         // No stored snapshot: only non-EXECOM attempts a live build here.
-        if (! $isExecom) {
+        if ($allowLiveRecomputation && ! $isExecom) {
             try {
                 $live = $this->previewDataForEmployee($employee, $this->periodInputFromPayslip($payslip));
                 $snapshot = is_array($live['snapshot'] ?? null) ? $live['snapshot'] : [];
@@ -3683,6 +3691,24 @@ class PayslipService
         return $this->formatDurationUnitsFromMinutes(max(0, $minutes)) ?? '0 mins';
     }
 
+    private function tardinessLabelMinutes(string $label): ?int
+    {
+        $label = trim($label);
+        if ($label === '') {
+            return null;
+        }
+
+        if (preg_match('/(\d+)\s*hour(?:s)?(?:\s+(\d+)\s*minute(?:s)?)?/i', $label, $hoursMatch) === 1) {
+            return ((int) $hoursMatch[1] * 60) + (int) ($hoursMatch[2] ?? 0);
+        }
+
+        if (preg_match('/(\d+)\s*minute(?:s)?/i', $label, $minutesMatch) === 1) {
+            return (int) $minutesMatch[1];
+        }
+
+        return null;
+    }
+
     /**
      * Build payslip-only attendance detail from the frozen daily payroll rows.
      * This is presentation data; it does not alter any payroll totals or line amounts.
@@ -3731,9 +3757,11 @@ class PayslipService
 
             $scheduledDays++;
 
-            // Holiday premium is a separate earning line; keep the day in scheduled
-            // workdays, but do not treat it as a Regular pay late/absence/undertime.
-            if (max(0.0, (float) ($day['holiday_premium_pay'] ?? 0)) > 0.0001) {
+            // A special-holiday-only line has no Regular pay to reduce. A worked
+            // regular holiday does have a regular-pay component, so its tardiness
+            // must remain in this display breakdown.
+            $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+            if ($holidayPremiumPay > 0.0001 && $this->attendanceBackedRegularPayMinutes($day) <= 0) {
                 continue;
             }
             $status = strtolower(trim((string) ($day['status'] ?? '')));
@@ -3763,8 +3791,10 @@ class PayslipService
             }
 
             $dayLateMinutes = max(0, (int) ($day['late_deduction_minutes'] ?? 0));
+            $dayUndertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
             $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
             $tardinessLabel = (string) ($day['tardiness_label'] ?? '');
+            $policyLateMinutes = $this->tardinessLabelMinutes($tardinessLabel);
             if ($status !== 'halfday' && $tardinessStatus === 'half_day') {
                 $paidRegularMinutes = max(0, (int) ($day['paid_regular_minutes'] ?? 0));
                 if ($paidRegularMinutes <= 0) {
@@ -3787,27 +3817,31 @@ class PayslipService
                     $halfDayReferenceMinutes += $halfDayBaselineMinutes;
                 }
             } elseif (
+                $status !== 'halfday'
+                && $tardinessStatus === 'late'
+                && $dayLateMinutes > 0
+                && $dayUndertimeMinutes === 0
+                && $policyLateMinutes !== null
+            ) {
+                // The daily ledger stores only the incremental cap adjustment after
+                // raw worked time. The payslip compares Regular pay against a full
+                // day, so show the same policy bucket the attendance screen shows.
+                $dayLateMinutes = $policyLateMinutes;
+            } elseif (
                 ! array_key_exists('late_deduction_minutes', $day)
                 && $tardinessStatus === 'late'
-                && $tardinessLabel !== ''
+                && $policyLateMinutes !== null
             ) {
                 // Current daily payroll rows carry the actual applied late deduction.
                 // Fall back to a legacy label only when that metric was never stored, so
                 // the label cannot double count minutes already captured by undertime.
-                $labelMinutes = 0;
-                if (preg_match('/(\d+)\s*hour(?:s)?(?:\s+(\d+)\s*minute(?:s)?)?/i', $tardinessLabel, $hoursMatch) === 1) {
-                    $labelMinutes = ((int) $hoursMatch[1] * 60) + (int) ($hoursMatch[2] ?? 0);
-                } elseif (preg_match('/(\d+)\s*minute(?:s)?/i', $tardinessLabel, $minutesMatch) === 1) {
-                    $labelMinutes = (int) $minutesMatch[1];
-                }
-                $dayLateMinutes = max($dayLateMinutes, $labelMinutes);
+                $dayLateMinutes = max($dayLateMinutes, $policyLateMinutes);
             }
             if ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
                 $lateCount++;
                 $lateMinutes += $dayLateMinutes;
             }
 
-            $dayUndertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
             if ($status !== 'halfday' && $dayUndertimeMinutes > 0) {
                 $undertimeCount++;
                 $undertimeMinutes += $dayUndertimeMinutes;

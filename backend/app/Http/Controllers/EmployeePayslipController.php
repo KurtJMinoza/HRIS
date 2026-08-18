@@ -212,14 +212,43 @@ class EmployeePayslipController extends Controller
                 }
 
                 try {
-                    $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                    $this->payslipService->refreshDraftPayslipFromLiveComputation(
+                        $payslip,
+                        $employee,
+                        $live,
+                    );
                 } catch (\Throwable) {
                     // View still returns live payload when refresh fails.
                 }
 
                 return response()->json($live);
-            } catch (\RuntimeException $e) {
-                return response()->json(['message' => $e->getMessage()], 422);
+            } catch (\Throwable $e) {
+                Log::warning('Employee payslip view: live payroll computation failed; using stored draft snapshot', [
+                    'payslip_id' => (int) $payslip->id,
+                    'employee_id' => (int) $employee->id,
+                    'exception' => $e::class,
+                    'error' => $e->getMessage(),
+                ]);
+
+                $company = $payslip->company ?? $employee->company;
+                $fallback = PayslipStoredSnapshotViewPayload::fromStoredPayslip(
+                    $payslip,
+                    $employee,
+                    $this->payslipService,
+                    $this->publicCompanyLogoUrl($company?->logo),
+                    false,
+                );
+                $fallback['mode'] = 'draft';
+                $fallback['source'] = 'stored_snapshot_fallback';
+                $fallback['computed_at'] = $payslip->updated_at?->toIso8601String();
+                $fallback['payroll'] = array_merge($fallback['payroll'] ?? [], [
+                    'status' => (string) ($payslip->status ?? Payslip::STATUS_DRAFT),
+                    'mode' => 'draft',
+                    'source' => 'stored_snapshot_fallback',
+                    'computed_at' => $fallback['computed_at'],
+                ]);
+
+                return response()->json($fallback);
             }
         }
 

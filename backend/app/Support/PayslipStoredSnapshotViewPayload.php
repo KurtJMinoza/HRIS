@@ -18,9 +18,14 @@ final class PayslipStoredSnapshotViewPayload
         Payslip $payslip,
         User $employee,
         PayslipService $payslipService,
-        ?string $companyLogoPublicUrl
+        ?string $companyLogoPublicUrl,
+        bool $allowLiveRecomputation = true,
     ): array {
-        $snapshot = $payslipService->snapshotForPayslipRender($payslip, $employee);
+        $snapshot = $payslipService->snapshotForPayslipRender(
+            $payslip,
+            $employee,
+            $allowLiveRecomputation,
+        );
         $metrics = $payslipService->payslipLineTotalsFromSnapshot($snapshot);
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $isExecom = strtolower(trim((string) ($payslip->payroll_module ?? $summary['payroll_module'] ?? ''))) === 'execom'

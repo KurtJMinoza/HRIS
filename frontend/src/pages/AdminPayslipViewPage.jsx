@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, FileDown, Loader2, Printer, RefreshCw } from 'lucide-react'
 import {
@@ -28,20 +28,24 @@ export default function AdminPayslipViewPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [data, setData] = useState(null)
+  const [loadError, setLoadError] = useState(null)
+  const latestLoadRequestRef = useRef(0)
 
   const isPreviewMode = !payslipId
 
   const loadPayslip = useCallback(async () => {
+    const requestId = ++latestLoadRequestRef.current
     setLoading(true)
+    setLoadError(null)
     try {
       if (payslipId && employeeSelfServiceView) {
         const payload = await getEmployeePayslipViewData(payslipId)
-        setData(payload)
+        if (requestId === latestLoadRequestRef.current) setData(payload)
         return
       }
       if (payslipId) {
         const payload = await getAdminPayslipViewData(payslipId)
-        setData(payload)
+        if (requestId === latestLoadRequestRef.current) setData(payload)
         return
       }
       const employeeId = searchParams.get('employee_id')
@@ -56,17 +60,23 @@ export default function AdminPayslipViewPage() {
         is_final_pay: searchParams.get('is_final_pay') === 'true',
         password_protect: searchParams.get('password_protect') === 'true',
       })
-      setData(payload)
+      if (requestId === latestLoadRequestRef.current) setData(payload)
     } catch (e) {
-      toast({ title: 'Payslip view failed', description: e.message || 'Unable to load payslip.', variant: 'destructive' })
-      navigate(employeeSelfServiceView ? `${hrBase}/payslips` : `${hrBase}/compensation/finalize-payroll`)
+      if (requestId !== latestLoadRequestRef.current) return
+      const message = e instanceof Error ? e.message : 'Unable to load payslip.'
+      setLoadError(message)
+      toast({ title: 'Payslip view failed', description: message, variant: 'destructive' })
     } finally {
-      setLoading(false)
+      if (requestId === latestLoadRequestRef.current) setLoading(false)
     }
-  }, [payslipId, searchParams, toast, navigate, hrBase, employeeSelfServiceView])
+  }, [payslipId, searchParams, toast, employeeSelfServiceView])
 
   useEffect(() => {
     loadPayslip()
+
+    return () => {
+      latestLoadRequestRef.current += 1
+    }
   }, [loadPayslip])
 
   const refreshPayslip = useCallback(async () => {
@@ -250,6 +260,24 @@ export default function AdminPayslipViewPage() {
       <div className="flex min-h-[45vh] items-center justify-center">
         <Loader2 className="mr-2 h-5 w-5 animate-spin text-muted-foreground" />
         <span className="text-sm text-muted-foreground">Loading payslip view...</span>
+      </div>
+    )
+  }
+
+  if (loadError && !data) {
+    return (
+      <div className="flex min-h-[45vh] flex-col items-center justify-center gap-4 px-4 text-center">
+        <p className="text-sm text-muted-foreground">{loadError}</p>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" onClick={loadPayslip}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Retry
+          </Button>
+          <Button type="button" variant="ghost" onClick={handleBack}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back
+          </Button>
+        </div>
       </div>
     )
   }
