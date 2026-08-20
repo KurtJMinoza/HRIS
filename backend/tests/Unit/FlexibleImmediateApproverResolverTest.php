@@ -927,6 +927,64 @@ class FlexibleImmediateApproverResolverTest extends TestCase
         $this->assertSame('admin_hr', $chain[1]['approval_level']);
     }
 
+    public function test_selected_branch_assignment_still_routes_to_area_head_when_branch_mirror_parent_is_stale(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $areaHead = $this->user();
+        $employee = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+
+        $company = Company::query()->create(['name' => 'Area Assignment Context Co '.Str::random(5)]);
+        $area = Area::query()->create([
+            'company_id' => (int) $company->id,
+            'area_name' => 'Assignment Context Area',
+            'area_manager_employee_id' => (int) $areaHead->id,
+        ]);
+        $branch = Branch::query()->create([
+            'name' => 'Assignment Context Branch',
+            'company_id' => (int) $company->id,
+            'area_id' => (int) $area->id,
+        ]);
+
+        app(OrganizationLeadershipService::class)->upsertLegacyHeadAssignment(
+            'area',
+            (int) $area->id,
+            (int) $areaHead->id,
+            null,
+        );
+
+        $branchUnit = OrganizationUnit::query()
+            ->where('legacy_source_type', 'branch')
+            ->where('legacy_source_id', (int) $branch->id)
+            ->firstOrFail();
+        $branchUnit->forceFill(['parent_id' => null])->save();
+
+        $assignment = EmployeeOrganizationAssignment::query()->create([
+            'employee_id' => (int) $employee->id,
+            'organization_unit_id' => (int) $branchUnit->id,
+            'assignment_type' => EmployeeOrganizationAssignment::TYPE_PRIMARY,
+            'company_id' => (int) $company->id,
+            'branch_id' => (int) $branch->id,
+            'is_primary' => true,
+            'effective_from' => null,
+            'effective_to' => null,
+            'is_active' => true,
+        ]);
+
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain(
+            $employee,
+            'leave',
+            $employee,
+            ['assignment_id' => (int) $assignment->id],
+        );
+
+        $this->assertCount(2, $chain);
+        $this->assertSame((int) $areaHead->id, (int) $chain[0]['approver_id']);
+        $this->assertSame('Area Head approval', $chain[0]['approval_label']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
+    }
+
     public function test_oic_filing_routes_to_company_head_then_hr(): void
     {
         $this->setWorkflowFallbackToParent('leave', true);

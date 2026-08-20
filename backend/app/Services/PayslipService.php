@@ -3795,6 +3795,9 @@ class PayslipService
             $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
             $tardinessLabel = (string) ($day['tardiness_label'] ?? '');
             $policyLateMinutes = $this->tardinessLabelMinutes($tardinessLabel);
+            $hasAttendanceRegularPay = $this->attendanceBackedRegularPayMinutes($day) > 0
+                || max(0, (int) ($day['paid_regular_minutes'] ?? 0)) > 0
+                || max(0, (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)) > 0;
             if ($status !== 'halfday' && $tardinessStatus === 'half_day') {
                 $paidRegularMinutes = max(0, (int) ($day['paid_regular_minutes'] ?? 0));
                 if ($paidRegularMinutes <= 0) {
@@ -3819,13 +3822,15 @@ class PayslipService
             } elseif (
                 $status !== 'halfday'
                 && $tardinessStatus === 'late'
-                && $dayLateMinutes > 0
                 && $dayUndertimeMinutes === 0
                 && $policyLateMinutes !== null
+                && $hasAttendanceRegularPay
             ) {
-                // The daily ledger stores only the incremental cap adjustment after
-                // raw worked time. The payslip compares Regular pay against a full
-                // day, so show the same policy bucket the attendance screen shows.
+                // The daily ledger can have no incremental cap adjustment after raw
+                // worked time catches up, while the attendance portal still records a
+                // late policy bucket. The payslip must show that same bucket whenever
+                // the day has paid regular work; otherwise its Late units disagree
+                // with the portal even though the Regular-pay reduction is correct.
                 $dayLateMinutes = $policyLateMinutes;
             } elseif (
                 ! array_key_exists('late_deduction_minutes', $day)
