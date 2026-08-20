@@ -812,6 +812,102 @@ class PolicyEngineTest extends TestCase
         $this->assertSame(102, $line['minutes_worked'] ?? null);
     }
 
+    public function test_payslip_regular_pay_repair_excludes_leave_only_halfday_minutes(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'daily_rate_divisor_days' => 26,
+            'monthly_basic_salary' => 18000,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 18000,
+                'semi_monthly_basic_salary' => 9000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 692.31,
+                        'minutes_worked' => 480,
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'amount' => 1038.48,
+                        'units' => '1.5 days',
+                    ],
+                ],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-17',
+                    'status' => 'halfday',
+                    'is_rest_day' => false,
+                    // Leave half is merged into regular_* (480) even though only 240 is attendance.
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [
+                        ['component' => 'regular_pay', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16],
+                        ['component' => 'paid_leave', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16, 'leave_type' => 'half_day', 'day_fraction' => 0.5],
+                    ],
+                ],
+                [
+                    'date' => '2026-08-18',
+                    'status' => 'halfday',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 240,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [
+                        ['component' => 'paid_leave', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16, 'leave_type' => 'half_day', 'day_fraction' => 0.5],
+                    ],
+                ],
+                [
+                    'date' => '2026-08-20',
+                    'status' => 'halfday',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [
+                        ['component' => 'regular_pay', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16],
+                        ['component' => 'paid_leave', 'minutes' => 240, 'rate' => 86.53875, 'amount' => 346.16, 'leave_type' => 'half_day', 'day_fraction' => 0.5],
+                    ],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $lines = collect($normalized['summary']['daily_computation_earning_lines'] ?? []);
+        $regular = $lines->first(fn ($line) => ($line['key'] ?? null) === 'daily:regular_pay');
+        $leave = $lines->first(fn ($line) => str_contains(strtolower((string) ($line['label'] ?? '')), 'leave'));
+
+        $this->assertNotNull($regular);
+        $this->assertSame('1 day', $regular['units'] ?? null);
+        $this->assertSame(480, (int) ($regular['minutes_worked'] ?? 0));
+        $this->assertEqualsWithDelta(692.31, (float) ($regular['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(692.31, (float) ($regular['display_amount'] ?? 0), 0.02);
+        $this->assertNotNull($leave);
+        $this->assertSame('1.5 days', $leave['units'] ?? null);
+
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? []);
+        $halfDay = $rows->first(fn ($row) => ($row['key'] ?? null) === 'half_day');
+        $absence = $rows->first(fn ($row) => ($row['key'] ?? null) === 'absence');
+        $this->assertSame(3, (int) ($halfDay['count'] ?? 0));
+        $this->assertSame(720, (int) ($halfDay['minutes'] ?? 0));
+        $this->assertEqualsWithDelta(1038.47, (float) ($halfDay['amount'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta(0.0, (float) ($absence['amount'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta(0.0, (float) ($breakdown['total_deduction'] ?? -1), 0.01);
+        $this->assertEqualsWithDelta(692.31, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(
+            692.31 + 1038.48,
+            (float) ($normalized['summary']['display_gross_pay'] ?? 0),
+            0.05
+        );
+    }
+
     public function test_stored_payslip_snapshot_repair_excludes_holiday_premium_days_from_regular_pay(): void
     {
         $snapshot = [
@@ -1336,7 +1432,7 @@ class PolicyEngineTest extends TestCase
         }
     }
 
-    public function test_proratable_allowance_treats_paid_leave_as_payable_and_unpaid_leave_as_deductible(): void
+    public function test_proratable_allowance_excludes_leave_by_default_and_can_include_each_leave_type(): void
     {
         if (! $this->tablesExist()) {
             $this->markTestSkipped('Database tables not available');
@@ -1361,7 +1457,7 @@ class PolicyEngineTest extends TestCase
             'sat' => $workday,
         ];
 
-        $makeEmployeeWithAllowance = function (string $suffix) use ($schedule): array {
+        $makeEmployeeWithAllowance = function (string $suffix, array $metadata = []) use ($schedule): array {
             $user = User::factory()->create([
                 'monthly_salary' => 26000,
                 'schedule' => $schedule,
@@ -1377,6 +1473,7 @@ class PolicyEngineTest extends TestCase
                 'is_taxable' => true,
                 'is_proratable' => true,
                 'is_active' => true,
+                'metadata' => $metadata,
             ]);
             $assignment = EmployeeCompensationComponent::create([
                 'user_id' => $user->id,
@@ -1409,32 +1506,44 @@ class PolicyEngineTest extends TestCase
             );
         };
 
-        [$paidUser, $paidComponent, $paidAssignment] = $makeEmployeeWithAllowance('PAID');
-        [$unpaidUser, $unpaidComponent, $unpaidAssignment] = $makeEmployeeWithAllowance('UNPAID');
+        [$paidUser, $paidComponent, $paidAssignment] = $makeEmployeeWithAllowance('PAID_DEFAULT');
+        [$paidIncludedUser, $paidIncludedComponent, $paidIncludedAssignment] = $makeEmployeeWithAllowance(
+            'PAID_INCLUDED',
+            ['allowance_proration_include_paid_leave' => true],
+        );
+        [$unpaidUser, $unpaidComponent, $unpaidAssignment] = $makeEmployeeWithAllowance('UNPAID_DEFAULT');
+        [$unpaidIncludedUser, $unpaidIncludedComponent, $unpaidIncludedAssignment] = $makeEmployeeWithAllowance(
+            'UNPAID_INCLUDED',
+            ['allowance_proration_include_unpaid_leave' => true],
+        );
 
         try {
-            LeaveRequest::create([
-                'user_id' => $paidUser->id,
-                'type' => 'vacation',
-                'start_date' => '2026-05-04',
-                'end_date' => '2026-05-04',
-                'status' => LeaveRequest::STATUS_APPROVED,
-                'reviewed_at' => Carbon::parse('2026-05-03 09:00', 'Asia/Manila')->utc(),
-                'leave_credits_charged' => 1,
-                'leave_unpaid_credit_days' => 0,
-            ]);
-            LeaveRequest::create([
-                'user_id' => $unpaidUser->id,
-                'type' => 'vacation',
-                'start_date' => '2026-05-04',
-                'end_date' => '2026-05-04',
-                'status' => LeaveRequest::STATUS_APPROVED,
-                'reviewed_at' => Carbon::parse('2026-05-03 09:00', 'Asia/Manila')->utc(),
-                'leave_credits_charged' => 0,
-                'leave_unpaid_credit_days' => 1,
-            ]);
+            foreach ([$paidUser, $paidIncludedUser] as $user) {
+                LeaveRequest::create([
+                    'user_id' => $user->id,
+                    'type' => 'vacation',
+                    'start_date' => '2026-05-04',
+                    'end_date' => '2026-05-04',
+                    'status' => LeaveRequest::STATUS_APPROVED,
+                    'reviewed_at' => Carbon::parse('2026-05-03 09:00', 'Asia/Manila')->utc(),
+                    'leave_credits_charged' => 1,
+                    'leave_unpaid_credit_days' => 0,
+                ]);
+            }
+            foreach ([$unpaidUser, $unpaidIncludedUser] as $user) {
+                LeaveRequest::create([
+                    'user_id' => $user->id,
+                    'type' => 'vacation',
+                    'start_date' => '2026-05-04',
+                    'end_date' => '2026-05-04',
+                    'status' => LeaveRequest::STATUS_APPROVED,
+                    'reviewed_at' => Carbon::parse('2026-05-03 09:00', 'Asia/Manila')->utc(),
+                    'leave_credits_charged' => 0,
+                    'leave_unpaid_credit_days' => 1,
+                ]);
+            }
 
-            foreach ([$paidUser, $unpaidUser] as $user) {
+            foreach ([$paidUser, $paidIncludedUser, $unpaidUser, $unpaidIncludedUser] as $user) {
                 foreach (['2026-05-05', '2026-05-06', '2026-05-07', '2026-05-08', '2026-05-09'] as $dateKey) {
                     AttendanceLog::create([
                         'user_id' => $user->id,
@@ -1453,44 +1562,68 @@ class PolicyEngineTest extends TestCase
             // (5 of 8 hours) but each is still a full present day. Total payable = 6.0.
             // Monthly Standard + Both + None: 2600 / 6 × 6 = 2600.00.
             $paidLine = collect($payrollFor($paidUser)['summary']['payslip_earning_lines'] ?? [])
-                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance PAID');
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance PAID_DEFAULT');
             $this->assertNotNull($paidLine);
-            $this->assertSame(2600.00, (float) ($paidLine['amount'] ?? 0));
+            $this->assertSame(2166.67, (float) ($paidLine['amount'] ?? 0));
             $this->assertSame(0.0, (float) data_get($paidLine, 'allowance_proration.unpaid_absent_days'));
             $this->assertSame(1.0, (float) data_get($paidLine, 'allowance_proration.approved_paid_leave_day_units'));
             $this->assertSame(5.0, (float) data_get($paidLine, 'allowance_proration.present_day_units'));
-            $this->assertSame(6.0, (float) data_get($paidLine, 'allowance_proration.payable_day_units'));
+            $this->assertSame(6.0, (float) data_get($paidLine, 'allowance_proration.base_payable_day_units'));
+            $this->assertSame(5.0, (float) data_get($paidLine, 'allowance_proration.payable_day_units'));
+            $this->assertFalse((bool) data_get($paidLine, 'allowance_proration.include_paid_leave'));
+            $this->assertSame(1.0, (float) data_get($paidLine, 'allowance_proration.excluded_paid_leave_day_units'));
             $this->assertTrue(collect(data_get($paidLine, 'allowance_proration.attendance_counted', []))
                 ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-04'
                     && ($row['reason'] ?? null) === 'approved_paid_leave'));
+
+            $paidIncludedLine = collect($payrollFor($paidIncludedUser)['summary']['payslip_earning_lines'] ?? [])
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance PAID_INCLUDED');
+            $this->assertNotNull($paidIncludedLine);
+            $this->assertSame(2600.00, (float) ($paidIncludedLine['amount'] ?? 0));
+            $this->assertTrue((bool) data_get($paidIncludedLine, 'allowance_proration.include_paid_leave'));
+            $this->assertSame(6.0, (float) data_get($paidIncludedLine, 'allowance_proration.payable_day_units'));
 
             // Unpaid leave on May 4 deducts a full day; May 5-9 each count as a full present day.
             // Payable = 5.0.
             // Monthly Standard + Both + None: 2600 / 6 × 5 = 2166.67.
             $unpaidLine = collect($payrollFor($unpaidUser)['summary']['payslip_earning_lines'] ?? [])
-                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance UNPAID');
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance UNPAID_DEFAULT');
             $this->assertNotNull($unpaidLine);
             $this->assertSame(2166.67, (float) ($unpaidLine['amount'] ?? 0));
             $this->assertSame(1.0, (float) data_get($unpaidLine, 'allowance_proration.unpaid_absent_days'));
+            $this->assertSame(1.0, (float) data_get($unpaidLine, 'allowance_proration.approved_unpaid_leave_day_units'));
             $this->assertSame(5.0, (float) data_get($unpaidLine, 'allowance_proration.present_day_units'));
             $this->assertSame(5.0, (float) data_get($unpaidLine, 'allowance_proration.payable_day_units'));
+            $this->assertFalse((bool) data_get($unpaidLine, 'allowance_proration.include_unpaid_leave'));
             $this->assertTrue(collect(data_get($unpaidLine, 'allowance_proration.unpaid_absences', []))
                 ->contains(fn ($row) => ($row['date'] ?? null) === '2026-05-04'
                     && ($row['reason'] ?? null) === 'approved_unpaid_leave'));
+
+            $unpaidIncludedLine = collect($payrollFor($unpaidIncludedUser)['summary']['payslip_earning_lines'] ?? [])
+                ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance UNPAID_INCLUDED');
+            $this->assertNotNull($unpaidIncludedLine);
+            $this->assertSame(2600.00, (float) ($unpaidIncludedLine['amount'] ?? 0));
+            $this->assertTrue((bool) data_get($unpaidIncludedLine, 'allowance_proration.include_unpaid_leave'));
+            $this->assertSame(6.0, (float) data_get($unpaidIncludedLine, 'allowance_proration.payable_day_units'));
+            $this->assertSame(0.0, (float) data_get($unpaidIncludedLine, 'allowance_proration.unpaid_absence_deduction'));
         } finally {
-            foreach ([$paidComponent, $unpaidComponent] as $component) {
+            foreach ([$paidComponent, $paidIncludedComponent, $unpaidComponent, $unpaidIncludedComponent] as $component) {
                 DeductionScheduleSetting::query()
                     ->where('deduction_key', 'pay_component:'.$component->id)
                     ->delete();
             }
             $paidAssignment->forceDelete();
+            $paidIncludedAssignment->forceDelete();
             $unpaidAssignment->forceDelete();
+            $unpaidIncludedAssignment->forceDelete();
             $paidComponent->forceDelete();
+            $paidIncludedComponent->forceDelete();
             $unpaidComponent->forceDelete();
+            $unpaidIncludedComponent->forceDelete();
         }
     }
 
-    public function test_half_day_paid_leave_pays_half_daily_rate_and_half_allowance_unit(): void
+    public function test_half_day_paid_leave_pays_half_daily_rate_and_excludes_allowance_by_default(): void
     {
         if (! $this->tablesExist()) {
             $this->markTestSkipped('Database tables not available');
@@ -1592,12 +1725,21 @@ class PolicyEngineTest extends TestCase
             $this->assertGreaterThan(0, $dailyRate);
             $this->assertEqualsWithDelta($dailyRate * 0.5, (float) ($halfDayRow['regular_pay'] ?? 0), 0.02);
 
+            $leaveLine = collect($payroll['summary']['daily_computation_earning_lines'] ?? [])
+                ->first(fn ($line) => str_contains(strtolower((string) ($line['label'] ?? '')), 'leave adjustment'));
+            $this->assertNotNull($leaveLine);
+            $this->assertSame('Leave adjustments', $leaveLine['label'] ?? null);
+            $this->assertSame('0.5 days', $leaveLine['units'] ?? null);
+            $this->assertEqualsWithDelta($dailyRate * 0.5, (float) ($leaveLine['amount'] ?? 0), 0.05);
+
             $allowanceLine = collect($payroll['summary']['payslip_earning_lines'] ?? [])
                 ->first(fn ($line) => ($line['label'] ?? null) === 'Allowance Half Day');
             $this->assertNotNull($allowanceLine);
             $this->assertSame(0.5, (float) data_get($allowanceLine, 'allowance_proration.approved_paid_leave_day_units'));
             $this->assertSame(5.0, (float) data_get($allowanceLine, 'allowance_proration.present_day_units'));
-            $this->assertSame(5.5, (float) data_get($allowanceLine, 'allowance_proration.payable_day_units'));
+            $this->assertSame(5.5, (float) data_get($allowanceLine, 'allowance_proration.base_payable_day_units'));
+            $this->assertSame(5.0, (float) data_get($allowanceLine, 'allowance_proration.payable_day_units'));
+            $this->assertSame(0.5, (float) data_get($allowanceLine, 'allowance_proration.excluded_paid_leave_day_units'));
         } finally {
             DeductionScheduleSetting::query()
                 ->where('deduction_key', 'pay_component:'.$component->id)
@@ -1605,6 +1747,99 @@ class PolicyEngineTest extends TestCase
             $assignment->forceDelete();
             $component->forceDelete();
         }
+    }
+
+    public function test_half_day_leave_with_worked_afternoon_includes_regular_pay_on_payslip(): void
+    {
+        if (! $this->tablesExist()) {
+            $this->markTestSkipped('Database tables not available');
+        }
+
+        $workday = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_period_minutes' => 0,
+            'early_timeout_minutes' => null,
+            'overtime_buffer_minutes' => 15,
+        ];
+        $schedule = [
+            'sun' => null,
+            'mon' => $workday,
+            'tue' => $workday,
+            'wed' => $workday,
+            'thu' => $workday,
+            'fri' => $workday,
+            'sat' => $workday,
+        ];
+
+        $user = User::factory()->create([
+            'monthly_salary' => 26000,
+            'schedule' => $schedule,
+            'is_active' => true,
+            'leave_credits' => 14,
+            'hire_date' => '2020-01-01',
+        ]);
+
+        LeaveRequest::create([
+            'user_id' => $user->id,
+            'type' => 'half_day',
+            'half_type' => 'am',
+            'half_day_time' => '13:00',
+            'start_date' => '2026-05-04',
+            'end_date' => '2026-05-04',
+            'status' => LeaveRequest::STATUS_APPROVED,
+            'reviewed_at' => Carbon::parse('2026-05-03 09:00', 'Asia/Manila')->utc(),
+            'leave_credits_charged' => 0.5,
+            'leave_unpaid_credit_days' => 0,
+        ]);
+
+        AttendanceLog::create([
+            'user_id' => $user->id,
+            'type' => AttendanceLog::TYPE_CLOCK_IN,
+            'verified_at' => Carbon::parse('2026-05-04 13:00', 'Asia/Manila')->utc(),
+        ]);
+        AttendanceLog::create([
+            'user_id' => $user->id,
+            'type' => AttendanceLog::TYPE_CLOCK_OUT,
+            'verified_at' => Carbon::parse('2026-05-04 17:00', 'Asia/Manila')->utc(),
+        ]);
+
+        $payroll = app(PayrollComputationService::class)->computeEmployeePayroll(
+            $user->fresh(),
+            Carbon::parse('2026-05-04', 'Asia/Manila'),
+            Carbon::parse('2026-05-04', 'Asia/Manila'),
+            null,
+            [
+                'pay_period_start' => '2026-05-04',
+                'pay_period_end' => '2026-05-04',
+                'selected_pay_date' => '2026-05-15',
+            ]
+        );
+
+        $day = collect($payroll['days'] ?? [])->first(fn ($d) => ($d['date'] ?? null) === '2026-05-04');
+        $this->assertNotNull($day);
+        $this->assertSame('halfday', $day['status'] ?? null);
+
+        $dailyRate = (float) ($payroll['summary']['daily_rate'] ?? 0);
+        $this->assertGreaterThan(0, $dailyRate);
+        $this->assertEqualsWithDelta($dailyRate, (float) ($day['regular_pay'] ?? 0), 0.05);
+
+        $lines = collect($payroll['summary']['daily_computation_earning_lines'] ?? []);
+        $regularLine = $lines->first(fn ($line) => ($line['key'] ?? null) === 'daily:regular_pay');
+        $leaveLine = $lines->first(fn ($line) => str_contains(strtolower((string) ($line['label'] ?? '')), 'leave adjustment'));
+
+        $this->assertNotNull($regularLine, 'Worked half must appear as Regular pay on the payslip');
+        $this->assertNotNull($leaveLine, 'Leave half must appear as Leave adjustments');
+        $this->assertEqualsWithDelta($dailyRate * 0.5, (float) ($regularLine['amount'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta($dailyRate * 0.5, (float) ($leaveLine['amount'] ?? 0), 0.05);
+        $this->assertSame(240, (int) ($regularLine['minutes_worked'] ?? 0));
+        $this->assertEqualsWithDelta(0.5, (float) ($payroll['summary']['actual_days_worked'] ?? 0), 0.01);
+        $ads = $payroll['summary']['attendance_display_summary'] ?? [];
+        $this->assertEqualsWithDelta(1.0, (float) ($ads['working_days_count'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(1.0, (float) ($ads['presence_days_count'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(4.0, (float) ($ads['total_regular_hours'] ?? 0), 0.01);
     }
 
     private function tablesExist(): bool

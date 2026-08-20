@@ -9,6 +9,7 @@ import {
   CALENDAR_MONTHS,
   CALENDAR_WEEKDAYS,
 } from '@/lib/monthCalendarGrid'
+import { halfDayTypeListLabel, halfDayTypeShortLabel } from '@/lib/halfDayLeaveLabels'
 
 function leaveTypeLabel(type) {
   const t = String(type || '').toLowerCase()
@@ -27,9 +28,8 @@ function leaveDurationLabel(leave) {
   if (!leave) return ''
   const type = String(leave.type || '').toLowerCase()
   if (type === 'half_day') {
-    if (leave.half_type === 'am') return 'Half day · AM'
-    if (leave.half_type === 'pm') return 'Half day · PM'
-    return 'Half day'
+    const short = halfDayTypeShortLabel(leave.half_type)
+    return short ? `Half day · ${short}` : halfDayTypeListLabel(leave.half_type)
   }
   if (type === 'undertime') {
     const minutes = typeof leave.undertime_minutes === 'number' ? leave.undertime_minutes : null

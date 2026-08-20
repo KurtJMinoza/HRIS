@@ -384,6 +384,48 @@ class HolidayPayPolicyServiceTest extends TestCase
         $this->assertSame('present_following_workday', $result['rule']);
     }
 
+    public function test_paid_leave_on_preceding_workday_can_be_disabled(): void
+    {
+        $service = $this->service(paidLeaveDates: ['2026-06-12']);
+        $policy = $this->policyWithHolidayRules([
+            'attendance' => ['paid_leave_qualifies_previous_workday' => false],
+        ]);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-15'), '2026-06-15', false, $policy);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('unpaid_absence_previous_workday', $result['rule']);
+    }
+
+    public function test_paid_leave_on_following_workday_can_be_disabled(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-12'], paidLeaveDates: ['2026-06-16']);
+        $policy = $this->policyWithHolidayRules([
+            'attendance' => [
+                'require_following_workday_presence' => true,
+                'paid_leave_qualifies_following_workday' => false,
+            ],
+        ]);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-15'), '2026-06-15', false, $policy);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('unpaid_absence_following_workday', $result['rule']);
+    }
+
+    public function test_paid_leave_on_following_workday_qualifies_when_enabled(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-12'], paidLeaveDates: ['2026-06-16']);
+        $policy = $this->policyWithHolidayRules([
+            'attendance' => [
+                'require_following_workday_presence' => true,
+                'paid_leave_qualifies_following_workday' => true,
+            ],
+        ]);
+        $result = $service->evaluate($this->employee(), $this->regularHoliday('2026-06-15'), '2026-06-15', false, $policy);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('paid_leave_following_workday', $result['rule']);
+    }
+
     public function test_following_workday_skips_rest_days_after_holiday(): void
     {
         $service = $this->service(workedDates: ['2026-06-11', '2026-06-15']);

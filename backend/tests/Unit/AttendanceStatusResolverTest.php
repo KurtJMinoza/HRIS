@@ -102,6 +102,143 @@ class AttendanceStatusResolverTest extends TestCase
         $this->assertSame(0, $result['overtime_minutes']);
     }
 
+    public function test_exact_half_day_clock_pair_is_half_day_not_undertime(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-08-15';
+        $nowTz = Carbon::parse('2026-08-15 18:00:00', $tz);
+
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_minutes' => 5,
+        ];
+
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-15 08:00:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-15 12:00:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['sat' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_HALFDAY, $result['status']);
+        $this->assertSame(240, $result['effective_worked_minutes']);
+        $this->assertSame(240, $result['undertime_minutes']);
+    }
+
+    public function test_short_completed_pair_is_undertime_not_half_day(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-08-11';
+        $nowTz = Carbon::parse('2026-08-11 18:00:00', $tz);
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_minutes' => 5,
+        ];
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-11 08:00:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-11 08:10:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['tue' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_UNDERTIME, $result['status']);
+        $this->assertSame(10, $result['effective_worked_minutes']);
+        $this->assertSame(470, $result['undertime_minutes']);
+    }
+
+    public function test_short_completed_pair_uses_its_matched_flexible_option_and_is_undertime(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-08-10';
+        $nowTz = Carbon::parse('2026-08-10 22:00:00', $tz);
+        $daySchedule = [
+            'shift_type' => 'flexible',
+            'schedule_type' => 'flexible',
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_minutes' => 5,
+            'flexible_shift_options' => [
+                [
+                    'matched_schedule_option_id' => 101,
+                    'matched_schedule_option_name' => 'Morning',
+                    'in' => '08:00',
+                    'out' => '17:00',
+                    'break_start' => '12:00',
+                    'break_end' => '13:00',
+                    'expected_paid_minutes' => 480,
+                    'is_default' => true,
+                    'sequence' => 1,
+                ],
+                [
+                    'matched_schedule_option_id' => 102,
+                    'matched_schedule_option_name' => 'Afternoon',
+                    'in' => '12:00',
+                    'out' => '21:00',
+                    'break_start' => '17:00',
+                    'break_end' => '18:00',
+                    'expected_paid_minutes' => 480,
+                    'is_default' => false,
+                    'sequence' => 2,
+                ],
+            ],
+        ];
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-10 12:00:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-10 12:10:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['mon' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_UNDERTIME, $result['status']);
+        $this->assertSame(10, $result['effective_worked_minutes']);
+        $this->assertSame(470, $result['undertime_minutes']);
+        $this->assertSame(0, $result['late_minutes']);
+    }
+
     public function test_raw_overtime_without_approval_stays_undertime_when_early_out(): void
     {
         $tz = config('attendance.timezone', 'Asia/Manila');

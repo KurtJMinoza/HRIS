@@ -1457,7 +1457,7 @@ class FlexibleImmediateApproverResolver
         }
 
         if (! $assignment->organizationUnit) {
-            return $hierarchy;
+            return $this->completeHierarchyFromBranch($hierarchy);
         }
 
         $unit = $assignment->organizationUnit->loadMissing(['type', 'parent']);
@@ -1468,6 +1468,35 @@ class FlexibleImmediateApproverResolver
                 $hierarchy[$legacyType] = $hierarchy[$legacyType] ?: $legacyId;
             }
             $unit = $unit->parent;
+        }
+
+        return $this->completeHierarchyFromBranch($hierarchy);
+    }
+
+    /**
+     * A filing's selected assignment can be a branch unit. Keep the area available
+     * even when an older mirror row has not yet received its Area parent.
+     *
+     * @param  array<string, int|null>  $hierarchy
+     * @return array<string, int|null>
+     */
+    private function completeHierarchyFromBranch(array $hierarchy): array
+    {
+        $branchId = (int) ($hierarchy['branch'] ?? 0);
+        if ($branchId <= 0) {
+            return $hierarchy;
+        }
+
+        $branch = Branch::query()->whereKey($branchId)->first(['area_id', 'company_id']);
+        if (! $branch) {
+            return $hierarchy;
+        }
+
+        if (! ($hierarchy['area'] ?? null) && $branch->area_id) {
+            $hierarchy['area'] = (int) $branch->area_id;
+        }
+        if (! ($hierarchy['company'] ?? null) && $branch->company_id) {
+            $hierarchy['company'] = (int) $branch->company_id;
         }
 
         return $hierarchy;

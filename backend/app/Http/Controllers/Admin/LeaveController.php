@@ -148,9 +148,10 @@ class LeaveController extends Controller
         // (ensureRecordsForRequest per pending row was the 5–10s open cost).
         $currentApprovals = $this->currentLeaveApprovalRecords($pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all());
         $pageIds = $pageLeaves->pluck('id')->map(fn ($id) => (int) $id)->all();
+        // Always load last acted actors — approved rows may still have a nameless pending HR-pool step.
         $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
             OrgApprovalWorkflowService::MODULE_LEAVE,
-            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+            $pageIds,
         );
         $actorIsAdminHr = $this->hrRoleResolver->isAdminHrAccount($actor);
 
@@ -326,6 +327,7 @@ class LeaveController extends Controller
             'end_date' => ['required', 'date', 'after_or_equal:start_date'],
             'half_type' => ['nullable', 'string', 'in:am,pm'],
             'half_day_time' => ['nullable', 'date_format:H:i'],
+            'schedule_option_id' => ['nullable', 'integer', 'min:1'],
             'undertime_time' => ['nullable', 'date_format:H:i'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'bypass_rest_days' => ['sometimes', 'boolean'],
@@ -356,9 +358,12 @@ class LeaveController extends Controller
         $type = $validated['type'];
 
         if ($validated['type'] === 'half_day') {
+            // Half-day leave is always a single calendar date (0.5 credit).
+            $validated['end_date'] = $validated['start_date'];
+
             if (empty($validated['half_type'])) {
                 return response()->json([
-                    'message' => 'Half day type (AM or PM) is required.',
+                    'message' => 'Please choose morning leave or afternoon leave.',
                 ], 422);
             }
 
@@ -366,8 +371,13 @@ class LeaveController extends Controller
             $dayKey = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][(int) Carbon::parse($dateKey, $tz)->format('w')];
             $effectiveSchedule = EmployeeScheduleResolver::resolveForDate($employee, $dateKey);
             $daySchedule = is_array($effectiveSchedule) ? ($effectiveSchedule[$dayKey] ?? null) : null;
+            $scheduleOptionId = isset($validated['schedule_option_id']) ? (int) $validated['schedule_option_id'] : null;
+            if (is_array($daySchedule) && $scheduleOptionId) {
+                $daySchedule = app(\App\Services\ScheduleComputationService::class)
+                    ->applyFlexibleShiftOption($daySchedule, $scheduleOptionId);
+            }
             $windows = is_array($daySchedule)
-                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz)
+                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz, $scheduleOptionId)
                 : ['is_flexible' => false];
             $halfDayTime = trim((string) ($validated['half_day_time'] ?? ''));
 
@@ -385,7 +395,8 @@ class LeaveController extends Controller
                             $daySchedule,
                             (string) $validated['half_type'],
                             $halfDayTime,
-                            $tz
+                            $tz,
+                            $scheduleOptionId
                         );
                     } catch (\Illuminate\Validation\ValidationException $e) {
                         return response()->json([
@@ -401,7 +412,8 @@ class LeaveController extends Controller
                         $daySchedule,
                         (string) $validated['half_type'],
                         $halfDayTime,
-                        $tz
+                        $tz,
+                        $scheduleOptionId
                     );
                 } catch (\Illuminate\Validation\ValidationException $e) {
                     return response()->json([
@@ -2150,12 +2162,14 @@ class LeaveController extends Controller
         }
 
         if ($leave->type === 'half_day') {
-            $days = max(1, (int) $leave->start_date->diffInDays($leave->end_date) + 1);
-            $total = round($days * 0.5, 1);
-            $label = $leave->half_type ? ' ('.strtoupper((string) $leave->half_type).')' : '';
-            $suffix = $days > 1 ? " across {$days} days" : '';
+            $half = strtolower((string) ($leave->half_type ?? ''));
+            $label = match ($half) {
+                'am' => ' (Morning leave)',
+                'pm' => ' (Afternoon leave)',
+                default => '',
+            };
 
-            return $total.' day'.($total === 1.0 ? '' : 's').$label.$suffix;
+            return '0.5 day'.$label;
         }
 
         if ($leave->type === 'undertime') {

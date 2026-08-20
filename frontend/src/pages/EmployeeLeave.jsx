@@ -44,6 +44,11 @@ import { AnimatedSection } from '@/components/ui/AnimatedSection'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { cn } from '@/lib/utils'
 import {
+  halfDayBoundaryTimeLabel,
+  halfDayTypeOptionLabel,
+  halfDayTypeShortLabel,
+} from '@/lib/halfDayLeaveLabels'
+import {
   requestModuleActionsTdClass,
   requestModuleActionsWrapRowClass,
   requestModuleCompactButtonClass,
@@ -160,15 +165,11 @@ function normalizeLeaveStatus(status) {
 }
 
 function computeLeaveDurationDays(leave) {
-  if (!leave?.start_date || !leave?.end_date) return null
-  const t = String(leave.type || '').toLowerCase()
+  const t = String(leave?.type || '').toLowerCase()
   if (t === 'half_day') {
-    if (!leave?.start_date) return 0.5
-    const s = new Date(`${leave.start_date}T12:00:00`)
-    const e = new Date(`${leave.end_date || leave.start_date}T12:00:00`)
-    const days = Math.max(1, Math.round((e - s) / 86400000) + 1)
-    return days * 0.5
+    return leave?.start_date ? 0.5 : null
   }
+  if (!leave?.start_date || !leave?.end_date) return null
   if (t === 'undertime') return null
   const s = new Date(`${leave.start_date}T12:00:00`)
   const e = new Date(`${leave.end_date}T12:00:00`)
@@ -181,12 +182,7 @@ function billableCreditDaysForForm(form) {
   const t = String(form?.type || '').toLowerCase()
   if (t === 'undertime') return 0
   if (t === 'half_day') {
-    if (!form?.start_date) return 0
-    const end = form.end_date || form.start_date
-    const s = new Date(`${form.start_date}T12:00:00`)
-    const e = new Date(`${end}T12:00:00`)
-    const days = Math.max(1, Math.round((e - s) / 86400000) + 1)
-    return days * 0.5
+    return form?.start_date ? 0.5 : 0
   }
   if (!form?.start_date || !form?.end_date) return 0
   const s = new Date(`${form.start_date}T12:00:00`)
@@ -361,6 +357,7 @@ function EmployeeLeaveSelfService() {
     undertime_time: '',
     half_type: '',
     half_day_time: '',
+    schedule_option_id: '',
     reason: '',
     supportingFiles: [],
   })
@@ -404,7 +401,7 @@ function EmployeeLeaveSelfService() {
 
   const isUndertime = addForm.type === 'undertime'
   const isHalfDay = addForm.type === 'half_day'
-  const isSingleDate = isUndertime
+  const isSingleDate = isUndertime || isHalfDay
 
   const requestedCreditDays = useMemo(() => billableCreditDaysForForm(addForm), [addForm])
   const eligible = Boolean(leaveCreditInfo?.eligible_for_paid_leave_pool)
@@ -445,11 +442,12 @@ function EmployeeLeaveSelfService() {
     if (!isSingleDate && !addForm.end_date) return true
     if (isUndertime && !addForm.undertime_time) return true
     if (isHalfDay && !addForm.half_type) return true
+    if (isHalfDay && halfdayPreview?.windows?.has_flexible_options && !addForm.schedule_option_id) return true
     if (isHalfDay && !halfdayPreview?.windows?.is_flexible && !addForm.half_day_time) return true
     return false
   })()
 
-  const rangeEndForRestCheck = isUndertime ? addForm.start_date : (addForm.end_date || addForm.start_date)
+  const rangeEndForRestCheck = isSingleDate ? addForm.start_date : (addForm.end_date || addForm.start_date)
 
   useEffect(() => {
     if (!addOpen || !addForm.start_date || !rangeEndForRestCheck) {
@@ -637,12 +635,23 @@ function EmployeeLeaveSelfService() {
         const data = await getHalfDayPreview({
           date: addForm.start_date,
           half_type: addForm.half_type || undefined,
+          schedule_option_id: addForm.schedule_option_id || undefined,
         })
-        if (!cancelled) setHalfdayPreview(data)
+        if (cancelled) return
+        setHalfdayPreview(data)
+        const selectedId = data?.windows?.selected_option_id ?? data?.schedule_option_id ?? null
+        if (data?.windows?.has_flexible_options && selectedId && !addForm.schedule_option_id) {
+          setAddForm((prev) => (prev.schedule_option_id ? prev : { ...prev, schedule_option_id: String(selectedId) }))
+        }
       } catch (e) {
         if (!cancelled) {
           setHalfdayPreview(null)
           setHalfdayPreviewError(e.message)
+          setAddForm((prev) =>
+            prev.half_type || prev.half_day_time || prev.schedule_option_id
+              ? { ...prev, half_type: '', half_day_time: '', schedule_option_id: '' }
+              : prev,
+          )
         }
       } finally {
         if (!cancelled) setHalfdayPreviewLoading(false)
@@ -652,7 +661,7 @@ function EmployeeLeaveSelfService() {
     return () => {
       cancelled = true
     }
-  }, [isHalfDay, addForm.start_date, addForm.half_type])
+  }, [isHalfDay, addForm.start_date, addForm.half_type, addForm.schedule_option_id])
 
   useEffect(() => {
     if (!isHalfDay || !addForm.half_type || !halfdayPreview?.suggested_time) return
@@ -660,20 +669,20 @@ function EmployeeLeaveSelfService() {
       ...prev,
       half_day_time: halfdayPreview.suggested_time,
     }))
-  }, [isHalfDay, addForm.half_type, halfdayPreview?.suggested_time])
+  }, [isHalfDay, addForm.half_type, addForm.schedule_option_id, halfdayPreview?.suggested_time])
 
   async function handleSubmit(e) {
     e.preventDefault()
     setAddError(null)
     const ut = addForm.type === 'undertime'
     const hd = addForm.type === 'half_day'
-    const single = ut
+    const single = ut || hd
     if (!addForm.start_date) {
       setAddError(single ? 'Please select a leave date.' : 'Please select a start date.')
       return
     }
     if (!single && !addForm.end_date) {
-      setAddError(hd ? 'Please select the last half-day date.' : 'Please select an end date.')
+      setAddError('Please select an end date.')
       return
     }
     if (!single && addForm.end_date < addForm.start_date) {
@@ -692,7 +701,11 @@ function EmployeeLeaveSelfService() {
     }
     if (hd) {
       if (!addForm.half_type) {
-        setAddError('Please select whether your half day is AM or PM.')
+        setAddError('Please choose morning leave or afternoon leave.')
+        return
+      }
+      if (halfdayPreview?.windows?.has_flexible_options && !addForm.schedule_option_id) {
+        setAddError('Please choose which flexible shift you will work that day.')
         return
       }
       if (!halfdayPreview?.windows?.is_flexible && !addForm.half_day_time) {
@@ -734,9 +747,12 @@ function EmployeeLeaveSelfService() {
           return {
             type: addForm.type,
             start_date: addForm.start_date,
-            end_date: addForm.end_date || addForm.start_date,
+            end_date: addForm.start_date,
             half_type: addForm.half_type,
             ...(addForm.half_day_time ? { half_day_time: addForm.half_day_time } : {}),
+            ...(addForm.schedule_option_id
+              ? { schedule_option_id: Number(addForm.schedule_option_id) }
+              : {}),
             ...(reasonOpt ? { reason: reasonOpt } : {}),
             ...assignmentPayload,
           }
@@ -765,6 +781,7 @@ function EmployeeLeaveSelfService() {
         undertime_time: '',
         half_type: '',
         half_day_time: '',
+        schedule_option_id: '',
         reason: '',
         supportingFiles: [],
       })
@@ -818,6 +835,7 @@ function EmployeeLeaveSelfService() {
       undertime_time: '',
       half_type: '',
       half_day_time: '',
+      schedule_option_id: '',
       reason: '',
       supportingFiles: [],
     })
@@ -1355,8 +1373,13 @@ function EmployeeLeaveSelfService() {
                     setAddForm((prev) => ({
                       ...prev,
                       type: value,
-                      end_date: value === 'undertime' ? prev.start_date : prev.end_date,
+                      end_date:
+                        value === 'undertime' || value === 'half_day'
+                          ? prev.start_date
+                          : prev.end_date,
                       half_type: value === 'half_day' ? prev.half_type : '',
+                      half_day_time: value === 'half_day' ? prev.half_day_time : '',
+                      schedule_option_id: value === 'half_day' ? prev.schedule_option_id : '',
                     }))
                   }
                 >
@@ -1382,17 +1405,8 @@ function EmployeeLeaveSelfService() {
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="emergency">
                       Emergency
                     </SelectItem>
-                    <SelectItem
-                      disabled
-                      value="half_day"
-                      className="rounded-lg px-4 py-3 text-base text-muted-foreground data-disabled:opacity-100"
-                    >
-                      <span className="flex w-full items-center justify-between gap-3">
-                        Half Day
-                        <span className="rounded-full border border-border/70 bg-muted px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                          Soon
-                        </span>
-                      </span>
+                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="half_day">
+                      Half Day
                     </SelectItem>
                     <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="other">
                       Other
@@ -1421,14 +1435,24 @@ function EmployeeLeaveSelfService() {
 
               <div className="space-y-2 sm:space-y-3">
                 <Label className={leaveModalLabelClass}>
-                  {addForm.type === 'undertime' ? 'Leave date' : addForm.type === 'half_day' ? 'Half-day dates' : 'Date range'}
+                  {isSingleDate ? 'Leave date' : 'Date range'}
                 </Label>
-                {addForm.type === 'undertime' ? (
+                {isSingleDate ? (
                   <div className="relative">
                     <Input
                       type="date"
                       value={addForm.start_date}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                      onChange={(e) => {
+                        const d = e.target.value
+                        setAddForm((prev) => ({
+                          ...prev,
+                          start_date: d,
+                          end_date: d,
+                          ...(prev.type === 'half_day'
+                            ? { half_type: '', half_day_time: '', schedule_option_id: '' }
+                            : {}),
+                        }))
+                      }}
                       className={leaveModalFieldClass}
                       required
                     />
@@ -1511,9 +1535,61 @@ function EmployeeLeaveSelfService() {
 
               {addForm.type === 'half_day' ? (
                 <div className="space-y-3">
+                  {!addForm.start_date ? (
+                    <p className={leaveModalHintClass}>Select the leave date first so we can load your schedule windows.</p>
+                  ) : null}
+                  {halfdayPreview?.windows?.has_flexible_options ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="half-schedule-option" className={leaveModalLabelClass}>
+                        Which shift will you work today?
+                      </Label>
+                      <p className={leaveModalHintClass}>
+                        Your schedule has multiple flexible options. Morning/afternoon leave windows follow the shift you pick.
+                      </p>
+                      <Select
+                        value={addForm.schedule_option_id || undefined}
+                        onValueChange={(value) =>
+                          setAddForm((prev) => ({
+                            ...prev,
+                            schedule_option_id: value,
+                            half_type: '',
+                            half_day_time: '',
+                          }))
+                        }
+                        disabled={!addForm.start_date || halfdayPreviewLoading || Boolean(halfdayPreviewError)}
+                        required
+                      >
+                        <SelectTrigger id="half-schedule-option" className={cn(leaveModalFieldClass, 'w-full justify-between')}>
+                          <SelectValue placeholder={halfdayPreviewLoading ? 'Loading shifts…' : 'Select shift option'} />
+                        </SelectTrigger>
+                        <SelectContent
+                          position="popper"
+                          align="start"
+                          className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
+                        >
+                          {(halfdayPreview.windows.flexible_options || []).map((opt) => (
+                            <SelectItem
+                              key={opt.id}
+                              className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground"
+                              value={String(opt.id)}
+                            >
+                              {opt.name}
+                              {opt.scheduled_start && opt.scheduled_end
+                                ? ` (${opt.scheduled_start}–${opt.scheduled_end})`
+                                : ''}
+                              {opt.is_default ? ' · Default' : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                   <Label htmlFor="half-type" className={leaveModalLabelClass}>
-                    Half day type
+                    Which half are you taking as leave?
                   </Label>
+                  <p className={leaveModalHintClass}>
+                    Pick the half of your shift that is leave (0.5 credit). The other half is the part you work.
+                  </p>
                   <Select
                     value={addForm.half_type || undefined}
                     onValueChange={(value) =>
@@ -1523,10 +1599,17 @@ function EmployeeLeaveSelfService() {
                         half_day_time: '',
                       }))
                     }
+                    disabled={
+                      !addForm.start_date ||
+                      halfdayPreviewLoading ||
+                      Boolean(halfdayPreviewError) ||
+                      !halfdayPreview?.windows ||
+                      (halfdayPreview?.windows?.has_flexible_options && !addForm.schedule_option_id)
+                    }
                     required
                   >
                     <SelectTrigger id="half-type" className={cn(leaveModalFieldClass, 'w-full justify-between')}>
-                      <SelectValue placeholder="Select option" />
+                      <SelectValue placeholder={halfdayPreviewLoading ? 'Loading schedule…' : 'Select morning or afternoon leave'} />
                     </SelectTrigger>
                     <SelectContent
                       position="popper"
@@ -1534,17 +1617,21 @@ function EmployeeLeaveSelfService() {
                       className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
                     >
                       <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="am">
-                        AM Half Day (leave morning, work afternoon)
+                        {halfDayTypeOptionLabel('am', halfdayPreview?.windows)}
                       </SelectItem>
                       <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="pm">
-                        PM Half Day (work morning, leave afternoon)
+                        {halfDayTypeOptionLabel('pm', halfdayPreview?.windows)}
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                  {halfdayPreviewLoading ? (
+                    <p className={leaveModalHintClass}>Loading your schedule for this date...</p>
+                  ) : null}
+                  {halfdayPreviewError ? <p className="text-[13px] text-destructive">{halfdayPreviewError}</p> : null}
                   {addForm.half_type ? (
                     <div className="space-y-3">
                       <Label htmlFor="half-day-time" className={leaveModalLabelClass}>
-                        {addForm.half_type === 'pm' ? 'Work ends / leave starts at' : 'Work starts at'}
+                        {halfDayBoundaryTimeLabel(addForm.half_type)}
                       </Label>
                       <Input
                         id="half-day-time"
@@ -1563,23 +1650,19 @@ function EmployeeLeaveSelfService() {
                       ) : null}
                     </div>
                   ) : null}
-                  {halfdayPreviewLoading ? (
-                    <p className={leaveModalHintClass}>Loading your schedule for this date...</p>
-                  ) : null}
-                  {halfdayPreviewError ? <p className="text-[13px] text-destructive">{halfdayPreviewError}</p> : null}
                   {halfdayPreview?.selected ? (
                     <p className="text-[13px] text-muted-foreground">
-                      Per your schedule ({halfdayPreview.windows?.scheduled_start || '—'}–{halfdayPreview.windows?.scheduled_end || '—'}):
-                      work{' '}
+                      {halfDayTypeShortLabel(addForm.half_type) || 'Half day'} on this schedule (
+                      {halfdayPreview.windows?.scheduled_start || '—'}–{halfdayPreview.windows?.scheduled_end || '—'}
+                      ): work{' '}
                       <span className="font-semibold text-foreground">
                         {halfdayPreview.selected.work_start || '—'}–{halfdayPreview.selected.work_end || '—'}
                       </span>{' '}
-                      ({Math.round((halfdayPreview.selected.work_paid_minutes || 0) / 6) / 10}h paid).
-                      Leave half pays{' '}
+                      ({Math.round((halfdayPreview.selected.work_paid_minutes || 0) / 6) / 10}h paid). Leave half pays{' '}
                       <span className="font-semibold text-foreground">
                         {Math.round((halfdayPreview.selected.leave_paid_minutes || 0) / 6) / 10}h
                       </span>{' '}
-                      (0.5 credit per day).
+                      (0.5 credit).
                     </p>
                   ) : null}
                   {halfdayPreview?.windows?.is_flexible ? (
@@ -1754,7 +1837,7 @@ function EmployeeLeaveSelfService() {
                         setAddForm((prev) => ({
                           ...prev,
                           start_date: d,
-                          end_date: prev.type === 'half_day' ? d : prev.end_date,
+                          end_date: d,
                         }))
                       }}
                       className="h-9 pl-9 text-sm"
@@ -1854,7 +1937,7 @@ function EmployeeLeaveSelfService() {
                 <>
                   <div className="space-y-1.5 @md:col-span-2">
                     <Label htmlFor="half-type" className="text-xs">
-                      Half day type
+                      Which half are you taking as leave?
                     </Label>
                     <select
                       id="half-type"
@@ -1869,15 +1952,15 @@ function EmployeeLeaveSelfService() {
                       }
                       required
                     >
-                      <option value="">Select option</option>
-                      <option value="am">AM Half Day (leave morning, work afternoon)</option>
-                      <option value="pm">PM Half Day (work morning, leave afternoon)</option>
+                      <option value="">Select morning or afternoon leave</option>
+                      <option value="am">{halfDayTypeOptionLabel('am')}</option>
+                      <option value="pm">{halfDayTypeOptionLabel('pm')}</option>
                     </select>
                   </div>
                   {addForm.half_type ? (
                     <div className="space-y-1.5 @md:col-span-2">
                       <Label htmlFor="half-day-time-mobile" className="text-xs">
-                        {addForm.half_type === 'pm' ? 'Work ends / leave starts at' : 'Work starts at'}
+                        {halfDayBoundaryTimeLabel(addForm.half_type)}
                       </Label>
                       <Input
                         id="half-day-time-mobile"

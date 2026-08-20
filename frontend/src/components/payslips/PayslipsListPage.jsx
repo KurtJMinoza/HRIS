@@ -9,8 +9,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useToast } from '@/components/ui/use-toast'
+import { HIDDEN_PAYSLIP_AMOUNT, usePayslipAmountPrivacy } from '@/lib/payslipAmountPrivacy'
 import { cn } from '@/lib/utils'
-import { ArrowRight, CalendarDays, CalendarRange, Download, Eye, FileText, Loader2, TrendingUp } from 'lucide-react'
+import { ArrowRight, CalendarDays, CalendarRange, Download, Eye, EyeOff, FileText, Loader2, TrendingUp } from 'lucide-react'
 
 function formatPeso(n) {
   const v = Number(n)
@@ -120,7 +121,10 @@ function MiniSparkline({ values, className }) {
  */
 export default function PayslipsListPage({ variant }) {
   const isHr = variant === 'hr'
+  const isEmployeeSelfService = variant === 'employee'
+  const isOwnPayslips = isEmployeeSelfService || isHr
   const { user } = useAuth()
+  const { amountsHidden, toggleAmountsHidden } = usePayslipAmountPrivacy(user?.id)
   const { toast } = useToast()
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
@@ -139,6 +143,8 @@ export default function PayslipsListPage({ variant }) {
   const [recentForChart, setRecentForChart] = useState([])
 
   const perPage = 10
+  const hideAmounts = isOwnPayslips && amountsHidden
+  const displayPeso = (value) => (hideAmounts ? HIDDEN_PAYSLIP_AMOUNT : formatPeso(value))
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -246,7 +252,7 @@ export default function PayslipsListPage({ variant }) {
 
   const openView = (id) => {
     if (isHr) {
-      navigate(`${hrBase}/compensation/payslips/${id}/view`, {
+      navigate(`${hrBase}/compensation/payslips/${id}/view?my_payslip=1`, {
         state: { payslipBackTo: `${hrBase}/compensation/payslips` },
       })
     } else {
@@ -278,7 +284,7 @@ export default function PayslipsListPage({ variant }) {
   const pageNumbers = useMemo(() => buildPageList(page, lastPage), [page, lastPage])
 
   const hero = latestHero
-  const heroNet = hero ? formatPeso(hero.net_pay) : '—'
+  const heroNet = hero ? displayPeso(hero.net_pay) : '—'
   const heroPeriod = hero ? formatPeriodRange(hero.pay_period_start, hero.pay_period_end) : '—'
   const heroPayDate = hero ? formatDate(hero.pay_date) : '—'
   const displayName = String(user?.name || 'there').trim() || 'there'
@@ -294,13 +300,28 @@ export default function PayslipsListPage({ variant }) {
 
   return (
     <div className="w-full min-w-0 max-w-none space-y-8 bg-background px-3 py-5 pb-12 text-foreground sm:space-y-10 sm:px-4 md:px-5 lg:space-y-12 lg:px-6 lg:py-6 3xl:px-10">
-      <header className="space-y-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-brand">Compensation</p>
-        <h1 className="text-[1.75rem] font-bold tracking-tight text-foreground @md:text-[2.125rem]">Payslips</h1>
-        <p className="max-w-3xl text-[15px] leading-relaxed text-muted-foreground">
-          Your payslips appear here after payroll is finalized and HR releases them with{' '}
-          <span className="font-medium text-foreground">Send payslips</span>.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-brand">Compensation</p>
+          <h1 className="text-[1.75rem] font-bold tracking-tight text-foreground @md:text-[2.125rem]">Payslips</h1>
+          <p className="max-w-3xl text-[15px] leading-relaxed text-muted-foreground">
+            Your payslips appear here after payroll is finalized and HR releases them with{' '}
+            <span className="font-medium text-foreground">Send payslips</span>.
+          </p>
+        </div>
+        {isOwnPayslips ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 w-10 shrink-0 rounded-xl border-border bg-card p-0 text-foreground hover:bg-muted/60"
+            onClick={toggleAmountsHidden}
+            aria-label={hideAmounts ? 'Show payslip amounts' : 'Hide payslip amounts'}
+            aria-pressed={hideAmounts}
+            title={hideAmounts ? 'Show payslip amounts' : 'Hide payslip amounts'}
+          >
+            {hideAmounts ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
+          </Button>
+        ) : null}
       </header>
 
       <section
@@ -358,22 +379,24 @@ export default function PayslipsListPage({ variant }) {
               </div>
             </div>
 
-            <div className="flex flex-row items-center justify-end gap-6 @lg:flex-col @lg:items-end">
-              <div className="flex flex-col items-end gap-2 text-right">
-                {chartSeries.length >= 2 ? (
-                  <>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                      Recent trend
-                    </p>
-                    <MiniSparkline values={chartSeries} className="h-10 w-[132px]" />
-                  </>
-                ) : (
-                  <div className="rounded-xl border border-brand/25 bg-brand/10 px-4 py-3 text-right text-xs text-brand dark:bg-brand/15">
-                    More payslips unlock a net-pay trend chart.
-                  </div>
-                )}
+            {!hideAmounts ? (
+              <div className="flex flex-row items-center justify-end gap-6 @lg:flex-col @lg:items-end">
+                <div className="flex flex-col items-end gap-2 text-right">
+                  {chartSeries.length >= 2 ? (
+                    <>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                        Recent trend
+                      </p>
+                      <MiniSparkline values={chartSeries} className="h-10 w-[132px]" />
+                    </>
+                  ) : (
+                    <div className="rounded-xl border border-brand/25 bg-brand/10 px-4 py-3 text-right text-xs text-brand dark:bg-brand/15">
+                      More payslips unlock a net-pay trend chart.
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
         ) : (
           <div className="flex flex-col items-center py-6 text-center @md:flex-row @md:items-center @md:gap-10 @md:text-left">
@@ -396,22 +419,24 @@ export default function PayslipsListPage({ variant }) {
             {[
               {
                 label: `Net (last ${quickStats.n} periods)`,
-                value: formatPeso(quickStats.sum),
+                value: displayPeso(quickStats.sum),
                 sub: 'From your recent payslips',
                 icon: TrendingUp,
               },
               {
                 label: 'Average net',
-                value: formatPeso(quickStats.avg),
+                value: displayPeso(quickStats.avg),
                 sub: 'Same window',
                 icon: CalendarRange,
               },
               {
                 label: 'Vs prior period',
                 value:
-                  quickStats.delta == null
-                    ? '—'
-                    : `${quickStats.delta >= 0 ? '+' : ''}${formatPeso(quickStats.delta)}`,
+                  hideAmounts
+                    ? HIDDEN_PAYSLIP_AMOUNT
+                    : quickStats.delta == null
+                      ? '—'
+                      : `${quickStats.delta >= 0 ? '+' : ''}${formatPeso(quickStats.delta)}`,
                 sub: quickStats.delta == null ? 'Need 2+ payslips' : 'Most recent minus previous',
                 icon: FileText,
               },
@@ -573,7 +598,7 @@ export default function PayslipsListPage({ variant }) {
                             {formatDate(row.pay_date)}
                           </TableCell>
                           <TableCell className="py-4 align-middle text-right text-lg font-bold tabular-nums text-foreground">
-                            {formatPeso(row.net_pay)}
+                            {displayPeso(row.net_pay)}
                           </TableCell>
                           <TableCell className="py-4 pr-4 text-right align-middle" onClick={(e) => e.stopPropagation()}>
                             <div className="flex flex-nowrap justify-end gap-2">
@@ -640,7 +665,7 @@ export default function PayslipsListPage({ variant }) {
                             <p className="text-[15px] font-semibold text-foreground">{periodLine}</p>
                             <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(row.pay_date)}</p>
                           </div>
-                          <p className="shrink-0 text-lg font-bold tabular-nums text-foreground">{formatPeso(row.net_pay)}</p>
+                          <p className="shrink-0 text-lg font-bold tabular-nums text-foreground">{displayPeso(row.net_pay)}</p>
                         </div>
                       </button>
                       <div className="flex flex-wrap items-center justify-end gap-2 px-4 pb-4">

@@ -9,8 +9,10 @@ use App\Models\Department;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\LegacyOrganizationMirrorService;
 use App\Services\OrganizationLeadershipAssignmentService;
 use App\Services\OrganizationLeadershipService;
+use App\Services\OrgApprovalWorkflowService;
 use App\Support\EmployeeProfileCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,6 +27,8 @@ class AreaController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly OrganizationLeadershipAssignmentService $leadershipAssignments,
         private readonly OrganizationLeadershipService $organizationLeadershipService,
+        private readonly LegacyOrganizationMirrorService $legacyOrganizationMirror,
+        private readonly OrgApprovalWorkflowService $approvalWorkflowService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -83,17 +87,18 @@ class AreaController extends Controller
             $this->leadershipAssignments->assertEligibleHeadCandidate((int) $validated['area_manager_employee_id']);
         }
 
-        $area = DB::transaction(function () use ($validated, $branchIds, $request): Area {
+        [$area, $affectedBranchIds] = DB::transaction(function () use ($validated, $branchIds, $request): array {
             $area = Area::create($validated + [
                 'created_by' => $request->user()?->id,
                 'updated_by' => $request->user()?->id,
             ]);
 
-            $this->syncBranchesForArea($area, $branchIds);
+            $affectedBranchIds = $this->syncBranchesForArea($area, $branchIds);
             $this->syncAreaHeadAssignment($area, null);
 
-            return $area;
+            return [$area, $affectedBranchIds];
         });
+        $this->resyncPendingFilingsForBranches($affectedBranchIds);
 
         Log::info('organization_area: area created', $this->logPayload($area, null, $area->area_manager_employee_id, 'created') + [
             'branch_ids' => $branchIds,
@@ -118,12 +123,14 @@ class AreaController extends Controller
         }
 
         $oldManagerId = $area->area_manager_employee_id;
-        DB::transaction(function () use ($area, $validated, $branchIds, $request): void {
+        $affectedBranchIds = DB::transaction(function () use ($area, $validated, $branchIds, $request): array {
             $area->fill($validated + ['updated_by' => $request->user()?->id]);
             $area->save();
             if ($branchIds !== null) {
-                $this->syncBranchesForArea($area, $branchIds);
+                return $this->syncBranchesForArea($area, $branchIds);
             }
+
+            return [];
         });
 
         if (array_key_exists('area_manager_employee_id', $validated)) {
@@ -135,6 +142,7 @@ class AreaController extends Controller
                 EmployeeProfileCache::invalidate($uid);
             }
         }
+        $this->resyncPendingFilingsForBranches($affectedBranchIds);
 
         Log::info('organization_area: area updated', $this->logPayload($area, $oldManagerId, $area->area_manager_employee_id, 'updated') + [
             'branch_ids' => $branchIds,
@@ -279,7 +287,8 @@ class AreaController extends Controller
         ]);
 
         $branchIds = array_values(array_unique(array_map('intval', $validated['branch_ids'] ?? [])));
-        $this->syncBranchesForArea($area, $branchIds);
+        $affectedBranchIds = DB::transaction(fn (): array => $this->syncBranchesForArea($area, $branchIds));
+        $this->resyncPendingFilingsForBranches($affectedBranchIds);
 
         Log::info('organization_area: branches assigned', [
             'area_id' => (int) $area->id,
@@ -344,8 +353,9 @@ class AreaController extends Controller
 
     /**
      * @param  list<int>  $branchIds
+     * @return list<int>
      */
-    private function syncBranchesForArea(Area $area, array $branchIds): void
+    private function syncBranchesForArea(Area $area, array $branchIds): array
     {
         $branches = Branch::query()->whereIn('id', $branchIds)->get(['id', 'company_id', 'area_id']);
         if ($branches->count() !== count($branchIds)) {
@@ -357,6 +367,17 @@ class AreaController extends Controller
             throw ValidationException::withMessages(['branch_ids' => ['Branches must belong to the same company as the area.']]);
         }
 
+        $existingAreaBranchIds = Branch::query()
+            ->where('area_id', (int) $area->id)
+            ->where('company_id', (int) $area->company_id)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+        $affectedBranchIds = array_values(array_unique([
+            ...$existingAreaBranchIds,
+            ...$branchIds,
+        ]));
+
         $existingAreaBranches = Branch::query()
             ->where('area_id', (int) $area->id)
             ->where('company_id', (int) $area->company_id);
@@ -367,6 +388,35 @@ class AreaController extends Controller
 
         if ($branchIds !== []) {
             Branch::query()->whereIn('id', $branchIds)->update(['area_id' => (int) $area->id, 'updated_at' => now()]);
+        }
+
+        if ($affectedBranchIds !== []) {
+            // Bulk updates bypass Branch::saved, so repair the flexible-org parent links explicitly.
+            $this->legacyOrganizationMirror->sync($area);
+            Branch::query()
+                ->whereIn('id', $affectedBranchIds)
+                ->orderBy('id')
+                ->get()
+                ->each(fn (Branch $branch) => $this->legacyOrganizationMirror->sync($branch));
+        }
+
+        return $affectedBranchIds;
+    }
+
+    /**
+     * Rebuild pending chains after a branch enters or leaves an Area so every
+     * filing type follows the new Area Head immediately.
+     *
+     * @param  list<int>  $branchIds
+     */
+    private function resyncPendingFilingsForBranches(array $branchIds): void
+    {
+        foreach (array_values(array_unique(array_filter(array_map('intval', $branchIds)))) as $branchId) {
+            $this->approvalWorkflowService->resyncPendingRequestChains(
+                OrganizationLeadershipService::pendingFilingResyncTypes(),
+                'branch',
+                $branchId,
+            );
         }
     }
 

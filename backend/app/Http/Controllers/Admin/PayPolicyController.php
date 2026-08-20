@@ -444,6 +444,8 @@ class PayPolicyController extends Controller
             'holiday_policy.attendance.require_previous_workday_presence' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.require_following_workday_presence' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.paid_leave_qualifies' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.paid_leave_qualifies_previous_workday' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.paid_leave_qualifies_following_workday' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.official_business_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.training_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.paid_suspension_qualifies' => ['sometimes', 'boolean'],
@@ -602,7 +604,7 @@ class PayPolicyController extends Controller
                 Policy::DEFAULT_HOLIDAY_POLICY['attendance'] ?? [],
                 $incoming['attendance']
             );
-            foreach (['require_previous_workday_presence', 'require_following_workday_presence'] as $attendanceFlag) {
+            foreach (['require_previous_workday_presence', 'require_following_workday_presence', 'paid_leave_qualifies_previous_workday', 'paid_leave_qualifies_following_workday'] as $attendanceFlag) {
                 if (array_key_exists($attendanceFlag, $incoming['attendance'])) {
                     $merged['attendance'][$attendanceFlag] = (bool) $incoming['attendance'][$attendanceFlag];
                 }

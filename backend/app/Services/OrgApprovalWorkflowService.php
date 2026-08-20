@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class OrgApprovalWorkflowService
 {
@@ -137,6 +138,10 @@ class OrgApprovalWorkflowService
                 // (head removal can leave Arbole on first_approver_id while org records are already HR-only).
                 if ($isPending) {
                     $this->syncLegacyRequestApprovers($request, $moduleType, $steps);
+                } else {
+                    // Approved/rejected requests can retain stale pending rows when approveCurrent
+                    // failed silently; heal so list Approver columns show the final actor.
+                    $this->healStalePendingRecordsForTerminalRequest($request, $moduleType, $existing);
                 }
 
                 return $this->records($moduleType, $requestId);
@@ -631,6 +636,104 @@ class OrgApprovalWorkflowService
     }
 
     /**
+     * When a request is already approved/rejected but org rows stayed pending (approveCurrent
+     * returned null while controllers still flipped request status), mark those rows terminal
+     * using the request's first/second/reviewed actors so Approver columns resolve.
+     *
+     * @param  EloquentCollection<int, OrgApprovalRecord>  $existing
+     */
+    private function healStalePendingRecordsForTerminalRequest(
+        Model $request,
+        string $moduleType,
+        EloquentCollection $existing
+    ): void {
+        $pendingRows = $existing->filter(
+            fn (OrgApprovalRecord $record): bool => $record->approval_status === OrgApprovalRecord::STATUS_PENDING
+        );
+        if ($pendingRows->isEmpty()) {
+            return;
+        }
+
+        $isRejected = (isset($request->rejected_at) && $request->rejected_at !== null)
+            || (isset($request->status) && (string) $request->status === 'rejected');
+        $isApproved = ! $isRejected && (
+            (isset($request->status) && (string) $request->status === 'approved')
+            || (isset($request->approved) && $request->approved === true)
+            || (isset($request->pending_approval) && $request->pending_approval === false
+                && isset($request->second_approved_at) && $request->second_approved_at !== null)
+        );
+        if (! $isRejected && ! $isApproved) {
+            return;
+        }
+
+        $targetStatus = $isRejected
+            ? OrgApprovalRecord::STATUS_REJECTED
+            : OrgApprovalRecord::STATUS_APPROVED;
+
+        $firstApproverId = isset($request->first_approver_id) ? (int) $request->first_approver_id : 0;
+        $finalApproverId = 0;
+        if (isset($request->second_approver_id) && (int) $request->second_approver_id > 0) {
+            $finalApproverId = (int) $request->second_approver_id;
+        } elseif (isset($request->reviewed_by) && (int) $request->reviewed_by > 0) {
+            $finalApproverId = (int) $request->reviewed_by;
+        } elseif (isset($request->rejected_by) && (int) $request->rejected_by > 0) {
+            $finalApproverId = (int) $request->rejected_by;
+        }
+
+        $actorIds = array_values(array_filter([$firstApproverId, $finalApproverId], static fn (int $id): bool => $id > 0));
+        $actors = $actorIds === []
+            ? collect()
+            : User::query()
+                ->select(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'profile_image'])
+                ->whereIn('id', $actorIds)
+                ->get()
+                ->keyBy('id');
+
+        foreach ($pendingRows as $record) {
+            $isHr = $record->approver_role === HrRole::AdminHr->value;
+            $actorId = $isHr ? $finalApproverId : $firstApproverId;
+            if ($actorId <= 0 && (int) ($record->approver_id ?? 0) > 0) {
+                $actorId = (int) $record->approver_id;
+            }
+
+            $approvedAt = $record->approved_at;
+            if ($approvedAt === null) {
+                if ($isHr) {
+                    $approvedAt = $request->getAttribute('second_approved_at')
+                        ?? $request->getAttribute('reviewed_at')
+                        ?? $request->getAttribute('rejected_at')
+                        ?? now();
+                } else {
+                    $approvedAt = $request->getAttribute('first_approved_at')
+                        ?? $request->getAttribute('reviewed_at')
+                        ?? $request->getAttribute('rejected_at')
+                        ?? now();
+                }
+            }
+
+            if ($actorId > 0) {
+                $record->approver_id = $actorId;
+                $actor = $actors->get($actorId);
+                if ($actor) {
+                    $record->approver_name = $actor->display_name;
+                }
+            }
+
+            $record->approval_status = $targetStatus;
+            $record->approved_at = $approvedAt instanceof Carbon ? $approvedAt : Carbon::parse($approvedAt);
+            $record->save();
+        }
+
+        Log::info('approval_chain: healed stale pending org approval records for terminal request', [
+            'module_type' => $moduleType,
+            'request_id' => (int) $request->getKey(),
+            'healed_count' => $pendingRows->count(),
+            'target_status' => $targetStatus,
+        ]);
+        ReviewRequestCache::forget($moduleType, (int) $request->getKey());
+    }
+
+    /**
      * True when a pending request's stored chain cannot be acted on (no pending step),
      * or still shows Completed/Rejected from a prior filing before the current filed_at.
      *
@@ -909,23 +1012,26 @@ class OrgApprovalWorkflowService
                     'allowed' => false,
                     'deny_reason' => 'no_pending_approval_step',
                 ]);
-
-                return null;
+                throw ValidationException::withMessages([
+                    'approval' => ['No pending approval step to approve.'],
+                ]);
             }
             if (! $this->canActorActOnRecord($actor, $pending)) {
                 $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, $pending, $requestor, [
                     'allowed' => false,
                     'deny_reason' => 'current_user_not_assigned_or_authorized_for_step',
                 ]);
-
-                return null;
+                throw ValidationException::withMessages([
+                    'approval' => ['You are not authorized to approve this approval step.'],
+                ]);
             }
             if ((int) $actor->id === (int) $employee->id) {
                 $result = $this->selfApprovalValidationResult($actor, $employee, $pending, $moduleType);
                 if (! $result['allowed']) {
                     $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, $pending, $requestor, $result);
-
-                    return null;
+                    throw ValidationException::withMessages([
+                        'approval' => ['Self-approval is not allowed for this approval step.'],
+                    ]);
                 }
                 $this->logApprovalActionValidation('approve', $request, $moduleType, $employee, $actor, $pending, $requestor, $result);
             } else {
@@ -936,7 +1042,9 @@ class OrgApprovalWorkflowService
             }
 
             if ((int) $actor->id === (int) $employee->id && ! $this->canSelfApproveAssignedRecord($actor, $employee, $pending, $moduleType)) {
-                return null;
+                throw ValidationException::withMessages([
+                    'approval' => ['Self-approval is not allowed for this approval step.'],
+                ]);
             }
 
             $isSelfApproval = $this->isAssignedSelfApproval($actor, $employee, $pending);
@@ -1049,6 +1157,8 @@ class OrgApprovalWorkflowService
 
     /**
      * Prefer the pending (current) approver; otherwise the latest approved/rejected actor.
+     * Pending HR-pool steps often have no person yet — fall back to the last acted approver
+     * so completed requests still show the final HR admin in list tables.
      *
      * @return array{
      *   current_approver_id: ?int,
@@ -1059,9 +1169,11 @@ class OrgApprovalWorkflowService
      */
     public function listApproverDisplayFields(?OrgApprovalRecord $pending, ?OrgApprovalRecord $latestActed = null): array
     {
-        $record = $pending ?? $latestActed;
-        $name = $record?->approver?->display_name ?? $record?->approver_name;
-        $name = is_string($name) && trim($name) !== '' ? trim($name) : null;
+        $pendingName = $this->approverRecordDisplayName($pending);
+        $record = ($pending !== null && $pendingName !== null)
+            ? $pending
+            : ($latestActed ?? $pending);
+        $name = $this->approverRecordDisplayName($record);
 
         return [
             'current_approver_id' => $record?->approver_id !== null ? (int) $record->approver_id : null,
@@ -1069,6 +1181,17 @@ class OrgApprovalWorkflowService
             'current_approver_name' => $name,
             'current_approver_profile_image' => $record?->approver?->profile_image_url,
         ];
+    }
+
+    private function approverRecordDisplayName(?OrgApprovalRecord $record): ?string
+    {
+        if ($record === null) {
+            return null;
+        }
+        $name = $record->approver?->display_name ?? $record->approver_name;
+        $name = is_string($name) ? trim($name) : '';
+
+        return $name !== '' ? $name : null;
     }
 
     /**
@@ -1094,14 +1217,16 @@ class OrgApprovalWorkflowService
             $name = trim((string) ($step['approver_name'] ?? ''));
             if ($status === 'current') {
                 $current = $step;
-                break;
+                // Keep scanning so lastActed is available when the current step has no person yet (HR pool).
+                continue;
             }
             if (($status === 'completed' || $status === 'rejected') && $name !== '') {
                 $lastActed = $step;
             }
         }
 
-        $step = $current ?? $lastActed;
+        $currentName = $current ? trim((string) ($current['approver_name'] ?? '')) : '';
+        $step = ($current !== null && $currentName !== '') ? $current : ($lastActed ?? $current);
         $name = $step ? trim((string) ($step['approver_name'] ?? '')) : '';
         $name = $name !== '' ? $name : null;
         $image = is_array($step) ? ($step['profile_image_url'] ?? null) : null;
@@ -1217,7 +1342,13 @@ class OrgApprovalWorkflowService
             $status = match ($record->approval_status) {
                 OrgApprovalRecord::STATUS_APPROVED => 'completed',
                 OrgApprovalRecord::STATUS_REJECTED => 'rejected',
-                default => $rejected ? 'skipped' : ($currentMarked || $finalApproved ? 'pending' : 'current'),
+                // Terminal request + stale pending row: treat as completed so Approver list/modal
+                // still resolve the assigned actor (healStalePendingRecordsForTerminalRequest fixes DB).
+                default => $rejected
+                    ? 'skipped'
+                    : ($finalApproved
+                        ? 'completed'
+                        : ($currentMarked ? 'pending' : 'current')),
             };
             if ($status === 'current') {
                 $currentMarked = true;

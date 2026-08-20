@@ -908,7 +908,10 @@ class ManualAttendanceService
             'time_in' => $timeIn?->format('g:i A'),
             'time_out' => $timeOut?->format('g:i A'),
             'status' => $summary['status'] ?? null,
-            'status_label' => $summary['presence_label'] ?? $summary['status'] ?? null,
+            'status_label' => $summary['presence_label']
+                ?? $summary['status_label']
+                ?? $summary['status']
+                ?? null,
             'late_minutes' => $summary['late_minutes'] ?? null,
             'late_label' => $summary['late_label'] ?? null,
             'undertime_minutes' => $summary['undertime_minutes'] ?? null,

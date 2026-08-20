@@ -826,7 +826,12 @@ export function AuditDetailDrawer({ open, onOpenChange, record, onRefreshRecord,
                         </div>
                         {item?.half_type ? (
                           <p className="mt-1 text-[11px] text-muted-foreground">
-                            Half type: {item.half_type}
+                            Half taken as leave:{' '}
+                            {item.half_type === 'am'
+                              ? 'Morning leave'
+                              : item.half_type === 'pm'
+                                ? 'Afternoon leave'
+                                : item.half_type}
                             {item?.half_day_time ? ` · ${item.half_day_time}` : ''}
                           </p>
                         ) : null}

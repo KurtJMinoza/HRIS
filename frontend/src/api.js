@@ -7530,10 +7530,13 @@ export async function getLeaveCreditHistory(employeeId) {
   return data
 }
 
-export async function getHalfDayPreview({ date, half_type } = {}) {
+export async function getHalfDayPreview({ date, half_type, schedule_option_id } = {}) {
   const query = new URLSearchParams()
   if (date) query.set('date', date)
   if (half_type) query.set('half_type', half_type)
+  if (schedule_option_id != null && schedule_option_id !== '') {
+    query.set('schedule_option_id', String(schedule_option_id))
+  }
   const path = `/leave/halfday-preview${query.toString() ? `?${query.toString()}` : ''}`
   const res = await authenticatedFetch(path)
   const data = await res.json().catch(() => ({}))

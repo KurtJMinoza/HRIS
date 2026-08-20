@@ -1601,6 +1601,10 @@ class PayrollCalculatorService
                 'pay_component_calculation_standard' => CalculationStandard::normalizeDefault(
                     $row->payComponent?->calculation_standard ?? null
                 ),
+                // Catalog metadata controls rules that must apply to every employee assignment.
+                'pay_component_metadata' => is_array($row->payComponent?->metadata ?? null)
+                    ? $row->payComponent->metadata
+                    : [],
                 'computed_amount' => $amount,
                 'configured_value' => round((float) ($row->value ?? 0), 2),
                 'hourly_rate' => $row->hourly_rate !== null ? round((float) $row->hourly_rate, 2) : null,

@@ -184,7 +184,7 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $this->assertSame('13 days', $label);
     }
 
-    public function test_regular_pay_display_amount_shows_present_day_gross_only(): void
+    public function test_regular_pay_display_amount_keeps_present_day_gross_and_shows_payable_total(): void
     {
         $snapshot = [
             'daily_rate' => 582.69,
@@ -221,18 +221,817 @@ class PayslipFrozenLineMetricsTest extends TestCase
         $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
         $totalDeduction = (float) ($normalized['summary']['attendance_pay_breakdown']['total_deduction'] ?? 0);
         $netAmount = round((float) ($line['amount'] ?? 0), 2);
-        $displayAmount = round((float) ($line['display_amount'] ?? 0), 2);
 
         $this->assertSame('13 days', $line['units'] ?? null);
-        $this->assertSame(7575.0, $displayAmount);
-        $this->assertSame($netAmount, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
-        $this->assertSame($netAmount, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
-        $this->assertGreaterThan($netAmount, $displayAmount);
+        $this->assertEqualsWithDelta(7101.53, $netAmount, 0.02);
+        $this->assertSame(7575.0, round((float) ($line['display_amount'] ?? 0), 2));
+        $afterReductions = round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2);
+        $this->assertSame($netAmount, $afterReductions);
+        $this->assertSame($afterReductions, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
+        $this->assertSame($afterReductions, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
         $this->assertGreaterThan(0.0, $totalDeduction);
-        $this->assertSame(
-            round($displayAmount - $totalDeduction, 2),
-            round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2)
+    }
+
+    public function test_worked_holiday_is_not_counted_as_a_regular_pay_day(): void
+    {
+        $regularDay = static fn (string $date): array => [
+            'date' => $date,
+            'status' => 'worked',
+            'is_rest_day' => false,
+            'regular_day_minutes' => 480,
+            'regular_night_minutes' => 0,
+            'required_minutes' => 480,
+            'breakdown' => [[
+                'component' => 'regular_pay',
+                'minutes' => 480,
+                'rate' => 76.9225,
+                'amount' => 615.38,
+            ]],
+        ];
+        $snapshot = [
+            'daily_rate' => 615.38,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 615.38,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 16000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 1846.14,
+                    ],
+                    [
+                        'key' => 'daily:holiday_premium',
+                        'label' => 'Special Holiday - Worked Pay: KADAWAYAN',
+                        'amount' => 799.99,
+                    ],
+                ],
+            ],
+            'daily_computation_days' => [
+                $regularDay('2026-08-12'),
+                $regularDay('2026-08-13'),
+                $regularDay('2026-08-14'),
+                [
+                    'date' => '2026-08-15',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 799.99,
+                    'breakdown' => [[
+                        'component' => 'holiday_premium',
+                        'minutes' => 480,
+                        'rate' => 99.99875,
+                        'amount' => 799.99,
+                    ]],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('3 days', $line['units'] ?? null);
+        $this->assertEqualsWithDelta(1846.14, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1846.14, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) ($breakdown['total_deduction'] ?? 0), 0.001);
+        $this->assertFalse($rowsByKey->has('attendance_adjustment'));
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenLine = $frozen['summary']['daily_computation_earning_lines'][0] ?? null;
+        $frozenRowsByKey = collect($frozen['summary']['attendance_pay_breakdown']['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('3 days', $frozenLine['units'] ?? null);
+        $this->assertEqualsWithDelta(1846.14, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
+        $this->assertFalse($frozenRowsByKey->has('attendance_adjustment'));
+    }
+
+    public function test_worked_regular_holiday_keeps_its_regular_pay_day(): void
+    {
+        $regularDay = static fn (string $date): array => [
+            'date' => $date,
+            'status' => 'worked',
+            'is_rest_day' => false,
+            'regular_day_minutes' => 480,
+            'regular_night_minutes' => 0,
+            'required_minutes' => 480,
+            'breakdown' => [[
+                'component' => 'regular_pay',
+                'minutes' => 480,
+                'rate' => 76.9225,
+                'amount' => 615.38,
+            ]],
+        ];
+        $snapshot = [
+            'daily_rate' => 615.38,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 615.38,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 16000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 2461.52,
+                    ],
+                    [
+                        'key' => 'daily:holiday_premium',
+                        'label' => 'Regular Holiday - Worked Pay: REGULAR HOLIDAY',
+                        'amount' => 615.38,
+                    ],
+                ],
+            ],
+            'daily_computation_days' => [
+                $regularDay('2026-08-10'),
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 615.38,
+                    'holiday' => ['name' => 'REGULAR HOLIDAY', 'type' => 'regular'],
+                    'breakdown' => [
+                        [
+                            'component' => 'regular_pay',
+                            'minutes' => 480,
+                            'rate' => 76.9225,
+                            'amount' => 615.38,
+                        ],
+                        [
+                            'component' => 'holiday_premium',
+                            'minutes' => 480,
+                            'rate' => 76.9225,
+                            'amount' => 615.38,
+                        ],
+                    ],
+                ],
+                $regularDay('2026-08-12'),
+                $regularDay('2026-08-13'),
+                [
+                    'date' => '2026-08-14',
+                    'status' => 'absent',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('4 days', $line['units'] ?? null);
+        $this->assertEqualsWithDelta(2461.52, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(2461.52, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(615.38, (float) ($normalized['summary']['daily_computation_earning_lines'][1]['amount'] ?? 0), 0.02);
+        $this->assertFalse($rowsByKey->has('attendance_adjustment'));
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenLine = $frozen['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('4 days', $frozenLine['units'] ?? null);
+        $this->assertEqualsWithDelta(2461.52, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
+    }
+
+    public function test_late_breakdown_uses_policy_buckets_for_worked_regular_holidays(): void
+    {
+        $hourlyRate = 69.1825;
+        $lateDay = static function (string $date, int $ledgerLateMinutes, bool $regularHoliday = false) use ($hourlyRate): array {
+            $dayBreakdown = [[
+                'component' => 'regular_pay',
+                'minutes' => 450,
+                'rate' => $hourlyRate,
+                'amount' => 518.87,
+            ]];
+            if ($regularHoliday) {
+                $dayBreakdown[] = [
+                    'component' => 'holiday_premium',
+                    'minutes' => 450,
+                    'rate' => $hourlyRate,
+                    'amount' => 518.87,
+                ];
+            }
+
+            return [
+                'date' => $date,
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'required_minutes' => 480,
+                'regular_day_minutes' => 450,
+                'regular_night_minutes' => 0,
+                'regular_pay' => 518.87,
+                'holiday_premium_pay' => $regularHoliday ? 518.87 : 0,
+                'late_deduction_minutes' => $ledgerLateMinutes,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '30 Minutes late',
+                'breakdown' => $dayBreakdown,
+            ];
+        };
+
+        $snapshot = [
+            'daily_rate' => 553.46,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 553.46,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 14390,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 2628.94,
+                ]],
+            ],
+            'daily_computation_days' => [
+                $lateDay('2026-08-11', 20, true),
+                $lateDay('2026-08-12', 23),
+                $lateDay('2026-08-13', 21),
+                [
+                    'date' => '2026-08-14',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'regular_pay' => 553.46,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => $hourlyRate,
+                        'amount' => 553.46,
+                    ]],
+                ],
+                $lateDay('2026-08-17', 24),
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(120, (int) ($rows['late']['minutes'] ?? 0));
+        $this->assertSame('2 hrs', $rows['late']['details'] ?? null);
+        $this->assertEqualsWithDelta(138.37, (float) ($rows['late']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(138.37, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(2628.94, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+        $this->assertFalse($rows->has('attendance_adjustment'));
+    }
+
+    public function test_late_breakdown_keeps_a_zero_ledger_late_bucket_when_regular_work_was_paid(): void
+    {
+        $lateDay = static function (string $date, int $ledgerLateMinutes, int $regularMinutes, string $label): array {
+            return [
+                'date' => $date,
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'required_minutes' => 480,
+                'regular_day_minutes' => $regularMinutes,
+                'regular_night_minutes' => 0,
+                'regular_pay' => $regularMinutes,
+                'late_deduction_minutes' => $ledgerLateMinutes,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => $label,
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => $regularMinutes,
+                    'rate' => 60,
+                    'amount' => $regularMinutes,
+                ]],
+            ];
+        };
+        $fullDay = static function (string $date): array {
+            return [
+                'date' => $date,
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'required_minutes' => 480,
+                'regular_day_minutes' => 480,
+                'regular_night_minutes' => 0,
+                'regular_pay' => 480,
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 480,
+                    'rate' => 60,
+                    'amount' => 480,
+                ]],
+            ];
+        };
+
+        $snapshot = [
+            'daily_rate' => 480,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 480,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 12480,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 4110,
+                ]],
+            ],
+            'daily_computation_days' => [
+                $lateDay('2026-07-31', 6, 450, '30 Minutes late'),
+                $lateDay('2026-08-01', 5, 450, '30 Minutes late'),
+                $lateDay('2026-08-04', 16, 450, '30 Minutes late'),
+                $lateDay('2026-08-05', 0, 450, '30 Minutes late'),
+                $lateDay('2026-08-06', 8, 450, '30 Minutes late'),
+                $lateDay('2026-08-10', 22, 420, '1 Hour Late'),
+                $fullDay('2026-08-03'),
+                $fullDay('2026-08-07'),
+                $fullDay('2026-08-08'),
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(210, (int) ($rows['late']['minutes'] ?? 0));
+        $this->assertSame('3 hrs 30 mins', $rows['late']['details'] ?? null);
+        $this->assertSame(210.0, (float) ($rows['late']['deduction_amount'] ?? 0));
+        $this->assertSame(210.0, (float) ($breakdown['total_deduction'] ?? 0));
+        $this->assertSame(4110.0, (float) ($breakdown['regular_pay_after_reductions'] ?? 0));
+    }
+
+    public function test_regular_pay_undertime_keeps_full_present_days_and_breakdown_uses_payable_total(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'units' => '4 days',
+                    'amount' => 2769.23,
+                    'display_amount' => 2769.23,
+                ]],
+            ],
+            'daily_computation_days' => array_merge([
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => 86.53875,
+                        'amount' => 692.31,
+                    ]],
+                ],
+            ], array_map(
+                static fn (string $date): array => [
+                    'date' => $date,
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 240,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'undertime_deduction_minutes' => 240,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 240,
+                        'rate' => 86.53875,
+                        'amount' => 346.16,
+                    ]],
+                ],
+                ['2026-08-12', '2026-08-17', '2026-08-20']
+            )),
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('4 days', $line['units'] ?? null);
+        $this->assertSame(1200, (int) ($line['minutes_worked'] ?? 0));
+        $this->assertEqualsWithDelta(1730.78, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(2769.23, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(
+            1730.78,
+            (float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0),
+            0.02
         );
+        $this->assertEqualsWithDelta(
+            1730.78,
+            (float) ($normalized['summary']['display_gross_pay'] ?? 0),
+            0.02
+        );
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+        $this->assertEqualsWithDelta(1038.45, (float) ($rows['undertime']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1038.45, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenLine = $frozen['summary']['daily_computation_earning_lines'][0] ?? null;
+        $this->assertSame('4 days', $frozenLine['units'] ?? null);
+        $this->assertEqualsWithDelta(1730.78, (float) ($frozenLine['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(2769.23, (float) ($frozenLine['display_amount'] ?? 0), 0.02);
+        $frozenBreakdown = $frozen['summary']['attendance_pay_breakdown'] ?? [];
+        $this->assertEqualsWithDelta(1038.45, (float) ($frozenBreakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(
+            1730.78,
+            (float) ($frozen['summary']['display_gross_pay'] ?? 0),
+            0.02
+        );
+    }
+
+    public function test_regular_pay_half_day_is_displayed_as_fractional_day(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 346.16,
+                ]],
+            ],
+            'daily_computation_days' => [[
+                'date' => '2026-08-13',
+                'status' => 'worked',
+                'tardiness_status' => 'half_day',
+                'is_rest_day' => false,
+                'regular_day_minutes' => 240,
+                'regular_night_minutes' => 0,
+                'required_minutes' => 480,
+                'undertime_deduction_minutes' => 240,
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 240,
+                    'rate' => 86.53875,
+                    'amount' => 346.16,
+                ]],
+            ]],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertSame('0.5 day', $line['units'] ?? null);
+        $this->assertEqualsWithDelta(346.16, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(346.16, (float) ($line['display_amount'] ?? 0), 0.02);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $this->assertEqualsWithDelta(0.0, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+    }
+
+    public function test_half_day_breakdown_only_deducts_time_below_included_half_day(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 1012.50,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'worked',
+                    'tardiness_status' => 'on_time',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => 86.53875,
+                        'amount' => 692.31,
+                    ]],
+                ],
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'tardiness_status' => 'half_day',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 222,
+                    'regular_night_minutes' => 0,
+                    'paid_regular_minutes' => 222,
+                    'required_minutes' => 480,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 222,
+                        'rate' => 86.53875,
+                        'amount' => 320.19,
+                    ]],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('1.5 days', $normalized['summary']['daily_computation_earning_lines'][0]['units'] ?? null);
+        $this->assertSame(18, (int) ($rows['half_day']['deduction_minutes'] ?? 0));
+        $this->assertEqualsWithDelta(25.96, (float) ($rows['half_day']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(25.96, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1012.50, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+    }
+
+    public function test_severe_undertime_does_not_create_a_half_day_or_late_deduction(): void
+    {
+        $hourlyRate = 769.23 / 8;
+        $snapshot = [
+            'daily_rate' => 769.23,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 769.23,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 20000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 991.99,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'tardiness_status' => 'late',
+                    'tardiness_label' => '30 Minutes late',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 10,
+                    'regular_night_minutes' => 0,
+                    'paid_regular_minutes' => 10,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 0,
+                    'undertime_deduction_minutes' => 470,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 10,
+                        'rate' => $hourlyRate,
+                        'amount' => 16.03,
+                    ]],
+                ],
+                [
+                    'date' => '2026-08-12',
+                    'status' => 'worked',
+                    'tardiness_status' => 'on_time',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'paid_regular_minutes' => 480,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 0,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => $hourlyRate,
+                        'amount' => 769.23,
+                    ]],
+                ],
+                [
+                    'date' => '2026-08-13',
+                    'status' => 'worked',
+                    'tardiness_status' => 'half_day',
+                    'tardiness_label' => 'Half Day',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 129,
+                    'regular_night_minutes' => 0,
+                    'paid_regular_minutes' => 129,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 0,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 129,
+                        'rate' => $hourlyRate,
+                        'amount' => 206.73,
+                    ]],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(0, (int) ($rows['late']['minutes'] ?? -1));
+        $this->assertSame(470, (int) ($rows['undertime']['minutes'] ?? 0));
+        $this->assertSame(111, (int) ($rows['half_day']['minutes'] ?? 0));
+        $this->assertSame('1 hr 51 mins', $rows['half_day']['details'] ?? null);
+        $this->assertSame(111, (int) ($rows['half_day']['deduction_minutes'] ?? 0));
+        $this->assertEqualsWithDelta(177.88, (float) ($rows['half_day']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(931.09, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(991.99, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+    }
+
+    public function test_regular_pay_late_day_keeps_one_day_display_units(): void
+    {
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 1038.47,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'worked',
+                    'tardiness_status' => 'late',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 240,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 240,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 240,
+                        'rate' => 86.53875,
+                        'amount' => 346.16,
+                    ]],
+                ],
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'tardiness_status' => 'on_time',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'late_deduction_minutes' => 0,
+                    'undertime_deduction_minutes' => 0,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => 86.53875,
+                        'amount' => 692.31,
+                    ]],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame('2 days', $line['units'] ?? null);
+        $this->assertEqualsWithDelta(1038.47, (float) ($line['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1384.62, (float) ($line['display_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(346.15, (float) ($rows['late']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(346.15, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+    }
+
+    public function test_attendance_breakdown_displays_only_payable_reductions(): void
+    {
+        $regularRate = 692.31 / 8;
+        $halfDay = static function (string $date, bool $hasPaidLeave) use ($regularRate): array {
+            $breakdown = [];
+            if ($hasPaidLeave || $date === '2026-08-12') {
+                $breakdown[] = [
+                    'component' => 'regular_pay',
+                    'minutes' => 240,
+                    'rate' => $regularRate,
+                    'amount' => 346.16,
+                ];
+            }
+            if ($hasPaidLeave) {
+                $breakdown[] = [
+                    'component' => 'paid_leave',
+                    'minutes' => 240,
+                    'rate' => $regularRate,
+                    'amount' => 346.16,
+                ];
+            }
+
+            return [
+                'date' => $date,
+                'status' => $hasPaidLeave ? 'halfday' : 'worked',
+                'is_rest_day' => false,
+                'regular_day_minutes' => $hasPaidLeave ? 480 : 240,
+                'regular_night_minutes' => 0,
+                'required_minutes' => 480,
+                'tardiness_status' => $date === '2026-08-12' || $hasPaidLeave ? 'half_day' : null,
+                'tardiness_label' => $date === '2026-08-12' || $hasPaidLeave ? 'Half Day' : null,
+                'breakdown' => $breakdown,
+            ];
+        };
+
+        $snapshot = [
+            'daily_rate' => 692.31,
+            'daily_rate_divisor_days' => 26,
+            'summary' => [
+                'daily_rate' => 692.31,
+                'daily_rate_divisor_days' => 26,
+                'monthly_basic_salary' => 18000,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'units' => '4 days',
+                        'amount' => 2769.23,
+                        'display_amount' => 2769.23,
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'units' => '1.5 days',
+                        'amount' => 1038.48,
+                    ],
+                ],
+                // Simulate the old frozen display fields. The view normalizer must rebuild
+                // attendance detail from the immutable daily rows.
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'total_deduction' => 346.16,
+                    'rows' => [],
+                ],
+            ],
+            'daily_computation_days' => array_merge(
+                [[
+                    'date' => '2026-08-11',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'regular_day_minutes' => 480,
+                    'regular_night_minutes' => 0,
+                    'required_minutes' => 480,
+                    'breakdown' => [[
+                        'component' => 'regular_pay',
+                        'minutes' => 480,
+                        'rate' => $regularRate,
+                        'amount' => 692.31,
+                    ]],
+                ]],
+                [
+                    $halfDay('2026-08-12', false),
+                    $halfDay('2026-08-17', true),
+                    $halfDay('2026-08-20', true),
+                    [
+                        'date' => '2026-08-18',
+                        'status' => 'halfday',
+                        'is_rest_day' => false,
+                        'regular_day_minutes' => 240,
+                        'regular_night_minutes' => 0,
+                        'required_minutes' => 480,
+                        'breakdown' => [[
+                            'component' => 'paid_leave',
+                            'minutes' => 240,
+                            'rate' => $regularRate,
+                            'amount' => 346.16,
+                        ]],
+                    ],
+                ],
+                array_map(
+                    static fn (int $day): array => [
+                        'date' => sprintf('2026-08-%02d', $day),
+                        'status' => 'absent',
+                        'is_rest_day' => false,
+                        'required_minutes' => 480,
+                    ],
+                    [13, 14, 15, 19, 21, 22, 24, 25]
+                )
+            ),
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $rows = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertEqualsWithDelta(1384.62, (float) ($rows['half_day']['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) ($rows['half_day']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(5538.48, (float) ($rows['absence']['amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) ($rows['absence']['deduction_amount'] ?? -1), 0.01);
+        $this->assertEqualsWithDelta(0.0, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1730.78, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
+
+        $frozen = app(PayslipService::class)->frozenSnapshotForPayslipView($snapshot);
+        $frozenBreakdown = $frozen['summary']['attendance_pay_breakdown'] ?? [];
+        $this->assertEqualsWithDelta(0.0, (float) ($frozenBreakdown['total_deduction'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) ($frozenBreakdown['rows'][2]['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(1730.78, (float) ($frozenBreakdown['regular_pay_after_reductions'] ?? 0), 0.02);
     }
 
     public function test_payslip_totals_snap_daily_rate_rounding_to_semi_monthly(): void
@@ -307,6 +1106,98 @@ class PayslipFrozenLineMetricsTest extends TestCase
 
         $this->assertSame(33158.0, round((float) ($normalized['summary']['display_gross_pay'] ?? 0), 2));
         $this->assertSame(17258.0, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
+    }
+
+    public function test_payslip_absences_units_use_scheduled_workdays(): void
+    {
+        $snapshot = [
+            'daily_rate' => 500,
+            'summary' => [
+                'daily_rate' => 500,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 1000,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'absent',
+                    'is_rest_day' => false,
+                    'required_minutes' => 540,
+                ],
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'absent',
+                    'is_rest_day' => true,
+                    'required_minutes' => 0,
+                ],
+                [
+                    'date' => '2026-08-12',
+                    'status' => 'absent',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $absenceRow = null;
+        foreach ($normalized['summary']['attendance_pay_breakdown']['rows'] ?? [] as $row) {
+            if (is_array($row) && ($row['key'] ?? '') === 'absence') {
+                $absenceRow = $row;
+                break;
+            }
+        }
+
+        $this->assertSame('2 days', $absenceRow['details'] ?? null);
+        $this->assertSame(2.0, (float) ($absenceRow['count'] ?? 0));
+    }
+
+    public function test_payslip_scheduled_days_include_unworked_special_holiday(): void
+    {
+        $snapshot = [
+            'daily_rate' => 500,
+            'summary' => [
+                'daily_rate' => 500,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 1000,
+                ]],
+            ],
+            'daily_computation_days' => [
+                [
+                    'date' => '2026-08-10',
+                    'status' => 'worked',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 0,
+                ],
+                [
+                    'date' => '2026-08-11',
+                    'status' => 'holiday',
+                    'is_rest_day' => false,
+                    'required_minutes' => 480,
+                    'holiday_premium_pay' => 500,
+                    'holiday' => ['name' => 'Kadayawan Festival', 'type' => 'special'],
+                ],
+            ],
+        ];
+
+        $normalized = app(PayslipService::class)->normalizeSnapshotForPayslipView($snapshot);
+        $breakdown = $normalized['summary']['attendance_pay_breakdown'] ?? [];
+        $absenceRow = null;
+        foreach ($breakdown['rows'] ?? [] as $row) {
+            if (is_array($row) && ($row['key'] ?? '') === 'absence') {
+                $absenceRow = $row;
+                break;
+            }
+        }
+
+        $this->assertSame(2, (int) ($breakdown['scheduled_days_count'] ?? 0));
+        $this->assertSame(0.0, (float) ($absenceRow['count'] ?? -1));
     }
 
     private function payslipServiceWithoutConstructor(): PayslipService

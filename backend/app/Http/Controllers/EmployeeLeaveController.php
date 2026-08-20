@@ -15,6 +15,7 @@ use App\Services\LeaveCreditService;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\PayrollPeriodMutationGuard;
+use App\Support\EmployeeScheduleResolver;
 use App\Support\LeaveFilingRules;
 use App\Support\LeaveModuleCache;
 use App\Support\LeaveScheduleSupport;
@@ -40,8 +41,6 @@ class EmployeeLeaveController extends Controller
         private readonly NotificationService $notificationService,
         private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
-
-    private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
     private function attendanceTimezone(): string
     {
@@ -241,6 +240,7 @@ class EmployeeLeaveController extends Controller
     {
         $fresh = User::query()
             ->select(['id', 'schedule', 'working_schedule_id'])
+            ->with('workingSchedule')
             ->where('id', $user->id)
             ->first();
 
@@ -248,16 +248,22 @@ class EmployeeLeaveController extends Controller
     }
 
     /**
+     * Day shift for leave/half-day checks — same source as My Schedule / admin leave
+     * ({@see EmployeeScheduleResolver}), not the legacy users.schedule JSON alone.
+     *
      * @return array|null Day schedule array or null when rest day / not configured.
      */
     private function getDayScheduleForDate(User $user, Carbon $date): ?array
     {
-        $schedule = $user->schedule;
-        if (! is_array($schedule) || $schedule === []) {
+        // Dated assignment first; if none covers this day, use the same current template My Schedule shows.
+        $resolved = EmployeeScheduleResolver::resolveForDate($user, $date);
+        if (! is_array($resolved) || $resolved === []) {
+            $resolved = EmployeeScheduleResolver::resolve($user);
+        }
+        if (! is_array($resolved) || $resolved === []) {
             return null;
         }
-        $dayKey = self::DAY_KEYS[(int) $date->format('w')];
-        $day = $schedule[$dayKey] ?? null;
+        $day = $resolved[EmployeeScheduleResolver::dayKeyForDate($date)] ?? null;
         if (! is_array($day) || $day === []) {
             return null;
         }
@@ -365,7 +371,8 @@ class EmployeeLeaveController extends Controller
         string $dateKey,
         string $halfType,
         string $halfDayTime,
-        string $tz
+        string $tz,
+        ?int $scheduleOptionId = null
     ): void {
         $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
         if (! $daySchedule) {
@@ -374,7 +381,14 @@ class EmployeeLeaveController extends Controller
             ]);
         }
 
-        AttendanceStatusService::validateHalfDayLeaveTime($dateKey, $daySchedule, $halfType, $halfDayTime, $tz);
+        AttendanceStatusService::validateHalfDayLeaveTime(
+            $dateKey,
+            $daySchedule,
+            $halfType,
+            $halfDayTime,
+            $tz,
+            $scheduleOptionId
+        );
     }
 
     /**
@@ -524,17 +538,27 @@ class EmployeeLeaveController extends Controller
         $validated = $request->validate([
             'date' => ['required', 'date'],
             'half_type' => ['nullable', 'string', 'in:am,pm'],
+            'schedule_option_id' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $dateKey = Carbon::parse($validated['date'], $tz)->toDateString();
-        $daySchedule = $this->getDayScheduleForDate($user, Carbon::parse($dateKey, $tz));
+        $date = Carbon::parse($dateKey, $tz);
+        $daySchedule = $this->getDayScheduleForDate($user, $date);
         if (! $daySchedule) {
+            $resolved = EmployeeScheduleResolver::resolveForDate($user, $date)
+                ?? EmployeeScheduleResolver::resolve($user);
+            $hasTemplate = is_array($resolved) && $resolved !== [];
             throw ValidationException::withMessages([
-                'date' => ['No working schedule is assigned for the selected date.'],
+                'date' => [
+                    $hasTemplate
+                        ? 'Selected date is a rest day on your work schedule.'
+                        : 'No working schedule is assigned for the selected date.',
+                ],
             ]);
         }
 
-        $windows = AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz);
+        $scheduleOptionId = isset($validated['schedule_option_id']) ? (int) $validated['schedule_option_id'] : null;
+        $windows = AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz, $scheduleOptionId);
         $halfType = strtolower(trim((string) ($validated['half_type'] ?? '')));
         $selected = $halfType === 'am' || $halfType === 'pm' ? ($windows[$halfType] ?? null) : null;
 
@@ -545,6 +569,7 @@ class EmployeeLeaveController extends Controller
             'suggested_time' => $selected
                 ? AttendanceStatusService::suggestedHalfDayTime($windows, $halfType)
                 : null,
+            'schedule_option_id' => $windows['selected_option_id'] ?? $scheduleOptionId,
         ]);
     }
 
@@ -780,6 +805,7 @@ class EmployeeLeaveController extends Controller
             // For half-day leave we require which half of the day is worked.
             'half_type' => ['nullable', 'string', 'in:am,pm'],
             'half_day_time' => ['nullable', 'date_format:H:i'],
+            'schedule_option_id' => ['nullable', 'integer', 'min:1'],
             'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
         ]);
 
@@ -808,22 +834,23 @@ class EmployeeLeaveController extends Controller
         }
 
         if ($type === 'half_day') {
+            // Half-day leave is always a single calendar date (0.5 credit).
+            $validated['end_date'] = $validated['start_date'];
+
             $halfType = $validated['half_type'] ?? null;
             if ($halfType === null || $halfType === '') {
                 throw ValidationException::withMessages([
-                    'half_type' => ['Half day type (AM or PM) is required.'],
+                    'half_type' => ['Please choose morning leave or afternoon leave.'],
                 ]);
-            }
-            if (empty($validated['end_date'])) {
-                $validated['end_date'] = $validated['start_date'];
             }
 
             $tz = $this->attendanceTimezone();
             $userForSchedule = $this->refreshUserForScheduleCheck($user);
             $dateKey = Carbon::parse($validated['start_date'], $tz)->toDateString();
             $daySchedule = $this->getDayScheduleForDate($userForSchedule, Carbon::parse($dateKey, $tz));
+            $scheduleOptionId = isset($validated['schedule_option_id']) ? (int) $validated['schedule_option_id'] : null;
             $windows = is_array($daySchedule)
-                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz)
+                ? AttendanceStatusService::halfDayLeaveWindows($dateKey, $daySchedule, $tz, $scheduleOptionId)
                 : ['is_flexible' => false];
             $halfDayTime = trim((string) ($validated['half_day_time'] ?? ''));
 
@@ -833,9 +860,23 @@ class EmployeeLeaveController extends Controller
                         'half_day_time' => ['Half-day time is required for your assigned schedule.'],
                     ]);
                 }
-                $this->validateHalfDayTimeOrThrow($userForSchedule, $dateKey, (string) $halfType, $halfDayTime, $tz);
+                $this->validateHalfDayTimeOrThrow(
+                    $userForSchedule,
+                    $dateKey,
+                    (string) $halfType,
+                    $halfDayTime,
+                    $tz,
+                    $scheduleOptionId
+                );
             } elseif ($halfDayTime !== '') {
-                $this->validateHalfDayTimeOrThrow($userForSchedule, $dateKey, (string) $halfType, $halfDayTime, $tz);
+                $this->validateHalfDayTimeOrThrow(
+                    $userForSchedule,
+                    $dateKey,
+                    (string) $halfType,
+                    $halfDayTime,
+                    $tz,
+                    $scheduleOptionId
+                );
             }
         }
 

@@ -97,6 +97,12 @@ import { LeaveCreditsSummaryPanel } from '@/components/leave/LeaveCreditsSummary
 import { LeaveModalCreditsCard } from '@/components/leave/LeaveModalCreditsCard'
 import { deriveLeaveCreditUsage, formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
 import {
+  halfDayBoundaryTimeLabel,
+  halfDayTypeListLabel,
+  halfDayTypeOptionLabel,
+  halfDayTypeShortLabel,
+} from '@/lib/halfDayLeaveLabels'
+import {
   clearRequestReviewSearchParams,
   extractLeaveRequestFromReviewPayload,
   leaveReviewSeedFromDashboardRow,
@@ -106,7 +112,7 @@ import {
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
 import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
-import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
+import ApproverAvatarNameCell, { approverFromApprovalProgress, approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
@@ -207,12 +213,7 @@ function billableCreditDaysForForm(form) {
   const t = String(form?.type || '').toLowerCase()
   if (t === 'undertime') return 0
   if (t === 'half_day') {
-    if (!form?.start_date) return 0
-    const end = form.end_date || form.start_date
-    const s = new Date(`${form.start_date}T12:00:00`)
-    const e = new Date(`${end}T12:00:00`)
-    const days = Math.max(1, Math.round((e - s) / 86400000) + 1)
-    return days * 0.5
+    return form?.start_date ? 0.5 : 0
   }
   if (!form?.start_date || !form?.end_date) return 0
   const s = new Date(`${form.start_date}T12:00:00`)
@@ -470,13 +471,21 @@ export default function AdminLeave() {
     const currentStep = Array.isArray(leave.approval_progress)
       ? leave.approval_progress.find((step) => step?.status === 'current')
       : null
+    const fromProgress = approverFromApprovalProgress(leave.approval_progress)
     const currentStage = leave.current_stage || currentStep?.label || leave.current_step_name
     const normalizedStage = normalizeApprovalHeadTitle(currentStage)
-    const currentApprover = leave.current_approver || leave.current_approver_name || currentStep?.approver_name
+    const currentApprover =
+      leave.current_approver_name
+      || leave.current_approver
+      || leave.approved_by_name
+      || currentStep?.approver_name
+      || fromProgress.name
+      || null
     const currentApproverImage =
       leave.current_approver_profile_image
       || leave.current_approver_profile_image_url
       || currentStep?.profile_image_url
+      || fromProgress.imageUrl
       || null
     const displayStatus = leave.display_status || (
       String(leave.status || '').toLowerCase() === 'pending' && normalizedStage
@@ -731,7 +740,9 @@ export default function AdminLeave() {
   }, [addOpen])
 
   const addSubjectUid = showEmployeePicker ? addForm.user_id : user?.id ? String(user.id) : ''
-  const addRangeEndYmd = addForm.end_date || addForm.start_date
+  const addRangeEndYmd = addForm.type === 'half_day'
+    ? addForm.start_date
+    : (addForm.end_date || addForm.start_date)
 
   useEffect(() => {
     if (!addOpen || !addSubjectUid || !addForm.start_date || !addRangeEndYmd) {
@@ -888,19 +899,25 @@ export default function AdminLeave() {
       : user?.id
         ? parseInt(String(user.id), 10)
         : null
-    if (!uid || !addForm.start_date || !addForm.end_date) {
+    if (!uid || !addForm.start_date) {
+      addLeaveSubmitLock.current = false
+      return
+    }
+    const isHalfDay = addForm.type === 'half_day'
+    const endDate = isHalfDay ? addForm.start_date : addForm.end_date
+    if (!isHalfDay && !endDate) {
       addLeaveSubmitLock.current = false
       return
     }
 
-    if (addForm.end_date < addForm.start_date) {
+    if (!isHalfDay && endDate < addForm.start_date) {
       setError('End date must be on or after the start date.')
       addLeaveSubmitLock.current = false
       return
     }
 
     if (addForm.type === 'half_day' && !addForm.half_type) {
-      setError('Please select whether the half day is AM or PM.')
+      setError('Please choose morning leave or afternoon leave.')
       addLeaveSubmitLock.current = false
       return
     }
@@ -939,7 +956,7 @@ export default function AdminLeave() {
         user_id: uid,
         type: addForm.type,
         start_date: addForm.start_date,
-        end_date: addForm.end_date,
+        end_date: endDate,
         ...(addForm.type === 'half_day'
           ? { half_type: addForm.half_type, half_day_time: addForm.half_day_time }
           : {}),
@@ -1540,7 +1557,7 @@ export default function AdminLeave() {
     const { type, start_date, end_date, half_type, half_day_time } = leave
     if (!start_date || !end_date) return '—'
     if (type === 'half_day') {
-      const label = half_type === 'am' ? 'AM' : half_type === 'pm' ? 'PM' : ''
+      const label = halfDayTypeShortLabel(half_type)
       const timeSuffix = half_day_time ? ` @ ${half_day_time}` : ''
       return `0.5 day${label ? ` (${label})` : ''}${timeSuffix}`
     }
@@ -2014,13 +2031,13 @@ export default function AdminLeave() {
                           {formatDateRange(leave.start_date, leave.end_date)}
                         </td>
                         <td className={requestModuleTdMutedClass}>
-                          {isUndertimeRow ? (
-                            undertimeMinutes !== null ? `${undertimeMinutes} min` : '—'
-                          ) : isHalfDayRow ? (
-                            leave.half_type === 'am' ? 'Half day (AM)' : leave.half_type === 'pm' ? 'Half day (PM)' : 'Half day'
-                          ) : (
-                            formatDuration(leave)
-                          )}
+                          {isUndertimeRow
+                            ? undertimeMinutes !== null
+                              ? `${undertimeMinutes} min`
+                              : '—'
+                            : isHalfDayRow
+                              ? halfDayTypeListLabel(leave.half_type)
+                              : formatDuration(leave)}
                         </td>
                         <td className={requestModuleTdClass}>
                           <LeaveCreditUsageBadge leave={leave} leaveCreditInfo={leaveCreditInfo} />
@@ -2229,11 +2246,7 @@ export default function AdminLeave() {
                           )
                         ) : isHalfDayRow ? (
                           <span className="text-xs text-muted-foreground">
-                            {leave.half_type === 'am'
-                              ? 'Half day (AM)'
-                              : leave.half_type === 'pm'
-                              ? 'Half day (PM)'
-                              : 'Half day'}
+                            {halfDayTypeListLabel(leave.half_type)}
                           </span>
                         ) : (
                           formatDuration(leave)
@@ -2662,7 +2675,9 @@ export default function AdminLeave() {
                       setAddForm((f) => ({
                         ...f,
                         type: t,
+                        end_date: t === 'half_day' ? f.start_date : f.end_date,
                         half_type: t === 'half_day' ? f.half_type : '',
+                        half_day_time: t === 'half_day' ? f.half_day_time : '',
                       }))
                     }}
                     className={adminLeaveModalSelectClass}
@@ -2675,7 +2690,9 @@ export default function AdminLeave() {
 
                 {addForm.type === 'half_day' ? (
                   <div className="space-y-2 sm:space-y-3">
-                    <Label htmlFor="add-half-type" className={adminLeaveModalLabelClass}>Half day type</Label>
+                    <Label htmlFor="add-half-type" className={adminLeaveModalLabelClass}>
+                      Which half is leave?
+                    </Label>
                     <select
                       id="add-half-type"
                       value={addForm.half_type}
@@ -2683,9 +2700,9 @@ export default function AdminLeave() {
                       className={cn(adminLeaveModalFieldClass, 'w-full')}
                       required
                     >
-                      <option value="">Select option</option>
-                      <option value="am">AM Half Day (leave morning, work afternoon)</option>
-                      <option value="pm">PM Half Day (work morning, leave afternoon)</option>
+                      <option value="">Select morning or afternoon leave</option>
+                      <option value="am">{halfDayTypeOptionLabel('am')}</option>
+                      <option value="pm">{halfDayTypeOptionLabel('pm')}</option>
                     </select>
                   </div>
                 ) : null}
@@ -2693,7 +2710,7 @@ export default function AdminLeave() {
                 {addForm.type === 'half_day' && addForm.half_type ? (
                   <div className="space-y-2 sm:space-y-3">
                     <Label htmlFor="add-half-day-time" className={adminLeaveModalLabelClass}>
-                      {addForm.half_type === 'pm' ? 'Work ends / leave starts at' : 'Work starts at'}
+                      {halfDayBoundaryTimeLabel(addForm.half_type)}
                     </Label>
                     <Input
                       id="add-half-day-time"
@@ -2710,7 +2727,28 @@ export default function AdminLeave() {
                 ) : null}
 
                 <div className="space-y-2 sm:space-y-3">
-                  <Label className={adminLeaveModalLabelClass}>Date range</Label>
+                  <Label className={adminLeaveModalLabelClass}>
+                    {addForm.type === 'half_day' ? 'Leave date' : 'Date range'}
+                  </Label>
+                  {addForm.type === 'half_day' ? (
+                    <div className="relative">
+                      <Input
+                        id="add-start"
+                        type="date"
+                        required
+                        value={addForm.start_date}
+                        onChange={(e) => {
+                          const d = e.target.value
+                          setAddForm((f) => ({
+                            ...f,
+                            start_date: d,
+                            end_date: d,
+                          }))
+                        }}
+                        className={cn(adminLeaveModalFieldClass, '[color-scheme:light] dark:[color-scheme:dark]')}
+                      />
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
                     <div className="relative">
                       <span className="pointer-events-none absolute left-3 top-2 text-xs font-medium text-muted-foreground sm:left-4 sm:text-sm">From</span>
@@ -2718,7 +2756,7 @@ export default function AdminLeave() {
                         id="add-start"
                         type="date"
                         required
-value={addForm.start_date}
+                        value={addForm.start_date}
                       onChange={(e) => {
                         const d = e.target.value
                         setAddForm((f) => ({
@@ -2742,6 +2780,7 @@ value={addForm.start_date}
                       />
                     </div>
                   </div>
+                  )}
                 </div>
 
                 {addRangeValidating && addSubjectUid && addForm.start_date && addRangeEndYmd ? (
@@ -2905,7 +2944,7 @@ value={addForm.start_date}
                 (showEmployeePicker && !addForm.user_id) ||
                 (!showEmployeePicker && !user?.id) ||
                 !addForm.start_date ||
-                !addForm.end_date
+                (addForm.type !== 'half_day' && !addForm.end_date)
               }
             >
               {addSubmitting && <Loader2 className="size-4 animate-spin" />}

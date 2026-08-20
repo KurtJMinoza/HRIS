@@ -1587,6 +1587,7 @@ class PayrollComputationService
                 'amount' => $leaveBaseAmount,
                 'taxable_compensation' => true,
                 'leave_type' => $leave->type,
+                'day_fraction' => round($factor, 4),
             ]];
             if ($isHolidayDay) {
                 $breakdown[] = [
@@ -1919,6 +1920,7 @@ class PayrollComputationService
         $dailyBreakdownTotals = [];
         $dailyBreakdownMinutes = [];
         $dailyBreakdownDays = [];
+        $dailyBreakdownDayUnits = [];
         foreach ($days as $d) {
             $dayTotalPay = (float) ($d['total_pay'] ?? 0);
             $regularPaidMinutes = (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0));
@@ -1930,9 +1932,11 @@ class PayrollComputationService
             $dayStatus = strtolower(trim((string) ($d['status'] ?? '')));
             $dayIsRest = (bool) ($d['is_rest_day'] ?? false);
             $dayBreakdown = (array) ($d['breakdown'] ?? []);
+            // halfday = worked half + approved half-day leave; still include the worked regular_pay slice.
+            $countsAsOrdinaryRegular = in_array($dayStatus, ['worked', 'halfday'], true) && ! $dayIsRest;
             $regularBasePay = collect($dayBreakdown)
-                ->filter(function ($entry) use ($dayStatus, $dayIsRest): bool {
-                    if ($dayStatus !== 'worked' || $dayIsRest) {
+                ->filter(function ($entry) use ($countsAsOrdinaryRegular): bool {
+                    if (! $countsAsOrdinaryRegular) {
                         return false;
                     }
 
@@ -1958,9 +1962,20 @@ class PayrollComputationService
             $totalRegularNight += (int) ($d['regular_night_minutes'] ?? 0);
             $totalOtDay += (int) ($d['ot_day_minutes'] ?? 0);
             $totalOtNight += (int) ($d['ot_night_minutes'] ?? 0);
-            if ($requiredMinutes > 0 && $dayStatus === 'worked' && ! $dayIsRest
+            if ($requiredMinutes > 0 && $countsAsOrdinaryRegular
                 && ! $this->dayIsWorkedSpecialNonWorkingHolidayExcludedFromRegularPay($d)) {
-                $actualWorkedDayUnits += min(1.0, $regularPaidMinutes / $requiredMinutes);
+                // Use regular_pay minutes so half-day leave minutes (merged into regular_* totals)
+                // are not counted as attendance-worked day units.
+                $workedRegularMinutes = (int) collect($dayBreakdown)
+                    ->filter(fn ($entry) => strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay')
+                    ->sum(fn ($entry) => max(0, (int) ($entry['minutes'] ?? 0)));
+                // Leave-only halfday has no regular_pay component; do not treat paid_leave minutes as worked.
+                if ($workedRegularMinutes <= 0 && $dayStatus === 'worked') {
+                    $workedRegularMinutes = $regularPaidMinutes;
+                }
+                if ($workedRegularMinutes > 0) {
+                    $actualWorkedDayUnits += min(1.0, $workedRegularMinutes / $requiredMinutes);
+                }
             }
             foreach ($dayBreakdown as $entry) {
                 $component = strtolower(trim((string) ($entry['component'] ?? '')));
@@ -1968,8 +1983,8 @@ class PayrollComputationService
                 if ($component === '' || $amount <= 0) {
                     continue;
                 }
-                // Regular-pay line is ordinary worked non-rest-day only.
-                if ($component === 'regular_pay' && ($dayStatus !== 'worked' || $dayIsRest)) {
+                // Regular-pay line is ordinary worked non-rest-day only (includes halfday worked half).
+                if ($component === 'regular_pay' && ! $countsAsOrdinaryRegular) {
                     continue;
                 }
                 // Accumulate exact (unrounded) amounts to avoid compounding rounding errors across days.
@@ -1977,7 +1992,19 @@ class PayrollComputationService
                 $dailyBreakdownTotals[$component] = (float) ($dailyBreakdownTotals[$component] ?? 0) + $amount;
                 $mins = (int) ($entry['minutes'] ?? 0);
                 $dailyBreakdownMinutes[$component] = ($dailyBreakdownMinutes[$component] ?? 0) + $mins;
-                if ($mins > 0) {
+                if (in_array($component, ['paid_leave', 'paid_leave_daily_flat'], true)) {
+                    $leaveType = strtolower(trim((string) ($entry['leave_type'] ?? '')));
+                    $fraction = array_key_exists('day_fraction', $entry)
+                        ? (float) $entry['day_fraction']
+                        : ($leaveType === 'half_day' ? 0.5 : 1.0);
+                    if ($fraction <= 0 && $mins > 0) {
+                        $fraction = $leaveType === 'half_day' ? 0.5 : 1.0;
+                    }
+                    if ($fraction > 0) {
+                        $dailyBreakdownDayUnits[$component] = (float) ($dailyBreakdownDayUnits[$component] ?? 0) + $fraction;
+                        $dailyBreakdownDays[$component] = ($dailyBreakdownDays[$component] ?? 0) + 1;
+                    }
+                } elseif ($mins > 0) {
                     $dailyBreakdownDays[$component] = ($dailyBreakdownDays[$component] ?? 0) + 1;
                 }
             }
@@ -2022,7 +2049,7 @@ class PayrollComputationService
         // above). $actualWorkedDayUnits still counts those days as "present", so using it for the Regular pay *units*
         // mislabels rows (e.g. "5 days" while amount is 4 × daily rate). Derive day-equivalent from amount ÷ daily rate.
         $dailyComputationEarningLines = collect($dailyBreakdownTotals)
-            ->map(function (float $amount, string $component) use ($componentLabelMap, $componentSortRank, $dailyBreakdownMinutes, $dailyBreakdownDays, $dailyRate, $attendanceDisplaySummary): array {
+            ->map(function (float $amount, string $component) use ($componentLabelMap, $componentSortRank, $dailyBreakdownMinutes, $dailyBreakdownDays, $dailyBreakdownDayUnits, $dailyRate, $attendanceDisplaySummary): array {
                 $mins = (int) ($dailyBreakdownMinutes[$component] ?? 0);
                 $dayCount = (int) ($dailyBreakdownDays[$component] ?? 0);
 
@@ -2041,7 +2068,8 @@ class PayrollComputationService
                 } elseif ($component === 'holiday_premium') {
                     $units = $dayCount > 0 ? $dayCount.' '.($dayCount === 1 ? 'day' : 'days') : null;
                 } elseif (in_array($component, ['paid_leave', 'paid_leave_daily_flat'], true)) {
-                    $units = $dayCount > 0 ? $dayCount.' '.($dayCount === 1 ? 'day' : 'days') : null;
+                    $dayUnits = (float) ($dailyBreakdownDayUnits[$component] ?? $dayCount);
+                    $units = $this->formatLeaveAdjustmentDayUnits($dayUnits);
                 } else {
                     $units = null;
                 }
@@ -2066,9 +2094,11 @@ class PayrollComputationService
                     ? round(($mins / 60.0) * $effectiveHourlyRate, 2)
                     : round($amount, 2);
 
+                $label = $componentLabelMap[$component] ?? Str::headline(str_replace('_', ' ', $component));
+
                 return [
                     'key' => 'daily:'.$component,
-                    'label' => $componentLabelMap[$component] ?? Str::headline(str_replace('_', ' ', $component)),
+                    'label' => $label,
                     'amount' => $canonicalAmount,
                     'units' => $units,
                     'minutes_worked' => $mins,
@@ -2555,8 +2585,9 @@ class PayrollComputationService
 
     /**
      * For each scheduled workday in the pay period (non-rest with required minutes > 0),
-     * credit a full 1.0 day-unit unless the day is an unpaid absence. Paid leave, approved
-     * corrections, and valid attendance all count as a whole payable day regardless of
+     * retain attendance and approved leave day-units for component-specific proration.
+     * Per-component leave settings determine whether a leave unit is payable.
+     * Valid attendance is not reduced by
      * tardiness, undertime, or early timeout — allowance proration is day-based, so lateness
      * is deducted from Regular pay hours only, never from the allowance proration.
      *
@@ -2578,6 +2609,8 @@ class PayrollComputationService
         $nonDeductibleDays = 0.0;
         $presentDays = 0.0;
         $approvedPaidLeaveDays = 0.0;
+        $approvedUnpaidLeaveDays = 0.0;
+        $unpaidAbsenceWithoutLeaveDays = 0.0;
         $approvedCorrectionDays = 0.0;
         $attendanceCounted = [];
         $attendanceExcluded = [];
@@ -2619,7 +2652,17 @@ class PayrollComputationService
                 ? (bool) ($resolution['unpaid_absent_day'] ?? false)
                 : ! (bool) ($d['allowance_attendance_valid'] ?? false);
             if ($isUnpaidAbsent) {
-                $unpaidAbsentDays += 1.0;
+                $isApprovedUnpaidLeave = $resolution !== null
+                    && (bool) data_get($resolution, 'sources.approved_unpaid_leave', false);
+                $unpaidDayUnit = $isApprovedUnpaidLeave
+                    ? max(0.0, min(1.0, (float) ($resolution['leave_day_unit'] ?? 1.0)))
+                    : 1.0;
+                $unpaidAbsentDays += $unpaidDayUnit;
+                if ($isApprovedUnpaidLeave) {
+                    $approvedUnpaidLeaveDays += $unpaidDayUnit;
+                } else {
+                    $unpaidAbsenceWithoutLeaveDays += $unpaidDayUnit;
+                }
                 if ($dateKey !== '') {
                     $row = [
                         'date' => $dateKey,
@@ -2629,6 +2672,7 @@ class PayrollComputationService
                             ? (string) ($resolution['reason'] ?? 'unpaid_absence')
                             : (string) ($d['allowance_attendance_reason'] ?? 'unpaid_absence'),
                         'sources' => $resolution['sources'] ?? ($d['allowance_attendance_sources'] ?? []),
+                        'leave_day_unit' => $isApprovedUnpaidLeave ? round($unpaidDayUnit, 6) : null,
                     ];
                     $attendanceExcluded[] = $row;
                     $unpaidAbsences[] = $row;
@@ -2678,6 +2722,8 @@ class PayrollComputationService
                 'payable_day_units' => round($payableDays, 6),
                 'present_day_units' => round($presentDays, 6),
                 'approved_paid_leave_day_units' => round($approvedPaidLeaveDays, 6),
+                'approved_unpaid_leave_day_units' => round($approvedUnpaidLeaveDays, 6),
+                'unpaid_absence_without_leave_day_units' => round($unpaidAbsenceWithoutLeaveDays, 6),
                 'approved_correction_day_units' => round($approvedCorrectionDays, 6),
                 'unpaid_absent_days' => round($unpaidAbsentDays, 6),
                 'non_deductible_days' => round($nonDeductibleDays, 6),
@@ -2695,9 +2741,9 @@ class PayrollComputationService
     }
 
     /**
-     * Centralized payable-day resolver for proratable allowances/components.
-     * Present/corrected/paid-leave days are payable; only scheduled workdays with no payable
-     * signal are unpaid absences. Hours worked, tardiness, and undertime are deliberately ignored.
+     * Centralized attendance and leave-day resolver for proratable allowances/components.
+     * Present and corrected days are payable. Each component later decides whether a paid or
+     * unpaid leave day is payable. Hours worked, tardiness, and undertime are ignored.
      *
      * @return array<string, mixed>
      */
@@ -2751,6 +2797,7 @@ class PayrollComputationService
                 'scheduled_deductible_day' => true,
                 'payable_day' => $isPaidLeave,
                 'unpaid_absent_day' => ! $isPaidLeave,
+                'leave_day_unit' => $payableDayUnit,
                 'payable_day_unit' => $isPaidLeave ? $payableDayUnit : 0.0,
                 'reason' => $isPaidLeave ? 'approved_paid_leave' : 'approved_unpaid_leave',
                 'sources' => array_merge($attendance['sources'] ?? [], [
@@ -3355,6 +3402,45 @@ class PayrollComputationService
     }
 
     /**
+     * Payslip unit label for leave adjustment day fractions (supports half-day 0.5).
+     */
+    private function formatLeaveAdjustmentDayUnits(float $dayUnits): ?string
+    {
+        if ($dayUnits <= 0) {
+            return null;
+        }
+        $rounded = round($dayUnits, 2);
+        $label = rtrim(rtrim(number_format($rounded, 2, '.', ''), '0'), '.');
+        if ($label === '') {
+            $label = '0';
+        }
+
+        return $label.' '.((abs($rounded - 1.0) < 0.00001) ? 'day' : 'days');
+    }
+
+    /**
+     * Attendance-backed regular minutes from the day breakdown (excludes paid leave minutes).
+     */
+    private function attendanceBackedRegularPayMinutes(array $day): int
+    {
+        $minutes = 0;
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                continue;
+            }
+            if ((float) ($entry['amount'] ?? 0) <= 0.0001) {
+                continue;
+            }
+            $minutes += max(0, (int) ($entry['minutes'] ?? 0));
+        }
+
+        return $minutes;
+    }
+
+    /**
      * @param  array<int, array<string, mixed>>  $days
      * @param  array<string, mixed>  $effectiveSchedule
      * @return array<string, mixed>
@@ -3362,7 +3448,8 @@ class PayrollComputationService
     private function buildAttendanceDisplaySummary(array $days, array $effectiveSchedule, string $tz): array
     {
         $lines = [];
-        $presenceDays = 0;
+        $presenceDayUnits = 0.0;
+        $regularRateDayUnits = 0.0;
         $totalMinutesRegularRateDays = 0;
         $totalMinutesAllPresence = 0;
 
@@ -3375,28 +3462,30 @@ class PayrollComputationService
             // Schedule module = single source of truth for rest days.
             $dayCfgForRestCheck = $effectiveSchedule[$dayKey] ?? null;
             $dayIsScheduledRestDay = ($day['is_rest_day'] ?? false) === true || $dayCfgForRestCheck === null;
-            $dayHasActualAttendance = (int) ($day['worked_minutes'] ?? 0) > 0;
+            $status = strtolower(trim((string) ($day['status'] ?? '')));
+            $attendanceRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
+            // Leave-only halfday/leave sets regular_* from paid_leave; that is not attendance presence.
+            if ($attendanceRegularMinutes <= 0 && $status === 'worked') {
+                $attendanceRegularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
+            }
+            $dayHasActualAttendance = $attendanceRegularMinutes > 0 || (int) ($day['worked_minutes'] ?? 0) > 0;
             if ($dayIsScheduledRestDay && ! $dayHasActualAttendance) {
                 continue;
             }
-            $status = strtolower(trim((string) ($day['status'] ?? '')));
-            // Attendance module source of truth: only actual present/worked days count toward
-            // regular-pay day display. Leave may be compensated, but is not a "present day".
-            if (! in_array($status, ['worked', 'halfday'], true)) {
+            // Regular-pay day display: attendance-backed regular_pay only (not leave credits).
+            if ($attendanceRegularMinutes <= 0) {
                 continue;
             }
             if ($dayIsScheduledRestDay) {
                 // Present on a rest day is treated as premium/rest-day work, not ordinary regular day.
                 continue;
             }
-            $regularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
-            // Only attendance-backed regular minutes.
-            if ($regularMinutes <= 0) {
-                continue;
-            }
 
-            $totalMinutesAllPresence += $regularMinutes;
-            $presenceDays++;
+            // Present calendar day = 1 unit on Regular pay (half-day worked still counts as 1 day).
+            $dayUnit = 1.0;
+
+            $totalMinutesAllPresence += $attendanceRegularMinutes;
+            $presenceDayUnits += $dayUnit;
 
             // Worked SH: full rate on holiday line. Unworked RH/SH: holiday-only pay.
             if ($this->dayIsPremiumHolidayExcludedFromRegularAttendanceSummary($day)
@@ -3412,12 +3501,13 @@ class PayrollComputationService
                 'date' => $dateKey,
                 'shift' => $shift,
             ];
-            $totalMinutesRegularRateDays += $regularMinutes;
+            $totalMinutesRegularRateDays += $attendanceRegularMinutes;
+            $regularRateDayUnits += $dayUnit;
         }
 
         return [
-            'working_days_count' => count($lines),
-            'presence_days_count' => $presenceDays,
+            'working_days_count' => round($regularRateDayUnits, 4),
+            'presence_days_count' => round($presenceDayUnits, 4),
             'lines' => $lines,
             'total_regular_hours' => round($totalMinutesRegularRateDays / 60, 2),
             'total_presence_regular_hours' => round($totalMinutesAllPresence / 60, 2),

@@ -872,7 +872,7 @@ class HolidayPayPolicyService
                 'rule' => $isFollowing ? 'present_following_workday' : 'present_previous_workday',
             ];
         }
-        if (($attendance['paid_leave_qualifies'] ?? true) && $this->hasApprovedPaidLeave($employee, $workdayKey)) {
+        if (($this->paidLeaveQualifiesForDirection($attendance, $isFollowing)) && $this->hasApprovedPaidLeave($employee, $workdayKey)) {
             return [
                 'date' => $includeDate ? $workdayKey : null,
                 'met' => true,
@@ -887,6 +887,18 @@ class HolidayPayPolicyService
             'reason' => "Absent without pay on the immediately {$position} working day.",
             'rule' => $isFollowing ? 'unpaid_absence_following_workday' : 'unpaid_absence_previous_workday',
         ];
+    }
+
+    private function paidLeaveQualifiesForDirection(array $attendance, bool $isFollowing): bool
+    {
+        $key = $isFollowing
+            ? 'paid_leave_qualifies_following_workday'
+            : 'paid_leave_qualifies_previous_workday';
+        if (array_key_exists($key, $attendance)) {
+            return (bool) $attendance[$key];
+        }
+
+        return (bool) ($attendance['paid_leave_qualifies'] ?? true);
     }
 
     private function isFutureAttendanceDate(string $dateKey): bool

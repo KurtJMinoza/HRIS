@@ -11,7 +11,7 @@ function getInitials(name) {
 }
 
 /**
- * Prefer pending (current) step; else latest completed/rejected step with an approver name.
+ * Prefer pending (current) step with a person; else latest completed/rejected step with an approver name.
  */
 export function approverFromApprovalProgress(progress) {
   if (!Array.isArray(progress)) {
@@ -26,14 +26,15 @@ export function approverFromApprovalProgress(progress) {
     const name = String(step.approver_name || '').trim()
     if (status === 'current') {
       current = step
-      break
+      continue
     }
     if ((status === 'completed' || status === 'rejected') && name) {
       lastActed = step
     }
   }
 
-  const step = current || lastActed
+  const currentName = String(current?.approver_name || '').trim()
+  const step = currentName ? current : (lastActed || current)
   const name = String(step?.approver_name || '').trim()
   const imageUrl = step?.profile_image_url || null
 

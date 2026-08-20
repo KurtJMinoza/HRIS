@@ -7,6 +7,7 @@ use App\Models\ScheduleRequest;
 use App\Models\ScheduleRequestApprovalAudit;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\EmployeeOrganizationAssignmentService;
 use App\Services\HrRoleResolver;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\ScheduleApprovalService;
@@ -31,8 +32,16 @@ class ScheduleRequestController extends MyScheduleController
         ScheduleApprovalService $scheduleApprovalService,
         HrRoleResolver $hrRoleResolver,
         ScheduleRequestPayloadService $scheduleRequestPayloadService,
+        EmployeeOrganizationAssignmentService $organizationAssignments,
     ) {
-        parent::__construct($approvalChainResolver, $scheduleApprovalService, $hrRoleResolver, $scheduleRequestPayloadService);
+        parent::__construct(
+            $approvalChainResolver,
+            $scheduleApprovalService,
+            $hrRoleResolver,
+            $scheduleRequestPayloadService,
+            $organizationAssignments,
+            $approvalWorkflowService,
+        );
     }
 
     public function index(Request $request): JsonResponse

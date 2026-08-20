@@ -35,6 +35,8 @@ class Policy extends Model
             'paid_suspension_qualifies' => true,
             'require_previous_workday_presence' => true,
             'require_following_workday_presence' => false,
+            'paid_leave_qualifies_previous_workday' => true,
+            'paid_leave_qualifies_following_workday' => true,
             'skip_rest_days' => true,
             'skip_company_non_working_days' => true,
         ],

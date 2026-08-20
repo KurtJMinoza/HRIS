@@ -69,6 +69,8 @@ const EMPTY_FORM = {
   contributes_philhealth: false,
   contributes_pagibig: false,
   is_proratable: false,
+  allowance_proration_include_paid_leave: false,
+  allowance_proration_include_unpaid_leave: false,
   apply_to_all: false,
   component_type: 'user',
   is_system_protected: false,
@@ -78,6 +80,7 @@ const EMPTY_FORM = {
   is_loan: false,
   is_amortized: false,
   default_term_months: '',
+  metadata: {},
 }
 
 const CATEGORY_OPTIONS = [
@@ -332,6 +335,8 @@ export default function AdminPayComponentsPage() {
       contributes_philhealth: Boolean(item.contributes_philhealth),
       contributes_pagibig: Boolean(item.contributes_pagibig),
       is_proratable: Boolean(item.is_proratable),
+      allowance_proration_include_paid_leave: readMetadataBoolean(meta.allowance_proration_include_paid_leave),
+      allowance_proration_include_unpaid_leave: readMetadataBoolean(meta.allowance_proration_include_unpaid_leave),
       apply_to_all: Boolean(item.apply_to_all),
       component_type: item.component_type || 'user',
       is_system_protected: Boolean(item.is_system_protected),
@@ -341,6 +346,7 @@ export default function AdminPayComponentsPage() {
       is_loan: Boolean(item.is_loan),
       is_amortized: Boolean(item.is_amortized),
       default_term_months: item.default_term_months != null && item.default_term_months !== '' ? String(item.default_term_months) : '',
+      metadata: { ...meta },
     })
     setCodeTouched(true)
     setDialogOpen(true)
@@ -444,7 +450,11 @@ export default function AdminPayComponentsPage() {
         defaultValueOut = Number(form.default_hourly_rate || form.default_value || 0)
       }
 
-      const metadata = {}
+      const metadata = form.metadata && typeof form.metadata === 'object' ? { ...form.metadata } : {}
+      delete metadata.default_hourly_rate
+      delete metadata.default_hours
+      delete metadata.default_days
+      delete metadata.default_percent
       if (calc === 'hourly') {
         if (form.default_hourly_rate !== '' && form.default_hourly_rate !== null) {
           metadata.default_hourly_rate = Number(form.default_hourly_rate)
@@ -461,6 +471,8 @@ export default function AdminPayComponentsPage() {
           metadata.default_percent = Number(form.default_percent)
         }
       }
+      metadata.allowance_proration_include_paid_leave = Boolean(form.allowance_proration_include_paid_leave)
+      metadata.allowance_proration_include_unpaid_leave = Boolean(form.allowance_proration_include_unpaid_leave)
 
       const isLoanComp = form.type === 'deduction' && Boolean(form.is_loan)
       const termMonthsRaw = String(form.default_term_months || '').trim()
@@ -482,6 +494,8 @@ export default function AdminPayComponentsPage() {
       delete payload.default_hours
       delete payload.default_days
       delete payload.default_percent
+      delete payload.allowance_proration_include_paid_leave
+      delete payload.allowance_proration_include_unpaid_leave
 
       const response = editingId
         ? await updatePayComponent(editingId, payload)
@@ -585,6 +599,7 @@ export default function AdminPayComponentsPage() {
         is_amortized: Boolean(item.is_amortized),
         default_term_months:
           item.default_term_months != null && item.default_term_months !== '' ? Number(item.default_term_months) : null,
+        metadata: item.metadata && typeof item.metadata === 'object' ? { ...item.metadata } : null,
       })
       toast({ title: 'Pay components', description: 'Component duplicated successfully.' })
       await loadComponents()
@@ -638,6 +653,10 @@ export default function AdminPayComponentsPage() {
   const isBasicSalaryComponent = useMemo(() => {
     return isBasicSalaryForm(form)
   }, [form])
+  const showAllowanceLeaveControls = !isBasicSalaryComponent
+    && form.type === 'earning'
+    && Boolean(form.is_proratable)
+    && isAllowanceComponentForm(form)
 
   const categoryOptions = form.type === 'deduction' ? DEDUCTION_CATEGORY_OPTIONS : CATEGORY_OPTIONS
 
@@ -1284,11 +1303,36 @@ export default function AdminPayComponentsPage() {
 
                     <ToggleCard
                       title="Pro-ratable"
-                      description="When enabled, this component is reduced only for unpaid absences. Approved paid leaves, valid attendance, and approved attendance corrections still receive the full amount."
+                      description="Calculate this allowance from payable workdays. Configure leave eligibility below."
                       checked={form.is_proratable}
                       onChange={(checked) => updateForm({ is_proratable: checked })}
                     />
                   </div>
+
+                  {showAllowanceLeaveControls ? (
+                    <div className="space-y-2.5">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Allowance proration during leave</p>
+                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                          Leave days are excluded by default. Turn on only the leave types that should receive this allowance.
+                        </p>
+                      </div>
+                      <div className="grid gap-2.5 sm:grid-cols-2">
+                        <ToggleCard
+                          title="Pay during paid leave"
+                          description="Include approved paid leave days when this allowance is prorated."
+                          checked={Boolean(form.allowance_proration_include_paid_leave)}
+                          onChange={(checked) => updateForm({ allowance_proration_include_paid_leave: checked })}
+                        />
+                        <ToggleCard
+                          title="Pay during unpaid leave"
+                          description="Include approved unpaid leave days when this allowance is prorated."
+                          checked={Boolean(form.allowance_proration_include_unpaid_leave)}
+                          onChange={(checked) => updateForm({ allowance_proration_include_unpaid_leave: checked })}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div
                     className={cn(
@@ -1538,6 +1582,20 @@ function isBasicSalaryForm(form) {
   return String(form.code || '').trim().toUpperCase() === 'BASIC_SALARY'
     || String(form.category || '').trim().toLowerCase() === 'basic salary'
     || String(form.name || '').trim().toLowerCase() === 'basic salary'
+}
+
+function isAllowanceComponentForm(form) {
+  const haystack = [form.category, form.name, form.code]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ')
+  return haystack.includes('allowance')
+}
+
+function readMetadataBoolean(value) {
+  if (typeof value === 'string') {
+    return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+  }
+  return Boolean(value)
 }
 
 function isCoreBasicSalaryComponent(item) {

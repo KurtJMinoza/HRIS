@@ -798,7 +798,11 @@ class PayslipController extends Controller
                 // Keep the draft row aligned with what the user sees so PDF/export/batch totals
                 // do not fall back to an older generated snapshot.
                 try {
-                    $refreshedPayslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($payslip, $employee);
+                    $refreshedPayslip = $this->payslipService->refreshDraftPayslipFromLiveComputation(
+                        $payslip,
+                        $employee,
+                        $live,
+                    );
                     $storedSnapshot = is_array($refreshedPayslip->snapshot) ? $refreshedPayslip->snapshot : [];
                     $storedMetrics = $this->payslipService->payslipLineTotalsFromSnapshot($storedSnapshot);
                     // Live computation is the base response, but generated/frozen earning lines
@@ -820,8 +824,33 @@ class PayslipController extends Controller
                 }
 
                 return response()->json($live);
-            } catch (\RuntimeException $e) {
-                return response()->json(['message' => $e->getMessage()], 422);
+            } catch (\Throwable $e) {
+                Log::warning('Payslip view: live payroll computation failed; using stored draft snapshot', [
+                    'payslip_id' => (int) $payslip->id,
+                    'employee_id' => (int) $employee->id,
+                    'exception' => $e::class,
+                    'error' => $e->getMessage(),
+                ]);
+
+                $company = $payslip->company ?? $employee->company;
+                $fallback = PayslipStoredSnapshotViewPayload::fromStoredPayslip(
+                    $payslip,
+                    $employee,
+                    $this->payslipService,
+                    $this->publicCompanyLogoUrl($company?->logo),
+                    false,
+                );
+                $fallback['mode'] = 'draft';
+                $fallback['source'] = 'stored_snapshot_fallback';
+                $fallback['computed_at'] = $payslip->updated_at?->toIso8601String();
+                $fallback['payroll'] = array_merge($fallback['payroll'] ?? [], [
+                    'status' => (string) ($payslip->status ?? Payslip::STATUS_DRAFT),
+                    'mode' => 'draft',
+                    'source' => 'stored_snapshot_fallback',
+                    'computed_at' => $fallback['computed_at'],
+                ]);
+
+                return response()->json($fallback);
             }
         }
 

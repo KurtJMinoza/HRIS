@@ -261,7 +261,7 @@ class OvertimeController extends Controller
         $pageIds = $pageRows->pluck('id')->map(fn ($id) => (int) $id)->all();
         $latestActedApprovals = $this->approvalWorkflowService->latestActedApprovalRecords(
             OrgApprovalWorkflowService::MODULE_OVERTIME,
-            array_values(array_filter($pageIds, static fn (int $id): bool => ! isset($currentApprovals[$id]))),
+            $pageIds,
         );
 
         $items = $pageRows->map(function (Overtime $o) use ($actor, $currentApprovals, $latestActedApprovals) {

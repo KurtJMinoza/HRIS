@@ -2003,7 +2003,7 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="flex items-center gap-1.5 text-muted-foreground">
                     <Sun className="size-3.5 text-amber-500" />
-                    AM Half-Day
+                    Morning leave
                   </span>
                   <span className="font-bold tabular-nums">
                     {halfDaySummary.am_today ?? 0}
@@ -2017,7 +2017,7 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between text-sm">
                   <span className="flex items-center gap-1.5 text-muted-foreground">
                     <Moon className="size-3.5 text-indigo-500" />
-                    PM Half-Day
+                    Afternoon leave
                   </span>
                   <span className="font-bold tabular-nums">
                     {halfDaySummary.pm_today ?? 0}
@@ -4105,7 +4105,7 @@ export default function AdminDashboard() {
                             emp.half_type === 'am' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-200' : 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-200'
                           }`}>
                             {emp.half_type === 'am' ? <Sun className="size-3" /> : <Moon className="size-3" />}
-                            {emp.half_type === 'am' ? 'AM' : 'PM'}
+                            {emp.half_type === 'am' ? 'Morning leave' : 'Afternoon leave'}
                           </span>
                         </td>
                         <td className="py-2.5 px-2 text-muted-foreground max-w-[180px] truncate" title={emp.notes ?? undefined}>
