@@ -1,6 +1,7 @@
 import { Fragment, useMemo } from 'react'
 import { companyLogoUrl } from '@/api'
 import { displayCompanyAddress, displayCompanyTin } from '@/lib/payslipCompanyDisplay'
+import { HIDDEN_PAYSLIP_AMOUNT } from '@/lib/payslipAmountPrivacy'
 import { cn } from '@/lib/utils'
 
 function peso(v) {
@@ -96,11 +97,18 @@ function isPublishedPayslipStatus(status) {
 
 /**
  * On-screen payslip layout (finalize preview page, modals, print).
- * @param {{ data: object | null, isPreviewMode?: boolean }} props
+ * @param {{ data: object | null, isPreviewMode?: boolean, hideAmounts?: boolean }} props
  */
-export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
+export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts = false }) {
   const summary = data?.summary
   const hasPositiveAmount = (line) => Number(line?.amount || 0) > 0
+  const displayAmount = (value) => (
+    hideAmounts
+      ? HIDDEN_PAYSLIP_AMOUNT
+      : Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  )
+  const displayPeso = (value) => (hideAmounts ? HIDDEN_PAYSLIP_AMOUNT : peso(value))
+  const displayAttendanceDeduction = (value) => (hideAmounts ? HIDDEN_PAYSLIP_AMOUNT : attendanceDeduction(value))
 
   const isExecomPayroll = useMemo(() => {
     const moduleValue = String(data?.payroll?.payroll_module || data?.payroll_module || summary?.payroll_module || '').toLowerCase()
@@ -336,15 +344,15 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
             </div>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Daily Rate</p>
-              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{peso(data?.payroll?.daily_rate || data?.summary?.daily_rate || 0)}</p>
+              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{displayPeso(data?.payroll?.daily_rate || data?.summary?.daily_rate || 0)}</p>
             </div>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Monthly Basic Salary</p>
-              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{peso(data?.summary?.monthly_basic_salary || 0)}</p>
+              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{displayPeso(data?.summary?.monthly_basic_salary || 0)}</p>
             </div>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Semi-Monthly Basic Salary</p>
-              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{peso(data?.summary?.semi_monthly_basic_salary || 0)}</p>
+              <p className="mt-1 font-semibold tabular-nums text-[#0A0A0A]">{displayPeso(data?.summary?.semi_monthly_basic_salary || 0)}</p>
             </div>
           </div>
         </section>
@@ -420,11 +428,11 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                             {formatUnits(line?.minutes_worked, line?.units) || '-'}
                           </td>
                           <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-semibold tabular-nums text-[#0A0A0A]">
-                            {Number(
+                            {displayAmount(
                               isRegularPayLine && line?.display_amount != null
                                 ? line.display_amount
                                 : (line?.amount || 0),
-                            ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            )}
                           </td>
                         </tr>
                         {isRegularPayLine && !isConsultantPayroll && attendanceBreakdown?.available ? (
@@ -440,14 +448,14 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                               <tr key={`attendance-detail-${row?.key || rowIdx}`} className="bg-slate-50/45">
                                 <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/70">{row?.label || 'Attendance adjustment'}</td>
                                 <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">{attendanceDetails(row)}</td>
-                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/70">{attendanceDeduction(row?.deduction_amount ?? row?.amount)}</td>
+                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] tabular-nums text-[#0A0A0A]/70">{displayAttendanceDeduction(row?.deduction_amount ?? row?.amount)}</td>
                               </tr>
                             ))}
                             <tr className="border-b border-emerald-100 bg-slate-50/45">
                               <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/75">Total attendance reductions</td>
                               <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
                               <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]/75">
-                                {attendanceDeduction(attendanceBreakdown?.total_deduction)}
+                                {displayAttendanceDeduction(attendanceBreakdown?.total_deduction)}
                               </td>
                             </tr>
                             {attendanceBreakdown?.regular_pay_after_reductions != null ? (
@@ -455,7 +463,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                                 <td className="py-1.5 pl-6 pr-2 text-[13px] font-semibold text-[#0A0A0A]/80">Regular pay after reductions</td>
                                 <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">-</td>
                                 <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
-                                  {Number(attendanceBreakdown.regular_pay_after_reductions || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  {displayAmount(attendanceBreakdown.regular_pay_after_reductions)}
                                 </td>
                               </tr>
                             ) : null}
@@ -473,7 +481,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                     <td className="py-3 pl-3 pr-2 text-[15px] font-bold">Total Gross Earnings</td>
                     <td className="px-2 py-3 text-center text-[13px] font-bold text-[#0A0A0A]/70" />
                     <td className="py-3 pl-2 pr-3 text-right text-[15px] font-bold tabular-nums">
-                      {displayedGrossPay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {displayAmount(displayedGrossPay)}
                     </td>
                   </tr>
                 </tbody>
@@ -508,14 +516,14 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
                     >
                       <td className="py-2.5 pl-3 pr-2 font-normal text-[#0A0A0A]/88">{line?.label || 'Deduction'}</td>
                       <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-medium tabular-nums text-[#0A0A0A]">
-                        {Number(line?.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {displayAmount(line?.amount)}
                       </td>
                     </tr>
                   ))}
                   <tr className="border-t border-red-100 bg-white text-[#0A0A0A]">
                     <td className="py-3 pl-3 pr-2 text-[15px] font-bold">Total Deductions</td>
                     <td className="py-3 pl-2 pr-3 text-right text-[15px] font-bold tabular-nums">
-                      {Number(data?.amounts?.total_deductions || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {displayAmount(data?.amounts?.total_deductions)}
                     </td>
                   </tr>
                 </tbody>
@@ -531,14 +539,14 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false }) {
           >
             <p className="text-[11px] font-medium uppercase tracking-[0.32em] text-white/65">Net Take-Home Pay</p>
             <p className="mt-2 text-4xl font-bold tabular-nums leading-none tracking-tight text-white print:text-3xl @md:text-5xl">
-              {peso(displayedNetPay)}
+              {displayPeso(displayedNetPay)}
             </p>
             <p className="mt-4 text-[14px] font-normal leading-snug text-white/60">
               For the period {payCycleRangeNumeric(data?.payroll?.pay_period_start, data?.payroll?.pay_period_end)}
             </p>
-            {netPay < 0 ? (
+            {!hideAmounts && netPay < 0 ? (
               <p className="mt-2 text-[12px] font-semibold text-red-100">Negative Net Pay</p>
-            ) : netPay === 0 ? (
+            ) : !hideAmounts && netPay === 0 ? (
               <p className="mt-2 text-[12px] font-normal text-white/50">Zero net pay</p>
             ) : null}
           </div>

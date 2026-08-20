@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, FileDown, Loader2, Printer, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff, FileDown, Loader2, Printer, RefreshCw } from 'lucide-react'
 import {
   adminPreviewPayslipEmployeeBlob,
   getAdminPayslipViewData,
@@ -14,16 +14,21 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/use-toast'
+import { usePayslipAmountPrivacy } from '@/lib/payslipAmountPrivacy'
 
 export default function AdminPayslipViewPage() {
   const { payslipId } = useParams()
   const { pathname, state: locationState } = useLocation()
   const [searchParams] = useSearchParams()
   const { user } = useAuth()
+  const { amountsHidden, toggleAmountsHidden } = usePayslipAmountPrivacy(user?.id)
   const { toast } = useToast()
   const navigate = useNavigate()
   const hrBase = useHrBasePath()
   const employeeSelfServiceView = pathname.includes('/employee/payslips/view/')
+  const adminMyPayslipView = searchParams.get('my_payslip') === '1'
+  const ownPayslipView = employeeSelfServiceView || adminMyPayslipView
+  const hideAmounts = ownPayslipView && amountsHidden
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [downloading, setDownloading] = useState(false)
@@ -134,6 +139,10 @@ export default function AdminPayslipViewPage() {
       navigate(`${hrBase}/payslips`)
       return
     }
+    if (adminMyPayslipView) {
+      navigate(`${hrBase}/compensation/payslips`)
+      return
+    }
     const returnToRaw = String(searchParams.get('return_to') || '').trim()
     if (returnToRaw.startsWith(`${hrBase}/`) || (returnToRaw.startsWith('/') && !returnToRaw.startsWith('//'))) {
       navigate(returnToRaw)
@@ -158,6 +167,7 @@ export default function AdminPayslipViewPage() {
     navigate,
     getFinalizePayrollListUrl,
     employeeSelfServiceView,
+    adminMyPayslipView,
     hrBase,
     locationState?.payslipBackTo,
     searchParams,
@@ -348,6 +358,19 @@ export default function AdminPayslipViewPage() {
                   Recompute
                 </Button>
               ) : null}
+              {ownPayslipView ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 w-10 rounded-xl border-slate-200/90 bg-white p-0 text-[#0A0A0A] shadow-sm dark:border-slate-700 dark:bg-card"
+                  onClick={toggleAmountsHidden}
+                  aria-label={hideAmounts ? 'Show payslip amounts' : 'Hide payslip amounts'}
+                  aria-pressed={hideAmounts}
+                  title={hideAmounts ? 'Show payslip amounts' : 'Hide payslip amounts'}
+                >
+                  {hideAmounts ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"
@@ -376,7 +399,7 @@ export default function AdminPayslipViewPage() {
           </div>
         </div>
 
-        <PayslipHtmlDocument data={data} isPreviewMode={isPreviewMode} />
+        <PayslipHtmlDocument data={data} isPreviewMode={isPreviewMode} hideAmounts={hideAmounts} />
       </div>
     </div>
   )
