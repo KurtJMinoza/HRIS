@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -64,13 +65,14 @@ final class OvertimeFilingRules
      */
     public static function clockInOutPresenceForDate(int $userId, string $dateYmd, string $tz): array
     {
-        $start = Carbon::parse($dateYmd, $tz)->startOfDay()->utc();
-        $end = Carbon::parse($dateYmd, $tz)->endOfDay()->utc();
+        // Same basis as AttendanceSessionService / payroll: verified_at punches + active approved corrections (incl. manual attendance).
+        $dayStartUtc = Carbon::parse($dateYmd, $tz)->startOfDay()->setTimezone('UTC');
+        $dayEndUtc = Carbon::parse($dateYmd, $tz)->endOfDay()->setTimezone('UTC');
 
         $logs = AttendanceLog::query()
             ->where('user_id', $userId)
-            ->whereBetween('created_at', [$start, $end])
-            ->orderBy('created_at')
+            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
+            ->orderBy('verified_at')
             ->get();
 
         $hasClockIn = false;
@@ -78,18 +80,33 @@ final class OvertimeFilingRules
         $lastClockOutAt = null;
 
         foreach ($logs as $log) {
+            $stamp = $log->verified_at ?? $log->created_at;
             if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
                 $hasClockIn = true;
             } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
                 $hasClockOut = true;
-                $lastClockOutAt = $log->created_at;
+                if ($lastClockOutAt === null || $stamp->greaterThan($lastClockOutAt)) {
+                    $lastClockOutAt = $stamp;
+                }
             }
         }
 
-        $correction = AttendanceCorrection::query()
+        $correctionQuery = AttendanceCorrection::query()
             ->where('user_id', $userId)
             ->whereDate('date', $dateYmd)
             ->where('approved', true)
+            ->where(function ($q) {
+                $q->where('pending_approval', false)->orWhereNull('pending_approval');
+            })
+            ->whereNull('rejected_at');
+
+        if (Schema::hasColumn('attendance_corrections', 'reversed_at')) {
+            $correctionQuery->whereNull('reversed_at');
+        }
+
+        $correction = $correctionQuery
+            ->orderByDesc('approved_at')
+            ->orderByDesc('id')
             ->first();
 
         if ($correction !== null) {

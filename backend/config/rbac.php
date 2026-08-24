@@ -50,6 +50,7 @@ return [
         ['slug' => 'overtime.approve', 'module' => 'overtime', 'label' => 'Approve OT', 'description' => 'Approve or reject overtime'],
         ['slug' => 'overtime.export', 'module' => 'overtime', 'label' => 'Export OT', 'description' => 'Export overtime reports'],
         ['slug' => 'overtime.edit_hours', 'module' => 'overtime', 'label' => 'Edit OT hours', 'description' => 'Adjust approved hours'],
+        ['slug' => 'overtime.override.manage', 'module' => 'overtime', 'label' => 'Manage OT auto-approve', 'description' => 'Configure per-employee overtime auto-approve overrides'],
 
         // 5. Leave
         ['slug' => 'leave.view', 'module' => 'leave', 'label' => 'View leave', 'description' => 'See leave requests in scope'],

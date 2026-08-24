@@ -75,6 +75,7 @@ export const adminNavItems = [
       { to: '/admin/schedule-requests', end: false, label: 'Schedule Approvals', icon: ClipboardList },
       { to: '/admin/corrections', end: false, label: 'Attendance Corrections', icon: ClipboardList },
       { to: '/admin/overtime', end: false, label: 'Overtime', icon: Timer },
+      { to: '/admin/overtime-auto-approve', end: false, label: 'OT Auto-Approve', icon: ShieldCheck, requiredPermissions: ['overtime.override.manage'] },
       { to: '/admin/leave', end: false, label: 'Leave', icon: CalendarOff },
       {
         to: '/admin/leave-credits',

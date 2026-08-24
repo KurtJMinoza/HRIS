@@ -72,6 +72,7 @@ class PayrollComputationService
         private readonly DeductionApplicationService $deductionApplicationService,
         private readonly LoanAmortizationService $loanAmortizationService,
         private readonly GovernmentDeductionExemptionResolver $governmentExemptionResolver,
+        private readonly OvertimeAutoApproveService $overtimeAutoApprove,
         private readonly ?EmploymentPayrollPolicyApplicator $employmentPayrollPolicyApplicator = null,
     ) {}
 
@@ -1759,6 +1760,8 @@ class PayrollComputationService
     ): array {
         $timingSink = $periodContext['_timing_sink'] ?? null;
         $__segStart = microtime(true);
+
+        $this->overtimeAutoApprove->ensureStandingOvertimeForPeriod($user, $from, $to);
 
         $this->activePayrollBatchRunId = isset($periodContext['payroll_batch_run_id'])
             ? (int) $periodContext['payroll_batch_run_id']

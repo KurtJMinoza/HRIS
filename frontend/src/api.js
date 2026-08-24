@@ -7745,6 +7745,54 @@ export async function clearEmployeeQr(id) {
 // —— Admin: Overtime Management ——
 
 /**
+ * List employees configured for overtime auto-approve override.
+ */
+export async function getOvertimeAutoApproveOverrides(params = {}) {
+  const query = new URLSearchParams()
+  if (params.search) query.set('search', String(params.search))
+  if (params.page) query.set('page', String(params.page))
+  if (params.per_page) query.set('per_page', String(params.per_page))
+  const path = `/admin/overtime-auto-approve${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load overtime auto-approve overrides')
+  return data
+}
+
+export async function syncOvertimeAutoApproveOverrides(payload = {}) {
+  const res = await authenticatedFetch('/admin/overtime-auto-approve', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to save overtime auto-approve overrides')
+  return data
+}
+
+export async function updateOvertimeAutoApproveOverride(userId, payload = {}) {
+  const res = await authenticatedFetch(`/admin/overtime-auto-approve/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update override')
+  return data
+}
+
+export async function updateOvertimeAutoApproveOverrideStatus(userId, isActive) {
+  return updateOvertimeAutoApproveOverride(userId, { is_active: Boolean(isActive) })
+}
+
+export async function deleteOvertimeAutoApproveOverride(userId) {
+  const res = await authenticatedFetch(`/admin/overtime-auto-approve/${userId}`, { method: 'DELETE' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to remove employee from override list')
+  return data
+}
+
+/**
  * Get overtime records for admin with filters and summary.
  * @param {{ from_date?: string, to_date?: string, department?: string, employee_id?: number, status?: 'pending'|'approved'|'rejected', ot_type?: string, page?: number, per_page?: number }} params
  */

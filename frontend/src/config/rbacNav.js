@@ -10,6 +10,7 @@ const PATHS_ADMIN_HR_ONLY = new Set([
   '/admin/employee-logs',
   '/admin/daily-computation/policy-settings',
   '/admin/approval-workflow-settings',
+  '/admin/overtime-auto-approve',
   '/admin/email-notifications',
 ])
 
@@ -46,6 +47,7 @@ const pathToPermissions = {
   '/admin/attendance-corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/overtime': ['overtime.view'],
+  '/admin/overtime-auto-approve': ['overtime.override.manage'],
   '/admin/leave-credits': [
     'can_access_reports_module',
     'can_view_subordinate_reports',

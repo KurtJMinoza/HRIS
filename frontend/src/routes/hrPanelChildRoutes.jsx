@@ -48,6 +48,7 @@ const AdminLeave = lazy(() => import('@/pages/AdminLeave'))
 const AdminLeaveCredits = lazy(() => import('@/pages/AdminLeaveCredits'))
 const AdminHoliday = lazy(() => import('@/pages/AdminHoliday'))
 const AdminOvertime = lazy(() => import('@/pages/AdminOvertime'))
+const AdminOvertimeAutoApprove = lazy(() => import('@/pages/AdminOvertimeAutoApprove'))
 const AdminRecruitment = lazy(() => import('@/pages/AdminRecruitment'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 const AdminEmailNotifications = lazy(() => import('@/pages/AdminEmailNotifications'))
@@ -120,6 +121,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-leave-credits" path="leave-credits" element={withSuspense(<AdminLeaveCredits />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ho" path="holiday" element={withSuspense(<AdminHoliday />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ov" path="overtime" element={withSuspense(<AdminOvertime />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-ov-auto" path="overtime-auto-approve" element={withSuspense(<AdminOvertimeAutoApprove />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-notifications" path="notifications" element={withSuspense(<NotificationsCenter />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-ms" path="my-schedule" element={withSuspense(<MySchedule />, <MyScheduleRouteFallback />)} />,
   <Route key="hr-my-dash" path="my-dashboard" element={withSuspense(<EmployeeDashboard />, <DataTableRouteFallback titleWidth="w-64" />)} />,

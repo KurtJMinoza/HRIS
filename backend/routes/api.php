@@ -34,6 +34,7 @@ use App\Http\Controllers\Admin\LeaveController;
 use App\Http\Controllers\Admin\LoanRequestController;
 use App\Http\Controllers\Admin\OrganizationLeadershipController;
 use App\Http\Controllers\Admin\OvertimeController;
+use App\Http\Controllers\Admin\OvertimeAutoApproveOverrideController;
 use App\Http\Controllers\Admin\PayComponentController;
 use App\Http\Controllers\Admin\PayCycleController;
 use App\Http\Controllers\Admin\PayPolicyController;
@@ -639,6 +640,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:overtime.approve')->patch('/admin/overtime/{id}/status', [OvertimeController::class, 'updateStatus']);
         Route::middleware('permission:overtime.edit_hours')->patch('/admin/overtime/{id}/hours', [OvertimeController::class, 'updateHours']);
         Route::middleware('permission:overtime.view')->delete('/admin/overtime/{id}', [OvertimeController::class, 'destroy']);
+
+        Route::middleware('permission:overtime.override.manage')->group(function () {
+            Route::get('/admin/overtime-auto-approve', [OvertimeAutoApproveOverrideController::class, 'index']);
+            Route::put('/admin/overtime-auto-approve', [OvertimeAutoApproveOverrideController::class, 'sync']);
+            Route::patch('/admin/overtime-auto-approve/{userId}', [OvertimeAutoApproveOverrideController::class, 'update'])->whereNumber('userId');
+            Route::patch('/admin/overtime-auto-approve/{userId}/status', [OvertimeAutoApproveOverrideController::class, 'updateStatus'])->whereNumber('userId');
+            Route::delete('/admin/overtime-auto-approve/{userId}', [OvertimeAutoApproveOverrideController::class, 'destroy'])->whereNumber('userId');
+        });
 
         Route::middleware('permission:payroll.view')->group(function () {
             Route::get('/admin/payroll/classify', [PayrollController::class, 'classify']);

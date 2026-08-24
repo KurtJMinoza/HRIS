@@ -13,9 +13,11 @@ use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
+use App\Services\OvertimeAutoApproveService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\PayrollRulesEngineService;
 use App\Support\EmployeeScheduleResolver;
+use App\Support\OvertimeFilingRules;
 use App\Support\OvertimeModuleCache;
 use App\Support\PhPayrollReference;
 use Carbon\Carbon;
@@ -40,6 +42,7 @@ class EmployeeOvertimeController extends Controller
         private readonly NotificationService $notificationService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly PayrollRulesEngineService $payrollRulesEngine,
+        private readonly OvertimeAutoApproveService $overtimeAutoApproveService,
         private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
@@ -1164,6 +1167,9 @@ class EmployeeOvertimeController extends Controller
             $defaultPhOtRule = $this->detectDefaultPhOtRule($user, $dateYmd);
             $detected = $this->otDetectionService->detectForDate($user, $dateYmd, $this->attendanceTimezone());
             $detectedSegments = $this->mapDetectedSegmentsForFiling($detected);
+            $tz = $this->attendanceTimezone();
+            $presence = OvertimeFilingRules::clockInOutPresenceForDate((int) $user->id, $dateYmd, $tz);
+            $hasCompleteAttendance = (bool) (($presence['has_clock_in'] ?? false) && ($presence['has_clock_out'] ?? false));
 
             return [
                 'date' => $dateYmd,
@@ -1174,9 +1180,12 @@ class EmployeeOvertimeController extends Controller
                 'schedule_start' => null,
                 'schedule_end' => null,
                 'overnight_shift' => false,
-                'has_clock_in' => false,
-                'has_clock_out' => false,
-                'last_clock_out_at' => null,
+                'has_clock_in' => (bool) ($presence['has_clock_in'] ?? false),
+                'has_clock_out' => (bool) ($presence['has_clock_out'] ?? false),
+                'has_complete_attendance' => $hasCompleteAttendance,
+                'last_clock_out_at' => isset($presence['last_clock_out_at']) && $presence['last_clock_out_at'] !== null
+                    ? $presence['last_clock_out_at']->copy()->timezone($tz)->toIso8601String()
+                    : null,
                 'mode' => 'flexible',
                 'mode_label' => 'Flexible OT filing',
                 'help' => 'File OT anytime using your preferred start and end time range.',
@@ -1394,6 +1403,7 @@ class EmployeeOvertimeController extends Controller
         $notificationService = $this->notificationService;
         $emailTrigger = $this->emailTrigger;
         $overtimeIds = [];
+        $autoApprovedIds = [];
         foreach ($overtimes as $overtime) {
             $this->approvalWorkflowService->ensureRecordsForRequest(
                 $overtime,
@@ -1402,10 +1412,17 @@ class EmployeeOvertimeController extends Controller
                 $user,
             );
             $overtimeIds[] = (int) $overtime->id;
+            if ($this->overtimeAutoApproveService->tryAutoApproveAfterFiling($overtime->fresh(), $user)) {
+                $autoApprovedIds[] = (int) $overtime->id;
+            }
         }
 
-        dispatch(static function () use ($overtimeIds, $employeeLabel, $notificationService, $emailTrigger): void {
+        dispatch(static function () use ($overtimeIds, $autoApprovedIds, $employeeLabel, $notificationService, $emailTrigger): void {
+            $autoApprovedLookup = array_fill_keys($autoApprovedIds, true);
             foreach ($overtimeIds as $overtimeId) {
+                if (isset($autoApprovedLookup[$overtimeId])) {
+                    continue;
+                }
                 $filed = Overtime::query()->find($overtimeId);
                 if (! $filed) {
                     continue;
