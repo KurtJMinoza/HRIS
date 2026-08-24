@@ -53,6 +53,7 @@ const AdminRecruitment = lazy(() => import('@/pages/AdminRecruitment'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 const AdminEmailNotifications = lazy(() => import('@/pages/AdminEmailNotifications'))
 const AdminEvaluation = lazy(() => import('@/pages/AdminEvaluation'))
+const AdminRefundsPage = lazy(() => import('@/pages/AdminRefundsPage'))
 const EmployeeDashboard = lazy(() => import('@/pages/EmployeeDashboard'))
 const EmployeeAttendance = lazy(() => import('@/pages/EmployeeAttendance'))
 const EmployeeHolidaysPage = lazy(() => import('@/pages/EmployeeHolidaysPage'))
@@ -152,6 +153,11 @@ export const HR_PANEL_CHILD_ROUTES = [
   />,
   <Route key="hr-pay-components" path="compensation/pay-components" element={withSuspense(<AdminPayComponentsPage />, <DataTableRouteFallback titleWidth="w-60" />)} />,
   <Route key="hr-thirteenth-month" path="compensation/13th-month-pay" element={withSuspense(<AdminThirteenthMonthPayPage />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route
+    key="hr-refunds"
+    path="refunds"
+    element={withSuspense(<AdminRefundsPage />, <DataTableRouteFallback titleWidth="w-72" />)}
+  />,
   <Route
     key="hr-deduction-schedule-settings"
     path="compensation/deduction-schedule-settings"

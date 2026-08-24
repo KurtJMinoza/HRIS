@@ -72,6 +72,7 @@ const pathToPermissions = {
   '/admin/compensation/government-deduction': ['compensation.view'],
   '/admin/compensation/deductions-loans': ['compensation.view'],
   '/admin/compensation/generate-payslips': ['payslip.generate'],
+  '/admin/refunds': ['refunds.view'],
   '/admin/compensation/13th-month-pay': ['thirteenth_month.view'],
   '/admin/compensation/finalize-payroll': ['payslip.finalize'],
   '/admin/execom/employees': ['execom.view', 'execom.manage'],
@@ -87,6 +88,7 @@ const pathToPermissions = {
   ],
   '/admin/evaluations': ['evaluations.view', 'evaluations.create', 'evaluations.review', 'employees.view'],
   '/admin/loans-deductions': ['loans.view_own', 'loans.request', 'request-loan'],
+  '/employee/payroll-adjustments': ['payslip.view'],
   '/admin/email-notifications': ['email_notifications.view', 'email_notifications.manage', 'settings.manage'],
   '/admin/schedules': ['manage-schedules', 'schedule.view'],
   /** Self-service: same visibility rule as Profile (no extra permission slug). */

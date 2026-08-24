@@ -9,6 +9,8 @@ use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class PayrollReportService
 {
@@ -75,6 +77,90 @@ class PayrollReportService
         }
 
         return $query->distinct()->pluck('company_id')->map(fn ($id): int => (int) $id)->values();
+    }
+
+    /**
+     * @return array{filename:string, employee_count:int, write:callable(): void}
+     */
+    public function excelForRunCompany(PayrollBatchRun $run, Company $company, User $actor, bool $deductionOnly = false): array
+    {
+        $payload = $this->buildReportPayload($run, $company, $actor, $deductionOnly);
+        $columns = $payload['columns'];
+        $rows = $payload['rows'];
+        $totals = $payload['totals'];
+        $reportTitle = $deductionOnly ? 'Payroll Deductions Report' : 'Payroll Report';
+        $sheetTitle = $deductionOnly ? 'Deductions' : 'Payroll';
+
+        $write = function () use ($columns, $rows, $totals, $reportTitle, $sheetTitle): void {
+            $spreadsheet = new Spreadsheet;
+            $spreadsheet->getProperties()
+                ->setCreator((string) config('app.name', 'HR'))
+                ->setTitle($reportTitle);
+
+            $sheet = $spreadsheet->getActiveSheet();
+            $sheet->setTitle($sheetTitle);
+            $sheet->fromArray(array_map(
+                static fn (array $column): string => (string) ($column['label'] ?? ''),
+                $columns,
+            ), null, 'A1');
+
+            $rowIndex = 2;
+            foreach ($rows as $row) {
+                $sheet->fromArray($this->excelRowValues($columns, $row), null, 'A'.$rowIndex);
+                $rowIndex++;
+            }
+
+            $sheet->fromArray($this->excelTotalRowValues($columns, $totals), null, 'A'.$rowIndex);
+
+            (new Xlsx($spreadsheet))->save('php://output');
+            $spreadsheet->disconnectWorksheets();
+        };
+
+        return [
+            'filename' => $this->excelFilename($company, $run, $deductionOnly),
+            'employee_count' => count($rows),
+            'write' => $write,
+        ];
+    }
+
+    /**
+     * @param  list<array{key:string,label:string,group:string,class:string,format?:string}>  $columns
+     * @param  array<string, mixed>  $row
+     * @return list<int|float|string>
+     */
+    private function excelRowValues(array $columns, array $row): array
+    {
+        return array_map(function (array $column) use ($row): int|float|string {
+            $key = (string) ($column['key'] ?? '');
+            if ($key === 'row_number' || $key === 'employee_name' || ($column['format'] ?? '') === 'text') {
+                return (string) ($row[$key] ?? '');
+            }
+
+            return round((float) ($row[$key] ?? 0), 2);
+        }, $columns);
+    }
+
+    /**
+     * @param  list<array{key:string,label:string,group:string,class:string,format?:string}>  $columns
+     * @param  array<string, mixed>  $totals
+     * @return list<int|float|string>
+     */
+    private function excelTotalRowValues(array $columns, array $totals): array
+    {
+        return array_map(function (array $column) use ($totals): int|float|string {
+            $key = (string) ($column['key'] ?? '');
+            if ($key === 'row_number') {
+                return '';
+            }
+            if ($key === 'employee_name') {
+                return 'Total';
+            }
+            if (($column['format'] ?? '') === 'text') {
+                return '';
+            }
+
+            return round((float) ($totals[$key] ?? 0), 2);
+        }, $columns);
     }
 
     /**
@@ -708,13 +794,22 @@ class PayrollReportService
 
     private function filename(Company $company, PayrollBatchRun $run, bool $deductionOnly = false): string
     {
+        return $this->reportBasename($company, $run, $deductionOnly, 'pdf');
+    }
+
+    private function excelFilename(Company $company, PayrollBatchRun $run, bool $deductionOnly = false): string
+    {
+        return $this->reportBasename($company, $run, $deductionOnly, 'xlsx');
+    }
+
+    private function reportBasename(Company $company, PayrollBatchRun $run, bool $deductionOnly, string $extension): string
+    {
         $companyName = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) $company->name) ?: 'Company';
         $start = $run->pay_period_start?->format('Ymd') ?? 'period';
         $end = $run->pay_period_end?->format('Ymd') ?? 'end';
-
         $prefix = $deductionOnly ? 'Payroll_Deductions_Report' : 'Payroll_Report';
 
-        return "{$prefix}_{$companyName}_{$start}_{$end}_Run_{$run->id}.pdf";
+        return "{$prefix}_{$companyName}_{$start}_{$end}_Run_{$run->id}.{$extension}";
     }
 
     private function runFilename(PayrollBatchRun $run, bool $deductionOnly = false): string

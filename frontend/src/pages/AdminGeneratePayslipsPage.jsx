@@ -17,7 +17,9 @@ import {
   getDepartments,
   getPayCycles,
   getPayrollRunCompanyPayrollReportPdfBlob,
+  getPayrollRunCompanyPayrollReportXlsxBlob,
   getPayrollRunCompanyPayrollDeductionsPdfBlob,
+  getPayrollRunCompanyPayrollDeductionsXlsxBlob,
   getExecomPayrollReportPdfBlob,
   getExecomPayrollDeductionsPdfBlob,
   companyLogoUrl,
@@ -28,6 +30,12 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
@@ -46,9 +54,11 @@ import {
   AlertTriangle,
   Building2,
   CalendarClock,
+  ChevronDown,
   Clock3,
   Eye,
   FileDown,
+  FileSpreadsheet,
   FileText,
   Layers,
   Loader2,
@@ -360,6 +370,8 @@ export default function AdminGeneratePayslipsPage() {
   const [bulkDownloadingBatchId, setBulkDownloadingBatchId] = useState(null)
   const [payrollReportDownloadingBatchId, setPayrollReportDownloadingBatchId] = useState(null)
   const [payrollDeductionsDownloadingBatchId, setPayrollDeductionsDownloadingBatchId] = useState(null)
+  const [payrollReportExcelDownloadingBatchId, setPayrollReportExcelDownloadingBatchId] = useState(null)
+  const [payrollDeductionsExcelDownloadingBatchId, setPayrollDeductionsExcelDownloadingBatchId] = useState(null)
   /** @type {import('react').MutableRefObject<AbortController|null>} */
   const bulkDownloadAbortRef = useRef(null)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
@@ -900,6 +912,64 @@ export default function AdminGeneratePayslipsPage() {
     } finally {
       if (deductionsOnly) setPayrollDeductionsDownloadingBatchId(null)
       else setPayrollReportDownloadingBatchId(null)
+    }
+  }
+
+  const handleDownloadPayrollReportExcel = async (row) => {
+    const id = row?.payroll_batch_run_id
+    const isExecomRow =
+      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
+    const rowCompanyId = Number(row?.company_id || 0)
+    if (id == null || payrollReportExcelDownloadingBatchId != null || isExecomRow || rowCompanyId <= 0) return
+    if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
+    if (!canBulkDownloadPayslipZip) return
+
+    setPayrollReportExcelDownloadingBatchId(id)
+    try {
+      const blob = await getPayrollRunCompanyPayrollReportXlsxBlob(id, rowCompanyId)
+      const companyName = String(row?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${id}.xlsx`)
+      toast({
+        title: 'Payroll Report Excel downloaded',
+        description: 'Your report spreadsheet download has started.',
+      })
+    } catch (e) {
+      toast({
+        title: 'Payroll Report Excel failed',
+        description: e.message || 'Could not download Payroll Report Excel.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPayrollReportExcelDownloadingBatchId(null)
+    }
+  }
+
+  const handleDownloadPayrollDeductionsExcel = async (row) => {
+    const id = row?.payroll_batch_run_id
+    const isExecomRow =
+      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
+    const rowCompanyId = Number(row?.company_id || 0)
+    if (id == null || payrollDeductionsExcelDownloadingBatchId != null || isExecomRow || rowCompanyId <= 0) return
+    if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
+    if (!canBulkDownloadPayslipZip) return
+
+    setPayrollDeductionsExcelDownloadingBatchId(id)
+    try {
+      const blob = await getPayrollRunCompanyPayrollDeductionsXlsxBlob(id, rowCompanyId)
+      const companyName = String(row?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Deductions_Report_${companyName}_Run_${id}.xlsx`)
+      toast({
+        title: 'Payroll Deductions Excel downloaded',
+        description: 'Your deductions spreadsheet download has started.',
+      })
+    } catch (e) {
+      toast({
+        title: 'Payroll Deductions Excel failed',
+        description: e.message || 'Could not download Payroll Deductions Excel.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPayrollDeductionsExcelDownloadingBatchId(null)
     }
   }
 
@@ -1708,7 +1778,7 @@ export default function AdminGeneratePayslipsPage() {
                         Generated
                       </TableHead>
                       <TableHead className="w-[110px] text-[13px] font-bold tracking-normal text-foreground">Status</TableHead>
-                      <TableHead className="min-w-[200px] text-right text-[13px] font-bold tracking-normal text-foreground">
+                      <TableHead className="min-w-[240px] whitespace-nowrap text-right text-[13px] font-bold tracking-normal text-foreground">
                         Actions
                       </TableHead>
                     </TableRow>
@@ -1724,6 +1794,13 @@ export default function AdminGeneratePayslipsPage() {
                       const batchFinalized = String(r.batch_run_status || '').toLowerCase() === 'finalized'
                       const showBulkPdf = batchFinalized && canBulkDownloadPayslipZip
                       const showPayrollReportPdf = showBulkPdf && (isExecomRow || Number(r.company_id || 0) > 0)
+                      const showCompanyExcelDownloads = showPayrollReportPdf && !isExecomRow && Number(r.company_id || 0) > 0
+                      const downloadsBusy =
+                        bulkDownloadingBatchId === r.payroll_batch_run_id ||
+                        payrollReportDownloadingBatchId === r.payroll_batch_run_id ||
+                        payrollReportExcelDownloadingBatchId === r.payroll_batch_run_id ||
+                        payrollDeductionsDownloadingBatchId === r.payroll_batch_run_id ||
+                        payrollDeductionsExcelDownloadingBatchId === r.payroll_batch_run_id
                       return (
                         <TableRow
                           key={key}
@@ -1784,7 +1861,7 @@ export default function AdminGeneratePayslipsPage() {
                           </TableCell>
                           <TableCell className="py-4">{batchStatusBadge(r.status, r.status_label)}</TableCell>
                           <TableCell className="py-4 text-right">
-                            <div className="flex flex-wrap items-center justify-end gap-2">
+                            <div className="flex flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
                               <Button
                                 type="button"
                                 size="sm"
@@ -1796,61 +1873,93 @@ export default function AdminGeneratePayslipsPage() {
                                 View
                               </Button>
                               {showBulkPdf && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
-                                  disabled={bulkDownloadingBatchId === r.payroll_batch_run_id}
-                                  onClick={() => handleBulkDownloadBatchPdf(r)}
-                                >
-                                  {bulkDownloadingBatchId === r.payroll_batch_run_id ? (
-                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <FileDown className="mr-1.5 h-4 w-4" />
-                                  )}
-                                  {bulkDownloadingBatchId === r.payroll_batch_run_id && bulkDownloadProgress
-                                    ? `${bulkPayslipDownloadStatusLabel(bulkDownloadProgress)}${
-                                        bulkDownloadProgress.progress_percent != null
-                                          ? ` (${bulkDownloadProgress.progress_percent}%)`
-                                          : ''
-                                      }`
-                                    : 'Bulk Download PDF'}
-                                </Button>
-                              )}
-                              {showPayrollReportPdf && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
-                                  disabled={payrollReportDownloadingBatchId === r.payroll_batch_run_id}
-                                  onClick={() => handleDownloadPayrollReportPdf(r)}
-                                >
-                                  {payrollReportDownloadingBatchId === r.payroll_batch_run_id ? (
-                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <FileText className="mr-1.5 h-4 w-4" />
-                                  )}
-                                  Payroll Report PDF
-                                </Button>
-                              )}
-                              {showPayrollReportPdf && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
-                                  disabled={payrollDeductionsDownloadingBatchId === r.payroll_batch_run_id}
-                                  onClick={() => handleDownloadPayrollReportPdf(r, true)}
-                                >
-                                  {payrollDeductionsDownloadingBatchId === r.payroll_batch_run_id ? (
-                                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <FileText className="mr-1.5 h-4 w-4" />
-                                  )}
-                                  Deductions PDF
-                                </Button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 rounded-lg border-border/80 bg-background px-3 text-xs font-semibold text-foreground shadow-sm hover:bg-muted dark:bg-input/35"
+                                      disabled={downloadsBusy}
+                                    >
+                                      {downloadsBusy ? (
+                                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <FileDown className="mr-1.5 h-4 w-4" />
+                                      )}
+                                      Downloads
+                                      <ChevronDown className="ml-1 h-3.5 w-3.5 opacity-70" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent
+                                    align="end"
+                                    className="min-w-[12.5rem] border-border/60 shadow-sm"
+                                  >
+                                    <DropdownMenuItem
+                                      disabled={bulkDownloadingBatchId === r.payroll_batch_run_id}
+                                      onSelect={() => handleBulkDownloadBatchPdf(r)}
+                                    >
+                                      {bulkDownloadingBatchId === r.payroll_batch_run_id ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <FileDown className="mr-2 h-4 w-4" />
+                                      )}
+                                      Bulk Download PDF
+                                    </DropdownMenuItem>
+                                    {showPayrollReportPdf && (
+                                      <DropdownMenuItem
+                                        disabled={payrollReportDownloadingBatchId === r.payroll_batch_run_id}
+                                        onSelect={() => handleDownloadPayrollReportPdf(r)}
+                                      >
+                                        {payrollReportDownloadingBatchId === r.payroll_batch_run_id ? (
+                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <FileText className="mr-2 h-4 w-4" />
+                                        )}
+                                        Payroll Report PDF
+                                      </DropdownMenuItem>
+                                    )}
+                                    {showCompanyExcelDownloads && (
+                                      <DropdownMenuItem
+                                        disabled={payrollReportExcelDownloadingBatchId === r.payroll_batch_run_id}
+                                        onSelect={() => handleDownloadPayrollReportExcel(r)}
+                                      >
+                                        {payrollReportExcelDownloadingBatchId === r.payroll_batch_run_id ? (
+                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <FileSpreadsheet className="mr-2 h-4 w-4" />
+                                        )}
+                                        Payroll Report Excel
+                                      </DropdownMenuItem>
+                                    )}
+                                    {showPayrollReportPdf && (
+                                      <DropdownMenuItem
+                                        disabled={payrollDeductionsDownloadingBatchId === r.payroll_batch_run_id}
+                                        onSelect={() => handleDownloadPayrollReportPdf(r, true)}
+                                      >
+                                        {payrollDeductionsDownloadingBatchId === r.payroll_batch_run_id ? (
+                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <FileText className="mr-2 h-4 w-4" />
+                                        )}
+                                        Deductions PDF
+                                      </DropdownMenuItem>
+                                    )}
+                                    {showCompanyExcelDownloads && (
+                                      <DropdownMenuItem
+                                        disabled={payrollDeductionsExcelDownloadingBatchId === r.payroll_batch_run_id}
+                                        onSelect={() => handleDownloadPayrollDeductionsExcel(r)}
+                                      >
+                                        {payrollDeductionsExcelDownloadingBatchId === r.payroll_batch_run_id ? (
+                                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <FileSpreadsheet className="mr-2 h-4 w-4" />
+                                        )}
+                                        Deductions Excel
+                                      </DropdownMenuItem>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               )}
                               {showDelete && (
                                 <Button

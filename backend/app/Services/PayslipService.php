@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PayrollBulkComputation;
 use App\Enums\EmploymentStatus;
 use App\Models\Company;
 use App\Models\EmployeeGovernmentIdDocument;
@@ -55,7 +56,7 @@ class PayslipService
 
     public function __construct(
         private readonly BrowsershotEnvironment $browsershotEnvironment,
-        private readonly PayrollComputationService $payrollComputation,
+        private readonly PayrollBulkComputation $payrollComputation,
         private readonly ExecomPayrollComputationService $execomPayrollComputation,
         private readonly PayCycleService $payCycleService,
         private readonly DataScopeService $dataScopeService,
@@ -1864,7 +1865,7 @@ class PayslipService
         if ((! empty($input['include_13th_month_pay']) || ! empty($input['include_thirteenth_month']))
             && ! empty($input['payroll_batch_run_id'])) {
             $recoveredBasisLines = $this->recoverMissingThirteenthMonthCutoffs(
-                $employee,
+                $employee,  
                 (int) ($payrollAssignment['company_id'] ?? $selectedCompanyId),
                 $from,
                 $to,
@@ -1882,6 +1883,7 @@ class PayslipService
                 $recoveredBasisLines
             );
         }
+        $snapshot = $this->applyRefundAdjustmentsToSnapshot($snapshot, $employee, $from, $to);
         $lineTotals = $this->payslipLineTotalsFromNormalizedSnapshot($snapshot);
         $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
         $grossPay = $lineTotals['gross_pay'];
@@ -3390,6 +3392,60 @@ class PayslipService
             || str_contains($key, 'wht')
             || str_contains($label, 'withholding')
             || str_contains($label, 'wht');
+    }
+
+    /**
+     * Append queued refund / payroll-recovery lines from the adjustment ledger.
+     *
+     * @return array<string, mixed>
+     */
+    private function applyRefundAdjustmentsToSnapshot(array $snapshot, User $employee, Carbon $from, Carbon $to): array
+    {
+        $adjustments = app(RefundPayrollApplicationService::class)
+            ->pendingAdjustmentsForWindow($employee, $from->toDateString(), $to->toDateString());
+        if ($adjustments === []) {
+            return $snapshot;
+        }
+
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $earnings = is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [];
+        $deductions = is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [];
+
+        foreach ($adjustments as $adj) {
+            $amount = round((float) ($adj['amount'] ?? 0), 2);
+            if ($amount <= 0.004) {
+                continue;
+            }
+            $line = [
+                'key' => (string) ($adj['component_code'] ?? 'refund_adjustment'),
+                'label' => (string) ($adj['label'] ?? 'Payroll Adjustment'),
+                'name' => (string) ($adj['label'] ?? 'Payroll Adjustment'),
+                'category' => (string) ($adj['source'] ?? 'basic_pay'),
+                'component_code' => (string) ($adj['component_code'] ?? 'refund_adjustment'),
+                'amount' => $amount,
+                'resolved_amount' => $amount,
+                'metadata' => [
+                    'refund_request_id' => $adj['refund_request_id'] ?? null,
+                    'refund_number' => $adj['refund_number'] ?? null,
+                    'reason' => $adj['reason'] ?? null,
+                ],
+            ];
+            if (($adj['line_type'] ?? 'earning') === 'deduction') {
+                $deductions[] = $line;
+            } else {
+                $earnings[] = $line;
+            }
+        }
+
+        $summary['payslip_earning_lines'] = array_values($earnings);
+        $summary['payslip_deduction_lines'] = array_values($deductions);
+        $summary['payroll_adjustment_lines'] = array_values(array_filter(
+            $adjustments,
+            fn ($row) => is_array($row)
+        ));
+        $snapshot['summary'] = $summary;
+
+        return $snapshot;
     }
 
     /**

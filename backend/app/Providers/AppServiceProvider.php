@@ -64,6 +64,14 @@ class AppServiceProvider extends ServiceProvider
             \App\Contracts\OrgUnitEmployeeCounter::class,
             \App\Services\OrgUnitEmployeeCountService::class,
         );
+        $this->app->bind(
+            \App\Contracts\PayrollDayComputation::class,
+            \App\Services\PayrollComputationService::class,
+        );
+        $this->app->bind(
+            \App\Contracts\PayrollBulkComputation::class,
+            \App\Services\PayrollComputationService::class,
+        );
     }
 
     /**

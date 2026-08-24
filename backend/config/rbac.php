@@ -112,6 +112,12 @@ return [
         ['slug' => 'payslip.finalize', 'module' => 'payslip', 'label' => 'Finalize payslips', 'description' => 'Finalize payroll and send payslips'],
         ['slug' => 'payslip.download', 'module' => 'payslip', 'label' => 'Download payslips', 'description' => 'Download payslip PDF files'],
 
+        // Refunds & payroll recovery
+        ['slug' => 'refunds.view', 'module' => 'payroll', 'label' => 'View refunds & adjustments', 'description' => 'List and review refund / payroll recovery requests'],
+        ['slug' => 'refunds.create', 'module' => 'payroll', 'label' => 'Create refunds', 'description' => 'Create and submit refund / adjustment requests'],
+        ['slug' => 'refunds.approve', 'module' => 'payroll', 'label' => 'Approve refunds', 'description' => 'Review, approve, or reject refund requests'],
+        ['slug' => 'refunds.process', 'module' => 'payroll', 'label' => 'Process refunds', 'description' => 'Queue refunds for payroll and mark processed'],
+
         // 10. Compensation
         ['slug' => 'compensation.view', 'module' => 'compensation', 'label' => 'View compensation', 'description' => 'View pay components, pay cycles, and compensation settings'],
         ['slug' => 'compensation.edit', 'module' => 'compensation', 'label' => 'Edit compensation', 'description' => 'Edit compensation settings and employee compensation configurations'],
@@ -216,6 +222,10 @@ return [
             'payslip.generate',
             'payslip.finalize',
             'payslip.download',
+            'refunds.view',
+            'refunds.create',
+            'refunds.approve',
+            'refunds.process',
             'reports.view',
             'reports.payroll',
             'reports.export',

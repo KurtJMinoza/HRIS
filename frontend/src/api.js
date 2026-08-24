@@ -3260,6 +3260,30 @@ export async function getPayrollRunCompanyPayrollDeductionsPdfBlob(batchRunId, c
   return res.blob()
 }
 
+export async function getPayrollRunCompanyPayrollReportXlsxBlob(batchRunId, companyId) {
+  const res = await authenticatedFetch(
+    `/payroll-runs/${encodeURIComponent(String(batchRunId))}/company/${encodeURIComponent(String(companyId))}/payroll-report/xlsx`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Report Excel')
+  }
+  return res.blob()
+}
+
+export async function getPayrollRunCompanyPayrollDeductionsXlsxBlob(batchRunId, companyId) {
+  const res = await authenticatedFetch(
+    `/payroll-runs/${encodeURIComponent(String(batchRunId))}/company/${encodeURIComponent(String(companyId))}/payroll-deductions-report/xlsx`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Deductions Excel')
+  }
+  return res.blob()
+}
+
 // ——— EXECOM payroll & employee management ———
 
 function execomQueryString(params = {}) {
@@ -3455,6 +3479,36 @@ export async function getReportsPayrollDeductionsPdfBlob(params = {}) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.message || 'Failed to download Payroll Deductions PDF')
+  }
+  return res.blob()
+}
+
+export async function getReportsPayrollReportXlsxBlob(params = {}) {
+  const q = new URLSearchParams()
+  if (params.company_id != null) q.set('company_id', String(params.company_id))
+  if (params.payroll_run_id != null) q.set('payroll_run_id', String(params.payroll_run_id))
+  if (params.pay_period_id != null) q.set('pay_period_id', String(params.pay_period_id))
+  const res = await authenticatedFetch(`/reports/payroll-report/xlsx${q.toString() ? `?${q}` : ''}`, {
+    timeoutMs: 120000,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Report Excel')
+  }
+  return res.blob()
+}
+
+export async function getReportsPayrollDeductionsXlsxBlob(params = {}) {
+  const q = new URLSearchParams()
+  if (params.company_id != null) q.set('company_id', String(params.company_id))
+  if (params.payroll_run_id != null) q.set('payroll_run_id', String(params.payroll_run_id))
+  if (params.pay_period_id != null) q.set('pay_period_id', String(params.pay_period_id))
+  const res = await authenticatedFetch(`/reports/payroll-deductions-report/xlsx${q.toString() ? `?${q}` : ''}`, {
+    timeoutMs: 120000,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Payroll Deductions Excel')
   }
   return res.blob()
 }
@@ -8953,5 +9007,112 @@ export async function getMyPendingEvaluations() {
   const res = await authenticatedFetch(`${evaluationApiPrefix()}/my-pending`)
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load pending evaluations')
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// Refunds & Payroll Recovery
+// ---------------------------------------------------------------------------
+
+export async function getAdminRefunds(params = {}) {
+  const query = new URLSearchParams()
+  if (params.tab) query.set('status', params.tab)
+  if (params.status) query.set('status', params.status)
+  if (params.search) query.set('search', params.search)
+  if (params.page) query.set('page', String(params.page))
+  if (params.per_page) query.set('per_page', String(params.per_page))
+  if (params.employee_id) query.set('employee_id', String(params.employee_id))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const res = await authenticatedFetch(`/admin/refunds${suffix}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load refunds')
+  return { data: data.data, counts: data.counts }
+}
+
+export async function getAdminRefundCounts() {
+  const res = await authenticatedFetch('/admin/refunds/counts')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load refund counts')
+  return data
+}
+
+export async function previewAdminRefund(payload) {
+  const res = await authenticatedFetch('/admin/refunds/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to preview refund calculation')
+  return data
+}
+
+export async function createAdminRefund(payload, { submit = false } = {}) {
+  const res = await authenticatedFetch('/admin/refunds', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, submit }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to create refund')
+  return data
+}
+
+export async function updateAdminRefund(id, payload, { submit = false } = {}) {
+  const res = await authenticatedFetch(`/admin/refunds/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, submit }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to update refund')
+  return data
+}
+
+export async function getAdminRefundDetail(id) {
+  const res = await authenticatedFetch(`/admin/refunds/${id}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load refund detail')
+  return data
+}
+
+export async function transitionAdminRefund(id, action, extra = {}) {
+  const body = { ...extra }
+  if (body.batchRunId != null && body.batch_run_id == null) {
+    body.batch_run_id = body.batchRunId
+    delete body.batchRunId
+  }
+  const res = await authenticatedFetch(`/admin/refunds/${id}/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || `Failed to ${action} refund`)
+  return data
+}
+
+export async function getRefundEligibleBatches(id) {
+  const res = await authenticatedFetch(`/admin/refunds/${id}/eligible-batches`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load eligible payroll batches')
+  return data
+}
+
+export async function getRefundCorrectionContext({ employee_id, affected_date }) {
+  const query = new URLSearchParams({
+    employee_id: String(employee_id),
+    affected_date: String(affected_date),
+  })
+  const res = await authenticatedFetch(`/admin/refunds/correction-context?${query.toString()}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load correction context')
+  return data
+}
+
+export async function getMyPayrollAdjustments() {
+  const res = await authenticatedFetch('/employee/payroll-adjustments')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load payroll adjustments')
   return data
 }

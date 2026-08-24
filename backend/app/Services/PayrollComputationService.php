@@ -16,6 +16,8 @@ use App\Models\Policy;
 use App\Models\User;
 use App\Models\WorkingSchedule;
 use App\Support\EmployeeScheduleResolver;
+use App\Contracts\PayrollBulkComputation;
+use App\Contracts\PayrollDayComputation;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -26,7 +28,7 @@ use Illuminate\Support\Str;
  * Uses {@see PayrollRulesEngineService}, {@see TimeSegmentationService}, {@see AttendanceSessionService}.
  * Docs: `docs/PAYROLL_RULES_ENGINE.md`; Admin snapshot: `GET /admin/payroll/policy-reference`.
  */
-class PayrollComputationService
+class PayrollComputationService implements PayrollBulkComputation
 {
     private const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
@@ -393,6 +395,25 @@ class PayrollComputationService
     public function getTimezone(): string
     {
         return config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    /**
+     * Schedule + daily rate for a single refund/computation date (historical schedule when applicable).
+     *
+     * @return array{effective_schedule: array, daily_rate: float, timezone: string}
+     */
+    public function resolveSingleDayComputationContext(User $user, Carbon $date): array
+    {
+        $tz = $this->getTimezone();
+        $day = $date->copy()->timezone($tz)->startOfDay();
+        [$effectiveSchedule] = $this->resolveEffectiveScheduleForDailyComputation($user, $day);
+        $computed = $this->computeEmployeePayroll($user, $day->copy(), $day->copy());
+
+        return [
+            'effective_schedule' => $effectiveSchedule,
+            'daily_rate' => (float) ($computed['daily_rate'] ?? 0),
+            'timezone' => $tz,
+        ];
     }
 
     /**

@@ -19,6 +19,7 @@ const EmployeeReportsPage = lazy(() => import('@/pages/AdminReports'))
 const MySchedule = lazy(() => import('@/pages/MySchedule'))
 const AdminPayslipViewPage = lazy(() => import('@/pages/AdminPayslipViewPage'))
 const EmployeeLoansDeductionsPage = lazy(() => import('@/pages/EmployeeLoansDeductionsPage'))
+const EmployeePayrollAdjustmentsPage = lazy(() => import('@/pages/EmployeePayrollAdjustmentsPage'))
 const NotificationsCenter = lazy(() => import('@/pages/NotificationsCenter'))
 const AdminEvaluation = lazy(() => import('@/pages/AdminEvaluation'))
 
@@ -86,6 +87,7 @@ function authenticatedRoutes() {
       <Route path="profile" element={withSuspense(<EmployeeProfile />)} />
       <Route path="profile/:employeeId" element={withSuspense(<EmployeeProfile />)} />
       <Route path="payslips" element={withSuspense(<EmployeeMyPayslipsPage />)} />
+      <Route path="payroll-adjustments" element={withSuspense(<EmployeePayrollAdjustmentsPage />)} />
       <Route path="payslips/view/:payslipId" element={withSuspense(<AdminPayslipViewPage />, routeFallback('Loading payslip...'))} />
       <Route path="notifications" element={withSuspense(<NotificationsCenter />, routeFallback('Loading notifications...'))} />
     </Route>,

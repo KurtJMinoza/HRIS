@@ -36,6 +36,26 @@ class PayrollReportController extends Controller
         return $this->download($request, $run, $company, $actor, true);
     }
 
+    public function downloadExcelForRunCompany(Request $request, int $id, int $companyId)
+    {
+        $actor = $this->authorizedActor($request);
+        $run = PayrollBatchRun::query()->findOrFail($id);
+        $company = Company::query()->findOrFail($companyId);
+        $this->ensureRunMatchesCompany($run, $company);
+
+        return $this->downloadExcel($request, $run, $company, $actor);
+    }
+
+    public function downloadDeductionsExcelForRunCompany(Request $request, int $id, int $companyId)
+    {
+        $actor = $this->authorizedActor($request);
+        $run = PayrollBatchRun::query()->findOrFail($id);
+        $company = Company::query()->findOrFail($companyId);
+        $this->ensureRunMatchesCompany($run, $company);
+
+        return $this->downloadExcel($request, $run, $company, $actor, true);
+    }
+
     public function downloadFromReports(Request $request)
     {
         $actor = $this->authorizedActor($request);
@@ -88,6 +108,58 @@ class PayrollReportController extends Controller
         return $this->download($request, $run, $company, $actor, true);
     }
 
+    public function downloadExcelFromReports(Request $request)
+    {
+        $actor = $this->authorizedActor($request);
+        $validated = $request->validate([
+            'company_id' => ['required', 'integer', 'exists:companies,id'],
+            'payroll_run_id' => ['nullable', 'integer', 'exists:payroll_batch_runs,id', 'required_without:pay_period_id'],
+            'pay_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id', 'required_without:payroll_run_id'],
+        ]);
+
+        $company = Company::query()->findOrFail((int) $validated['company_id']);
+        if (! empty($validated['payroll_run_id'])) {
+            $run = PayrollBatchRun::query()->findOrFail((int) $validated['payroll_run_id']);
+        } else {
+            $run = PayrollBatchRun::query()
+                ->where('company_id', (int) $company->id)
+                ->where('payroll_period_id', (int) $validated['pay_period_id'])
+                ->where('status', PayrollBatchRun::STATUS_FINALIZED)
+                ->orderByDesc('finalized_at')
+                ->orderByDesc('id')
+                ->firstOrFail();
+        }
+        $this->ensureRunMatchesCompany($run, $company);
+
+        return $this->downloadExcel($request, $run, $company, $actor);
+    }
+
+    public function downloadDeductionsExcelFromReports(Request $request)
+    {
+        $actor = $this->authorizedActor($request);
+        $validated = $request->validate([
+            'company_id' => ['required', 'integer', 'exists:companies,id'],
+            'payroll_run_id' => ['nullable', 'integer', 'exists:payroll_batch_runs,id', 'required_without:pay_period_id'],
+            'pay_period_id' => ['nullable', 'integer', 'exists:payroll_periods,id', 'required_without:payroll_run_id'],
+        ]);
+
+        $company = Company::query()->findOrFail((int) $validated['company_id']);
+        if (! empty($validated['payroll_run_id'])) {
+            $run = PayrollBatchRun::query()->findOrFail((int) $validated['payroll_run_id']);
+        } else {
+            $run = PayrollBatchRun::query()
+                ->where('company_id', (int) $company->id)
+                ->where('payroll_period_id', (int) $validated['pay_period_id'])
+                ->where('status', PayrollBatchRun::STATUS_FINALIZED)
+                ->orderByDesc('finalized_at')
+                ->orderByDesc('id')
+                ->firstOrFail();
+        }
+        $this->ensureRunMatchesCompany($run, $company);
+
+        return $this->downloadExcel($request, $run, $company, $actor, true);
+    }
+
     private function download(Request $request, PayrollBatchRun $run, Company $company, User $actor, bool $deductionOnly = false)
     {
         try {
@@ -101,6 +173,24 @@ class PayrollReportController extends Controller
         $this->logAudit($request, $actor, $company, $run, $actionPrefix.'_downloaded', (int) $result['employee_count']);
 
         return $result['pdf']->download($result['filename']);
+    }
+
+    private function downloadExcel(Request $request, PayrollBatchRun $run, Company $company, User $actor, bool $deductionOnly = false)
+    {
+        try {
+            $result = $this->payrollReportService->excelForRunCompany($run, $company, $actor, $deductionOnly);
+        } catch (\RuntimeException $e) {
+            abort(422, $e->getMessage());
+        }
+
+        $actionPrefix = $deductionOnly ? 'payroll_deductions_report' : 'payroll_report';
+        $this->logAudit($request, $actor, $company, $run, $actionPrefix.'_excel_viewed', (int) $result['employee_count']);
+        $this->logAudit($request, $actor, $company, $run, $actionPrefix.'_excel_downloaded', (int) $result['employee_count']);
+
+        return response()->streamDownload($result['write'], $result['filename'], [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+        ]);
     }
 
     private function authorizedActor(Request $request): User

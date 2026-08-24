@@ -26,6 +26,7 @@ import {
   Settings,
   ShieldCheck,
   Timer,
+  Undo2,
   User,
   UserCheck,
   UserCog,
@@ -100,6 +101,7 @@ export const adminNavItems = [
       { to: '/admin/compensation/government-deduction', end: false, label: 'Government Deductions', icon: Landmark },
       { to: '/admin/compensation/deductions-loans', end: false, label: 'Loans & Deductions', icon: HandCoins },
       { to: '/admin/compensation/generate-payslips', end: false, label: 'Generate Payslips', icon: Receipt },
+      { to: '/admin/refunds', end: false, label: 'Refunds & Adjustments', icon: Undo2, requiredPermissions: ['refunds.view'] },
       { to: '/admin/compensation/13th-month-pay', end: false, label: '13th Month Pay', icon: Calculator },
       { to: '/admin/daily-computation', end: false, label: 'Daily Payroll', icon: Calculator },
       { to: '/admin/execom/employees', end: false, label: 'EXECOM Payroll', icon: UserCog },
@@ -169,6 +171,7 @@ export const employeeNavItems = [
     icon: Banknote,
     children: [
       { to: '/employee/payslips', end: false, label: 'My Payslips', icon: Receipt },
+      { to: '/employee/payroll-adjustments', end: false, label: 'Payroll Adjustments', icon: Undo2 },
       { to: '/employee/loans-deductions', end: false, label: 'Loans & Deductions', icon: HandCoins },
     ],
   },

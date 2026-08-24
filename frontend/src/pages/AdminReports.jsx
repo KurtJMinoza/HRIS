@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { pdf } from '@react-pdf/renderer'
 import { exportRowsToXlsx } from '@/lib/excelExport'
-import { FileDown, FileText, Filter, RefreshCw, Table2 } from 'lucide-react'
+import { FileDown, FileSpreadsheet, FileText, Filter, RefreshCw, Table2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -18,7 +18,9 @@ import {
   fetchAllAdminReportsDetailedRows,
   fetchAllEmployeeReportsDetailedRows,
   getReportsPayrollReportPdfBlob,
+  getReportsPayrollReportXlsxBlob,
   getReportsPayrollDeductionsPdfBlob,
+  getReportsPayrollDeductionsXlsxBlob,
   profileImageUrl,
   REPORTS_AND_ATTENDANCE_PAGE_SIZE,
   ATTENDANCE_PAGE_SIZE_OPTIONS,
@@ -185,6 +187,8 @@ export default function AdminReports() {
   const [payrollReportRunId, setPayrollReportRunId] = useState('')
   const [downloadingPayrollReport, setDownloadingPayrollReport] = useState(false)
   const [downloadingPayrollDeductions, setDownloadingPayrollDeductions] = useState(false)
+  const [downloadingPayrollReportExcel, setDownloadingPayrollReportExcel] = useState(false)
+  const [downloadingPayrollDeductionsExcel, setDownloadingPayrollDeductionsExcel] = useState(false)
 
   const { user } = useAuth()
   const location = useLocation()
@@ -740,6 +744,40 @@ export default function AdminReports() {
     }
   }
 
+  async function handleDownloadPayrollReportExcel() {
+    const selectedRun = finalizedPayrollRunOptions.find((run) => run.id === payrollReportRunId)
+    if (!selectedRun || downloadingPayrollReportExcel) return
+
+    setDownloadingPayrollReportExcel(true)
+    try {
+      const blob = await getReportsPayrollReportXlsxBlob({
+        company_id: Number(selectedRun.company_id),
+        payroll_run_id: Number(selectedRun.id),
+      })
+      const companyName = String(selectedRun.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${selectedRun.id}.xlsx`)
+    } finally {
+      setDownloadingPayrollReportExcel(false)
+    }
+  }
+
+  async function handleDownloadPayrollDeductionsExcel() {
+    const selectedRun = finalizedPayrollRunOptions.find((run) => run.id === payrollReportRunId)
+    if (!selectedRun || downloadingPayrollDeductionsExcel) return
+
+    setDownloadingPayrollDeductionsExcel(true)
+    try {
+      const blob = await getReportsPayrollDeductionsXlsxBlob({
+        company_id: Number(selectedRun.company_id),
+        payroll_run_id: Number(selectedRun.id),
+      })
+      const companyName = String(selectedRun.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Deductions_Report_${companyName}_Run_${selectedRun.id}.xlsx`)
+    } finally {
+      setDownloadingPayrollDeductionsExcel(false)
+    }
+  }
+
   const hasRows = Number(detailedReportMeta?.total ?? 0) > 0
   const showTableSkeleton = detailedQuery.isLoading && !detailedQuery.isPlaceholderData
 
@@ -907,6 +945,21 @@ export default function AdminReports() {
                  variant="outline"
                  size="sm"
                  className="gap-1.5"
+                 onClick={handleDownloadPayrollReportExcel}
+                 disabled={!payrollReportRunId || downloadingPayrollReportExcel || payrollRunsQuery.isFetching}
+               >
+                 {downloadingPayrollReportExcel ? (
+                   <RefreshCw className="size-3.5 animate-spin" />
+                 ) : (
+                   <FileSpreadsheet className="size-3.5" />
+                 )}
+                 Payroll Report Excel
+               </Button>
+               <Button
+                 type="button"
+                 variant="outline"
+                 size="sm"
+                 className="gap-1.5"
                  onClick={handleDownloadPayrollDeductionsPdf}
                  disabled={!payrollReportRunId || downloadingPayrollDeductions || payrollRunsQuery.isFetching}
                >
@@ -916,6 +969,21 @@ export default function AdminReports() {
                    <FileText className="size-3.5" />
                  )}
                  Deductions PDF
+               </Button>
+               <Button
+                 type="button"
+                 variant="outline"
+                 size="sm"
+                 className="gap-1.5"
+                 onClick={handleDownloadPayrollDeductionsExcel}
+                 disabled={!payrollReportRunId || downloadingPayrollDeductionsExcel || payrollRunsQuery.isFetching}
+               >
+                 {downloadingPayrollDeductionsExcel ? (
+                   <RefreshCw className="size-3.5 animate-spin" />
+                 ) : (
+                   <FileSpreadsheet className="size-3.5" />
+                 )}
+                 Deductions Excel
                </Button>
              </div>
           </CardHeader>
