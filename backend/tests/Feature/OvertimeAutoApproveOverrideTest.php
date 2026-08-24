@@ -303,6 +303,79 @@ class OvertimeAutoApproveOverrideTest extends TestCase
         $this->assertSame('21:00:00', $fresh->approved_ot_end?->format('H:i:s'));
     }
 
+    public function test_standing_overtime_syncs_ph_ot_rule_when_holiday_scope_applies(): void
+    {
+        $employee = $this->makeEmployee();
+
+        $override = OvertimeAutoApproveOverride::query()->create([
+            'user_id' => $employee->id,
+            'is_active' => true,
+            'max_hours_per_day' => 4,
+            'created_by' => $employee->id,
+            'updated_by' => $employee->id,
+        ]);
+
+        AttendanceLog::query()->create([
+            'user_id' => $employee->id,
+            'type' => AttendanceLog::TYPE_CLOCK_IN,
+            'created_at' => '2026-08-11 08:00:00',
+            'verified_at' => '2026-08-11 08:00:00',
+        ]);
+        AttendanceLog::query()->create([
+            'user_id' => $employee->id,
+            'type' => AttendanceLog::TYPE_CLOCK_OUT,
+            'created_at' => '2026-08-11 17:00:00',
+            'verified_at' => '2026-08-11 17:00:00',
+        ]);
+
+        $overtime = Overtime::query()->create([
+            'user_id' => $employee->id,
+            'date' => '2026-08-11',
+            'schedule_end' => '17:00:00',
+            'expected_end_time' => '21:00:00',
+            'approved_ot_start' => '17:00:00',
+            'approved_ot_end' => '21:00:00',
+            'computed_minutes' => 240,
+            'computed_hours' => 4,
+            'approved_ot_hours' => 4,
+            'payable_ot_hours' => 4,
+            'ph_ot_rule' => 'ORD',
+            'ot_type' => 'regular',
+            'reason' => 'Standing OT (auto-approve override — complete attendance day).',
+            'status' => Overtime::STATUS_APPROVED,
+            'approval_stage' => 'approved',
+            'pending_approval' => false,
+            'filed_at' => now(),
+            'filed_by' => $employee->id,
+            'created_by' => $employee->id,
+        ]);
+
+        $service = app(OvertimeAutoApproveService::class);
+
+        if (! \Illuminate\Support\Facades\Schema::hasTable('holidays')) {
+            $this->markTestSkipped('holidays table not available');
+        }
+
+        $holiday = \App\Models\Holiday::query()->create([
+            'name' => 'Branch Special Holiday',
+            'date' => '2026-08-11',
+            'type' => 'special',
+            'scope' => 'branch',
+            'status' => 'active',
+            'company_id' => $employee->company_id,
+            'branch_id' => $employee->branch_id,
+        ]);
+
+        try {
+            $this->assertSame('SH', $service->resolveExpectedPhOtRule($employee, '2026-08-11'));
+            $this->assertTrue($service->syncStandingOvertimeForDate($employee, '2026-08-11', $override->fresh()));
+            $this->assertSame('SH', $overtime->fresh()->ph_ot_rule);
+            $this->assertEquals(4.0, (float) $overtime->fresh()->approved_ot_hours);
+        } finally {
+            $holiday->delete();
+        }
+    }
+
     public function test_auto_approve_caps_to_max_hours_per_day(): void
     {
         $employee = $this->makeEmployee();

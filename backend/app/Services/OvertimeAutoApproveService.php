@@ -341,28 +341,48 @@ class OvertimeAutoApproveService
             return $changed;
         }
 
+        $expectedRule = $this->resolveExpectedPhOtRule($employee, $dateYmd);
         $currentHours = round((float) ($primary->approved_ot_hours ?? $primary->computed_hours ?? 0), 2);
-        if (abs($currentHours - $targetHours) < 0.01) {
+        $currentRule = strtoupper(trim((string) ($primary->ph_ot_rule ?? 'ORD')));
+        $hoursNeedSync = abs($currentHours - $targetHours) >= 0.01;
+        $ruleNeedsSync = $currentRule !== $expectedRule;
+
+        if (! $hoursNeedSync && ! $ruleNeedsSync) {
             return $changed;
         }
 
-        $expectedRule = $this->resolveExpectedPhOtRule($employee, $dateYmd);
         $approvedWindow = $this->approvedWindowForHours($primary, $targetHours, $dateYmd);
         $computedMinutes = (int) round($targetHours * 60);
-        $details = sprintf(
-            'Standing OT synced to %.2f hrs (daily limit %.2f hrs; %.2f from other approved OT).',
-            $targetHours,
-            $maxHours,
-            $nonStandingApproved,
-        );
+        $details = $hoursNeedSync && $ruleNeedsSync
+            ? sprintf(
+                'Standing OT synced to %.2f hrs (%s; daily limit %.2f hrs; %.2f from other approved OT).',
+                $targetHours,
+                $expectedRule,
+                $maxHours,
+                $nonStandingApproved,
+            )
+            : ($hoursNeedSync
+                ? sprintf(
+                    'Standing OT synced to %.2f hrs (daily limit %.2f hrs; %.2f from other approved OT).',
+                    $targetHours,
+                    $maxHours,
+                    $nonStandingApproved,
+                )
+                : sprintf(
+                    'Standing OT day type synced to %s (scope-aware holiday rule).',
+                    $expectedRule,
+                ));
 
-        $primary->expected_end_time = $approvedWindow['end'];
-        $primary->computed_minutes = $computedMinutes;
-        $primary->computed_hours = $targetHours;
-        $primary->approved_ot_start = $approvedWindow['start'];
-        $primary->approved_ot_end = $approvedWindow['end'];
-        $primary->approved_ot_hours = $targetHours;
-        $primary->payable_ot_hours = $targetHours;
+        if ($hoursNeedSync) {
+            $primary->expected_end_time = $approvedWindow['end'];
+            $primary->computed_minutes = $computedMinutes;
+            $primary->computed_hours = $targetHours;
+            $primary->approved_ot_start = $approvedWindow['start'];
+            $primary->approved_ot_end = $approvedWindow['end'];
+            $primary->approved_ot_hours = $targetHours;
+            $primary->payable_ot_hours = $targetHours;
+        }
+
         $primary->ph_ot_rule = $expectedRule;
         $primary->remarks = $details;
         $primary->save();
@@ -371,20 +391,24 @@ class OvertimeAutoApproveService
             'overtime_id' => $primary->id,
             'actor_id' => $this->resolveHrApprover()?->id,
             'employee_id' => $employee->id,
-            'action' => 'sync_standing_hours',
+            'action' => $ruleNeedsSync && ! $hoursNeedSync ? 'sync_standing_rule' : 'sync_standing_hours',
             'details' => $details,
             'approver_role' => 'system',
         ]);
 
         $this->runStandingHoursSyncSideEffects($primary->fresh(['user']));
 
-        Log::info('overtime_standing_accrual.synced_hours', [
+        Log::info('overtime_standing_accrual.synced', [
             'overtime_id' => (int) $primary->id,
             'user_id' => (int) $employee->id,
             'date' => $dateYmd,
             'previous_hours' => $currentHours,
             'target_hours' => $targetHours,
+            'previous_ph_ot_rule' => $currentRule,
+            'target_ph_ot_rule' => $expectedRule,
             'max_hours_per_day' => $maxHours,
+            'hours_synced' => $hoursNeedSync,
+            'rule_synced' => $ruleNeedsSync,
         ]);
 
         return true;
