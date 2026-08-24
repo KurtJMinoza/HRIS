@@ -23,7 +23,6 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 import {
@@ -219,8 +218,26 @@ function tileTimeLines(record) {
   return rows
 }
 
-function EmployeePicker({ employees, value, onChange, disabled }) {
-  const [open, setOpen] = useState(false)
+function employeeSearchHaystack(emp) {
+  return [
+    emp?.name,
+    emp?.formatted_name,
+    emp?.display_name,
+    emp?.employee_id,
+    emp?.employee_code,
+    emp?.username,
+    emp?.email,
+    emp?.company_name,
+    emp?.branch_name,
+    emp?.department_name,
+    emp?.department,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function EmployeePicker({ employees, value, onChange, disabled, loading = false }) {
   const [search, setSearch] = useState('')
   const selected = useMemo(
     () => employees.find((e) => String(e.id) === String(value)),
@@ -229,123 +246,78 @@ function EmployeePicker({ employees, value, onChange, disabled }) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return employees
-    return employees.filter((emp) => {
-      const hay = [
-        emp.name,
-        emp.employee_id,
-        emp.employee_code,
-        emp.username,
-        emp.email,
-        emp.company_name,
-        emp.branch_name,
-        emp.department_name,
-        emp.department,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-      return hay.includes(q)
-    })
+    return employees.filter((emp) => employeeSearchHaystack(emp).includes(q))
   }, [employees, search])
 
+  if (disabled && selected) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5 dark:border-white/10">
+        <Avatar className="size-9 shrink-0 border border-border/60">
+          {selected.profile_image ? <AvatarImage src={profileImageUrl(selected.profile_image)} alt="" /> : null}
+          <AvatarFallback className="text-[10px] font-bold">{getInitials(selected.name)}</AvatarFallback>
+        </Avatar>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold text-foreground">{selected.name}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {[selected.employee_id || selected.employee_code, selected.company_name, selected.department_name || selected.department].filter(Boolean).join(' · ')}
+          </span>
+        </span>
+      </div>
+    )
+  }
+
   return (
-    <Popover
-      modal
-      open={open && !disabled}
-      onOpenChange={(next) => {
-        if (disabled) return
-        setOpen(next)
-        if (!next) setSearch('')
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled}
-          className={cn(
-            fieldClass,
-            'w-full max-w-md justify-start gap-3 px-3 font-normal hover:bg-muted/30',
-          )}
-        >
-          {selected ? (
-            <>
-              <Avatar className="size-8 shrink-0 border border-border/60">
-                {selected.profile_image ? <AvatarImage src={profileImageUrl(selected.profile_image)} alt="" /> : null}
-                <AvatarFallback className="text-[10px] font-bold">{getInitials(selected.name)}</AvatarFallback>
-              </Avatar>
-              <span className="min-w-0 flex-1 text-left">
-                <span className="block truncate text-sm font-semibold text-foreground">{selected.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {[selected.employee_id, selected.company_name, selected.department_name || selected.department].filter(Boolean).join(' · ')}
-                </span>
-              </span>
-            </>
-          ) : (
-            <span className="text-muted-foreground">Select employee</span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        side="bottom"
-        sideOffset={4}
-        collisionPadding={16}
-        className="z-[80] flex !w-[var(--radix-popover-trigger-width)] max-w-md flex-col overflow-hidden border-0 p-0 shadow-lg"
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        onWheel={(e) => e.stopPropagation()}
-      >
-        <div className="shrink-0 border-b border-border/70 p-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              autoFocus
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name or employee number…"
-              className="h-9 rounded-lg pl-9 text-sm"
-              onKeyDown={(e) => e.stopPropagation()}
-            />
-          </div>
-          <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">
-            {filtered.length} of {employees.length} employees
+    <div className="space-y-2">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter by name or employee number…"
+          className="h-10 rounded-xl pl-9 text-sm"
+          disabled={disabled || loading}
+        />
+      </div>
+      <p className="px-0.5 text-[11px] text-muted-foreground">
+        {loading
+          ? 'Loading employees…'
+          : `${filtered.length} of ${employees.length} employees`}
+      </p>
+      <div className="max-h-56 overflow-y-auto overscroll-contain rounded-xl border border-border/70 dark:border-white/10">
+        {loading ? (
+          <p className="inline-flex w-full items-center justify-center gap-2 px-3 py-8 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" /> Loading employees…
           </p>
-        </div>
-        <div
-          className="max-h-56 min-h-0 overflow-y-auto overscroll-contain p-1"
-          onWheel={(e) => e.stopPropagation()}
-        >
-          {filtered.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">No employees found.</p>
-          ) : filtered.map((emp) => (
-            <button
-              key={emp.id}
-              type="button"
-              className={cn(
-                'flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-muted/60',
-                String(emp.id) === String(value) && 'bg-brand/10',
-              )}
-              onClick={() => {
-                onChange(String(emp.id))
-                setOpen(false)
-                setSearch('')
-              }}
-            >
-              <Avatar className="size-8 shrink-0 border border-border/60">
-                {emp.profile_image ? <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" /> : null}
-                <AvatarFallback className="text-[10px] font-bold">{getInitials(emp.name)}</AvatarFallback>
-              </Avatar>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold">{emp.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {[emp.employee_id, emp.company_name, emp.branch_name, emp.department_name || emp.department].filter(Boolean).join(' · ')}
-                </span>
+        ) : filtered.length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+            {employees.length === 0 ? 'No employees available.' : 'No matching employees.'}
+          </p>
+        ) : filtered.map((emp) => (
+          <button
+            key={emp.id}
+            type="button"
+            disabled={disabled}
+            className={cn(
+              'flex w-full items-center gap-2.5 border-b border-border/60 px-3 py-2 text-left last:border-b-0 dark:border-white/10',
+              String(emp.id) === String(value) ? 'bg-brand/10' : 'hover:bg-muted/40',
+              disabled && 'cursor-not-allowed opacity-60',
+            )}
+            onClick={() => onChange(String(emp.id))}
+          >
+            <Avatar className="size-8 shrink-0 border border-border/60">
+              {emp.profile_image ? <AvatarImage src={profileImageUrl(emp.profile_image)} alt="" /> : null}
+              <AvatarFallback className="text-[10px] font-bold">{getInitials(emp.name)}</AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold">{emp.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {[emp.employee_id || emp.employee_code, emp.company_name, emp.branch_name, emp.department_name || emp.department].filter(Boolean).join(' · ')}
               </span>
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -501,13 +473,19 @@ export function ManualAttendanceModal({
   reasonCodes = {},
   canOverrideConflict = false,
   employees: employeesProp = null,
+  employeesLoading: employeesLoadingProp = false,
 }) {
   const { toast } = useToast()
   const isEdit = Boolean(editRecord?.id)
   const now = new Date()
 
   const [employeesLocal, setEmployeesLocal] = useState([])
-  const employees = employeesProp ?? employeesLocal
+  const [employeesLocalLoading, setEmployeesLocalLoading] = useState(false)
+  // Parent often passes [] while loading; empty array must not block the local roster fetch.
+  const employees = (Array.isArray(employeesProp) && employeesProp.length > 0)
+    ? employeesProp
+    : employeesLocal
+  const employeesLoading = Boolean(employeesLoadingProp) || (employees.length === 0 && employeesLocalLoading)
   const [employeeId, setEmployeeId] = useState('')
   const [selectedDates, setSelectedDates] = useState([])
   const [calYear, setCalYear] = useState(now.getFullYear())
@@ -534,10 +512,22 @@ export function ManualAttendanceModal({
 
   useEffect(() => {
     if (!open) return
-    if (employeesProp?.length) return
+    if (Array.isArray(employeesProp) && employeesProp.length > 0) return
+    let cancelled = false
+    setEmployeesLocalLoading(true)
     getEmployees({ per_page: 'all', lite: 1, active_filter: 'active' })
-      .then((res) => setEmployeesLocal(res?.employees ?? []))
-      .catch(() => setEmployeesLocal([]))
+      .then((res) => {
+        if (!cancelled) setEmployeesLocal(res?.employees ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setEmployeesLocal([])
+      })
+      .finally(() => {
+        if (!cancelled) setEmployeesLocalLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [open, employeesProp])
 
   useEffect(() => {
@@ -787,6 +777,7 @@ export function ManualAttendanceModal({
                   value={employeeId}
                   onChange={handleEmployeeChange}
                   disabled={isEdit}
+                  loading={employeesLoading}
                 />
                 {selectedEmployee && (
                   <p className="text-xs text-muted-foreground">

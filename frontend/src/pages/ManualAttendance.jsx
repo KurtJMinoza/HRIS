@@ -616,7 +616,8 @@ export default function ManualAttendance() {
         editRecord={editRecord}
         reasonCodes={reasonCodes}
         canOverrideConflict={canOverride}
-        employees={employeesQuery.data ?? []}
+        employees={employeesQuery.data}
+        employeesLoading={employeesQuery.isLoading || employeesQuery.isFetching}
       />
 
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
