@@ -13,7 +13,9 @@ import {
   companyLogoUrl,
   getCompanies,
   getPayrollRunCompanyPayrollReportPdfBlob,
+  getPayrollRunCompanyPayrollReportXlsxBlob,
   getPayrollRunCompanyPayrollDeductionsPdfBlob,
+  getPayrollRunCompanyPayrollDeductionsXlsxBlob,
   userProfileImageSrc,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
@@ -40,6 +42,7 @@ import {
   CheckCircle2,
   Eye,
   FileDown,
+  FileSpreadsheet,
   FileText,
   Info,
   RefreshCw,
@@ -309,6 +312,8 @@ export default function AdminFinalizePayrollPage() {
   const [bulkDownloadingZip, setBulkDownloadingZip] = useState(false)
   const [payrollReportDownloading, setPayrollReportDownloading] = useState(false)
   const [payrollDeductionsDownloading, setPayrollDeductionsDownloading] = useState(false)
+  const [payrollReportExcelDownloading, setPayrollReportExcelDownloading] = useState(false)
+  const [payrollDeductionsExcelDownloading, setPayrollDeductionsExcelDownloading] = useState(false)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
   const bulkDownloadAbortRef = useRef(null)
   const [sendBatchDialogOpen, setSendBatchDialogOpen] = useState(false)
@@ -1007,6 +1012,50 @@ export default function AdminFinalizePayrollPage() {
     }
   }
 
+  const handleDownloadPayrollReportExcel = async () => {
+    const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
+    const companyId = Number(effectivePayload.company_id || preview?.batch_run?.company_id || selectedCompany?.id || 0)
+    if (batchRunId <= 0 || companyId <= 0 || payrollReportExcelDownloading || !batchRunStatusFinalized || !canBulkDownloadPayslipZip) return
+
+    setPayrollReportExcelDownloading(true)
+    try {
+      const blob = await getPayrollRunCompanyPayrollReportXlsxBlob(batchRunId, companyId)
+      const companyName = String(selectedCompany?.name || preview?.totals?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${batchRunId}.xlsx`)
+      toastRef.current({ title: 'Payroll Report Excel downloaded', description: 'Your report spreadsheet download has started.' })
+    } catch (e) {
+      toastRef.current({
+        title: 'Payroll Report Excel failed',
+        description: e.message || 'Could not download Payroll Report Excel.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPayrollReportExcelDownloading(false)
+    }
+  }
+
+  const handleDownloadPayrollDeductionsExcel = async () => {
+    const batchRunId = Number(preview?.batch_run?.payroll_batch_run_id || 0)
+    const companyId = Number(effectivePayload.company_id || preview?.batch_run?.company_id || selectedCompany?.id || 0)
+    if (batchRunId <= 0 || companyId <= 0 || payrollDeductionsExcelDownloading || !batchRunStatusFinalized || !canBulkDownloadPayslipZip) return
+
+    setPayrollDeductionsExcelDownloading(true)
+    try {
+      const blob = await getPayrollRunCompanyPayrollDeductionsXlsxBlob(batchRunId, companyId)
+      const companyName = String(selectedCompany?.name || preview?.totals?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      savePdfBlob(blob, `Payroll_Deductions_Report_${companyName}_Run_${batchRunId}.xlsx`)
+      toastRef.current({ title: 'Payroll Deductions Excel downloaded', description: 'Your deductions spreadsheet download has started.' })
+    } catch (e) {
+      toastRef.current({
+        title: 'Payroll Deductions Excel failed',
+        description: e.message || 'Could not download Payroll Deductions Excel.',
+        variant: 'destructive',
+      })
+    } finally {
+      setPayrollDeductionsExcelDownloading(false)
+    }
+  }
+
   const togglePayslipSelected = (id) => {
     setSelectedPayslipIds((prev) => {
       const next = new Set(prev)
@@ -1176,6 +1225,25 @@ export default function AdminFinalizePayrollPage() {
                   variant="outline"
                   size="sm"
                   className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
+                  disabled={payrollReportExcelDownloading || loading}
+                  onClick={handleDownloadPayrollReportExcel}
+                >
+                  {payrollReportExcelDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="h-4 w-4" />
+                  )}
+                  Payroll Report Excel
+                </Button>
+              )}
+            {batchRunStatusFinalized &&
+              Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 &&
+              canBulkDownloadPayslipZip && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
                   disabled={payrollDeductionsDownloading || loading}
                   onClick={handleDownloadPayrollDeductionsPdf}
                 >
@@ -1185,6 +1253,25 @@ export default function AdminFinalizePayrollPage() {
                     <FileText className="h-4 w-4" />
                   )}
                   Deductions PDF
+                </Button>
+              )}
+            {batchRunStatusFinalized &&
+              Number(preview?.batch_run?.payroll_batch_run_id || 0) > 0 &&
+              canBulkDownloadPayslipZip && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-10 gap-2 rounded-xl border-border/80 bg-card font-semibold shadow-sm hover:bg-muted"
+                  disabled={payrollDeductionsExcelDownloading || loading}
+                  onClick={handleDownloadPayrollDeductionsExcel}
+                >
+                  {payrollDeductionsExcelDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileSpreadsheet className="h-4 w-4" />
+                  )}
+                  Deductions Excel
                 </Button>
               )}
             {canDeleteCurrentDraftPayroll ? (

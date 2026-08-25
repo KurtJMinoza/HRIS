@@ -34,6 +34,7 @@ use App\Http\Controllers\Admin\LeaveController;
 use App\Http\Controllers\Admin\LoanRequestController;
 use App\Http\Controllers\Admin\OrganizationLeadershipController;
 use App\Http\Controllers\Admin\OvertimeController;
+use App\Http\Controllers\Admin\OvertimeAutoApproveOverrideController;
 use App\Http\Controllers\Admin\PayComponentController;
 use App\Http\Controllers\Admin\PayCycleController;
 use App\Http\Controllers\Admin\PayPolicyController;
@@ -43,6 +44,7 @@ use App\Http\Controllers\Admin\PayrollPeriodUnlockController;
 use App\Http\Controllers\Admin\PayslipController as AdminPayslipController;
 use App\Http\Controllers\Admin\RbacController;
 use App\Http\Controllers\Admin\RecruitmentController;
+use App\Http\Controllers\Admin\RefundController;
 use App\Http\Controllers\Admin\RegularizationApprovalController;
 use App\Http\Controllers\Admin\ReportsController;
 use App\Http\Controllers\Admin\ScheduleController;
@@ -216,6 +218,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/employee/my-deductions', [EmployeeLoanRequestController::class, 'myDeductions']);
     Route::post('/employee/loan-requests', [EmployeeLoanRequestController::class, 'store']);
     Route::get('/employee/loan-requests/{id}', [EmployeeLoanRequestController::class, 'show']);
+
+    Route::middleware('permission:payslip.view')->get('/employee/payroll-adjustments', [RefundController::class, 'myAdjustments']);
 
     /** Self-service detailed report (employees and any account with own-report access). */
     Route::get('/employee/reports/detailed', [ReportsController::class, 'detailed'])->name('employee.reports.detailed');
@@ -640,6 +644,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:overtime.edit_hours')->patch('/admin/overtime/{id}/hours', [OvertimeController::class, 'updateHours']);
         Route::middleware('permission:overtime.view')->delete('/admin/overtime/{id}', [OvertimeController::class, 'destroy']);
 
+        Route::middleware('permission:overtime.override.manage')->group(function () {
+            Route::get('/admin/overtime-auto-approve', [OvertimeAutoApproveOverrideController::class, 'index']);
+            Route::put('/admin/overtime-auto-approve', [OvertimeAutoApproveOverrideController::class, 'sync']);
+            Route::patch('/admin/overtime-auto-approve/{userId}', [OvertimeAutoApproveOverrideController::class, 'update'])->whereNumber('userId');
+            Route::patch('/admin/overtime-auto-approve/{userId}/status', [OvertimeAutoApproveOverrideController::class, 'updateStatus'])->whereNumber('userId');
+            Route::delete('/admin/overtime-auto-approve/{userId}', [OvertimeAutoApproveOverrideController::class, 'destroy'])->whereNumber('userId');
+        });
+
         Route::middleware('permission:payroll.view')->group(function () {
             Route::get('/admin/payroll/classify', [PayrollController::class, 'classify']);
             Route::get('/admin/payroll/preview', [PayrollController::class, 'preview']);
@@ -727,8 +739,16 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/payroll-runs/{id}/company/{companyId}/payroll-deductions-report/pdf', [PayrollReportController::class, 'downloadDeductionsForRunCompany'])
                 ->whereNumber('id')
                 ->whereNumber('companyId');
+            Route::get('/payroll-runs/{id}/company/{companyId}/payroll-report/xlsx', [PayrollReportController::class, 'downloadExcelForRunCompany'])
+                ->whereNumber('id')
+                ->whereNumber('companyId');
+            Route::get('/payroll-runs/{id}/company/{companyId}/payroll-deductions-report/xlsx', [PayrollReportController::class, 'downloadDeductionsExcelForRunCompany'])
+                ->whereNumber('id')
+                ->whereNumber('companyId');
             Route::get('/reports/payroll-report', [PayrollReportController::class, 'downloadFromReports']);
+            Route::get('/reports/payroll-report/xlsx', [PayrollReportController::class, 'downloadExcelFromReports']);
             Route::get('/reports/payroll-deductions-report', [PayrollReportController::class, 'downloadDeductionsFromReports']);
+            Route::get('/reports/payroll-deductions-report/xlsx', [PayrollReportController::class, 'downloadDeductionsExcelFromReports']);
         });
         Route::middleware('permission:approval.workflow.manage')->group(function () {
             Route::get('/admin/approval-workflow-settings', [ApprovalWorkflowSettingsController::class, 'index']);
@@ -816,6 +836,23 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:loans.approve')->group(function () {
             Route::post('/admin/loan-requests/{id}/approve', [LoanRequestController::class, 'approve']);
             Route::post('/admin/loan-requests/{id}/reject', [LoanRequestController::class, 'reject']);
+        });
+
+        Route::middleware('permission:refunds.view')->group(function () {
+            Route::get('/admin/refunds', [RefundController::class, 'index']);
+            Route::get('/admin/refunds/counts', [RefundController::class, 'counts']);
+            Route::get('/admin/refunds/correction-context', [RefundController::class, 'correctionContext']);
+            Route::get('/admin/refunds/{id}', [RefundController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:refunds.create')->group(function () {
+            Route::post('/admin/refunds/preview', [RefundController::class, 'preview']);
+            Route::post('/admin/refunds', [RefundController::class, 'store']);
+            Route::patch('/admin/refunds/{id}', [RefundController::class, 'update'])->whereNumber('id');
+        });
+        Route::middleware('permission:refunds.approve|refunds.process')->group(function () {
+            Route::post('/admin/refunds/{id}/{action}', [RefundController::class, 'transition'])
+                ->whereNumber('id')
+                ->where('action', 'submit|start-review|approve|reject|cancel|void');
         });
 
         Route::middleware('permission:rbac.manage')->get('/admin/rbac/matrix', [RbacController::class, 'matrix']);

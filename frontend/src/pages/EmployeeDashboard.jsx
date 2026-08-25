@@ -344,6 +344,27 @@ function holidayTypeDisplay(type) {
 }
 
 /**
+ * Pending employee requests for a calendar day (correction / leave / OT).
+ * Kept short so they fit under the main status badge.
+ * @returns {string[]}
+ */
+function calendarPendingRequestLabels(record, dateKey, pendingOtDates) {
+  const labels = []
+  if (record?.presence_issue === 'correction_pending' || record?.pending_correction) {
+    const correctionLabel = String(record.pending_correction_label || '').trim()
+    labels.push(correctionLabel || 'Pending correction')
+  }
+  if (record?.pending_leave) {
+    const leaveLabel = String(record.pending_leave_label || '').trim()
+    labels.push(leaveLabel || 'Pending leave')
+  }
+  if (pendingOtDates?.has?.(dateKey)) {
+    labels.push('Pending OT')
+  }
+  return labels
+}
+
+/**
  * Maps API day row → calendar tile + badge (handles `clocked_in`, `incomplete`, leave, rest).
  * Backend sets status to `clocked_in` while still on shift; late/undertime flags stay on the row.
  */
@@ -451,6 +472,15 @@ function getCalendarDayVisual(record, dateKey, ctx) {
       badge: record.presence_label || record.status_label || 'Invalid Shift',
       tileClass: `${baseGridCell} ${tint.red}`,
       badgeClass: `${L.ink} ${L.red}`,
+    }
+  }
+
+  // Pending attendance correction should read as a request, not a clean Present day.
+  if (record.presence_issue === 'correction_pending') {
+    return {
+      badge: calendarStatusBadge(record, 'Present'),
+      tileClass: `${baseGridCell} ${tint.amber}`,
+      badgeClass: `${L.ink} ${L.emerald}`,
     }
   }
 
@@ -712,7 +742,7 @@ export default function EmployeeDashboard() {
       if (calendarCacheRef.current.has(mk)) continue
       try {
         const data = await getEmployeeDashboardAttendanceCalendar({ month: mk })
-        if (data?.meta?.schema_version === 25) {
+        if (data?.meta?.schema_version === 27) {
           calendarCacheRef.current.set(mk, data)
         }
       } catch {
@@ -725,7 +755,7 @@ export default function EmployeeDashboard() {
     const monthKey = calendarMonthSelectKey(year, month)
     calendarAbortRef.current?.abort()
     const cached = calendarCacheRef.current.get(monthKey)
-    const cacheValid = cached && cached?.meta?.schema_version === 25
+    const cacheValid = cached && cached?.meta?.schema_version === 27
 
     if (cacheValid) {
       setDays(Array.isArray(cached.days) ? cached.days : [])
@@ -1482,6 +1512,14 @@ export default function EmployeeDashboard() {
       unfiledEntries,
     }
   }, [monthOtRequests, days])
+
+  const pendingOtDates = useMemo(() => {
+    const dates = new Set()
+    for (const o of monthOtRequests) {
+      if (o?.date && o.status === 'pending') dates.add(o.date)
+    }
+    return dates
+  }, [monthOtRequests])
 
   const otModalRows = useMemo(() => {
     const rows = []
@@ -2814,12 +2852,15 @@ export default function EmployeeDashboard() {
                         isAdjacent: cell.isAdjacent,
                       }
                       const visual = getCalendarDayVisual(record, key, ctx)
+                      const pendingRequestLabels = calendarPendingRequestLabels(record, key, pendingOtDates)
                       const lines = tileTooltipLines(record, key)
+                      if (pendingRequestLabels.length) lines.push(...pendingRequestLabels)
                       const timeLines = calendarTileTimeLines(record)
                       const monthShort = MONTHS[cell.month]?.slice(0, 3) ?? ''
                       const isToday = key === todayKeyNow
                       const isSelected = selectedDay != null && formatLocalDateKey(selectedDay) === key
                       const tooltipTitle = lines.length ? lines.join('\n') : undefined
+                      const hasTileBody = Boolean(visual.badge) || pendingRequestLabels.length > 0
 
                       return (
                         <div key={`${key}-${idx}`} className="flex min-h-19 min-w-0 @sm:min-h-21">
@@ -2834,6 +2875,7 @@ export default function EmployeeDashboard() {
                               isSelected &&
                                 'z-1 border-orange-500 ring-1 ring-orange-300 ring-offset-1 ring-offset-background',
                               cell.isAdjacent && record && 'opacity-[0.88]',
+                              pendingRequestLabels.length > 0 && !visual.badge && 'bg-amber-50 dark:bg-amber-500/12',
                             )}
                           >
                             <div className="flex items-start justify-between gap-0.5">
@@ -2857,9 +2899,21 @@ export default function EmployeeDashboard() {
                                 </span>
                               )}
                             </div>
-                            {visual.badge ? (
+                            {hasTileBody ? (
                               <div className="mt-auto space-y-0.5 pt-1">
-                                <span className={visual.badgeClass}>{visual.badge}</span>
+                                {visual.badge ? <span className={visual.badgeClass}>{visual.badge}</span> : null}
+                                {pendingRequestLabels.length > 0 && (
+                                  <div className="space-y-0.5 text-left">
+                                    {pendingRequestLabels.map((label) => (
+                                      <span
+                                        key={label}
+                                        className="block max-w-full text-[8px] font-semibold leading-snug tracking-tight text-amber-800 line-clamp-2 @sm:text-[10px] dark:text-amber-300"
+                                      >
+                                        {label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                                 {timeLines.length > 0 && (
                                   <div className="space-y-0.5 text-left text-[8px] font-semibold leading-tight text-muted-foreground @sm:text-[10px]">
                                     {timeLines.slice(0, 2).map((row) => (

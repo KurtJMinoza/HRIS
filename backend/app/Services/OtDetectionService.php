@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\LeaveRequest;
 use App\Models\Overtime;
 use App\Models\User;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Passive OT / ND / Premium detection — computes potential extra hours from
@@ -99,10 +101,6 @@ class OtDetectionService
             ->orderBy('verified_at')
             ->get();
 
-        if ($logs->isEmpty()) {
-            return null;
-        }
-
         $firstClockIn = null;
         $lastClockOut = null;
 
@@ -112,6 +110,36 @@ class OtDetectionService
                 $firstClockIn = $stamp;
             } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
                 $lastClockOut = $stamp;
+            }
+        }
+
+        // Manual attendance / approved corrections (same overlay as payroll + auto-approve presence).
+        if ($firstClockIn === null || $lastClockOut === null) {
+            $correctionQuery = AttendanceCorrection::query()
+                ->where('user_id', $user->id)
+                ->whereDate('date', $dateKey)
+                ->where('approved', true)
+                ->where(function ($q) {
+                    $q->where('pending_approval', false)->orWhereNull('pending_approval');
+                })
+                ->whereNull('rejected_at');
+
+            if (Schema::hasColumn('attendance_corrections', 'reversed_at')) {
+                $correctionQuery->whereNull('reversed_at');
+            }
+
+            $correction = $correctionQuery
+                ->orderByDesc('approved_at')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($correction !== null) {
+                if ($firstClockIn === null && $correction->time_in !== null) {
+                    $firstClockIn = $correction->time_in;
+                }
+                if ($lastClockOut === null && $correction->time_out !== null) {
+                    $lastClockOut = $correction->time_out;
+                }
             }
         }
 

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Overtime;
 use App\Models\User;
+use App\Support\OvertimeFilingRules;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -206,7 +207,10 @@ class OvertimePayrollService
                 continue;
             }
             $seenIds[$otId] = true;
-            $hours = max(0.0, (float) ($ot->computed_hours ?? 0));
+            $hours = max(
+                0.0,
+                (float) ($ot->approved_ot_hours ?? $ot->computed_hours ?? 0)
+            );
             if ($hours <= 0.0001) {
                 continue;
             }
@@ -282,6 +286,22 @@ class OvertimePayrollService
 
         $approvedMinutes = max(0, $approvedMinutes);
         $payableMinutes = $this->resolvePayableOtMinutes($renderedOtMinutes, $approvedMinutes);
+
+        // Honor explicit payable_ot_hours on approved rows (auto-approve sets this; min basis must not zero it out).
+        $explicitPayableMinutes = 0;
+        foreach ($records as $ot) {
+            if (! $ot instanceof Overtime || $ot->status !== Overtime::STATUS_APPROVED) {
+                continue;
+            }
+            $explicit = $ot->payable_ot_hours;
+            if ($explicit !== null && (float) $explicit > 0.0001) {
+                $explicitPayableMinutes += (int) round((float) $explicit * 60);
+            }
+        }
+        if ($explicitPayableMinutes > $payableMinutes) {
+            $payableMinutes = $explicitPayableMinutes;
+        }
+
         $payableHours = $payableMinutes / 60.0;
         $approvedHours = $approvedMinutes / 60.0;
 
@@ -467,7 +487,19 @@ class OvertimePayrollService
 
         $this->applyPayrollEligibleScope($query, $payrollBatchRunId, $companyId, $assignmentId);
 
-        return $query->get()->all();
+        $tz = (string) config('payroll.timezone', config('attendance.timezone', 'Asia/Manila'));
+
+        return array_values(array_filter(
+            $query->get()->all(),
+            fn (Overtime $ot): bool => OvertimeFilingRules::pastDateHasCompletedAttendance($userId, $this->overtimeDateKey($ot), $tz)
+        ));
+    }
+
+    private function overtimeDateKey(Overtime $ot): string
+    {
+        return $ot->date instanceof Carbon
+            ? $ot->date->toDateString()
+            : Carbon::parse((string) $ot->date)->toDateString();
     }
 
     /**

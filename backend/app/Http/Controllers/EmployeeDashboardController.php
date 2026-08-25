@@ -339,7 +339,7 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 25) {
+        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 27) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -386,7 +386,7 @@ class EmployeeDashboardController extends Controller
             ->groupBy(fn ($l) => $this->attendanceLogPunchInstant($l)->timezone($attendanceTz)->toDateString());
 
         $corrections = AttendanceCorrection::query()
-            ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'reason_code', 'filed_at', 'is_incomplete_record'])
+            ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'reason_code', 'filed_at', 'is_incomplete_record', 'issue_kind'])
             ->where('user_id', $employeeId)
             ->whereBetween('date', [$fromStr, $toStr])
             ->get()
@@ -400,6 +400,15 @@ class EmployeeDashboardController extends Controller
             ->where('end_date', '>=', $fromStr)
             ->get();
 
+        $pendingLeaves = LeaveRequest::query()
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status'])
+            ->where('user_id', $employeeId)
+            ->where('status', LeaveRequest::STATUS_PENDING)
+            ->where('start_date', '<=', $toStr)
+            ->where('end_date', '>=', $fromStr)
+            ->orderByDesc('id')
+            ->get();
+
         $leaveByDate = [];
         foreach ($approvedLeaves as $leave) {
             $leaveStart = $leave->start_date->copy()->max($from);
@@ -411,6 +420,18 @@ class EmployeeDashboardController extends Controller
                 if ($existing === null || $leave->id > $existing->id) {
                     $leaveByDate[$ds] = $leave;
                 }
+                $cursor->addDay();
+            }
+        }
+
+        $pendingLeaveByDate = [];
+        foreach ($pendingLeaves as $leave) {
+            $leaveStart = $leave->start_date->copy()->max($from);
+            $leaveEnd = $leave->end_date->copy()->min($to);
+            $cursor = $leaveStart->copy();
+            while ($cursor->lessThanOrEqualTo($leaveEnd)) {
+                $ds = $cursor->toDateString();
+                $pendingLeaveByDate[$ds] ??= $leave;
                 $cursor->addDay();
             }
         }
@@ -458,6 +479,7 @@ class EmployeeDashboardController extends Controller
             $dateKey = $cursor->toDateString();
             $holidayOnDate = $holidayMap[$dateKey] ?? null;
             $leaveOnDate = $leaveByDate[$dateKey] ?? null;
+            $pendingLeaveOnDate = $pendingLeaveByDate[$dateKey] ?? null;
             $dayLogs = isset($logs[$dateKey]) ? $logs[$dateKey]->all() : null;
             $correctionCollection = $corrections->get($dateKey);
             $correction = $correctionCollection?->first();
@@ -583,10 +605,21 @@ class EmployeeDashboardController extends Controller
                 $absentCounts['holiday']++;
             }
 
+            $pendingCorrection = $correction && $correction->pending_approval
+                ? $this->pendingCorrectionCalendarMeta($correction)
+                : null;
+
             $days[] = array_merge($summary, [
                 'holiday_name' => $holidayOnDate['name'] ?? null,
                 'holiday_type' => $holidayOnDate['type'] ?? null,
                 'holiday_pay_policy' => $holidayPayPolicy,
+                'pending_leave' => $pendingLeaveOnDate !== null,
+                'pending_leave_label' => $pendingLeaveOnDate !== null
+                    ? $this->pendingLeaveCalendarLabel($pendingLeaveOnDate)
+                    : null,
+                'pending_correction' => $pendingCorrection !== null,
+                'pending_correction_scope' => $pendingCorrection['scope'] ?? null,
+                'pending_correction_label' => $pendingCorrection['label'] ?? null,
             ]);
 
             $cursor->addDay();
@@ -657,7 +690,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 25,
+                'schema_version' => 27,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -1291,6 +1324,60 @@ class EmployeeDashboardController extends Controller
         if ((! is_array($schedule) || $schedule === [] || $schedule === null) && $user->working_schedule_id !== null) {
             $user->loadMissing('workingSchedule');
         }
+    }
+
+    private function pendingLeaveCalendarLabel(LeaveRequest $leave): string
+    {
+        $type = trim((string) ($leave->type ?? ''));
+        if ($type === '') {
+            return 'Pending leave';
+        }
+
+        $normalized = strtolower(str_replace(['_', '-'], ' ', $type));
+        $label = match ($normalized) {
+            'vl', 'vacation', 'vacation leave' => 'VL',
+            'sl', 'sick', 'sick leave' => 'SL',
+            'el', 'emergency', 'emergency leave' => 'EL',
+            'ul', 'unpaid', 'unpaid leave' => 'UL',
+            default => strlen($type) <= 12 ? $type : (ucfirst($normalized) ?: $type),
+        };
+
+        return 'Pending '.$label;
+    }
+
+    /**
+     * @return array{scope: string, label: string}
+     */
+    private function pendingCorrectionCalendarMeta(AttendanceCorrection $correction): array
+    {
+        $stored = is_string($correction->issue_kind ?? null) ? trim((string) $correction->issue_kind) : '';
+        $scope = match ($stored) {
+            'missing_in' => 'time_in',
+            'missing_out' => 'time_out',
+            'both' => 'both',
+            default => null,
+        };
+
+        if ($scope === null) {
+            $hasIn = $correction->time_in !== null;
+            $hasOut = $correction->time_out !== null;
+            $scope = match (true) {
+                $hasIn && ! $hasOut => 'time_in',
+                $hasOut && ! $hasIn => 'time_out',
+                default => 'both',
+            };
+        }
+
+        $label = match ($scope) {
+            'time_in' => 'Pending time in',
+            'time_out' => 'Pending time out',
+            default => 'Pending in & out',
+        };
+
+        return [
+            'scope' => $scope,
+            'label' => $label,
+        ];
     }
 
     private function buildScheduleFromWorkingSchedule(?\App\Models\WorkingSchedule $schedule): ?array

@@ -10,6 +10,7 @@ const PATHS_ADMIN_HR_ONLY = new Set([
   '/admin/employee-logs',
   '/admin/daily-computation/policy-settings',
   '/admin/approval-workflow-settings',
+  '/admin/overtime-auto-approve',
   '/admin/email-notifications',
 ])
 
@@ -46,6 +47,7 @@ const pathToPermissions = {
   '/admin/attendance-corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/corrections': ['attendance.corrections.approve', 'attendance.view'],
   '/admin/overtime': ['overtime.view'],
+  '/admin/overtime-auto-approve': ['overtime.override.manage'],
   '/admin/leave-credits': [
     'can_access_reports_module',
     'can_view_subordinate_reports',
@@ -70,6 +72,7 @@ const pathToPermissions = {
   '/admin/compensation/government-deduction': ['compensation.view'],
   '/admin/compensation/deductions-loans': ['compensation.view'],
   '/admin/compensation/generate-payslips': ['payslip.generate'],
+  '/admin/refunds': ['refunds.view'],
   '/admin/compensation/13th-month-pay': ['thirteenth_month.view'],
   '/admin/compensation/finalize-payroll': ['payslip.finalize'],
   '/admin/execom/employees': ['execom.view', 'execom.manage'],
@@ -85,6 +88,7 @@ const pathToPermissions = {
   ],
   '/admin/evaluations': ['evaluations.view', 'evaluations.create', 'evaluations.review', 'employees.view'],
   '/admin/loans-deductions': ['loans.view_own', 'loans.request', 'request-loan'],
+  '/employee/payroll-adjustments': ['payslip.view'],
   '/admin/email-notifications': ['email_notifications.view', 'email_notifications.manage', 'settings.manage'],
   '/admin/schedules': ['manage-schedules', 'schedule.view'],
   /** Self-service: same visibility rule as Profile (no extra permission slug). */

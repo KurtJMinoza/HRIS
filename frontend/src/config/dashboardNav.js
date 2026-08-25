@@ -26,6 +26,7 @@ import {
   Settings,
   ShieldCheck,
   Timer,
+  Undo2,
   User,
   UserCheck,
   UserCog,
@@ -75,6 +76,7 @@ export const adminNavItems = [
       { to: '/admin/schedule-requests', end: false, label: 'Schedule Approvals', icon: ClipboardList },
       { to: '/admin/corrections', end: false, label: 'Attendance Corrections', icon: ClipboardList },
       { to: '/admin/overtime', end: false, label: 'Overtime', icon: Timer },
+      { to: '/admin/overtime-auto-approve', end: false, label: 'OT Auto-Approve', icon: ShieldCheck, requiredPermissions: ['overtime.override.manage'] },
       { to: '/admin/leave', end: false, label: 'Leave', icon: CalendarOff },
       {
         to: '/admin/leave-credits',
@@ -99,6 +101,7 @@ export const adminNavItems = [
       { to: '/admin/compensation/government-deduction', end: false, label: 'Government Deductions', icon: Landmark },
       { to: '/admin/compensation/deductions-loans', end: false, label: 'Loans & Deductions', icon: HandCoins },
       { to: '/admin/compensation/generate-payslips', end: false, label: 'Generate Payslips', icon: Receipt },
+      { to: '/admin/refunds', end: false, label: 'Refunds & Adjustments', icon: Undo2, requiredPermissions: ['refunds.view'] },
       { to: '/admin/compensation/13th-month-pay', end: false, label: '13th Month Pay', icon: Calculator },
       { to: '/admin/daily-computation', end: false, label: 'Daily Payroll', icon: Calculator },
       { to: '/admin/execom/employees', end: false, label: 'EXECOM Payroll', icon: UserCog },
@@ -168,6 +171,7 @@ export const employeeNavItems = [
     icon: Banknote,
     children: [
       { to: '/employee/payslips', end: false, label: 'My Payslips', icon: Receipt },
+      { to: '/employee/payroll-adjustments', end: false, label: 'Payroll Adjustments', icon: Undo2 },
       { to: '/employee/loans-deductions', end: false, label: 'Loans & Deductions', icon: HandCoins },
     ],
   },

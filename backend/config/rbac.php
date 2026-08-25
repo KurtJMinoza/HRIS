@@ -50,6 +50,7 @@ return [
         ['slug' => 'overtime.approve', 'module' => 'overtime', 'label' => 'Approve OT', 'description' => 'Approve or reject overtime'],
         ['slug' => 'overtime.export', 'module' => 'overtime', 'label' => 'Export OT', 'description' => 'Export overtime reports'],
         ['slug' => 'overtime.edit_hours', 'module' => 'overtime', 'label' => 'Edit OT hours', 'description' => 'Adjust approved hours'],
+        ['slug' => 'overtime.override.manage', 'module' => 'overtime', 'label' => 'Manage OT auto-approve', 'description' => 'Configure per-employee overtime auto-approve overrides'],
 
         // 5. Leave
         ['slug' => 'leave.view', 'module' => 'leave', 'label' => 'View leave', 'description' => 'See leave requests in scope'],
@@ -110,6 +111,12 @@ return [
         ['slug' => 'payslip.generate', 'module' => 'payslip', 'label' => 'Generate payslips', 'description' => 'Generate payslips for selected scope'],
         ['slug' => 'payslip.finalize', 'module' => 'payslip', 'label' => 'Finalize payslips', 'description' => 'Finalize payroll and send payslips'],
         ['slug' => 'payslip.download', 'module' => 'payslip', 'label' => 'Download payslips', 'description' => 'Download payslip PDF files'],
+
+        // Refunds & payroll recovery
+        ['slug' => 'refunds.view', 'module' => 'payroll', 'label' => 'View refunds & adjustments', 'description' => 'List and review refund / payroll recovery requests'],
+        ['slug' => 'refunds.create', 'module' => 'payroll', 'label' => 'Create refunds', 'description' => 'Create and submit refund / adjustment requests'],
+        ['slug' => 'refunds.approve', 'module' => 'payroll', 'label' => 'Approve refunds', 'description' => 'Review, approve, or reject refund requests'],
+        ['slug' => 'refunds.process', 'module' => 'payroll', 'label' => 'Process refunds', 'description' => 'Queue refunds for payroll and mark processed'],
 
         // 10. Compensation
         ['slug' => 'compensation.view', 'module' => 'compensation', 'label' => 'View compensation', 'description' => 'View pay components, pay cycles, and compensation settings'],
@@ -215,6 +222,10 @@ return [
             'payslip.generate',
             'payslip.finalize',
             'payslip.download',
+            'refunds.view',
+            'refunds.create',
+            'refunds.approve',
+            'refunds.process',
             'reports.view',
             'reports.payroll',
             'reports.export',

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PayrollDayComputation;
 use App\Models\PayCycle;
 use App\Models\Overtime;
 use App\Models\PayrollBatchRun;
@@ -37,7 +38,7 @@ class FinalizePayrollService
     private static ?array $payrollBatchRunColumns = null;
 
     public function __construct(
-        private readonly PayrollComputationService $payrollComputation,
+        private readonly PayrollDayComputation $payrollComputation,
         private readonly PayslipService $payslipService,
         private readonly PayCycleService $payCycleService,
         private readonly PayrollPersistService $payrollPersistService,
@@ -2413,6 +2414,11 @@ class FinalizePayrollService
         $this->payslipService->syncBatchRunTotals($run);
         $run = $run->fresh();
         $this->markOvertimePaidForBatch($run, $employees, $periodStart, $periodEnd, $companyId);
+        $actorUser = $actor ?? User::query()->find($adminUserId);
+        app(RefundPayrollApplicationService::class)->markProcessedForBatch(
+            $run,
+            $actorUser instanceof User ? $actorUser : null
+        );
 
         $this->emitPayrollQueueProgress('Finalize payroll: draft snapshot fast path completed', [
             'batch_run_id' => (int) $run->id,

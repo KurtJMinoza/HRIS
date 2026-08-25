@@ -31,6 +31,7 @@ import {
   getLeaveCreditHistory,
   getLeaveCreditsReport,
   updateLeaveCreditSettings,
+  userProfileImageSrc,
 } from '@/api'
 import { useToast } from '@/components/ui/use-toast'
 import { Badge } from '@/components/ui/badge'
@@ -224,7 +225,7 @@ function ActionIconButton({ label, icon: Icon, onClick, disabled = false, tone =
 
 function EmployeeAvatar({ row, className = 'size-9 text-[11px]' }) {
   const [failed, setFailed] = useState(false)
-  const avatarUrl = row?.avatar_url || row?.photo_url
+  const avatarUrl = userProfileImageSrc(row)
 
   if (!avatarUrl || failed) {
     return (

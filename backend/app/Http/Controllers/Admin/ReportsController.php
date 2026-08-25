@@ -1960,7 +1960,7 @@ class ReportsController extends Controller
         // every company / branch / department available to the viewer.
         $scopeUsers = (clone $baseQuery)->get([
             'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',
-            'leave_credits', 'employment_status', 'hire_date',
+            'leave_credits', 'employment_status', 'hire_date', 'profile_image',
         ]);
         $companies = $scopeUsers
             ->filter(fn (User $u) => $u->company !== null)
@@ -2007,7 +2007,7 @@ class ReportsController extends Controller
         }
         $users = $query->get([
             'id', 'name', 'employee_code', 'department_id', 'company_id', 'branch_id',
-            'leave_credits', 'employment_status', 'hire_date',
+            'leave_credits', 'employment_status', 'hire_date', 'profile_image',
         ]);
 
         Log::info('leave_credit_reports: scoped employee query resolved', [

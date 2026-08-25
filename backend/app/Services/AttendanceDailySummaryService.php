@@ -93,6 +93,12 @@ class AttendanceDailySummaryService
         ));
         $approvedOtHours = $this->sumOvertimeHours($approvedOtRecords);
 
+        // Incomplete attendance (missing in or out) must not show approved/payable OT.
+        if (! ($hasTimeIn && $hasTimeOut)) {
+            $approvedOtRecords = [];
+            $approvedOtHours = 0.0;
+        }
+
         $scheduleForOt = is_array($daySchedule) ? $daySchedule : (
             $isRestDay ? AttendanceStatusService::firstWorkdaySchedule($effectiveSchedule) : null
         );

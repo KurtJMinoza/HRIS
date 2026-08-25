@@ -94,10 +94,11 @@ class OvertimeBulkFollowUpJob implements ShouldQueue
     {
         $drafts = Payslip::query()
             ->where('user_id', (int) $overtime->user_id)
-            ->where('status', Payslip::STATUS_DRAFT)
+            ->whereIn('status', [Payslip::STATUS_DRAFT, Payslip::STATUS_GENERATED])
+            ->whereNull('voided_at')
             ->whereDate('pay_period_start', '<=', $date)
             ->whereDate('pay_period_end', '>=', $date)
-            ->get(['id', 'company_id', 'pay_period_start', 'pay_period_end']);
+            ->get(['id', 'company_id', 'pay_period_start', 'pay_period_end', 'payroll_batch_run_id']);
 
         if ($drafts->isEmpty()) {
             return;
@@ -106,13 +107,31 @@ class OvertimeBulkFollowUpJob implements ShouldQueue
         $draftIds = $drafts->pluck('id')->map(fn ($id) => (int) $id)->all();
         Payslip::query()->whereIn('id', $draftIds)->delete();
 
+        $batchIds = $drafts->pluck('payroll_batch_run_id')
+            ->filter(fn ($id) => $id !== null && (int) $id > 0)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($batchIds !== []) {
+            PayrollBatchRun::query()
+                ->whereIn('id', $batchIds)
+                ->whereIn('status', [PayrollBatchRun::STATUS_DRAFT, PayrollBatchRun::STATUS_FAILED])
+                ->update([
+                    'error_message' => 'Needs recompute: overtime request '.$overtime->id.' was approved. Regenerate payslips to include OT.',
+                ]);
+        }
+
         foreach ($drafts as $draft) {
             PayrollBatchRun::query()
                 ->where('status', PayrollBatchRun::STATUS_DRAFT)
                 ->whereDate('pay_period_start', $draft->pay_period_start?->toDateString() ?? $date)
                 ->whereDate('pay_period_end', $draft->pay_period_end?->toDateString() ?? $date)
                 ->when($draft->company_id !== null, fn ($q) => $q->where('company_id', (int) $draft->company_id))
-                ->update(['error_message' => 'Draft needs recompute: overtime request '.$overtime->id.' was approved.']);
+                ->update([
+                    'error_message' => 'Needs recompute: overtime request '.$overtime->id.' was approved. Regenerate payslips to include OT.',
+                ]);
         }
 
         Log::info('payroll_draft_cache_cleared_for_overtime_bulk', [
@@ -120,6 +139,7 @@ class OvertimeBulkFollowUpJob implements ShouldQueue
             'employee_id' => (int) $overtime->user_id,
             'date' => $date,
             'deleted_draft_payslip_ids' => $draftIds,
+            'affected_batch_ids' => $batchIds,
         ]);
     }
 }

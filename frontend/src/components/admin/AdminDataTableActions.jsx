@@ -20,6 +20,8 @@ export function AdminDataTableActions({
   onReject,
   showDelete = false,
   onDelete,
+  deleteLabel = 'Delete',
+  deleteAriaLabel = 'Delete',
   showSubmitRecommendation = false,
   onSubmitRecommendation,
   disabled = false,
@@ -161,11 +163,11 @@ export function AdminDataTableActions({
             'focus-visible:ring-2 focus-visible:ring-destructive/30',
           )}
           onClick={stop(onDelete)}
-          title="Delete"
-          aria-label="Delete"
+          title={deleteAriaLabel}
+          aria-label={deleteAriaLabel}
         >
           <Trash2 className="size-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
-          <span className={actionLabelClass}>Delete</span>
+          <span className={actionLabelClass}>{deleteLabel}</span>
         </Button>
       ) : null}
     </div>
