@@ -345,14 +345,13 @@ function holidayTypeDisplay(type) {
 
 /**
  * Pending employee requests for a calendar day (correction / leave / OT).
- * Kept short so they fit under the main status badge.
+ * Correction missing in/out is the main badge; secondary notes approval wait + other filings.
  * @returns {string[]}
  */
 function calendarPendingRequestLabels(record, dateKey, pendingOtDates) {
   const labels = []
   if (record?.presence_issue === 'correction_pending' || record?.pending_correction) {
-    const correctionLabel = String(record.pending_correction_label || '').trim()
-    labels.push(correctionLabel || 'Pending correction')
+    labels.push('Pending approval')
   }
   if (record?.pending_leave) {
     const leaveLabel = String(record.pending_leave_label || '').trim()
@@ -362,6 +361,17 @@ function calendarPendingRequestLabels(record, dateKey, pendingOtDates) {
     labels.push('Pending OT')
   }
   return labels
+}
+
+function calendarPendingCorrectionBadge(record) {
+  const scope = String(record?.pending_correction_scope || '').trim()
+  if (scope === 'time_in') return 'Missing in'
+  if (scope === 'time_out') return 'Missing out'
+  if (scope === 'both') return 'Missing in & out'
+  const label = String(record?.pending_correction_label || '').trim()
+  if (/time in/i.test(label) && !/out/i.test(label)) return 'Missing in'
+  if (/time out/i.test(label) && !/in &/i.test(label)) return 'Missing out'
+  return calendarIncompleteBadge(record) || 'Incomplete'
 }
 
 /**
@@ -475,12 +485,12 @@ function getCalendarDayVisual(record, dateKey, ctx) {
     }
   }
 
-  // Pending attendance correction should read as a request, not a clean Present day.
-  if (record.presence_issue === 'correction_pending') {
+  // Pending attendance correction: show missing in/out, not a clean Present day.
+  if (record.presence_issue === 'correction_pending' || record.pending_correction) {
     return {
-      badge: calendarStatusBadge(record, 'Present'),
+      badge: calendarPendingCorrectionBadge(record),
       tileClass: `${baseGridCell} ${tint.amber}`,
-      badgeClass: `${L.ink} ${L.emerald}`,
+      badgeClass: `${L.ink} ${L.amber}`,
     }
   }
 
