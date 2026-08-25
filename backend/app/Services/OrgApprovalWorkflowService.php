@@ -314,6 +314,8 @@ class OrgApprovalWorkflowService
         }
 
         if (in_array(self::MODULE_ATTENDANCE_CORRECTION, $requestTypes, true)) {
+            // Use filed_at (not attendance date) so a new shared assignment applies to
+            // already-filed corrections for earlier punch dates.
             $synced += $this->resyncPendingEmployeeRequests(
                 AttendanceCorrection::query()
                     ->where('pending_approval', true)
@@ -325,7 +327,7 @@ class OrgApprovalWorkflowService
                     ),
                 $employeeIds,
                 self::MODULE_ATTENDANCE_CORRECTION,
-                'date',
+                'filed_at',
             );
         }
 

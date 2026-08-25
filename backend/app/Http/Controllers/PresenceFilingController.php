@@ -290,10 +290,12 @@ class PresenceFilingController extends Controller
             ->whereDate('date', $dateKey)
             ->first();
 
+        // Resolve org context as of filing time so late corrections for past dates
+        // still route to the employee's current shared/primary head (not a stale primary).
         $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
             $employee,
             isset($validated['assignment_id']) ? (int) $validated['assignment_id'] : null,
-            $dateKey,
+            now(),
         );
         $assignmentContext = $this->organizationAssignments->requestContextPayload($selectedAssignment);
 
@@ -559,7 +561,7 @@ class PresenceFilingController extends Controller
         $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
             $employee,
             isset($validated['assignment_id']) ? (int) $validated['assignment_id'] : null,
-            $dateKey,
+            now(),
         );
         $assignmentContext = $this->organizationAssignments->requestContextPayload($selectedAssignment);
 

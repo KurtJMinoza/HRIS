@@ -141,6 +141,8 @@ class EmployeeOrganizationAssignmentService
                         $created[] = $assignment->fresh();
                     }
                 } else {
+                    // Null effective_from so pending filings for earlier attendance/leave
+                    // dates still resolve to this shared org (and its head) on resync.
                     $assignment = EmployeeOrganizationAssignment::query()->create([
                         'employee_id' => (int) $user->id,
                         'organization_unit_id' => (int) $context['organization_unit_id'],
@@ -152,7 +154,7 @@ class EmployeeOrganizationAssignmentService
                         'section_unit_id' => $context['section_unit_id'],
                         'is_primary' => false,
                         'immediate_leader_id' => null,
-                        'effective_from' => now()->toDateString(),
+                        'effective_from' => null,
                         'effective_to' => null,
                         'is_active' => true,
                         'remarks' => $remarks,
@@ -550,15 +552,31 @@ class EmployeeOrganizationAssignmentService
             ];
         }
 
+        $companyId = $this->existingRequestContextId($assignment->company_id, 'companies');
+        $branchId = $this->existingRequestContextId($assignment->branch_id, 'branches');
+        $divisionId = $this->existingRequestContextId($assignment->division_id, 'divisions');
+        $departmentId = $this->existingRequestContextId($assignment->department_id, 'departments');
+        $sectionUnitId = $this->existingRequestContextId($assignment->section_unit_id, 'sections_or_units');
+
         return [
             'assignment_id' => (int) $assignment->id,
             'assignment_type' => $assignment->assignment_type,
-            'company_id' => $assignment->company_id ? (int) $assignment->company_id : null,
-            'branch_id' => $assignment->branch_id ? (int) $assignment->branch_id : null,
-            'division_id' => $assignment->division_id ? (int) $assignment->division_id : null,
-            'department_id' => $assignment->department_id ? (int) $assignment->department_id : null,
-            'section_unit_id' => $assignment->section_unit_id ? (int) $assignment->section_unit_id : null,
+            'company_id' => $companyId,
+            'branch_id' => $branchId,
+            'division_id' => $divisionId,
+            'department_id' => $departmentId,
+            'section_unit_id' => $sectionUnitId,
         ];
+    }
+
+    private function existingRequestContextId(mixed $id, string $table): ?int
+    {
+        $id = $id !== null && $id !== '' ? (int) $id : 0;
+        if ($id <= 0 || ! Schema::hasTable($table)) {
+            return null;
+        }
+
+        return DB::table($table)->where('id', $id)->exists() ? $id : null;
     }
 
     /**
