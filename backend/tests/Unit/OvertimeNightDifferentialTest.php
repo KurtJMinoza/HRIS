@@ -98,4 +98,29 @@ class OvertimeNightDifferentialTest extends TestCase
         $this->assertSame(375.0, (float) $onTime['ot_pay']);
         $this->assertSame(375.0, (float) $overRendered['ot_pay']);
     }
+
+    public function test_approved_ot_is_payroll_payable_without_completed_attendance_pair(): void
+    {
+        $service = app(OvertimePayrollService::class);
+
+        $approved = new Overtime([
+            'status' => Overtime::STATUS_APPROVED,
+            'approved_ot_hours' => 7.3,
+            'computed_hours' => 7.3,
+        ]);
+        $this->assertTrue($service->isPayrollPayableApprovedRecord($approved));
+
+        $zeroHours = new Overtime([
+            'status' => Overtime::STATUS_APPROVED,
+            'approved_ot_hours' => 0,
+            'computed_hours' => 0,
+        ]);
+        $this->assertFalse($service->isPayrollPayableApprovedRecord($zeroHours));
+
+        $pending = new Overtime([
+            'status' => Overtime::STATUS_PENDING,
+            'approved_ot_hours' => 7.3,
+        ]);
+        $this->assertFalse($service->isPayrollPayableApprovedRecord($pending));
+    }
 }

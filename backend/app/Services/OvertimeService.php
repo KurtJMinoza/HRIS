@@ -8,12 +8,186 @@ use App\Models\Overtime;
 use App\Models\User;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
+use Illuminate\Validation\ValidationException;
 
 class OvertimeService
 {
+    public function __construct(
+        private readonly ScheduleComputationService $scheduleComputation,
+    ) {}
+
     private function attendanceTimezone(): string
     {
         return (string) config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    /**
+     * Filed OT quantities from start/end, excluding unpaid schedule breaks (fixed or matched flexible shift).
+     *
+     * @return array{
+     *   schedule_end: Carbon,
+     *   expected_end: Carbon,
+     *   computed_minutes: int,
+     *   computed_hours: float,
+     *   break_minutes_deducted: int
+     * }
+     */
+    public function computeFiledOvertimeQuantities(
+        User $user,
+        string $dateYmd,
+        string $startTimeHmi,
+        string $endTimeHmi,
+    ): array {
+        $tz = $this->attendanceTimezone();
+        $start = Carbon::parse($dateYmd.' '.$startTimeHmi, $tz);
+        $end = Carbon::parse($dateYmd.' '.$endTimeHmi, $tz);
+        if ($end->lessThanOrEqualTo($start)) {
+            $end->addDay();
+        }
+
+        $rawMinutes = (int) $start->diffInMinutes($end);
+        if ($rawMinutes <= 0) {
+            throw ValidationException::withMessages([
+                'end_time' => ['End time must be later than start time.'],
+            ]);
+        }
+
+        $daySchedule = $this->resolveDayScheduleForOvertimeWindow($user, $dateYmd, $start, $end, $tz);
+        $breakMinutes = is_array($daySchedule) && $daySchedule !== []
+            ? $this->scheduleComputation->totalUnpaidBreakOverlapMinutes($dateYmd, $daySchedule, $start, $end, $tz)
+            : 0;
+        $computedMinutes = max(0, $rawMinutes - $breakMinutes);
+
+        if ($computedMinutes <= 0) {
+            throw ValidationException::withMessages([
+                'end_time' => ['The selected OT window falls entirely within an unpaid break on your schedule. Adjust the start or end time.'],
+            ]);
+        }
+
+        return [
+            'schedule_end' => $start,
+            'expected_end' => $end,
+            'computed_minutes' => $computedMinutes,
+            'computed_hours' => round($computedMinutes / 60, 2),
+            'break_minutes_deducted' => $breakMinutes,
+        ];
+    }
+
+    /**
+     * Recompute stored hours for pending OT filings using current schedule break rules.
+     *
+     * @return array{scanned: int, updated: int, skipped: int}
+     */
+    public function syncPendingOvertimeQuantities(?int $onlyUserId = null, ?int $onlyOvertimeId = null): array
+    {
+        $query = Overtime::query()
+            ->where('status', Overtime::STATUS_PENDING)
+            ->whereNotNull('schedule_end')
+            ->whereNotNull('expected_end_time')
+            ->with(['user.workingSchedule']);
+
+        if ($onlyUserId !== null && $onlyUserId > 0) {
+            $query->where('user_id', $onlyUserId);
+        }
+        if ($onlyOvertimeId !== null && $onlyOvertimeId > 0) {
+            $query->whereKey($onlyOvertimeId);
+        }
+
+        $scanned = 0;
+        $updated = 0;
+        $skipped = 0;
+
+        foreach ($query->orderBy('id')->cursor() as $overtime) {
+            $scanned++;
+            $user = $overtime->user;
+            if (! $user instanceof User) {
+                $skipped++;
+                continue;
+            }
+
+            $dateYmd = $overtime->date?->toDateString();
+            if ($dateYmd === null) {
+                $skipped++;
+                continue;
+            }
+
+            $startTime = $overtime->schedule_end instanceof \DateTimeInterface
+                ? Carbon::instance($overtime->schedule_end)->format('H:i')
+                : trim((string) $overtime->schedule_end);
+            $endTime = $overtime->expected_end_time instanceof \DateTimeInterface
+                ? Carbon::instance($overtime->expected_end_time)->format('H:i')
+                : trim((string) $overtime->expected_end_time);
+            if ($startTime === '' || $endTime === '') {
+                $skipped++;
+                continue;
+            }
+
+            try {
+                $computed = $this->computeFiledOvertimeQuantities($user, $dateYmd, $startTime, $endTime);
+            } catch (ValidationException) {
+                $skipped++;
+                continue;
+            }
+
+            $oldMinutes = (int) ($overtime->computed_minutes ?? 0);
+            $newMinutes = (int) $computed['computed_minutes'];
+            if ($oldMinutes === $newMinutes) {
+                continue;
+            }
+
+            $overtime->fill([
+                'computed_minutes' => $newMinutes,
+                'computed_hours' => $computed['computed_hours'],
+                'approved_ot_hours' => null,
+                'actual_rendered_ot_hours' => 0,
+                'payable_ot_hours' => 0,
+                'unapproved_ot_hours' => 0,
+                'overtime_reduction_reason' => null,
+            ]);
+            $overtime->save();
+            $updated++;
+        }
+
+        return [
+            'scanned' => $scanned,
+            'updated' => $updated,
+            'skipped' => $skipped,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function resolveDayScheduleForOvertimeWindow(
+        User $user,
+        string $dateYmd,
+        Carbon $windowStart,
+        Carbon $windowEnd,
+        string $tz,
+    ): ?array {
+        $user->loadMissing('workingSchedule');
+        $schedule = EmployeeScheduleResolver::resolveForDate($user, $dateYmd);
+        if (! is_array($schedule) || $schedule === []) {
+            return null;
+        }
+
+        $dayKey = EmployeeScheduleResolver::dayKeyForDate(Carbon::parse($dateYmd, $tz));
+        $daySchedule = $schedule[$dayKey] ?? null;
+        if (! is_array($daySchedule) || $daySchedule === []) {
+            // Rest days have no day row; use the next working day's shift template for break windows.
+            $daySchedule = EmployeeScheduleResolver::referenceWorkingDaySchedule($schedule, $dayKey);
+        }
+        if (! is_array($daySchedule) || $daySchedule === []) {
+            return null;
+        }
+
+        return $this->scheduleComputation->resolveFlexibleShiftForAttendance(
+            $dateYmd,
+            $daySchedule,
+            $windowStart,
+            $windowEnd,
+            $tz,
+        )['schedule'];
     }
 
     /**

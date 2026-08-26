@@ -209,4 +209,29 @@ final class EmployeeScheduleResolver
 
         return self::DAY_KEYS[$w];
     }
+
+    /**
+     * Working-day shift template for rest-day/holiday OT break math.
+     * Uses the next configured working day after the given day key (e.g. Sun → Mon).
+     *
+     * @param  array<string, array<string, mixed>|null>  $schedule
+     * @return array<string, mixed>|null
+     */
+    public static function referenceWorkingDaySchedule(array $schedule, string $dayKey): ?array
+    {
+        $startIdx = array_search($dayKey, self::DAY_KEYS, true);
+        if ($startIdx === false) {
+            $startIdx = -1;
+        }
+
+        for ($offset = 1; $offset <= 7; $offset++) {
+            $key = self::DAY_KEYS[($startIdx + $offset) % 7];
+            $day = $schedule[$key] ?? null;
+            if (is_array($day) && $day !== []) {
+                return $day;
+            }
+        }
+
+        return null;
+    }
 }

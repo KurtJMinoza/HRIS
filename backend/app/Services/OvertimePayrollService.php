@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Overtime;
 use App\Models\User;
-use App\Support\OvertimeFilingRules;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -487,12 +486,25 @@ class OvertimePayrollService
 
         $this->applyPayrollEligibleScope($query, $payrollBatchRunId, $companyId, $assignmentId);
 
-        $tz = (string) config('payroll.timezone', config('attendance.timezone', 'Asia/Manila'));
-
         return array_values(array_filter(
             $query->get()->all(),
-            fn (Overtime $ot): bool => OvertimeFilingRules::pastDateHasCompletedAttendance($userId, $this->overtimeDateKey($ot), $tz)
+            fn (Overtime $ot): bool => $this->isPayrollPayableApprovedRecord($ot)
         ));
+    }
+
+    /**
+     * Approved OT rows eligible for payroll: HR approval is the gate, not a second attendance re-check.
+     * (Filing may allow rest-day OT; partial punch days must not drop approved premiums from payslips.)
+     */
+    public function isPayrollPayableApprovedRecord(Overtime $ot): bool
+    {
+        if ((string) $ot->status !== Overtime::STATUS_APPROVED) {
+            return false;
+        }
+
+        $hours = (float) ($ot->approved_ot_hours ?? $ot->computed_hours ?? 0);
+
+        return $hours > 0.0001;
     }
 
     private function overtimeDateKey(Overtime $ot): string
@@ -606,6 +618,9 @@ class OvertimePayrollService
 
         $byKey = [];
         foreach ($query->get() as $ot) {
+            if (! $this->isPayrollPayableApprovedRecord($ot)) {
+                continue;
+            }
             $d = $ot->date instanceof Carbon
                 ? $ot->date->toDateString()
                 : Carbon::parse((string) $ot->date)->toDateString();

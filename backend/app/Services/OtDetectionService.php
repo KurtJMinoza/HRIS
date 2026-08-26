@@ -24,6 +24,10 @@ use Illuminate\Support\Facades\Schema;
  */
 class OtDetectionService
 {
+    public function __construct(
+        private readonly ScheduleComputationService $scheduleComputation,
+    ) {}
+
     /**
      * Threshold (minutes) before scheduled start for pre-shift OT notice.
      * Default 60 minutes (1 hour).
@@ -147,17 +151,34 @@ class OtDetectionService
             return null;
         }
 
-        $scheduleStart = Carbon::parse($dateKey.' '.trim((string) $daySchedule['in']), $tz);
-        $scheduleEnd = Carbon::parse($dateKey.' '.trim((string) $daySchedule['out']), $tz);
+        $firstClockInLocal = $firstClockIn->copy()->timezone($tz);
+        $lastClockOutLocal = $lastClockOut ? $lastClockOut->copy()->timezone($tz) : null;
+        $resolvedDaySchedule = $this->scheduleComputation->resolveFlexibleShiftForAttendance(
+            $dateKey,
+            $daySchedule,
+            $firstClockInLocal,
+            $lastClockOutLocal,
+            $tz,
+        )['schedule'];
+
+        $scheduleStart = Carbon::parse($dateKey.' '.trim((string) ($resolvedDaySchedule['in'] ?? $daySchedule['in'])), $tz);
+        $scheduleEnd = Carbon::parse($dateKey.' '.trim((string) ($resolvedDaySchedule['out'] ?? $daySchedule['out'])), $tz);
         if ($scheduleEnd->lessThanOrEqualTo($scheduleStart)) {
             $scheduleEnd->addDay();
         }
 
-        $firstClockInLocal = $firstClockIn->copy()->timezone($tz);
         $preShiftThresholdAt = $scheduleStart->copy()->subMinutes($this->preShiftThresholdMinutes());
         $preShift = null;
         if ($firstClockInLocal->lessThan($preShiftThresholdAt)) {
-            $preMinutes = (int) $firstClockInLocal->diffInMinutes($scheduleStart);
+            $rawPreMinutes = (int) $firstClockInLocal->diffInMinutes($scheduleStart);
+            $preBreakMinutes = $this->scheduleComputation->totalUnpaidBreakOverlapMinutes(
+                $dateKey,
+                $resolvedDaySchedule,
+                $firstClockInLocal,
+                $scheduleStart,
+                $tz,
+            );
+            $preMinutes = max(0, $rawPreMinutes - $preBreakMinutes);
             if ($preMinutes > 0) {
                 $preShift = [
                     'clock_in' => $firstClockInLocal->format('H:i'),
@@ -168,13 +189,19 @@ class OtDetectionService
             }
         }
 
-        $workEnd = $lastClockOut
-            ? $lastClockOut->copy()->timezone($tz)
-            : now($tz);
+        $workEnd = $lastClockOutLocal ?? now($tz);
 
         $postShift = null;
         if ($workEnd->greaterThan($scheduleEnd)) {
-            $postMinutes = (int) $scheduleEnd->diffInMinutes($workEnd);
+            $rawPostMinutes = (int) $scheduleEnd->diffInMinutes($workEnd);
+            $postBreakMinutes = $this->scheduleComputation->totalUnpaidBreakOverlapMinutes(
+                $dateKey,
+                $resolvedDaySchedule,
+                $scheduleEnd,
+                $workEnd,
+                $tz,
+            );
+            $postMinutes = max(0, $rawPostMinutes - $postBreakMinutes);
             $grace = $this->postShiftGraceMinutes();
             if ($postMinutes > $grace) {
                 $postShift = [

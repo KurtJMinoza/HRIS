@@ -328,7 +328,7 @@ class PayrollComputationService implements PayrollBulkComputation
             $this->overtimeExistsCache[$existsKey] = true;
             $approvedHours = 0.0;
             foreach ($records as $ot) {
-                $approvedHours += (float) ($ot->computed_hours ?? 0);
+                $approvedHours += (float) ($ot->approved_ot_hours ?? $ot->computed_hours ?? 0);
             }
             $hk = $existsKey.'|'.Overtime::STATUS_APPROVED;
             $this->overtimeHoursCache[$hk] = ($this->overtimeHoursCache[$hk] ?? 0.0) + $approvedHours;
@@ -828,7 +828,7 @@ class PayrollComputationService implements PayrollBulkComputation
                 }
             }
 
-            // Approved OT without clock logs remains authorized but not payable until attendance supplies an actual out.
+            // Approved OT is payable even without a complete IN+OUT pair (rest day / partial punch).
             $noPunchOtComp = $this->computeApprovedOvertimeCompensationForDay(
                 $user,
                 $dateKey,
@@ -1385,6 +1385,25 @@ class PayrollComputationService implements PayrollBulkComputation
      * (true overnight/graveyard shift where OT was filed on the prior date).
      */
     /**
+     * Warm approved OT for this employee/period so preview, PDF, and batch paths share one eligibility query.
+     */
+    private function ensureApprovedOvertimeLoadedForPeriod(User $user, Carbon $from, Carbon $to): void
+    {
+        if ($this->approvedOvertimeByUserDate !== []) {
+            return;
+        }
+
+        $this->approvedOvertimeByUserDate = $this->overtimePayroll->prefetchApprovedByUserDate(
+            [(int) $user->id],
+            $from,
+            $to,
+            $this->activePayrollCompanyId ?? $user->getEffectiveCompanyId(),
+            $this->activePayrollBatchRunId,
+            $this->activeAssignmentIdsByUser
+        );
+    }
+
+    /**
      * @return list<Overtime>
      */
     private function approvedOvertimeRecordsForUserDate(User $user, string $dateKey): array
@@ -1893,6 +1912,8 @@ class PayrollComputationService implements PayrollBulkComputation
             $timingSink->load_schedules_ms = ($timingSink->load_schedules_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
         }
         $__segStart = microtime(true);
+
+        $this->ensureApprovedOvertimeLoadedForPeriod($user, $from, $to);
 
         $days = [];
         if ($isConsultant && ! $consultantAttendanceEarnings) {

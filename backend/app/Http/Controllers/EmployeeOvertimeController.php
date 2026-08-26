@@ -14,6 +14,7 @@ use App\Services\OrgApprovalWorkflowService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimeApprovalService;
 use App\Services\OvertimeAutoApproveService;
+use App\Services\OvertimeService;
 use App\Services\PayrollPeriodMutationGuard;
 use App\Services\PayrollRulesEngineService;
 use App\Support\EmployeeScheduleResolver;
@@ -43,6 +44,7 @@ class EmployeeOvertimeController extends Controller
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly PayrollRulesEngineService $payrollRulesEngine,
         private readonly OvertimeAutoApproveService $overtimeAutoApproveService,
+        private readonly OvertimeService $overtimeService,
         private readonly \App\Services\EmailTriggerService $emailTrigger,
     ) {}
 
@@ -52,35 +54,11 @@ class EmployeeOvertimeController extends Controller
     }
 
     /**
-     * Flexible OT filing quantities from user-provided time range.
-     *
      * @return array{schedule_end: \Carbon\Carbon, expected_end: \Carbon\Carbon, computed_minutes: int, computed_hours: float}
      */
-    private function computeOvertimeRequestQuantities(string $dateYmd, string $startTimeHmi, string $endTimeHmi): array
+    private function computeOvertimeRequestQuantities(User $user, string $dateYmd, string $startTimeHmi, string $endTimeHmi): array
     {
-        $tz = $this->attendanceTimezone();
-        $start = Carbon::parse($dateYmd.' '.$startTimeHmi, $tz);
-        $end = Carbon::parse($dateYmd.' '.$endTimeHmi, $tz);
-        if ($end->lessThanOrEqualTo($start)) {
-            $end->addDay();
-        }
-
-        $computedMinutes = (int) $start->diffInMinutes($end);
-
-        if ($computedMinutes <= 0) {
-            throw ValidationException::withMessages([
-                'end_time' => ['End time must be later than start time.'],
-            ]);
-        }
-
-        $computedHours = round($computedMinutes / 60, 2);
-
-        return [
-            'schedule_end' => $start,
-            'expected_end' => $end,
-            'computed_minutes' => $computedMinutes,
-            'computed_hours' => $computedHours,
-        ];
+        return $this->overtimeService->computeFiledOvertimeQuantities($user, $dateYmd, $startTimeHmi, $endTimeHmi);
     }
 
     private function validateNoOverlappingOvertime(
@@ -1051,7 +1029,7 @@ class EmployeeOvertimeController extends Controller
         ]);
 
         $dateYmd = $overtime->date->toDateString();
-        $computed = $this->computeOvertimeRequestQuantities($dateYmd, $validated['start_time'], $validated['end_time']);
+        $computed = $this->computeOvertimeRequestQuantities($user, $dateYmd, $validated['start_time'], $validated['end_time']);
         $this->validateNoOverlappingOvertime($user, $dateYmd, $validated['start_time'], $validated['end_time'], (int) $overtime->id);
 
         $attachmentPath = $overtime->attachment_path;
@@ -1296,7 +1274,7 @@ class EmployeeOvertimeController extends Controller
 
         $computedTargets = [];
         foreach ($targets as $target) {
-            $computed = $this->computeOvertimeRequestQuantities($dateYmd, $target['start_time'], $target['end_time']);
+            $computed = $this->computeOvertimeRequestQuantities($user, $dateYmd, $target['start_time'], $target['end_time']);
             $computedTargets[] = array_merge($target, ['computed' => $computed]);
         }
 

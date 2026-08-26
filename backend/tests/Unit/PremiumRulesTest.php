@@ -108,4 +108,59 @@ class PremiumRulesTest extends TestCase
         $this->assertSame(480, $seg['regular_minutes'], '8h regular within 08:00–17:00 minus lunch (early hour ignored)');
         $this->assertSame(570, $seg['total_minutes'], 'Net paid work = regular + OT');
     }
+
+    public function test_filed_overtime_window_excludes_scheduled_lunch(): void
+    {
+        $service = app(\App\Services\ScheduleComputationService::class);
+        $tz = 'Asia/Manila';
+        $date = '2026-03-20';
+        $start = Carbon::parse("{$date} 12:00", $tz);
+        $end = Carbon::parse("{$date} 20:00", $tz);
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+        ];
+
+        $rawMinutes = (int) $start->diffInMinutes($end);
+        $breakMinutes = $service->totalUnpaidBreakOverlapMinutes($date, $daySchedule, $start, $end, $tz);
+
+        $this->assertSame(480, $rawMinutes);
+        $this->assertSame(60, $breakMinutes);
+        $this->assertSame(420, $rawMinutes - $breakMinutes, '7h OT after excluding 1h lunch overlap');
+    }
+
+    public function test_rest_day_filed_overtime_uses_next_working_day_break(): void
+    {
+        $service = app(\App\Services\ScheduleComputationService::class);
+        $tz = 'Asia/Manila';
+        $date = '2026-08-23'; // Sunday rest day
+        $start = Carbon::parse("{$date} 07:45", $tz);
+        $end = Carbon::parse("{$date} 16:03", $tz);
+        $weekSchedule = [
+            'sun' => null,
+            'mon' => [
+                'in' => '08:00',
+                'out' => '17:00',
+                'break_start' => '12:00',
+                'break_end' => '13:00',
+            ],
+            'tue' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'wed' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'thu' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'fri' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+            'sat' => ['in' => '08:00', 'out' => '17:00', 'break_start' => '12:00', 'break_end' => '13:00'],
+        ];
+
+        $reference = \App\Support\EmployeeScheduleResolver::referenceWorkingDaySchedule($weekSchedule, 'sun');
+        $this->assertNotNull($reference);
+
+        $rawMinutes = (int) $start->diffInMinutes($end);
+        $breakMinutes = $service->totalUnpaidBreakOverlapMinutes($date, $reference, $start, $end, $tz);
+
+        $this->assertSame(498, $rawMinutes);
+        $this->assertSame(60, $breakMinutes);
+        $this->assertSame(7.3, round(($rawMinutes - $breakMinutes) / 60, 2));
+    }
 }
