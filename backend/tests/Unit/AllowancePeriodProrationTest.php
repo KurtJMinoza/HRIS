@@ -83,4 +83,45 @@ class AllowancePeriodProrationTest extends TestCase
         $this->assertSame(8.0, (float) ($result['present_day_units'] ?? 0));
         $this->assertSame(13.0, (float) ($result['period_scheduled_workdays'] ?? 0));
     }
+
+    public function test_fixed_every_allowance_payslip_line_has_no_day_units(): void
+    {
+        $service = app(DeductionScheduleService::class);
+
+        $lines = $service->buildPayslipEarningDisplayLines([[
+            'name' => 'ALLOWANCE EVERY 15 AND 30',
+            'code' => 'ALLOWANCE_EVERY_15_AND_30',
+            'category' => 'Fixed Allowance',
+            'computed_amount' => 5000.0,
+            'scheduled_this_period' => 2500.0,
+            'is_proratable' => true,
+            'allowance_proration' => [
+                'allowance_type' => 'attendance_prorated',
+                'payable_day_units' => 15.0,
+            ],
+        ]]);
+
+        $this->assertSame(2500.0, (float) ($lines[0]['amount'] ?? 0));
+        $this->assertArrayNotHasKey('units', $lines[0]);
+    }
+
+    public function test_attendance_prorate_allowance_payslip_line_shows_payable_day_units(): void
+    {
+        $service = app(DeductionScheduleService::class);
+
+        $lines = $service->buildPayslipEarningDisplayLines([[
+            'name' => 'ALLOWANCE PRORATE 15-30',
+            'code' => 'ALLOWANCE_PRORATE_15_30',
+            'category' => 'Fixed Allowance',
+            'computed_amount' => 5000.0,
+            'scheduled_this_period' => 1538.46,
+            'is_proratable' => true,
+            'allowance_proration' => [
+                'allowance_type' => 'attendance_prorated',
+                'payable_day_units' => 9.0,
+            ],
+        ]]);
+
+        $this->assertSame('9 days', $lines[0]['units'] ?? null);
+    }
 }

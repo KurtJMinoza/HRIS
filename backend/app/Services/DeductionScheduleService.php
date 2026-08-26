@@ -614,9 +614,11 @@ class DeductionScheduleService
             ];
             if (is_array($line['allowance_proration'] ?? null)) {
                 $row['allowance_proration'] = $line['allowance_proration'];
-                $payableDays = (float) ($line['allowance_proration']['payable_day_units'] ?? 0);
-                if ($payableDays > 0.0) {
-                    $row['units'] = $this->formatAllowanceDayUnits($payableDays);
+                if ($this->allowancePayslipShowsPayableDayUnits($line)) {
+                    $payableDays = (float) ($line['allowance_proration']['payable_day_units'] ?? 0);
+                    if ($payableDays > 0.0) {
+                        $row['units'] = $this->formatAllowanceDayUnits($payableDays);
+                    }
                 }
             }
             $out[] = $row;
@@ -1324,7 +1326,44 @@ class DeductionScheduleService
             return 'scheduled_fixed';
         }
 
+        if ($this->isFixedScheduleAllowanceLine($line)) {
+            return 'scheduled_fixed';
+        }
+
         return $this->isAllowanceLine($line) ? 'attendance_prorated' : 'cutoff_prorated';
+    }
+
+    /**
+     * Attendance-prorated allowances (e.g. ALLOWANCE PRORATE 15-30) show payable-day units.
+     * Fixed every-payroll allowances (e.g. ALLOWANCE EVERY 15 AND 30) do not.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function allowancePayslipShowsPayableDayUnits(array $line): bool
+    {
+        if (empty($line['is_proratable']) || ! is_array($line['allowance_proration'] ?? null)) {
+            return false;
+        }
+
+        return $this->resolveAllowanceProrationType($line, false) === 'attendance_prorated';
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isFixedScheduleAllowanceLine(array $line): bool
+    {
+        $haystack = strtolower(str_replace(['-', ' '], '_', implode(' ', array_filter([
+            (string) ($line['code'] ?? ''),
+            (string) ($line['name'] ?? ''),
+        ]))));
+
+        if (str_contains($haystack, 'prorate') || str_contains($haystack, 'prorated')) {
+            return false;
+        }
+
+        return str_contains($haystack, 'every')
+            && (str_contains($haystack, '15') || str_contains($haystack, '30') || str_contains($haystack, 'both'));
     }
 
     private function isAllowanceLine(array $line): bool
