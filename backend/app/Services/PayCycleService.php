@@ -567,10 +567,30 @@ class PayCycleService
     /**
      * @return array<string, mixed>
      */
-    public function buildCyclePreview(PayCycle $cycle, Carbon|string|null $referenceDate = null): array
+    public function buildCyclePreview(
+        PayCycle $cycle,
+        Carbon|string|null $referenceDate = null,
+        int $lookbackPeriods = 2,
+        int $forwardPeriods = 6,
+    ): array
     {
         $period = $this->getCutOffPeriod($cycle, $referenceDate);
-        $generatedPeriods = $this->generatePayPeriods($cycle, $period['reference_date'], 6);
+        $lookbackPeriods = max(0, $lookbackPeriods);
+        $forwardPeriods = max(1, $forwardPeriods);
+
+        // Include recently closed cutoffs so UIs (refunds, payslips) can still select them
+        // after the cutoff day has passed (e.g. Aug 11–25 still listed on Aug 26).
+        $generateFrom = $period['start']->copy();
+        for ($i = 0; $i < $lookbackPeriods; $i++) {
+            $previous = $this->getCutOffPeriod($cycle, $generateFrom->copy()->subDay());
+            $generateFrom = $previous['start']->copy();
+        }
+
+        $generatedPeriods = $this->generatePayPeriods(
+            $cycle,
+            $generateFrom,
+            $lookbackPeriods + $forwardPeriods
+        );
         $firstGenerated = (is_array($generatedPeriods) && isset($generatedPeriods[0]) && is_array($generatedPeriods[0]))
             ? $generatedPeriods[0]
             : null;
@@ -955,10 +975,12 @@ class PayCycleService
             $unadjustedPay = $anchor->copy()->endOfMonth()->startOfDay();
             $segment = 'second';
         } elseif ($day >= 26) {
-            $start = $anchor->copy()->day(26)->startOfDay();
-            $end = $anchor->copy()->addMonthNoOverflow()->startOfMonth()->day(10)->startOfDay();
-            $unadjustedPay = $end->copy()->day(15)->startOfDay();
-            $segment = 'first';
+            // After the 25th cutoff, keep the just-closed 11–25 window as the default
+            // for Generate Payslips / refunds — do not jump to the unfinished 26–10 window.
+            $start = $anchor->copy()->day(11)->startOfDay();
+            $end = $anchor->copy()->day(25)->startOfDay();
+            $unadjustedPay = $anchor->copy()->endOfMonth()->startOfDay();
+            $segment = 'second';
         } else {
             $end = $anchor->copy()->day(10)->startOfDay();
             $start = $anchor->copy()->subMonthNoOverflow()->startOfMonth()->day(26)->startOfDay();

@@ -162,6 +162,8 @@ class PayCycleController extends Controller
             'pay_day_offset' => ['nullable', 'integer', 'min:0', 'max:60'],
             'pro_ration_type' => ['nullable', 'string'],
             'reference_date' => ['nullable', 'date'],
+            'lookback_periods' => ['nullable', 'integer', 'min:0', 'max:6'],
+            'forward_periods' => ['nullable', 'integer', 'min:1', 'max:12'],
             'name' => ['nullable', 'string', 'max:255'],
             'metadata' => ['nullable', 'array'],
         ]);
@@ -174,7 +176,9 @@ class PayCycleController extends Controller
         return response()->json([
             'data' => $this->payCycleService->buildCyclePreview(
                 $cycle,
-                Carbon::parse((string) ($validated['reference_date'] ?? now()->toDateString()))
+                Carbon::parse((string) ($validated['reference_date'] ?? now()->toDateString())),
+                (int) ($validated['lookback_periods'] ?? 2),
+                (int) ($validated['forward_periods'] ?? 6),
             ),
         ]);
     }
