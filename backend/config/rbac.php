@@ -191,6 +191,13 @@ return [
         ['slug' => 'execom.view', 'module' => 'execom', 'label' => 'View EXECOM', 'description' => 'Open EXECOM payroll and management pages'],
         ['slug' => 'execom.manage', 'module' => 'execom', 'label' => 'Manage EXECOM', 'description' => 'Manage EXECOM employees, payroll settings, and payroll runs'],
 
+        // 19b. Consultant payroll
+        ['slug' => 'consultant.view', 'module' => 'consultant', 'label' => 'View Consultant payroll', 'description' => 'Open Consultant payroll pages and batch lists'],
+        ['slug' => 'consultant.payroll.generate', 'module' => 'consultant', 'label' => 'Generate Consultant payroll', 'description' => 'Generate consultant-only payroll batches'],
+        ['slug' => 'consultant.payroll.finalize', 'module' => 'consultant', 'label' => 'Finalize Consultant payroll', 'description' => 'Finalize consultant payroll batches separately'],
+        ['slug' => 'consultant.payroll.download', 'module' => 'consultant', 'label' => 'Download Consultant payslips', 'description' => 'Download consultant payslip PDFs and bulk archives'],
+        ['slug' => 'consultant.reports', 'module' => 'consultant', 'label' => 'Consultant payroll reports', 'description' => 'View and export consultant payroll reports'],
+
         // 20. Email notifications
         ['slug' => 'email_notifications.view', 'module' => 'email_notifications', 'label' => 'View email notifications', 'description' => 'View email notification settings and logs'],
         ['slug' => 'email_notifications.manage', 'module' => 'email_notifications', 'label' => 'Manage email notifications', 'description' => 'Configure email notification settings, templates, and retry failed emails'],
@@ -222,6 +229,11 @@ return [
             'payslip.generate',
             'payslip.finalize',
             'payslip.download',
+            'consultant.view',
+            'consultant.payroll.generate',
+            'consultant.payroll.finalize',
+            'consultant.payroll.download',
+            'consultant.reports',
             'refunds.view',
             'refunds.create',
             'refunds.approve',

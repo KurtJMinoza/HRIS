@@ -26,6 +26,7 @@ const AdminGeneratePayslipsPage = lazy(() => import('@/pages/AdminGeneratePaysli
 const AdminFinalizePayrollPage = lazy(() => import('@/pages/AdminFinalizePayrollPage'))
 const AdminExecomManagementPage = lazy(() => import('@/pages/AdminExecomManagementPage'))
 const AdminExecomFinalizePayrollPage = lazy(() => import('@/pages/AdminExecomFinalizePayrollPage'))
+const AdminConsultantFinalizePayrollPage = lazy(() => import('@/pages/AdminConsultantFinalizePayrollPage'))
 const TeamPayslipsPage = lazy(() => import('@/pages/TeamPayslipsPage'))
 const AdminPayslipViewPage = lazy(() => import('@/pages/AdminPayslipViewPage'))
 const EmployeeLoansDeductionsPage = lazy(() => import('@/pages/EmployeeLoansDeductionsPage'))
@@ -187,6 +188,11 @@ export const HR_PANEL_CHILD_ROUTES = [
     key="hr-execom-finalize-payroll"
     path="execom/payroll/finalize"
     element={withSuspense(<AdminExecomFinalizePayrollPage />, <DataTableRouteFallback titleWidth="w-64" />)}
+  />,
+  <Route
+    key="hr-consultant-finalize-payroll"
+    path="consultant/payroll/finalize"
+    element={withSuspense(<AdminConsultantFinalizePayrollPage />, <DataTableRouteFallback titleWidth="w-64" />)}
   />,
   <Route
     key="hr-payslips-list"

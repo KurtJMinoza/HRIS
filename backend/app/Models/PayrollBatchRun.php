@@ -28,6 +28,8 @@ class PayrollBatchRun extends Model
 
     public const MODULE_EXECOM = 'execom';
 
+    public const MODULE_CONSULTANT = 'consultant';
+
     protected $fillable = [
         'payroll_module',
         'batch_key',

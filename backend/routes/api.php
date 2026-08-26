@@ -24,6 +24,7 @@ use App\Http\Controllers\Admin\EmployeeSkillController as AdminEmployeeSkillCont
 use App\Http\Controllers\Admin\EmployeeStatusController;
 use App\Http\Controllers\Admin\ExecomManagementController;
 use App\Http\Controllers\Admin\ExecomPayrollController;
+use App\Http\Controllers\Admin\ConsultantPayrollController;
 use App\Http\Controllers\Admin\ExecomPayrollSettingsController;
 use App\Http\Controllers\Admin\EmploymentPayrollSettingsController;
 use App\Http\Controllers\Admin\GeofenceController;
@@ -724,6 +725,26 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:execom.reports')->group(function () {
             Route::get('/admin/execom/payroll/batches/{id}/report/pdf', [ExecomPayrollController::class, 'downloadReport'])->whereNumber('id');
             Route::get('/admin/execom/payroll/batches/{id}/deductions-report/pdf', [ExecomPayrollController::class, 'downloadDeductionsReport'])->whereNumber('id');
+        });
+        Route::middleware('permission:consultant.view|payslip.generate|consultant.payroll.generate')->group(function () {
+            Route::get('/admin/consultant/payroll/batches', [ConsultantPayrollController::class, 'recentBatches']);
+            Route::get('/admin/consultant/payroll/batches/{id}/status', [ConsultantPayrollController::class, 'batchStatus'])->whereNumber('id');
+            Route::get('/admin/consultant/payroll/batches/{id}/payslips', [ConsultantPayrollController::class, 'batchPayslips'])->whereNumber('id');
+            Route::get('/admin/consultant/payroll/draft', [ConsultantPayrollController::class, 'viewDraft']);
+            Route::get('/admin/consultant/payroll/finalized', [ConsultantPayrollController::class, 'viewFinalized']);
+        });
+        Route::middleware('permission:consultant.payroll.generate|payslip.generate')->group(function () {
+            Route::post('/admin/consultant/payroll/generate', [ConsultantPayrollController::class, 'generateDraft']);
+            Route::post('/admin/consultant/payroll/batches/{id}/recompute', [ConsultantPayrollController::class, 'recomputeDraft'])->whereNumber('id');
+        });
+        Route::middleware('permission:consultant.payroll.finalize|payslip.finalize')->group(function () {
+            Route::post('/admin/consultant/payroll/batches/{id}/finalize', [ConsultantPayrollController::class, 'finalize'])->whereNumber('id');
+        });
+        Route::middleware('permission:consultant.reports|payslip.download|payslip.finalize')->group(function () {
+            Route::get('/admin/consultant/payroll/batches/{id}/report/pdf', [ConsultantPayrollController::class, 'downloadReport'])->whereNumber('id');
+            Route::get('/admin/consultant/payroll/batches/{id}/deductions-report/pdf', [ConsultantPayrollController::class, 'downloadDeductionsReport'])->whereNumber('id');
+            Route::get('/admin/consultant/payroll/batches/{id}/report/xlsx', [ConsultantPayrollController::class, 'downloadReportExcel'])->whereNumber('id');
+            Route::get('/admin/consultant/payroll/batches/{id}/deductions-report/xlsx', [ConsultantPayrollController::class, 'downloadDeductionsReportExcel'])->whereNumber('id');
         });
         Route::middleware('permission:payslip.download')->group(function () {
             Route::get('/admin/payslips/{id}/pdf', [AdminPayslipController::class, 'download'])->whereNumber('id');

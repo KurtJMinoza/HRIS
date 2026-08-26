@@ -3453,6 +3453,150 @@ export async function getExecomPayrollDeductionsPdfBlob(batchRunId, companyId = 
   return res.blob()
 }
 
+function consultantQueryString(params = {}) {
+  const q = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value != null && value !== '') q.set(key, String(value))
+  })
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+export async function adminGenerateConsultantPayroll(payload) {
+  const res = await authenticatedFetch('/admin/consultant/payroll/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to generate Consultant payroll')
+  return data
+}
+
+export async function adminRecomputeConsultantPayroll(batchRunId) {
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/recompute`,
+    { method: 'POST', headers: { Accept: 'application/json' } }
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to recompute Consultant payroll')
+  return data
+}
+
+export async function adminFinalizeConsultantPayroll(batchRunId) {
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/finalize`,
+    { method: 'POST', headers: { Accept: 'application/json' } }
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to finalize Consultant payroll')
+  return data
+}
+
+export async function getConsultantPayrollBatchStatus(batchRunId) {
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/status`
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load Consultant payroll batch status')
+  return data
+}
+
+export async function getConsultantPayrollBatches(params = {}) {
+  const res = await authenticatedFetch(`/admin/consultant/payroll/batches${consultantQueryString(params)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load Consultant payroll batches')
+  return data
+}
+
+export async function getConsultantPayrollBatchPayslips(batchRunId, params = {}) {
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/payslips${consultantQueryString(params)}`
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load Consultant payroll payslips')
+  return data
+}
+
+export async function getConsultantPayrollPayslips(params = {}) {
+  const status = String(params.status || 'draft').toLowerCase()
+  const path = status === 'finalized' ? '/admin/consultant/payroll/finalized' : '/admin/consultant/payroll/draft'
+  const q = { ...params }
+  delete q.status
+  const res = await authenticatedFetch(`${path}${consultantQueryString(q)}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load Consultant payroll payslips')
+  return data
+}
+
+export async function getConsultantPayrollReportPdfBlob(batchRunId, companyId = null) {
+  const params = new URLSearchParams()
+  if (companyId != null && companyId !== '') {
+    params.set('company_id', String(companyId))
+  }
+  const query = params.toString()
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/report/pdf${query ? `?${query}` : ''}`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Consultant Payroll Report PDF')
+  }
+  return res.blob()
+}
+
+export async function getConsultantPayrollDeductionsPdfBlob(batchRunId, companyId = null) {
+  const params = new URLSearchParams()
+  if (companyId != null && companyId !== '') {
+    params.set('company_id', String(companyId))
+  }
+  const query = params.toString()
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/deductions-report/pdf${query ? `?${query}` : ''}`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Consultant Payroll Deductions PDF')
+  }
+  return res.blob()
+}
+
+export async function getConsultantPayrollReportXlsxBlob(batchRunId, companyId = null) {
+  const params = new URLSearchParams()
+  if (companyId != null && companyId !== '') {
+    params.set('company_id', String(companyId))
+  }
+  const query = params.toString()
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/report/xlsx${query ? `?${query}` : ''}`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Consultant Payroll Report Excel')
+  }
+  return res.blob()
+}
+
+export async function getConsultantPayrollDeductionsXlsxBlob(batchRunId, companyId = null) {
+  const params = new URLSearchParams()
+  if (companyId != null && companyId !== '') {
+    params.set('company_id', String(companyId))
+  }
+  const query = params.toString()
+  const res = await authenticatedFetch(
+    `/admin/consultant/payroll/batches/${encodeURIComponent(String(batchRunId))}/deductions-report/xlsx${query ? `?${query}` : ''}`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || 'Failed to download Consultant Payroll Deductions Excel')
+  }
+  return res.blob()
+}
+
 export async function getReportsPayrollReportPdfBlob(params = {}) {
   const q = new URLSearchParams()
   if (params.company_id != null) q.set('company_id', String(params.company_id))

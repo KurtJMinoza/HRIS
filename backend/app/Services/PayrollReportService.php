@@ -88,10 +88,45 @@ class PayrollReportService
         $columns = $payload['columns'];
         $rows = $payload['rows'];
         $totals = $payload['totals'];
+
+        $write = $this->excelWriteClosure($columns, $rows, $totals, $deductionOnly);
+
+        return [
+            'filename' => $this->excelFilename($company, $run, $deductionOnly),
+            'employee_count' => count($rows),
+            'write' => $write,
+        ];
+    }
+
+    /**
+     * @return array{filename:string, employee_count:int, write:callable(): void}
+     */
+    public function excelForRun(PayrollBatchRun $run, User $actor, bool $deductionOnly = false): array
+    {
+        $payload = $this->buildReportPayloadForRun($run, $actor, $deductionOnly);
+        $columns = $payload['columns'];
+        $rows = $payload['rows'];
+        $totals = $payload['totals'];
+
+        return [
+            'filename' => preg_replace('/\.pdf$/', '.xlsx', $this->runFilename($run, $deductionOnly)),
+            'employee_count' => count($rows),
+            'write' => $this->excelWriteClosure($columns, $rows, $totals, $deductionOnly),
+        ];
+    }
+
+    /**
+     * @param  list<array{key:string,label:string,group:string,class:string,format?:string}>  $columns
+     * @param  list<array<string, mixed>>  $rows
+     * @param  array<string, mixed>  $totals
+     * @return callable(): void
+     */
+    private function excelWriteClosure(array $columns, array $rows, array $totals, bool $deductionOnly): callable
+    {
         $reportTitle = $deductionOnly ? 'Payroll Deductions Report' : 'Payroll Report';
         $sheetTitle = $deductionOnly ? 'Deductions' : 'Payroll';
 
-        $write = function () use ($columns, $rows, $totals, $reportTitle, $sheetTitle): void {
+        return function () use ($columns, $rows, $totals, $reportTitle, $sheetTitle): void {
             $spreadsheet = new Spreadsheet;
             $spreadsheet->getProperties()
                 ->setCreator((string) config('app.name', 'HR'))
@@ -115,12 +150,6 @@ class PayrollReportService
             (new Xlsx($spreadsheet))->save('php://output');
             $spreadsheet->disconnectWorksheets();
         };
-
-        return [
-            'filename' => $this->excelFilename($company, $run, $deductionOnly),
-            'employee_count' => count($rows),
-            'write' => $write,
-        ];
     }
 
     /**
@@ -293,18 +322,21 @@ class PayrollReportService
                 ), 2);
             }
         }
-        $columns = $deductionOnly
-            ? $this->deductionReportColumns($deductionColumnLabels)
-            : $this->reportColumns($dynamicColumns);
-        $layout = $this->layoutForColumnCount(count($columns));
-
         $isExecom = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM;
+        $isConsultant = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_CONSULTANT;
+        $includeCompanyColumn = $isExecom || $isConsultant;
+
+        $columns = $deductionOnly
+            ? $this->deductionReportColumns($deductionColumnLabels, $includeCompanyColumn)
+            : $this->reportColumns($dynamicColumns, $includeCompanyColumn);
+        $layout = $this->layoutForColumnCount(count($columns));
 
         return [
             'company' => $company,
-            'reportCompanyName' => $isExecom ? 'Execom' : ($company?->name ?? 'Company'),
-            'reportCompanyAddress' => $isExecom ? null : $company?->address,
+            'reportCompanyName' => $isExecom ? 'Execom' : ($isConsultant ? 'Consultant' : ($company?->name ?? 'Company')),
+            'reportCompanyAddress' => $isExecom || $isConsultant ? null : $company?->address,
             'isExecomPayroll' => $isExecom,
+            'isConsultantPayroll' => $isConsultant,
             'isDeductionOnly' => $deductionOnly,
             'run' => $run,
             'rows' => $rows,
@@ -323,14 +355,17 @@ class PayrollReportService
      * @param  array<string, bool>  $dynamicColumns
      * @return list<array{key:string,label:string,group:string,class:string}>
      */
-    private function reportColumns(array $dynamicColumns): array
+    private function reportColumns(array $dynamicColumns, bool $includeCompanyColumn = false): array
     {
         $columns = [
             ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
             ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
-            ['key' => 'total_attendance', 'label' => 'Total Attendance', 'group' => 'Attendance', 'class' => 'employee', 'format' => 'text'],
-            ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num earnings'],
         ];
+        if ($includeCompanyColumn) {
+            $columns[] = ['key' => 'company_name', 'label' => 'Company', 'group' => 'Employee', 'class' => 'employee', 'format' => 'text'];
+        }
+        $columns[] = ['key' => 'total_attendance', 'label' => 'Total Attendance', 'group' => 'Attendance', 'class' => 'employee', 'format' => 'text'];
+        $columns[] = ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num earnings'];
 
         foreach ([
             'holiday_pay' => 'Holiday',
@@ -360,12 +395,15 @@ class PayrollReportService
     /**
      * @return list<array{key:string,label:string,group:string,class:string}>
      */
-    private function deductionReportColumns(array $deductionColumnLabels): array
+    private function deductionReportColumns(array $deductionColumnLabels, bool $includeCompanyColumn = false): array
     {
         $columns = [
             ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
             ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
         ];
+        if ($includeCompanyColumn) {
+            $columns[] = ['key' => 'company_name', 'label' => 'Company', 'group' => 'Employee', 'class' => 'employee', 'format' => 'text'];
+        }
 
         foreach ($deductionColumnLabels as $key => $label) {
             $columns[] = [
@@ -439,7 +477,11 @@ class PayrollReportService
     private function finalizedPayslipsForBatchRun(PayrollBatchRun $run, ?int $companyId = null): Collection
     {
         $query = Payslip::query()
-            ->with(['employee:id,name,first_name,middle_name,last_name,suffix,employee_code'])
+            ->with([
+                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id',
+                'employee.company:id,name',
+                'company:id,name',
+            ])
             ->where('payroll_batch_run_id', (int) $run->id)
             ->whereNull('voided_at')
             ->where('period_slot', 0)
@@ -557,6 +599,7 @@ class PayrollReportService
         return array_merge($earnings, $deductions, $detailedDeductions['amounts'], [
             'employee_name' => $name !== '' ? $name : 'Employee '.$payslip->user_id,
             'employee_sort_key' => $employee instanceof User ? $employee->employeeListingSortKey() : mb_strtolower($name),
+            'company_name' => $this->resolvePayslipCompanyName($payslip),
             'total_attendance' => $this->isConsultantRow($employee, $summary)
                 ? '—'
                 : ($this->payslipService->regularPayAttendanceLabel($attendanceSummary) ?? '—'),
@@ -792,6 +835,41 @@ class PayrollReportService
         return $status === 'consultant' || $type === 'consultant';
     }
 
+    private function resolvePayslipCompanyName(Payslip $payslip): string
+    {
+        $company = $payslip->company;
+        if ($company instanceof Company) {
+            $name = trim((string) $company->name);
+            if ($name !== '') {
+                return $name;
+            }
+        }
+
+        $employee = $payslip->employee;
+        if ($employee instanceof User) {
+            $employeeCompany = $employee->company;
+            if ($employeeCompany instanceof Company) {
+                $name = trim((string) $employeeCompany->name);
+                if ($name !== '') {
+                    return $name;
+                }
+            }
+
+            $effectiveCompanyId = $employee->getEffectiveCompanyId();
+            if ($effectiveCompanyId) {
+                $resolved = Company::query()->find($effectiveCompanyId);
+                if ($resolved instanceof Company) {
+                    $name = trim((string) $resolved->name);
+                    if ($name !== '') {
+                        return $name;
+                    }
+                }
+            }
+        }
+
+        return '—';
+    }
+
     private function filename(Company $company, PayrollBatchRun $run, bool $deductionOnly = false): string
     {
         return $this->reportBasename($company, $run, $deductionOnly, 'pdf');
@@ -814,9 +892,11 @@ class PayrollReportService
 
     private function runFilename(PayrollBatchRun $run, bool $deductionOnly = false): string
     {
-        $module = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM
-            ? 'EXECOM'
-            : 'Payroll';
+        $module = match (strtolower(trim((string) ($run->payroll_module ?? '')))) {
+            PayrollBatchRun::MODULE_EXECOM => 'EXECOM',
+            PayrollBatchRun::MODULE_CONSULTANT => 'Consultant',
+            default => 'Payroll',
+        };
         $start = $run->pay_period_start?->format('Ymd') ?? 'period';
         $end = $run->pay_period_end?->format('Ymd') ?? 'end';
 

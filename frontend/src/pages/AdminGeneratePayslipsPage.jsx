@@ -3,6 +3,7 @@ import { bulkPayslipDownloadStatusLabel, saveBulkPayslipZipBlob } from '../lib/b
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   adminGenerateExecomPayroll,
+  adminGenerateConsultantPayroll,
   adminGeneratePayslips,
   adminQueueBulkPayslipDownload,
   adminPollAndDownloadBulkPayslipZip,
@@ -22,6 +23,10 @@ import {
   getPayrollRunCompanyPayrollDeductionsXlsxBlob,
   getExecomPayrollReportPdfBlob,
   getExecomPayrollDeductionsPdfBlob,
+  getConsultantPayrollReportPdfBlob,
+  getConsultantPayrollDeductionsPdfBlob,
+  getConsultantPayrollReportXlsxBlob,
+  getConsultantPayrollDeductionsXlsxBlob,
   companyLogoUrl,
 } from '@/api'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
@@ -327,6 +332,14 @@ function BreakdownPill({ label, count }) {
   )
 }
 
+function payrollRowModuleKind(row) {
+  const module = String(row?.payroll_module || '').toLowerCase()
+  const label = String(row?.module_label || '').toLowerCase()
+  if (module === 'execom' || label.includes('execom')) return 'execom'
+  if (module === 'consultant' || label.includes('consultant')) return 'consultant'
+  return 'regular'
+}
+
 export default function AdminGeneratePayslipsPage() {
   const { user } = useAuth()
   const { toast } = useToast()
@@ -336,11 +349,20 @@ export default function AdminGeneratePayslipsPage() {
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin'
   const permissionSet = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const isExecomModule = searchParams.get('module') === 'execom'
+  const isConsultantModule = searchParams.get('module') === 'consultant'
+  const isDedicatedPayrollModule = isExecomModule || isConsultantModule
   const canManageRegularPayslips = permissionSet.has('payslip.generate')
   const canManageExecomPayroll = permissionSet.has('execom.payroll.generate')
-  const canManagePayslips = isExecomModule ? canManageExecomPayroll : canManageRegularPayslips
+  const canManageConsultantPayroll =
+    permissionSet.has('consultant.payroll.generate') || permissionSet.has('payslip.generate')
+  const canManagePayslips = isExecomModule
+    ? canManageExecomPayroll
+    : isConsultantModule
+      ? canManageConsultantPayroll
+      : canManageRegularPayslips
   const canBulkDownloadPayslipZip = permissionSet.has('payslip.download')
   const canViewExecom = permissionSet.has('execom.view') || canManageExecomPayroll
+  const canViewConsultant = permissionSet.has('consultant.view') || canManageConsultantPayroll
 
   const [companies, setCompanies] = useState([])
   const [branches, setBranches] = useState([])
@@ -476,7 +498,7 @@ export default function AdminGeneratePayslipsPage() {
 
   const scopeReady = Boolean(companyId || branchId || departmentId)
   const execomReady = Boolean(fromDate && toDate)
-  const finalizeReady = isExecomModule
+  const finalizeReady = isDedicatedPayrollModule
     ? execomReady
     : (!isAdmin || scopeReady || Boolean(String(employeeId || '').trim()))
 
@@ -518,10 +540,12 @@ export default function AdminGeneratePayslipsPage() {
     [fromDate, toDate, payCycleId, referenceDate, passwordProtect, includeThirteenthMonth, companyId, branchId, departmentId, employeeId],
   )
 
+  const consultantBulkPayload = execomBulkPayload
+
   const setPayrollModule = useCallback(
     (module) => {
       const next = new URLSearchParams(searchParams)
-      if (module === 'execom') next.set('module', 'execom')
+      if (module === 'execom' || module === 'consultant') next.set('module', module)
       else next.delete('module')
       setSearchParams(next, { replace: true })
     },
@@ -529,20 +553,22 @@ export default function AdminGeneratePayslipsPage() {
   )
 
   useEffect(() => {
-    if (!canManageRegularPayslips && canManageExecomPayroll && !isExecomModule) {
+    if (!canManageRegularPayslips && canManageExecomPayroll && !isDedicatedPayrollModule) {
       setPayrollModule('execom')
+    } else if (!canManageRegularPayslips && !canManageExecomPayroll && canManageConsultantPayroll && !isDedicatedPayrollModule) {
+      setPayrollModule('consultant')
     }
-  }, [canManageRegularPayslips, canManageExecomPayroll, isExecomModule, setPayrollModule])
+  }, [canManageRegularPayslips, canManageExecomPayroll, canManageConsultantPayroll, isDedicatedPayrollModule, setPayrollModule])
 
   useEffect(() => {
-    if (!isExecomModule) return
+    if (!isDedicatedPayrollModule) return
     setCompanyId('')
     setBranchId('')
     setDepartmentId('')
-  }, [isExecomModule])
+  }, [isDedicatedPayrollModule])
 
   useEffect(() => {
-    if (isExecomModule || !canManagePayslips || (isAdmin && !scopeReady)) {
+    if (isDedicatedPayrollModule || !canManagePayslips || (isAdmin && !scopeReady)) {
       setPreview(null)
       return
     }
@@ -568,10 +594,10 @@ export default function AdminGeneratePayslipsPage() {
       cancelled = true
       clearTimeout(t)
     }
-  }, [canManagePayslips, isAdmin, companyId, branchId, departmentId, fromDate, toDate, scopeReady, isExecomModule])
+  }, [canManagePayslips, isAdmin, companyId, branchId, departmentId, fromDate, toDate, scopeReady, isDedicatedPayrollModule])
 
   useEffect(() => {
-    if (isExecomModule || !canManagePayslips || !scopeReady) {
+    if (isDedicatedPayrollModule || !canManagePayslips || !scopeReady) {
       setBatchEstimateData(null)
       return
     }
@@ -591,7 +617,7 @@ export default function AdminGeneratePayslipsPage() {
       cancelled = true
       clearTimeout(t)
     }
-  }, [canManagePayslips, scopeReady, bulkPayload, isExecomModule])
+  }, [canManagePayslips, scopeReady, bulkPayload, isDedicatedPayrollModule])
 
   const loadCompanySummary = useCallback(async () => {
     setListLoading(true)
@@ -655,6 +681,7 @@ export default function AdminGeneratePayslipsPage() {
   const activeEmployees = Number(preview?.total_employees ?? 0)
   const payrollScopeTotalEmployees = Number(preview?.payroll_scope_total_employees ?? activeEmployees)
   const execomExcludedEmployees = Number(preview?.execom_excluded_employees ?? 0)
+  const consultantExcludedEmployees = Number(preview?.consultant_excluded_employees ?? 0)
   const contractualEmployees = Number(preview?.contractual_or_project ?? 0)
   const otherEmployees = Number(preview?.other ?? 0)
 
@@ -758,10 +785,12 @@ export default function AdminGeneratePayslipsPage() {
     if (!canManagePayslips) return
     if (!finalizeReady) {
       toast({
-        title: isExecomModule ? 'Select pay dates' : 'Select scope or employee',
+        title: isDedicatedPayrollModule ? 'Select pay dates' : 'Select scope or employee',
         description: isExecomModule
           ? 'Choose a pay period before generating EXECOM payroll.'
-          : 'Choose company, branch, or department — or enter a single employee user ID.',
+          : isConsultantModule
+            ? 'Choose a pay period before generating Consultant payroll.'
+            : 'Choose company, branch, or department — or enter a single employee user ID.',
         variant: 'destructive',
       })
       return
@@ -770,15 +799,25 @@ export default function AdminGeneratePayslipsPage() {
     try {
       const res = isExecomModule
         ? await adminGenerateExecomPayroll(execomBulkPayload)
-        : await adminGeneratePayslips(bulkPayload)
+        : isConsultantModule
+          ? await adminGenerateConsultantPayroll(consultantBulkPayload)
+          : await adminGeneratePayslips(bulkPayload)
       toast({
-        title: res?.queued === false ? 'Payslips generated' : isExecomModule ? 'EXECOM payroll draft queued' : 'Payroll draft queued',
+        title: res?.queued === false
+          ? 'Payslips generated'
+          : isExecomModule
+            ? 'EXECOM payroll draft queued'
+            : isConsultantModule
+              ? 'Consultant payroll draft queued'
+              : 'Payroll draft queued',
         description:
           res?.queued === false
             ? `${Number(res?.generated_count ?? res?.employee_count ?? 0)} draft payslip${Number(res?.generated_count ?? res?.employee_count ?? 0) === 1 ? '' : 's'} are ready.`
             : isExecomModule
               ? 'The EXECOM review page will open while Redis computes fixed Basic Pay rows in the background.'
-              : 'Finalize Payroll will open now while Redis computes employee rows in the background.',
+              : isConsultantModule
+                ? 'The Consultant review page will open while payroll rows are computed in the background.'
+                : 'Finalize Payroll will open now while Redis computes employee rows in the background.',
       })
       loadCompanySummary()
       const q = new URLSearchParams(buildFinalizeQuery().toString())
@@ -788,14 +827,16 @@ export default function AdminGeneratePayslipsPage() {
       navigate(
         isExecomModule
           ? `${hrBase}/execom/payroll/finalize?${q.toString()}`
-          : `${hrBase}/compensation/finalize-payroll?${q.toString()}`,
+          : isConsultantModule
+            ? `${hrBase}/consultant/payroll/finalize?${q.toString()}`
+            : `${hrBase}/compensation/finalize-payroll?${q.toString()}`,
       )
     } catch (e) {
       toast({ title: 'Generate failed', description: e.message || 'Failed to queue payslip generation', variant: 'destructive' })
     } finally {
       setGenerating(false)
     }
-  }, [canManagePayslips, finalizeReady, toast, bulkPayload, execomBulkPayload, isExecomModule, loadCompanySummary, buildFinalizeQuery, navigate, hrBase])
+  }, [canManagePayslips, finalizeReady, toast, bulkPayload, execomBulkPayload, consultantBulkPayload, isExecomModule, isConsultantModule, isDedicatedPayrollModule, loadCompanySummary, buildFinalizeQuery, navigate, hrBase])
 
   const handleViewBatch = (row) => {
     const q = new URLSearchParams()
@@ -808,12 +849,13 @@ export default function AdminGeneratePayslipsPage() {
     if (row?.pay_cycle_id != null) q.set('pay_cycle_id', String(row.pay_cycle_id))
     else if (row?.pay_cycle_source === 'company_default') q.set('use_company_default', 'true')
     if (row?.payroll_batch_run_id != null) q.set('batch_run_id', String(row.payroll_batch_run_id))
-    const isExecomRow =
-      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
+    const rowModule = payrollRowModuleKind(row)
     navigate(
-      isExecomRow
+      rowModule === 'execom'
         ? `${hrBase}/execom/payroll/finalize?${q.toString()}`
-        : `${hrBase}/compensation/finalize-payroll?${q.toString()}`,
+        : rowModule === 'consultant'
+          ? `${hrBase}/consultant/payroll/finalize?${q.toString()}`
+          : `${hrBase}/compensation/finalize-payroll?${q.toString()}`,
     )
   }
 
@@ -876,24 +918,25 @@ export default function AdminGeneratePayslipsPage() {
 
   const handleDownloadPayrollReportPdf = async (row, deductionsOnly = false) => {
     const id = row?.payroll_batch_run_id
-    const isExecomRow =
-      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
+    const rowModule = payrollRowModuleKind(row)
     const rowCompanyId = Number(row?.company_id || 0)
     const downloadingBatchId = deductionsOnly ? payrollDeductionsDownloadingBatchId : payrollReportDownloadingBatchId
     if (id == null || downloadingBatchId != null) return
-    if (!isExecomRow && rowCompanyId <= 0) return
+    if (rowModule === 'regular' && rowCompanyId <= 0) return
     if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
     if (!canBulkDownloadPayslipZip) return
 
     if (deductionsOnly) setPayrollDeductionsDownloadingBatchId(id)
     else setPayrollReportDownloadingBatchId(id)
     try {
-      const blob = isExecomRow
+      const blob = rowModule === 'execom'
         ? await (deductionsOnly ? getExecomPayrollDeductionsPdfBlob(id) : getExecomPayrollReportPdfBlob(id))
-        : await (deductionsOnly
-            ? getPayrollRunCompanyPayrollDeductionsPdfBlob(id, rowCompanyId)
-            : getPayrollRunCompanyPayrollReportPdfBlob(id, rowCompanyId))
-      const companyName = (isExecomRow ? 'Execom' : String(row?.company_name || 'company')).replace(
+        : rowModule === 'consultant'
+          ? await (deductionsOnly ? getConsultantPayrollDeductionsPdfBlob(id) : getConsultantPayrollReportPdfBlob(id))
+          : await (deductionsOnly
+              ? getPayrollRunCompanyPayrollDeductionsPdfBlob(id, rowCompanyId)
+              : getPayrollRunCompanyPayrollReportPdfBlob(id, rowCompanyId))
+      const companyName = (rowModule === 'regular' ? String(row?.company_name || 'company') : rowModule === 'consultant' ? 'Consultant' : 'Execom').replace(
         /[^\w-]+/g,
         '_',
       )
@@ -917,17 +960,19 @@ export default function AdminGeneratePayslipsPage() {
 
   const handleDownloadPayrollReportExcel = async (row) => {
     const id = row?.payroll_batch_run_id
-    const isExecomRow =
-      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
+    const rowModule = payrollRowModuleKind(row)
     const rowCompanyId = Number(row?.company_id || 0)
-    if (id == null || payrollReportExcelDownloadingBatchId != null || isExecomRow || rowCompanyId <= 0) return
+    if (id == null || payrollReportExcelDownloadingBatchId != null) return
+    if (rowModule === 'regular' && rowCompanyId <= 0) return
     if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
     if (!canBulkDownloadPayslipZip) return
 
     setPayrollReportExcelDownloadingBatchId(id)
     try {
-      const blob = await getPayrollRunCompanyPayrollReportXlsxBlob(id, rowCompanyId)
-      const companyName = String(row?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      const blob = rowModule === 'consultant'
+        ? await getConsultantPayrollReportXlsxBlob(id)
+        : await getPayrollRunCompanyPayrollReportXlsxBlob(id, rowCompanyId)
+      const companyName = (rowModule === 'regular' ? String(row?.company_name || 'company') : rowModule === 'consultant' ? 'Consultant' : 'Execom').replace(/[^\w-]+/g, '_')
       savePdfBlob(blob, `Payroll_Report_${companyName}_Run_${id}.xlsx`)
       toast({
         title: 'Payroll Report Excel downloaded',
@@ -946,17 +991,19 @@ export default function AdminGeneratePayslipsPage() {
 
   const handleDownloadPayrollDeductionsExcel = async (row) => {
     const id = row?.payroll_batch_run_id
-    const isExecomRow =
-      row?.payroll_module === 'execom' || String(row?.module_label || '').toLowerCase().includes('execom')
+    const rowModule = payrollRowModuleKind(row)
     const rowCompanyId = Number(row?.company_id || 0)
-    if (id == null || payrollDeductionsExcelDownloadingBatchId != null || isExecomRow || rowCompanyId <= 0) return
+    if (id == null || payrollDeductionsExcelDownloadingBatchId != null) return
+    if (rowModule === 'regular' && rowCompanyId <= 0) return
     if (String(row?.batch_run_status || '').toLowerCase() !== 'finalized') return
     if (!canBulkDownloadPayslipZip) return
 
     setPayrollDeductionsExcelDownloadingBatchId(id)
     try {
-      const blob = await getPayrollRunCompanyPayrollDeductionsXlsxBlob(id, rowCompanyId)
-      const companyName = String(row?.company_name || 'company').replace(/[^\w-]+/g, '_')
+      const blob = rowModule === 'consultant'
+        ? await getConsultantPayrollDeductionsXlsxBlob(id)
+        : await getPayrollRunCompanyPayrollDeductionsXlsxBlob(id, rowCompanyId)
+      const companyName = (rowModule === 'regular' ? String(row?.company_name || 'company') : rowModule === 'consultant' ? 'Consultant' : 'Execom').replace(/[^\w-]+/g, '_')
       savePdfBlob(blob, `Payroll_Deductions_Report_${companyName}_Run_${id}.xlsx`)
       toast({
         title: 'Payroll Deductions Excel downloaded',
@@ -1073,7 +1120,7 @@ export default function AdminGeneratePayslipsPage() {
     }
   }
 
-  if (!canManagePayslips && !(canManageRegularPayslips || canViewExecom)) {
+  if (!canManagePayslips && !(canManageRegularPayslips || canViewExecom || canViewConsultant)) {
     return (
       <TooltipProvider>
         <div className={cn(PAYSLIP_MODULE_SHELL, PAYSLIP_STACK)}>
@@ -1081,7 +1128,7 @@ export default function AdminGeneratePayslipsPage() {
             <CardHeader>
               <CardTitle className="text-foreground">Bulk payslip generation</CardTitle>
               <CardDescription>
-                You do not have permission to generate payslips or EXECOM payroll.
+                You do not have permission to generate payslips, EXECOM payroll, or Consultant payroll.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -1097,12 +1144,14 @@ export default function AdminGeneratePayslipsPage() {
           <Card className={cn('mx-auto max-w-lg', CARD_SHELL)}>
             <CardHeader>
               <CardTitle className="text-foreground">
-                {isExecomModule ? 'EXECOM payroll generation' : 'Bulk payslip generation'}
+                {isExecomModule ? 'EXECOM payroll generation' : isConsultantModule ? 'Consultant payroll generation' : 'Bulk payslip generation'}
               </CardTitle>
               <CardDescription>
                 {isExecomModule
                   ? 'You do not have permission to generate EXECOM payroll drafts.'
-                  : 'You do not have permission to generate regular payslips.'}
+                  : isConsultantModule
+                    ? 'You do not have permission to generate Consultant payroll drafts.'
+                    : 'You do not have permission to generate regular payslips.'}
               </CardDescription>
             </CardHeader>
           </Card>
@@ -1126,21 +1175,23 @@ export default function AdminGeneratePayslipsPage() {
                 Payroll · Compensation
               </Badge>
               <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-foreground md:text-[34px]">
-                {isExecomModule ? 'EXECOM Payroll Generation' : 'Bulk Payslip Generation'}
+                {isExecomModule ? 'EXECOM Payroll Generation' : isConsultantModule ? 'Consultant Payroll Generation' : 'Bulk Payslip Generation'}
               </h1>
               <p className="max-w-2xl text-[15px] font-medium leading-7 text-muted-foreground">
                 {isExecomModule
                   ? 'Generate EXECOM payroll drafts using fixed Basic Pay. Allowances, deductions, schedules, and pay cycles follow the same rules as regular payroll.'
-                  : 'Generate official PDF payslips for active employees in the selected scope using the same payroll engine as your previews — pay components, statutory deductions, loans, pay cycles, and daily computation.'}
+                  : isConsultantModule
+                    ? 'Generate Consultant payroll drafts for employees with consultant employment type only. Uses the same consultant fixed-pay and policy rules as the regular engine.'
+                    : 'Generate official PDF payslips for active employees in the selected scope using the same payroll engine as your previews — pay components, statutory deductions, loans, pay cycles, and daily computation.'}
               </p>
-              {(canManageRegularPayslips || canManageExecomPayroll) && (
+              {(canManageRegularPayslips || canManageExecomPayroll || canManageConsultantPayroll) && (
                 <div className="flex flex-wrap gap-2 pt-1">
                   {canManageRegularPayslips && (
                     <Button
                       type="button"
                       size="sm"
-                      variant={isExecomModule ? 'outline' : 'default'}
-                      className={cn(!isExecomModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
+                      variant={!isDedicatedPayrollModule ? 'default' : 'outline'}
+                      className={cn(!isDedicatedPayrollModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
                       onClick={() => setPayrollModule('regular')}
                     >
                       Regular Payroll
@@ -1155,6 +1206,17 @@ export default function AdminGeneratePayslipsPage() {
                       onClick={() => setPayrollModule('execom')}
                     >
                       EXECOM Payroll
+                    </Button>
+                  )}
+                  {canManageConsultantPayroll && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={isConsultantModule ? 'default' : 'outline'}
+                      className={cn(isConsultantModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
+                      onClick={() => setPayrollModule('consultant')}
+                    >
+                      Consultant Payroll
                     </Button>
                   )}
                 </div>
@@ -1195,13 +1257,15 @@ export default function AdminGeneratePayslipsPage() {
                     <CardDescription className="text-sm font-normal text-muted-foreground">
                       {isExecomModule
                         ? 'Choose the pay period and PDF options for all active EXECOM profiles.'
-                        : 'Narrow the batch by company, branch, and department. Choose a pay cycle or use company defaults.'}
+                        : isConsultantModule
+                          ? 'Choose the pay period and PDF options for all active consultant employees.'
+                          : 'Narrow the batch by company, branch, and department. Choose a pay cycle or use company defaults.'}
                     </CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-8 pt-6">
-                {!isExecomModule && (
+                {!isDedicatedPayrollModule && (
                   <>
                     {/* Company Entity — full width with logo */}
                     <div className="space-y-3">
@@ -1473,13 +1537,13 @@ export default function AdminGeneratePayslipsPage() {
             <div
               className={cn(
                 'overflow-hidden rounded-2xl border bg-card shadow-sm shadow-slate-900/3 dark:shadow-black/25',
-                (isExecomModule ? execomReady : scopeReady)
+                (isDedicatedPayrollModule ? execomReady : scopeReady)
                   ? 'border-brand/35 ring-1 ring-brand/10'
                   : 'border-border/80',
               )}
             >
               <div className="p-5 md:p-6">
-                {!isExecomModule && scopeReady && (
+                {!isDedicatedPayrollModule && scopeReady && (
                   <div className="mb-4 overflow-hidden rounded-full">
                     <Progress value={scopeReadiness} className="h-1.5" indicatorClassName="bg-brand" />
                   </div>
@@ -1489,13 +1553,19 @@ export default function AdminGeneratePayslipsPage() {
                     <p className="text-[17px] font-semibold leading-snug text-foreground">
                       {isExecomModule
                         ? (execomReady ? 'Ready to generate EXECOM payroll' : 'Choose pay dates for EXECOM payroll')
-                        : scopeReady
+                        : isConsultantModule
+                          ? (execomReady ? 'Ready to generate Consultant payroll' : 'Choose pay dates for Consultant payroll')
+                          : scopeReady
                         ? `Ready to generate · ${activeEmployees} Regular Payroll employee${activeEmployees === 1 ? '' : 's'} in scope`
                         : 'Choose filters to estimate your batch'}
                     </p>
                     {isExecomModule ? (
                       <p className="text-sm font-normal text-muted-foreground">
                         All active EXECOM profiles will be included. Fixed Basic Pay is used for EXECOM payroll.
+                      </p>
+                    ) : isConsultantModule ? (
+                      <p className="text-sm font-normal text-muted-foreground">
+                        All active consultant employees will be included. Consultant fixed-pay and employment payroll policies apply.
                       </p>
                     ) : scopeReady ? (
                       recentListNetTotal != null && companyRows.length > 0 ? (
@@ -1507,8 +1577,15 @@ export default function AdminGeneratePayslipsPage() {
                         </p>
                       ) : (
                         <p className="text-sm font-normal text-muted-foreground">
-                          {execomExcludedEmployees > 0
-                            ? `${execomExcludedEmployees} EXECOM employee${execomExcludedEmployees === 1 ? '' : 's'} in this scope ${execomExcludedEmployees === 1 ? 'is' : 'are'} handled in EXECOM Payroll.`
+                          {execomExcludedEmployees > 0 || consultantExcludedEmployees > 0
+                            ? [
+                                execomExcludedEmployees > 0
+                                  ? `${execomExcludedEmployees} EXECOM employee${execomExcludedEmployees === 1 ? '' : 's'} handled in EXECOM Payroll`
+                                  : null,
+                                consultantExcludedEmployees > 0
+                                  ? `${consultantExcludedEmployees} Consultant employee${consultantExcludedEmployees === 1 ? '' : 's'} handled in Consultant Payroll`
+                                  : null,
+                              ].filter(Boolean).join('. ') + '.'
                             : 'Continue to Finalize Payroll to review totals and generate PDF payslips.'}
                         </p>
                       )
@@ -1519,7 +1596,7 @@ export default function AdminGeneratePayslipsPage() {
                     )}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                    {!isExecomModule && (
+                    {!isDedicatedPayrollModule && (
                       <Button
                         type="button"
                         variant="outline"
@@ -1548,7 +1625,7 @@ export default function AdminGeneratePayslipsPage() {
                       )}
                     >
                       {generating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                      {generating ? 'Queuing…' : isExecomModule ? 'Generate EXECOM Draft' : 'Generate Payslips'}
+                      {generating ? 'Queuing…' : isExecomModule ? 'Generate EXECOM Draft' : isConsultantModule ? 'Generate Consultant Draft' : 'Generate Payslips'}
                     </Button>
                   </div>
                 </div>
@@ -1592,6 +1669,7 @@ export default function AdminGeneratePayslipsPage() {
                     <div className="flex flex-wrap justify-center gap-2">
                       {activeEmployees > 0 && <BreakdownPill label="Regular Payroll" count={activeEmployees} />}
                       {execomExcludedEmployees > 0 && <BreakdownPill label="EXECOM separate" count={execomExcludedEmployees} />}
+                      {consultantExcludedEmployees > 0 && <BreakdownPill label="Consultant separate" count={consultantExcludedEmployees} />}
                       {payrollScopeTotalEmployees > activeEmployees && <BreakdownPill label="Combined payroll scope" count={payrollScopeTotalEmployees} />}
                       {contractualEmployees > 0 && <BreakdownPill label="Contractual" count={contractualEmployees} />}
                       {otherEmployees > 0 && <BreakdownPill label="Other" count={otherEmployees} />}
@@ -1700,7 +1778,7 @@ export default function AdminGeneratePayslipsPage() {
                     value="all"
                     icon={Layers}
                     title="All Modules"
-                    subtitle="Regular and EXECOM"
+                    subtitle="Regular, EXECOM, and Consultant"
                   />
                   <PayrollSelectItem
                     value="regular"
@@ -1713,6 +1791,12 @@ export default function AdminGeneratePayslipsPage() {
                     icon={Zap}
                     title="EXECOM Payroll"
                     subtitle="Executive payroll batches"
+                  />
+                  <PayrollSelectItem
+                    value="consultant"
+                    icon={Users}
+                    title="Consultant Payroll"
+                    subtitle="Consultant-only batches"
                   />
                 </SelectContent>
               </Select>
@@ -1786,15 +1870,16 @@ export default function AdminGeneratePayslipsPage() {
                   <TableBody className="[&_tr]:border-0 [&_tr]:transition-colors divide-y divide-border/70">
                     {companyRows.map((r) => {
                       const key = rowGroupKey(r)
-                      const isExecomRow = r.payroll_module === 'execom' || String(r.module_label || '').toLowerCase().includes('execom')
-                      const logo = isExecomRow ? null : (resolveLogoUrl(r) || companyLogoById[r.company_id])
-                      const displayCompanyName = isExecomRow ? 'Execom' : (r.company_name ?? '—')
+                      const rowModule = payrollRowModuleKind(r)
+                      const isDedicatedRow = rowModule !== 'regular'
+                      const logo = isDedicatedRow ? null : (resolveLogoUrl(r) || companyLogoById[r.company_id])
+                      const displayCompanyName = rowModule === 'execom' ? 'Execom' : rowModule === 'consultant' ? 'Consultant' : (r.company_name ?? '—')
                       const showDelete = Boolean(r.can_delete)
                       const deleteDisabled = !r.can_delete || deletingBatchId === r.payroll_batch_run_id
                       const batchFinalized = String(r.batch_run_status || '').toLowerCase() === 'finalized'
                       const showBulkPdf = batchFinalized && canBulkDownloadPayslipZip
-                      const showPayrollReportPdf = showBulkPdf && (isExecomRow || Number(r.company_id || 0) > 0)
-                      const showCompanyExcelDownloads = showPayrollReportPdf && !isExecomRow && Number(r.company_id || 0) > 0
+                      const showPayrollReportPdf = showBulkPdf && (isDedicatedRow || Number(r.company_id || 0) > 0)
+                      const showCompanyExcelDownloads = showPayrollReportPdf && (rowModule === 'regular' ? Number(r.company_id || 0) > 0 : rowModule === 'consultant')
                       const downloadsBusy =
                         bulkDownloadingBatchId === r.payroll_batch_run_id ||
                         payrollReportDownloadingBatchId === r.payroll_batch_run_id ||
@@ -1811,12 +1896,14 @@ export default function AdminGeneratePayslipsPage() {
                               variant="outline"
                               className={cn(
                                 'rounded-full text-[11px] font-semibold',
-                                isExecomRow
+                                rowModule === 'execom'
                                   ? 'border-violet-300 bg-violet-50 text-violet-900 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200'
-                                  : 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200',
+                                  : rowModule === 'consultant'
+                                    ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200'
+                                    : 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200',
                               )}
                             >
-                              {r.module_label || (isExecomRow ? 'EXECOM' : 'Regular')}
+                              {r.module_label || (rowModule === 'execom' ? 'EXECOM' : rowModule === 'consultant' ? 'Consultant' : 'Regular')}
                             </Badge>
                           </TableCell>
                           <TableCell className="py-4">

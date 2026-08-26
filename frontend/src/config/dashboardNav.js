@@ -105,6 +105,7 @@ export const adminNavItems = [
       { to: '/admin/compensation/13th-month-pay', end: false, label: '13th Month Pay', icon: Calculator },
       { to: '/admin/daily-computation', end: false, label: 'Daily Payroll', icon: Calculator },
       { to: '/admin/execom/employees', end: false, label: 'EXECOM Payroll', icon: UserCog },
+      { to: '/admin/consultant/payroll/finalize', end: false, label: 'Consultant Payroll', icon: Users, requiredPermissions: ['consultant.view', 'consultant.payroll.generate', 'consultant.payroll.finalize', 'payslip.generate', 'payslip.finalize'] },
     ],
   },
 

@@ -59,7 +59,7 @@ final class PayrollFreezeService
                 ->where('payroll_employees.user_id', $employeeId)
                 ->where('payroll_employees.status', PayrollEmployee::STATUS_FINALIZED)
                 ->where('payroll_batch_runs.status', PayrollBatchRun::STATUS_FINALIZED)
-                ->whereIn('payroll_batch_runs.payroll_module', [PayrollBatchRun::MODULE_STANDARD, PayrollBatchRun::MODULE_EXECOM])
+                ->whereIn('payroll_batch_runs.payroll_module', [PayrollBatchRun::MODULE_STANDARD, PayrollBatchRun::MODULE_EXECOM, PayrollBatchRun::MODULE_CONSULTANT])
                 ->whereDate('payroll_employees.pay_period_start', '<=', $toKey)
                 ->whereDate('payroll_employees.pay_period_end', '>=', $fromKey)
                 ->orderByDesc('payroll_batch_runs.finalized_at')
@@ -140,7 +140,11 @@ final class PayrollFreezeService
 
     private function frozenResult(string $module, ?int $runId, string $start, string $end, ?string $finalizedAt): array
     {
-        $type = $module === PayrollBatchRun::MODULE_EXECOM ? 'execom' : 'regular';
+        $type = match ($module) {
+            PayrollBatchRun::MODULE_EXECOM => 'execom',
+            PayrollBatchRun::MODULE_CONSULTANT => 'consultant',
+            default => 'regular',
+        };
         return [
             'frozen' => true,
             'payroll_type' => $type,
@@ -148,9 +152,11 @@ final class PayrollFreezeService
             'period_start' => $start,
             'period_end' => $end,
             'finalized_at' => $finalizedAt,
-            'reason' => $type === 'execom'
-                ? 'This date is locked because EXECOM payroll has already been finalized for this cutoff.'
-                : 'This date is locked because regular payroll has already been finalized for this cutoff.',
+            'reason' => match ($type) {
+                'execom' => 'This date is locked because EXECOM payroll has already been finalized for this cutoff.',
+                'consultant' => 'This date is locked because Consultant payroll has already been finalized for this cutoff.',
+                default => 'This date is locked because regular payroll has already been finalized for this cutoff.',
+            },
         ];
     }
 

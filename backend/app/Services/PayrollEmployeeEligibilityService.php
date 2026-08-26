@@ -43,6 +43,18 @@ class PayrollEmployeeEligibilityService
             );
         }
 
+        if ($payrollModule === PayrollBatchRun::MODULE_CONSULTANT) {
+            return $this->consultantPayrollQuery(
+                $companyId,
+                $branchId,
+                $departmentId,
+                $periodStart,
+                $periodEnd,
+                $actor,
+                $dataScopeService
+            );
+        }
+
         $query = User::query()->payrollEmployees()->active();
         $this->applyPayrollStartDateScope($query, $periodEnd);
         if ($actor instanceof User && $dataScopeService instanceof DataScopeService) {
@@ -50,6 +62,7 @@ class PayrollEmployeeEligibilityService
         }
 
         $this->excludeExecomEmployeesFromRegularQuery($query, $periodStart, $periodEnd);
+        $this->excludeConsultantsFromRegularQuery($query);
 
         if ($companyId !== null && $companyId > 0) {
             $query->where(function (Builder $scope) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
@@ -119,6 +132,25 @@ class PayrollEmployeeEligibilityService
         return $this->execomPayrollQuery($companyId, $branchId, $departmentId, $periodStart, $periodEnd, $actor, $dataScopeService)
             ->orderByLastName()
             ->get();
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function getConsultantPayrollEligibleEmployeeIds(
+        ?int $companyId,
+        ?int $branchId = null,
+        ?int $departmentId = null,
+        ?CarbonInterface $periodStart = null,
+        ?CarbonInterface $periodEnd = null,
+        ?User $actor = null,
+        ?DataScopeService $dataScopeService = null,
+    ): array {
+        return $this->consultantPayrollQuery($companyId, $branchId, $departmentId, $periodStart, $periodEnd, $actor, $dataScopeService)
+            ->pluck('users.id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
     }
 
     /**
@@ -196,6 +228,10 @@ class PayrollEmployeeEligibilityService
             : $this->activePayrollAssignmentForEvaluation($employee, $companyId, $branchId, $departmentId, $periodStart, $periodEnd);
 
         $reason = null;
+        if ($payrollModule === PayrollBatchRun::MODULE_CONSULTANT && ! $this->isConsultantEmployee($employee)) {
+            $reason = self::EXCLUSION_ASSIGNMENT_NOT_ACTIVE;
+            $assignment = null;
+        }
         if (! $payrollStart instanceof Carbon || $payrollStart->gt($end)) {
             $createdAt = $employee->created_at ? Carbon::parse($employee->created_at)->startOfDay() : null;
             $payrollEffective = $this->employeePayrollEffectiveDate($employee);
@@ -310,6 +346,77 @@ class PayrollEmployeeEligibilityService
         if (Schema::hasTable('execom_employee_profiles')) {
             $this->applyActiveExecomProfileScope($query, null, null, null, $periodStart, $periodEnd, false);
         }
+    }
+
+    private function excludeConsultantsFromRegularQuery(Builder $query): void
+    {
+        $query->where(function (Builder $scope): void {
+            $scope->where(function (Builder $inner): void {
+                $inner->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) != 'consultant'")
+                    ->orWhereNull('users.employment_status');
+            })->where(function (Builder $inner): void {
+                $inner->whereRaw("LOWER(TRIM(COALESCE(users.employment_type, ''))) != 'consultant'")
+                    ->orWhereNull('users.employment_type');
+            });
+        });
+    }
+
+    private function consultantPayrollQuery(
+        ?int $companyId,
+        ?int $branchId,
+        ?int $departmentId,
+        ?CarbonInterface $periodStart,
+        ?CarbonInterface $periodEnd,
+        ?User $actor,
+        ?DataScopeService $dataScopeService,
+    ): Builder {
+        $query = User::query()->payrollEmployees()->active();
+        $this->applyPayrollStartDateScope($query, $periodEnd);
+        if ($actor instanceof User && $dataScopeService instanceof DataScopeService) {
+            $dataScopeService->restrictEmployeeQuery($actor, $query);
+        }
+
+        $this->applyConsultantScope($query, true);
+
+        if ($companyId !== null && $companyId > 0) {
+            $query->where(function (Builder $scope) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
+                $this->applyPrimaryEligibility($scope, $companyId, $branchId, $departmentId, $periodStart, $periodEnd);
+                $scope->orWhereHas('organizationAssignments', function (Builder $assignment) use ($companyId, $branchId, $departmentId, $periodStart, $periodEnd): void {
+                    $this->applySharedPayrollEligibility($assignment, $companyId, $branchId, $departmentId, $periodStart, $periodEnd);
+                });
+            });
+        } else {
+            if ($branchId !== null && $branchId > 0) {
+                $query->where('branch_id', $branchId);
+            }
+            if ($departmentId !== null && $departmentId > 0) {
+                $query->where('department_id', $departmentId);
+            }
+        }
+
+        return $query;
+    }
+
+    private function applyConsultantScope(Builder $query, bool $mustBeConsultant): void
+    {
+        if ($mustBeConsultant) {
+            $query->where(function (Builder $scope): void {
+                $scope->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) = 'consultant'")
+                    ->orWhereRaw("LOWER(TRIM(COALESCE(users.employment_type, ''))) = 'consultant'");
+            });
+
+            return;
+        }
+
+        $this->excludeConsultantsFromRegularQuery($query);
+    }
+
+    private function isConsultantEmployee(User $employee): bool
+    {
+        $status = strtolower(trim(str_replace(['-', ' '], '_', (string) ($employee->employment_status ?? ''))));
+        $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($employee->employment_type ?? ''))));
+
+        return $status === 'consultant' || $type === 'consultant';
     }
 
     private function applyActiveExecomProfileScope(

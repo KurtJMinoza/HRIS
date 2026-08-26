@@ -3073,7 +3073,9 @@ class PayrollComputationService implements PayrollBulkComputation
             'pay_cycle_preview' => $preview,
             'pay_cycle_code' => (string) ($periodContext['pay_cycle_code'] ?? data_get($preview, 'pay_cycle_code', data_get($preview, 'code', ''))),
             'semi_month_segment' => data_get($periodContext, 'semi_month_segment', data_get($preview, 'semi_month_segment')),
-            '_attendance_proration' => $this->consultantAttendanceProration(0),
+            '_attendance_proration' => $this->consultantAttendanceProration(
+                max(1, $from->copy()->startOfDay()->diffInDays($to->copy()->startOfDay()) + 1)
+            ),
         ]);
     }
 
@@ -3323,16 +3325,25 @@ class PayrollComputationService implements PayrollBulkComputation
      */
     private function consultantAttendanceProration(int $dayCount): array
     {
+        $payable = (float) max(0, $dayCount);
+
         return [
             'factor' => 1.0,
-            'scheduled_workdays' => (float) $dayCount,
-            'credited_day_units' => (float) $dayCount,
+            'scheduled_workdays' => $payable,
+            'credited_day_units' => $payable,
+            'payable_day_units' => $payable,
+            'unpaid_absent_days' => 0.0,
             'source' => 'consultant_fixed_basic_pay',
             'allowance' => [
-                'factor' => 1.0,
-                'scheduled_deductible_days' => (float) $dayCount,
-                'payable_days' => (float) $dayCount,
+                'worked_day_units' => $payable,
+                'payable_day_units' => $payable,
+                'present_day_units' => $payable,
+                'approved_paid_leave_day_units' => 0.0,
+                'approved_unpaid_leave_day_units' => 0.0,
+                'approved_correction_day_units' => 0.0,
                 'unpaid_absent_days' => 0.0,
+                'monthly_divisor_days' => max(1.0, $payable),
+                'divisor_source' => 'consultant_auto_present',
                 'proration_basis' => 'consultant_auto_present',
                 'attendance_counted' => [],
                 'attendance_excluded' => [],

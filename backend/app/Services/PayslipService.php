@@ -7100,9 +7100,15 @@ class PayslipService
 
     private function normalizePayrollModule(string $module): string
     {
-        return strtolower(trim($module)) === PayrollBatchRun::MODULE_EXECOM
-            ? PayrollBatchRun::MODULE_EXECOM
-            : PayrollBatchRun::MODULE_STANDARD;
+        $normalized = strtolower(trim($module));
+        if ($normalized === PayrollBatchRun::MODULE_EXECOM) {
+            return PayrollBatchRun::MODULE_EXECOM;
+        }
+        if ($normalized === PayrollBatchRun::MODULE_CONSULTANT) {
+            return PayrollBatchRun::MODULE_CONSULTANT;
+        }
+
+        return PayrollBatchRun::MODULE_STANDARD;
     }
 
     /**
@@ -7178,16 +7184,18 @@ class PayslipService
 
         $expectedModule = $this->normalizePayrollModule((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD));
         $this->normalizeDraftBatchPayslipPeriodDates($run, $expectedModule);
-        $wrongModule = $expectedModule === PayrollBatchRun::MODULE_EXECOM
-            ? PayrollBatchRun::MODULE_STANDARD
-            : PayrollBatchRun::MODULE_EXECOM;
+        $wrongModules = array_values(array_filter([
+            PayrollBatchRun::MODULE_STANDARD,
+            PayrollBatchRun::MODULE_EXECOM,
+            PayrollBatchRun::MODULE_CONSULTANT,
+        ], fn (string $module): bool => $module !== $expectedModule));
         $eligibleEmployeeIds = $this->employeeIdsForBatchScope($run);
 
         $staleQuery = Payslip::query()
             ->where('payroll_batch_run_id', (int) $run->id)
             ->whereIn('status', $this->draftSnapshotStatuses())
-            ->where(function ($query) use ($wrongModule, $eligibleEmployeeIds) {
-                $query->where('payroll_module', $wrongModule);
+            ->where(function ($query) use ($wrongModules, $eligibleEmployeeIds) {
+                $query->whereIn('payroll_module', $wrongModules);
                 if ($eligibleEmployeeIds === []) {
                     $query->orWhereNotNull('user_id');
                 } else {

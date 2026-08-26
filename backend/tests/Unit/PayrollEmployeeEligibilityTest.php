@@ -271,6 +271,33 @@ class PayrollEmployeeEligibilityTest extends TestCase
         $this->assertNotContains((int) $employee->id, $ids);
     }
 
+    public function test_consultants_are_excluded_from_regular_payroll_and_included_in_consultant_module(): void
+    {
+        $company = Company::query()->create(['name' => 'ACI']);
+        $regular = $this->employee($company, ['employee_code' => 'REG-001', 'employment_status' => 'regular']);
+        $consultant = $this->employee($company, [
+            'employee_code' => 'CON-001',
+            'employment_status' => 'consultant',
+        ]);
+
+        $periodStart = Carbon::parse('2026-05-11');
+        $periodEnd = Carbon::parse('2026-05-25');
+
+        $regularIds = $this->eligibleIds($company, $periodStart, $periodEnd);
+        $consultantIds = $this->service->getConsultantPayrollEligibleEmployeeIds(
+            (int) $company->id,
+            null,
+            null,
+            $periodStart,
+            $periodEnd
+        );
+
+        $this->assertContains((int) $regular->id, $regularIds);
+        $this->assertNotContains((int) $consultant->id, $regularIds);
+        $this->assertContains((int) $consultant->id, $consultantIds);
+        $this->assertNotContains((int) $regular->id, $consultantIds);
+    }
+
     public function test_stale_draft_cleanup_removes_employee_hired_after_payroll_period(): void
     {
         $company = Company::query()->create(['name' => 'ACI']);

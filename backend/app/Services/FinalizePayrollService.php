@@ -3058,9 +3058,15 @@ class FinalizePayrollService
 
     private function normalizePayrollModule(string $module): string
     {
-        return strtolower(trim($module)) === PayrollBatchRun::MODULE_EXECOM
-            ? PayrollBatchRun::MODULE_EXECOM
-            : PayrollBatchRun::MODULE_STANDARD;
+        $normalized = strtolower(trim($module));
+        if ($normalized === PayrollBatchRun::MODULE_EXECOM) {
+            return PayrollBatchRun::MODULE_EXECOM;
+        }
+        if ($normalized === PayrollBatchRun::MODULE_CONSULTANT) {
+            return PayrollBatchRun::MODULE_CONSULTANT;
+        }
+
+        return PayrollBatchRun::MODULE_STANDARD;
     }
 
     private function isConsultantEmployee(User $user): bool
@@ -3112,6 +3118,16 @@ class FinalizePayrollService
             return;
         }
 
+        if ($expectedModule === PayrollBatchRun::MODULE_CONSULTANT) {
+            if ($draftUserIds === []) {
+                throw new \RuntimeException(
+                    'Cannot finalize: no Consultant draft payslips are linked to this batch. Regenerate the Consultant payroll draft first, then finalize again.'
+                );
+            }
+
+            return;
+        }
+
         if ($draftUserIds === []) {
             return;
         }
@@ -3126,6 +3142,18 @@ class FinalizePayrollService
         $execomInDraft = array_values(array_intersect($draftUserIds, $execomEligibleIds));
         if ($execomInDraft !== []) {
             throw new \RuntimeException('Regular payroll contains EXECOM employees. Please regenerate Regular Payroll.');
+        }
+
+        $consultantEligibleIds = $this->payrollEligibility->getConsultantPayrollEligibleEmployeeIds(
+            $run->company_id ? (int) $run->company_id : null,
+            $run->branch_id ? (int) $run->branch_id : null,
+            $run->department_id ? (int) $run->department_id : null,
+            $run->pay_period_start,
+            $run->pay_period_end
+        );
+        $consultantsInDraft = array_values(array_intersect($draftUserIds, $consultantEligibleIds));
+        if ($consultantsInDraft !== []) {
+            throw new \RuntimeException('Regular payroll contains Consultant employees. Please regenerate Regular Payroll or use Consultant Payroll.');
         }
     }
 

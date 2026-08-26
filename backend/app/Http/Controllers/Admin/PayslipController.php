@@ -182,7 +182,7 @@ class PayslipController extends Controller
             $q->whereDate('pay_period_start', '<=', $v['to_date']);
         }
         $requestedModule = strtolower(trim((string) ($v['payroll_module'] ?? 'all')));
-        if (in_array($requestedModule, [PayrollBatchRun::MODULE_STANDARD, PayrollBatchRun::MODULE_EXECOM], true)) {
+        if (in_array($requestedModule, [PayrollBatchRun::MODULE_STANDARD, PayrollBatchRun::MODULE_EXECOM, PayrollBatchRun::MODULE_CONSULTANT], true)) {
             $q->where('payroll_module', $requestedModule);
         }
 
@@ -249,14 +249,21 @@ class PayslipController extends Controller
                 PayrollBatchRun::STATUS_FAILED,
             ], true);
 
-            $payrollModule = strtolower(trim((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD))) === PayrollBatchRun::MODULE_EXECOM
-                ? PayrollBatchRun::MODULE_EXECOM
-                : PayrollBatchRun::MODULE_STANDARD;
+            $rawModule = strtolower(trim((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)));
+            $payrollModule = match ($rawModule) {
+                PayrollBatchRun::MODULE_EXECOM => PayrollBatchRun::MODULE_EXECOM,
+                PayrollBatchRun::MODULE_CONSULTANT => PayrollBatchRun::MODULE_CONSULTANT,
+                default => PayrollBatchRun::MODULE_STANDARD,
+            };
 
             return [
                 'payroll_batch_run_id' => (int) $run->id,
                 'payroll_module' => $payrollModule,
-                'module_label' => $payrollModule === PayrollBatchRun::MODULE_EXECOM ? 'EXECOM' : 'Regular',
+                'module_label' => match ($payrollModule) {
+                    PayrollBatchRun::MODULE_EXECOM => 'EXECOM',
+                    PayrollBatchRun::MODULE_CONSULTANT => 'Consultant',
+                    default => 'Regular',
+                },
                 'company_id' => $resolvedCompanyId,
                 'company_name' => $resolvedCompanyName,
                 'company_logo_url' => $this->publicCompanyLogoUrl($resolvedCompanyLogo),
@@ -424,11 +431,24 @@ class PayslipController extends Controller
             PayrollBatchRun::MODULE_EXECOM
         );
 
+        $consultantQ = $this->payrollEligibility->query(
+            $companyId,
+            $branchId,
+            $departmentId,
+            $periodStart,
+            $periodEnd,
+            $request->user(),
+            $this->dataScopeService,
+            PayrollBatchRun::MODULE_CONSULTANT
+        );
+
         $standardEmployeeIds = (clone $q)->pluck('users.id')->map(fn ($id) => (int) $id)->unique()->values()->all();
         $execomEmployeeIds = (clone $execomQ)->pluck('users.id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $consultantEmployeeIds = (clone $consultantQ)->pluck('users.id')->map(fn ($id) => (int) $id)->unique()->values()->all();
         $total = count($standardEmployeeIds);
         $execomExcluded = count($execomEmployeeIds);
-        $payrollScopeTotal = count(array_unique(array_merge($standardEmployeeIds, $execomEmployeeIds)));
+        $consultantExcluded = count($consultantEmployeeIds);
+        $payrollScopeTotal = count(array_unique(array_merge($standardEmployeeIds, $execomEmployeeIds, $consultantEmployeeIds)));
 
         if (! empty($v['branch_id'])) {
             $branchesFiltered = 1;
@@ -457,6 +477,7 @@ class PayslipController extends Controller
             'total_employees' => $total,
             'regular_payroll_employees' => $total,
             'execom_excluded_employees' => $execomExcluded,
+            'consultant_excluded_employees' => $consultantExcluded,
             'payroll_scope_total_employees' => $payrollScopeTotal,
             'regular' => $regular,
             'contractual_or_project' => $contractualProject,
