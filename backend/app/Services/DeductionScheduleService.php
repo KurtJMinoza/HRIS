@@ -614,11 +614,30 @@ class DeductionScheduleService
             ];
             if (is_array($line['allowance_proration'] ?? null)) {
                 $row['allowance_proration'] = $line['allowance_proration'];
+                $payableDays = (float) ($line['allowance_proration']['payable_day_units'] ?? 0);
+                if ($payableDays > 0.0) {
+                    $row['units'] = $this->formatAllowanceDayUnits($payableDays);
+                }
             }
             $out[] = $row;
         }
 
         return $out;
+    }
+
+    private function formatAllowanceDayCount(float $days): string
+    {
+        $rounded = round(max(0.0, $days), 2);
+
+        return rtrim(rtrim(number_format($rounded, 2, '.', ''), '0'), '.');
+    }
+
+    private function formatAllowanceDayUnits(float $days): string
+    {
+        $display = $this->formatAllowanceDayCount($days);
+        $rounded = round(max(0.0, $days), 2);
+
+        return $display.' '.(abs($rounded - 1.0) < 0.001 ? 'day' : 'days');
     }
 
     private function formatPayslipEarningLineDisplay(string $label, float $fullMonthly, string $sched, string $calculationStandard = PayComponent::STANDARD_MONTHLY): string
@@ -746,6 +765,59 @@ class DeductionScheduleService
 
         $payCycleCode = strtolower(trim((string) ($payrollRun['pay_cycle_code'] ?? $this->resolvePayCycleCodeForRun($user, $payrollRun))));
         $payrollRunType = $this->resolvePayrollRunType($payCycleCode, $segment, $selectedPayDate);
+
+        if ($this->isAllowanceLine($component)) {
+            $prorationMethod = AllowanceCalculationService::resolveProrationMethod($component);
+            $currentPayroll = in_array($payrollRunType, [
+                DeductionScheduleSetting::SCHEDULE_15TH,
+                DeductionScheduleSetting::SCHEDULE_30TH,
+            ], true)
+                ? $payrollRunType
+                : $this->mapPayrollRunTypeForAllowance($segment);
+
+            $allowanceResult = app(AllowanceCalculationService::class)->compute(
+                $original,
+                $standard,
+                $schedule,
+                $prorationMethod,
+                $currentPayroll,
+                (bool) ($component['is_taxable'] ?? true),
+            );
+            $appliedAmount = round($allowanceResult->payrollAmount, 2);
+            $divisorApplied = $original > 0.0 ? round($appliedAmount / $original, 6) : 0.0;
+
+            $resolution = array_merge($standardMeta, [
+                'original_amount' => $original,
+                'calculation_standard' => $standard,
+                'resolved_schedule' => $schedule,
+                'payroll_run_type' => $payrollRunType,
+                'divisor_applied' => $divisorApplied,
+                'applied_amount' => $appliedAmount,
+            ]);
+
+            if (! BulkPayrollDraftContext::$active) {
+                Log::debug('payroll.pay_component_amount_resolution', [
+                    'employee_id' => $user ? (int) $user->id : null,
+                    'employee_component_id' => $component['id'] ?? null,
+                    'component_id' => $component['pay_component_id'] ?? null,
+                    'component_code' => $component['code'] ?? null,
+                    'original_amount' => $original,
+                    'schedule_override' => $component['schedule_override'] ?? null,
+                    'default_schedule' => $component['default_schedule'] ?? null,
+                    'resolved_schedule' => $schedule,
+                    'calculation_standard_override' => $standardMeta['calculation_standard_override'],
+                    'default_calculation_standard' => $standardMeta['default_calculation_standard'],
+                    'resolved_calculation_standard' => $standard,
+                    'calculation_standard_source' => $standardMeta['calculation_standard_source'],
+                    'current_payroll_run' => $payrollRunType,
+                    'allowance_proration_method' => $prorationMethod,
+                    'divisor_applied' => $divisorApplied,
+                    'final_applied_amount' => $appliedAmount,
+                ]);
+            }
+
+            return $resolution;
+        }
 
         $monthlyFactor = $this->resolveMonthlyStandardFactor(
             $user,
@@ -913,6 +985,20 @@ class DeductionScheduleService
         }
 
         return $selectedPayDate->day <= 15 ? '15th' : '30th';
+    }
+
+    /**
+     * @param  'first'|'second'|'15th'|'30th'|string|null  $segmentOrRun
+     */
+    private function mapPayrollRunTypeForAllowance(?string $segmentOrRun): string
+    {
+        $normalized = strtolower(trim((string) $segmentOrRun));
+
+        return match ($normalized) {
+            'second', DeductionScheduleSetting::SCHEDULE_30TH => DeductionScheduleSetting::SCHEDULE_30TH,
+            'first', DeductionScheduleSetting::SCHEDULE_15TH => DeductionScheduleSetting::SCHEDULE_15TH,
+            default => DeductionScheduleSetting::SCHEDULE_15TH,
+        };
     }
 
     private function resolveMonthlyStandardFactor(
@@ -1106,7 +1192,7 @@ class DeductionScheduleService
             $allowanceMode = $this->resolveAllowanceProrationType($e, $isBasic);
             if ($allowanceMode === 'attendance_prorated') {
                 $allowanceProration = $this->computeAttendanceProratedAllowanceAmount(
-                    $e,
+                    array_merge($e, ['pay_component_resolution' => $resolvedAmount]),
                     $attendanceProration,
                     $sched,
                     $factor,
@@ -1253,8 +1339,8 @@ class DeductionScheduleService
     }
 
     /**
-     * Proratable allowances are payable-day based: schedule decides whether the component
-     * applies in this run, then the amount is monthly allowance / monthly workdays * payable days.
+     * Proratable allowances: per-cutoff amount / cutoff scheduled workdays * payable days.
+     * Never use salary daily rate (basic ÷ 26) for allowance proration.
      *
      * @param  array<string, mixed>|null  $attendanceProration
      * @return array<string, mixed>
@@ -1271,7 +1357,18 @@ class DeductionScheduleService
         $allowanceMeta = is_array($attendanceProration['allowance'] ?? null)
             ? $attendanceProration['allowance']
             : [];
-        $monthlyAmount = round(max(0.0, (float) ($line['computed_amount'] ?? 0)), 2);
+        $configuredAmount = round(max(0.0, (float) ($line['configured_value'] ?? $line['computed_amount'] ?? 0)), 2);
+        $frequency = (string) ($line['resolved_calculation_standard'] ?? $line['calculation_standard'] ?? PayComponent::STANDARD_MONTHLY);
+        $prorationMethod = AllowanceCalculationService::resolveProrationMethod($line);
+        $allowanceResult = app(AllowanceCalculationService::class)->compute(
+            $configuredAmount,
+            $frequency,
+            $scheduleType,
+            $prorationMethod,
+            $this->mapPayrollRunTypeForAllowance($currentRunType),
+            (bool) ($line['is_taxable'] ?? true),
+        );
+        $monthlyAmount = round($allowanceResult->monthlyEquivalent, 2);
         $monthlyDivisor = max(1.0, (float) ($allowanceMeta['monthly_divisor_days'] ?? 0));
         $basePayableDayUnits = max(0.0, (float) ($allowanceMeta['payable_day_units'] ?? $allowanceMeta['worked_day_units'] ?? 0));
         $unpaidAbsentDays = max(0.0, (float) ($allowanceMeta['unpaid_absent_days'] ?? 0));
@@ -1288,10 +1385,8 @@ class DeductionScheduleService
             $basePayableDayUnits - $excludedPaidLeaveDays + ($includeUnpaidLeave ? $approvedUnpaidLeaveDays : 0.0)
         );
         $scheduleFactor = max(0.0, min(1.0, $scheduleFactor));
-        $isApplicable = $scheduleFactor > 0.0;
-
-        // Per-period amount = monthly amount × schedule's per-run factor.
-        $perPeriodAmount = $isApplicable ? round($monthlyAmount * $scheduleFactor, 2) : 0.0;
+        $isApplicable = $allowanceResult->isScheduledThisRun && $scheduleFactor > 0.0;
+        $perPeriodAmount = $isApplicable ? round($allowanceResult->payrollAmount, 2) : 0.0;
         // Use the period's scheduled workdays as divisor so proration stays within the period,
         // rather than scaling against the full-month divisor (which would account for only half
         // the month when the allowance is assigned to a single payroll run).
@@ -1344,7 +1439,8 @@ class DeductionScheduleService
             'approved_correction_day_units' => round($approvedCorrectionDays, 6),
             'proration_basis' => 'payable_days',
             'monthly_divisor_days' => round($monthlyDivisor, 4),
-            'base_divisor_days' => round($monthlyDivisor, 4),
+            'period_scheduled_workdays' => round($periodScheduledDays, 4),
+            'base_divisor_days' => round($periodScheduledDays, 4),
             'daily_allowance_rate' => round($periodDailyRate, 6),
             'worked_day_units' => round($payableDayUnits, 6),
             'worked_minutes' => (int) ($allowanceMeta['worked_minutes'] ?? 0),

@@ -244,13 +244,16 @@ class AttendanceSessionService
 
         $hasValidInOut = (($sources['raw_clock_in'] || $sources['approved_correction_time_in'])
             && ($sources['raw_clock_out'] || $sources['approved_correction_time_out']));
-        $valid = $hasValidInOut || $sources['approved_correction'];
+        $valid = $hasValidInOut;
+        $hasIn = ($sources['raw_clock_in'] || $sources['approved_correction_time_in']);
+        $hasOut = ($sources['raw_clock_out'] || $sources['approved_correction_time_out']);
+        $reason = $valid
+            ? ($sources['approved_correction'] ? 'approved_attendance_correction' : 'valid_attendance_session')
+            : (($hasIn xor $hasOut) ? 'incomplete_attendance_pair' : 'missing_attendance_or_approved_correction');
 
         return [
             'valid' => $valid,
-            'reason' => $valid
-                ? ($sources['approved_correction'] ? 'approved_attendance_correction' : 'valid_attendance_session')
-                : 'missing_attendance_or_approved_correction',
+            'reason' => $reason,
             'sources' => $sources,
         ];
     }

@@ -2658,13 +2658,13 @@ class PayrollComputationService implements PayrollBulkComputation
                 }
                 continue;
             }
-            if ($resolution === null && ($isRest || $isHoliday || $required <= 0)) {
+            if ($resolution === null && ($isRest || $required <= 0)) {
                 if ($dateKey !== '') {
                     $nonDeductibleDays += 1.0;
                     $attendanceExcluded[] = [
                         'date' => $dateKey,
                         'status' => (string) ($d['status'] ?? ''),
-                        'reason' => $isRest ? 'rest_day' : ($isHoliday ? 'holiday' : 'no_required_minutes'),
+                        'reason' => $isRest ? 'rest_day' : 'no_required_minutes',
                     ];
                 }
                 continue;
@@ -2766,8 +2766,9 @@ class PayrollComputationService implements PayrollBulkComputation
 
     /**
      * Centralized attendance and leave-day resolver for proratable allowances/components.
-     * Present and corrected days are payable. Each component later decides whether a paid or
-     * unpaid leave day is payable. Hours worked, tardiness, and undertime are ignored.
+     * Present days require a complete IN+OUT pair (raw logs and/or approved correction).
+     * Half-day, tardiness, and undertime still count when the pair is complete.
+     * Approved leave follows separate paid/unpaid rules.
      *
      * @return array<string, mixed>
      */
@@ -2784,13 +2785,13 @@ class PayrollComputationService implements PayrollBulkComputation
         $isHoliday = is_array($dayPayroll['holiday'] ?? null);
         $required = (int) ($dayPayroll['required_minutes'] ?? 0);
 
-        if ($isRest || $isHoliday || $required <= 0) {
+        if ($isRest || $required <= 0) {
             return [
-                'valid' => true,
+                'valid' => false,
                 'scheduled_deductible_day' => false,
                 'payable_day' => false,
                 'unpaid_absent_day' => false,
-                'reason' => $isRest ? 'rest_day' : ($isHoliday ? 'holiday' : 'no_scheduled_workday'),
+                'reason' => $isRest ? 'rest_day' : 'no_scheduled_workday',
                 'sources' => [
                     'rest_day' => $isRest,
                     'holiday' => $isHoliday,
@@ -2799,12 +2800,15 @@ class PayrollComputationService implements PayrollBulkComputation
             ];
         }
 
+        // Scheduled holidays still count toward the cutoff divisor, but allowance is
+        // payable only when the employee is present (or on approved leave/correction).
         $attendance = $this->resolveAllowanceAttendanceValidity($user, $dateKey, $timeIn, $timeOut, $tz);
         if ((bool) ($attendance['valid'] ?? false)) {
             return array_merge($attendance, [
                 'scheduled_deductible_day' => true,
                 'payable_day' => true,
                 'unpaid_absent_day' => false,
+                'payable_day_unit' => 1.0,
             ]);
         }
 
@@ -2904,13 +2908,16 @@ class PayrollComputationService implements PayrollBulkComputation
         $hasValidInOut = ($timeIn !== null && $timeOut !== null)
             && (($sources['raw_clock_in'] || $sources['approved_correction_time_in'])
                 && ($sources['raw_clock_out'] || $sources['approved_correction_time_out']));
-        $valid = $hasValidInOut || $sources['approved_correction'];
+        $valid = $hasValidInOut;
+        $hasIn = ($sources['raw_clock_in'] || $sources['approved_correction_time_in']);
+        $hasOut = ($sources['raw_clock_out'] || $sources['approved_correction_time_out']);
+        $reason = $valid
+            ? ($sources['approved_correction'] ? 'approved_attendance_correction' : 'valid_attendance_session')
+            : (($hasIn xor $hasOut) ? 'incomplete_attendance_pair' : 'missing_attendance_or_approved_correction');
 
         return [
             'valid' => $valid,
-            'reason' => $valid
-                ? ($sources['approved_correction'] ? 'approved_attendance_correction' : 'valid_attendance_session')
-                : 'missing_attendance_or_approved_correction',
+            'reason' => $reason,
             'sources' => $sources,
         ];
     }

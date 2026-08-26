@@ -96,6 +96,15 @@ const SELECT_ITEM =
   'min-h-11 rounded-xl px-3 py-2.5 pr-9 text-sm font-medium transition-colors focus:bg-brand/10 focus:text-brand data-[state=checked]:bg-brand/10 data-[state=checked]:text-brand'
 const DEMO_ORG_NAME_PATTERN = /^(company\s+[ab]|acme\s+(corp|group))$/i
 
+function payrollModuleTabClass(active) {
+  return cn(
+    'rounded-md border shadow-none box-border',
+    active
+      ? 'border-brand bg-brand text-brand-foreground hover:border-brand hover:bg-brand-strong hover:text-brand-foreground'
+      : 'border-border bg-background text-foreground hover:border-border hover:bg-muted/50 hover:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50',
+  )
+}
+
 function isDemoOrganization(item) {
   return DEMO_ORG_NAME_PATTERN.test(String(item?.name || '').trim())
 }
@@ -1190,8 +1199,8 @@ export default function AdminGeneratePayslipsPage() {
                     <Button
                       type="button"
                       size="sm"
-                      variant={!isDedicatedPayrollModule ? 'default' : 'outline'}
-                      className={cn(!isDedicatedPayrollModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
+                      variant="outline"
+                      className={payrollModuleTabClass(!isDedicatedPayrollModule)}
                       onClick={() => setPayrollModule('regular')}
                     >
                       Regular Payroll
@@ -1201,8 +1210,8 @@ export default function AdminGeneratePayslipsPage() {
                     <Button
                       type="button"
                       size="sm"
-                      variant={isExecomModule ? 'default' : 'outline'}
-                      className={cn(isExecomModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
+                      variant="outline"
+                      className={payrollModuleTabClass(isExecomModule)}
                       onClick={() => setPayrollModule('execom')}
                     >
                       EXECOM Payroll
@@ -1212,8 +1221,8 @@ export default function AdminGeneratePayslipsPage() {
                     <Button
                       type="button"
                       size="sm"
-                      variant={isConsultantModule ? 'default' : 'outline'}
-                      className={cn(isConsultantModule && 'bg-brand text-brand-foreground hover:bg-brand-strong')}
+                      variant="outline"
+                      className={payrollModuleTabClass(isConsultantModule)}
                       onClick={() => setPayrollModule('consultant')}
                     >
                       Consultant Payroll
