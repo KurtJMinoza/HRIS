@@ -17,6 +17,7 @@ import {
   getCompanies,
   getDepartments,
   getPayCycles,
+  previewPayCycle,
   getPayrollRunCompanyPayrollReportPdfBlob,
   getPayrollRunCompanyPayrollReportXlsxBlob,
   getPayrollRunCompanyPayrollDeductionsPdfBlob,
@@ -128,6 +129,20 @@ function formatPayPeriodRange(start, end) {
   const startStr = a.toLocaleDateString(undefined, sameYear ? { month: 'short', day: 'numeric' } : full)
   const endStr = b.toLocaleDateString(undefined, full)
   return `${startStr} – ${endStr}`
+}
+
+function formatDate(value) {
+  if (!value) return '—'
+  try {
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      .format(new Date(`${value}T12:00:00`))
+  } catch {
+    return value
+  }
+}
+
+function payCyclePeriodKey(period) {
+  return `${period.cut_off_start_date}|${period.cut_off_end_date}|${period.pay_date || ''}`
 }
 
 function formatPeso(n) {
@@ -382,6 +397,9 @@ export default function AdminGeneratePayslipsPage() {
   const [branchId, setBranchId] = useState('')
   const [departmentId, setDepartmentId] = useState('')
   const [payCycleId, setPayCycleId] = useState('')
+  const [cyclePeriods, setCyclePeriods] = useState([])
+  const [cyclePeriodsLoading, setCyclePeriodsLoading] = useState(false)
+  const [selectedPeriodKey, setSelectedPeriodKey] = useState('')
 
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
@@ -746,6 +764,58 @@ export default function AdminGeneratePayslipsPage() {
     if (eid) p.set('employee_id', eid)
     return p
   }, [fromDate, toDate, payCycleId, referenceDate, useCompanyDefaultDates, passwordProtect, companyId, branchId, departmentId, employeeId])
+
+  const selectedCycle = useMemo(
+    () => cycles.find((c) => String(c.id) === String(payCycleId)) || null,
+    [cycles, payCycleId],
+  )
+
+  const applyPayCyclePeriod = useCallback((period) => {
+    if (!period) return
+    const start = period.cut_off_start_date || ''
+    const end = period.cut_off_end_date || ''
+    setSelectedPeriodKey(payCyclePeriodKey(period))
+    setFromDate(start)
+    setToDate(end)
+    setReferenceDate(period.pay_date || '')
+  }, [])
+
+  useEffect(() => {
+    if (!selectedCycle) {
+      setCyclePeriods([])
+      setSelectedPeriodKey('')
+      return undefined
+    }
+    let cancelled = false
+    const cycleSnapshot = {
+      code: selectedCycle.code,
+      name: selectedCycle.name,
+      cut_off_type: selectedCycle.cut_off_type,
+      cut_off_value: selectedCycle.cut_off_value,
+      pay_day_type: selectedCycle.pay_day_type,
+      pay_day_value: selectedCycle.pay_day_value,
+      pay_day_offset: selectedCycle.pay_day_offset,
+      pro_ration_type: selectedCycle.pro_ration_type,
+      metadata: selectedCycle.metadata,
+    }
+    ;(async () => {
+      setCyclePeriodsLoading(true)
+      try {
+        const res = await previewPayCycle(cycleSnapshot)
+        if (cancelled) return
+        const periods = Array.isArray(res?.data?.preview_periods) ? res.data.preview_periods : []
+        setCyclePeriods(periods)
+      } catch (e) {
+        if (!cancelled) {
+          setCyclePeriods([])
+          toast({ title: 'Failed to load pay periods', description: e.message, variant: 'destructive' })
+        }
+      } finally {
+        if (!cancelled) setCyclePeriodsLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [payCycleId, selectedCycle?.code, selectedCycle?.cut_off_type, selectedCycle?.pay_day_type, selectedCycle?.pay_day_offset, toast]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!payCycleId) return
@@ -1401,7 +1471,19 @@ export default function AdminGeneratePayslipsPage() {
                     <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
                     Pay Period (Pay Cycle)
                   </Label>
-                  <Select value={payCycleId || '__none__'} onValueChange={(v) => setPayCycleId(v === '__none__' ? '' : v)}>
+                  <Select
+                    value={payCycleId || '__none__'}
+                    onValueChange={(v) => {
+                      const next = v === '__none__' ? '' : v
+                      setPayCycleId(next)
+                      setSelectedPeriodKey('')
+                      if (next) {
+                        setFromDate('')
+                        setToDate('')
+                        setReferenceDate('')
+                      }
+                    }}
+                  >
                     <SelectTrigger className={SELECT_TRIGGER}>
                       <SelectValue placeholder="Default (employee / company cycle)" />
                     </SelectTrigger>
@@ -1420,6 +1502,70 @@ export default function AdminGeneratePayslipsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {payCycleId ? (
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
+                      <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground/80" aria-hidden />
+                      Payroll cycle
+                    </Label>
+                    <Select
+                      value={selectedPeriodKey || '__none__'}
+                      disabled={cyclePeriodsLoading}
+                      onValueChange={(v) => {
+                        if (v === '__none__') {
+                          setSelectedPeriodKey('')
+                          setFromDate('')
+                          setToDate('')
+                          setReferenceDate('')
+                          return
+                        }
+                        const period = cyclePeriods.find((p) => payCyclePeriodKey(p) === v)
+                        if (period) applyPayCyclePeriod(period)
+                      }}
+                    >
+                      <SelectTrigger className={SELECT_TRIGGER}>
+                        <SelectValue
+                          placeholder={
+                            cyclePeriodsLoading
+                              ? 'Loading periods…'
+                              : 'Select a payroll cycle…'
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent position="popper" align="start" className={SELECT_CONTENT}>
+                        <SelectItem value="__none__" className={SELECT_ITEM}>
+                          {cyclePeriodsLoading ? 'Loading periods…' : 'Select a payroll cycle…'}
+                        </SelectItem>
+                        {cyclePeriods.map((period) => {
+                          const key = payCyclePeriodKey(period)
+                          return (
+                            <SelectItem key={key} value={key} className={SELECT_ITEM}>
+                              {period.preview_line
+                                || `${period.cut_off_start_date} → ${period.cut_off_end_date}${period.pay_date ? ` · Pay ${period.pay_date}` : ''}`}
+                            </SelectItem>
+                          )
+                        })}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Pick the cut-off window and pay date for this run, same as refunds.
+                    </p>
+                    {fromDate && toDate ? (
+                      <div className="rounded-xl border border-brand/25 bg-brand/4.5 px-4 py-3 dark:border-brand/25 dark:bg-brand/10">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-brand">Selected payroll cycle</p>
+                        <p className="mt-1.5 text-sm font-semibold text-foreground">
+                          {formatPayPeriodRange(fromDate, toDate)}
+                        </p>
+                        {referenceDate ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Pay date: {formatDate(referenceDate)}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 <div className="space-y-2">
                     <Label className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
@@ -1482,7 +1628,7 @@ export default function AdminGeneratePayslipsPage() {
                             type="date"
                             value={fromDate}
                             onChange={(e) => setFromDate(e.target.value)}
-                            disabled={useCompanyDefaultDates && !payCycleId}
+                            disabled={(useCompanyDefaultDates && !payCycleId) || Boolean(payCycleId)}
                             className="h-10 rounded-lg border-border/80 bg-background dark:bg-input/45"
                           />
                         </div>
@@ -1492,7 +1638,7 @@ export default function AdminGeneratePayslipsPage() {
                             type="date"
                             value={toDate}
                             onChange={(e) => setToDate(e.target.value)}
-                            disabled={useCompanyDefaultDates && !payCycleId}
+                            disabled={(useCompanyDefaultDates && !payCycleId) || Boolean(payCycleId)}
                             className="h-10 rounded-lg border-border/80 bg-background dark:bg-input/45"
                           />
                         </div>
@@ -1502,7 +1648,7 @@ export default function AdminGeneratePayslipsPage() {
                             type="date"
                             value={referenceDate}
                             onChange={(e) => setReferenceDate(e.target.value)}
-                            disabled={useCompanyDefaultDates && !payCycleId}
+                            disabled={(useCompanyDefaultDates && !payCycleId) || Boolean(payCycleId)}
                             className="h-10 rounded-lg border-border/80 bg-background dark:bg-input/45"
                           />
                         </div>
