@@ -804,10 +804,13 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/admin/employees/{userId}/tax-profile', [GovernmentContributionController::class, 'showEmployeeTaxProfile']);
             Route::get('/admin/payroll/government-deduction-exemptions', [EmployeeGovernmentDeductionSettingController::class, 'index']);
             Route::get('/admin/employees/{userId}/government-deduction-exemption', [EmployeeGovernmentDeductionSettingController::class, 'show']);
+            Route::post('/admin/payroll/government-deductions/generate', [GovernmentContributionController::class, 'generateEmployeeDeductions']);
+            Route::get('/admin/payroll/remittances/{id}', [GovernmentContributionController::class, 'showRemittance']);
         });
         Route::middleware('permission:government_deductions.manage|government_deductions.remittances.manage')->group(function () {
             Route::put('/admin/payroll/statutory-rates/{code}', [GovernmentContributionController::class, 'upsertRate']);
             Route::post('/admin/payroll/remittances/generate', [GovernmentContributionController::class, 'generateRemittance']);
+            Route::post('/admin/payroll/government-deductions/save', [GovernmentContributionController::class, 'saveEmployeeDeductions']);
             Route::put('/admin/employees/{userId}/tax-profile', [GovernmentContributionController::class, 'upsertEmployeeTaxProfile']);
             Route::put('/admin/employees/{userId}/government-deduction-exemption', [EmployeeGovernmentDeductionSettingController::class, 'update']);
             Route::post('/admin/payroll/government-deduction-exemptions/bulk', [EmployeeGovernmentDeductionSettingController::class, 'bulkUpdate']);

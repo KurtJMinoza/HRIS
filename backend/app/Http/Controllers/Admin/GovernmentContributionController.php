@@ -9,9 +9,11 @@ use App\Models\EmployeeTaxInfo;
 use App\Models\SssBracket;
 use App\Models\StatutoryContribution;
 use App\Models\StatutoryRateHistory;
+use App\Models\StatutoryRemittance;
 use App\Models\TaxTable;
 use App\Models\User;
 use App\Services\DataScopeService;
+use App\Services\GovernmentDeductionGeneratorService;
 use App\Services\PayrollCalculatorService;
 use App\Services\RemittanceService;
 use App\Services\TaxComputationService;
@@ -28,6 +30,7 @@ class GovernmentContributionController extends Controller
         private readonly DataScopeService $dataScopeService,
         private readonly RemittanceService $remittanceService,
         private readonly TaxComputationService $taxComputation,
+        private readonly GovernmentDeductionGeneratorService $deductionGenerator,
     ) {}
 
     public function rates(Request $request): JsonResponse
@@ -594,20 +597,27 @@ class GovernmentContributionController extends Controller
         $paginator = $this->remittanceService->listRemittances($validated);
 
         return response()->json([
-            'data' => collect($paginator->items())->map(fn ($row) => [
-                'id' => $row->id,
-                'company_id' => $row->company_id,
-                'period_year' => $row->period_year,
-                'period_month' => $row->period_month,
-                'agency' => $row->agency,
-                'report_kind' => $row->report_kind,
-                'status' => $row->status,
-                'file_name' => $row->file_name,
-                'total_employee_amount' => $row->total_employee_amount,
-                'total_employer_amount' => $row->total_employer_amount,
-                'generated_by_user_id' => $row->generated_by_user_id,
-                'created_at' => optional($row->created_at)->toIso8601String(),
-            ])->values(),
+            'data' => collect($paginator->items())->map(function ($row) {
+                $payload = is_array($row->payload) ? $row->payload : [];
+                $scope = is_array($payload['scope'] ?? null) ? $payload['scope'] : null;
+
+                return [
+                    'id' => $row->id,
+                    'company_id' => $row->company_id,
+                    'period_year' => $row->period_year,
+                    'period_month' => $row->period_month,
+                    'agency' => $row->agency,
+                    'report_kind' => $row->report_kind,
+                    'status' => $row->status,
+                    'file_name' => $row->file_name,
+                    'total_employee_amount' => $row->total_employee_amount,
+                    'total_employer_amount' => $row->total_employer_amount,
+                    'generated_by_user_id' => $row->generated_by_user_id,
+                    'created_at' => optional($row->created_at)->toIso8601String(),
+                    'scope' => $scope,
+                    'employee_count' => is_array($payload['data'] ?? null) ? count($payload['data']) : null,
+                ];
+            })->values(),
             'meta' => [
                 'total' => $paginator->total(),
                 'page' => $paginator->currentPage(),
@@ -659,5 +669,75 @@ class GovernmentContributionController extends Controller
             'notes' => $result['notes'],
             'row_count' => count($result['rows']),
         ], 201);
+    }
+
+    public function generateEmployeeDeductions(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'company_id' => ['required', 'integer', 'exists:companies,id'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'department_id' => ['nullable', 'integer', 'exists:departments,id'],
+            'from_date' => ['required', 'date'],
+            'to_date' => ['required', 'date', 'after_or_equal:from_date'],
+            'pay_cycle_id' => ['nullable', 'integer', 'exists:pay_cycles,id'],
+            'reference_date' => ['nullable', 'date'],
+            'search' => ['nullable', 'string', 'max:120'],
+            'missing_only' => ['nullable', 'boolean'],
+            'return_all' => ['nullable', 'boolean'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:500'],
+        ]);
+
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        $result = $this->deductionGenerator->generate($actor, $validated);
+
+        return response()->json($result);
+    }
+
+    public function saveEmployeeDeductions(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'company_id' => ['required', 'integer', 'exists:companies,id'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'department_id' => ['nullable', 'integer', 'exists:departments,id'],
+            'from_date' => ['required', 'date'],
+            'to_date' => ['required', 'date', 'after_or_equal:from_date'],
+            'pay_cycle_id' => ['nullable', 'integer', 'exists:pay_cycles,id'],
+            'reference_date' => ['nullable', 'date'],
+            'payload' => ['nullable', 'array'],
+        ]);
+
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        $result = $this->deductionGenerator->save($actor, $validated);
+
+        return response()->json($result, 201);
+    }
+
+    public function showRemittance(Request $request, int $id): JsonResponse
+    {
+        $actor = $request->user();
+        abort_unless($actor instanceof User, 403);
+
+        $row = StatutoryRemittance::query()->findOrFail($id);
+
+        return response()->json([
+            'remittance' => [
+                'id' => $row->id,
+                'company_id' => $row->company_id,
+                'period_year' => $row->period_year,
+                'period_month' => $row->period_month,
+                'agency' => $row->agency,
+                'report_kind' => $row->report_kind,
+                'status' => $row->status,
+                'total_employee_amount' => $row->total_employee_amount,
+                'total_employer_amount' => $row->total_employer_amount,
+                'created_at' => optional($row->created_at)->toIso8601String(),
+            ],
+            'payload' => is_array($row->payload) ? $row->payload : [],
+        ]);
     }
 }

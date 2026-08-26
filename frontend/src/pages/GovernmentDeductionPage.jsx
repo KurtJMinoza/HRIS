@@ -37,10 +37,12 @@ import {
   upsertStatutoryRate,
 } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
+import GovernmentDeductionGeneratorPanel from '@/components/payroll/GovernmentDeductionGeneratorPanel'
 import { cn } from '@/lib/utils'
 
 const RATE_CODES = ['SSS', 'PHILHEALTH', 'PAGIBIG', 'EC']
 const TABS = [
+  { id: 'EMPLOYEE_DEDUCTIONS', label: 'Employee Deductions' },
   { id: 'SSS', label: 'SSS' },
   { id: 'PHILHEALTH', label: 'PhilHealth' },
   { id: 'PAGIBIG', label: 'Pag-IBIG (HDMF)' },
@@ -816,7 +818,7 @@ function EmployeeExemptionsTab({ canManage }) {
 }
 
 export default function GovernmentDeductionPage() {
-  const [activeTab, setActiveTab] = useState('SSS')
+  const [activeTab, setActiveTab] = useState('EMPLOYEE_DEDUCTIONS')
   const [rowsByCode, setRowsByCode] = useState(DEFAULT_ROWS)
   const [effectiveFrom, setEffectiveFrom] = useState(todayYmd())
   const [basicSalary, setBasicSalary] = useState('25000')
@@ -1191,7 +1193,7 @@ export default function GovernmentDeductionPage() {
             </div>
             <h1 className="mt-4 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">Government Deductions</h1>
             <p className="mt-2 max-w-4xl text-sm leading-relaxed text-muted-foreground">
-              Statutory contributions: SSS including employer EC, PhilHealth, and Pag-IBIG. Rates reference RA 11199, RA 11223, RA 9679, and BIR TRAIN withholding.
+              Generate payroll-aligned SSS, PhilHealth, Pag-IBIG, withholding tax, and loan deductions by company and pay cycle. Review statutory rates, employee government IDs, and missing information before remittance.
             </p>
           </div>
 
@@ -1246,6 +1248,10 @@ export default function GovernmentDeductionPage() {
             ))}
           </div>
         </div>
+
+        {activeTab === 'EMPLOYEE_DEDUCTIONS' ? (
+          <GovernmentDeductionGeneratorPanel />
+        ) : null}
 
         {loading ? (
           <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground shadow-sm">

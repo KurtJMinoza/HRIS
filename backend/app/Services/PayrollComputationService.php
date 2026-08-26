@@ -1800,8 +1800,11 @@ class PayrollComputationService implements PayrollBulkComputation
     ): array {
         $timingSink = $periodContext['_timing_sink'] ?? null;
         $__segStart = microtime(true);
+        $deductionRosterMode = ! empty($periodContext['deduction_roster_mode']);
 
-        $this->overtimeAutoApprove->ensureStandingOvertimeForPeriod($user, $from, $to);
+        if (empty($periodContext['skip_standing_ot_sync'])) {
+            $this->overtimeAutoApprove->ensureStandingOvertimeForPeriod($user, $from, $to);
+        }
 
         $this->activePayrollBatchRunId = isset($periodContext['payroll_batch_run_id'])
             ? (int) $periodContext['payroll_batch_run_id']
@@ -2061,6 +2064,10 @@ class PayrollComputationService implements PayrollBulkComputation
             ? $this->consultantAttendanceDisplaySummary($days)
             : $this->buildAttendanceDisplaySummary($days, $effectiveSchedule, $tz);
 
+        if ($deductionRosterMode) {
+            $dailyComputationEarningLines = [];
+            $holidayPremiumBreakdown = [];
+        } else {
         $componentLabelMap = [
             // Daily Computation is the source of truth for attendance-driven earning add-ons.
             'regular_pay' => 'Regular pay',
@@ -2190,6 +2197,7 @@ class PayrollComputationService implements PayrollBulkComputation
                 return $aSort <=> $bSort;
             });
         }
+        }
 
         $attendanceProration = $isConsultant
             ? $this->consultantAttendanceProration(count($days))
@@ -2209,7 +2217,7 @@ class PayrollComputationService implements PayrollBulkComputation
             'proration_factor' => 1,
             'include_deduction_schedule_catalog' => false,
             // Payroll must read fresh calculation-standard metadata (override + pay component default).
-            'cache' => false,
+            'cache' => $deductionRosterMode,
         ]);
         if ($isConsultant && $consultantSalarySources !== null) {
             $compensationSummary = $this->compensationSummaryWithConsultantSalary(
@@ -2490,10 +2498,12 @@ class PayrollComputationService implements PayrollBulkComputation
 
         $this->activePayrollBatchRunId = null;
 
-        $payslipEarningLines = $this->deductionScheduleService->buildPayslipEarningDisplayLines(
-            $deductionSchedule['earning_lines'] ?? []
-        );
-        if ($isConsultant) {
+        $payslipEarningLines = $deductionRosterMode
+            ? []
+            : $this->deductionScheduleService->buildPayslipEarningDisplayLines(
+                $deductionSchedule['earning_lines'] ?? []
+            );
+        if (! $deductionRosterMode && $isConsultant) {
             $payslipEarningLines = array_values(array_filter(
                 $payslipEarningLines,
                 fn ($line): bool => ! is_array($line) || ! $this->isBasicSalaryLine($line)
@@ -2552,13 +2562,16 @@ class PayrollComputationService implements PayrollBulkComputation
                 'deduction_schedule' => $deductionSchedule,
                 'legal_warnings' => $phase3Deduction['legal_warnings'],
                 'minimum_take_home_floor' => $phase3Deduction['minimum_take_home_floor'],
-                // Phase 3 integration hook: final-pay / clearance views can recover outstanding balances from this snapshot.
-                'outstanding_loans_for_final_pay' => $this->loanAmortizationService->outstandingLoanSummary($user),
+                'outstanding_loans_for_final_pay' => $deductionRosterMode
+                    ? []
+                    : $this->loanAmortizationService->outstandingLoanSummary($user),
                 'non_basic_earnings_this_period' => round($nonBasicEarningsThisPeriod, 2),
-                'payslip_deduction_lines' => $this->deductionScheduleService->buildPayslipDeductionDisplayLines(
-                    $deductionSchedule['government'] ?? [],
-                    $withholdingMonthlyFull
-                ),
+                'payslip_deduction_lines' => $deductionRosterMode
+                    ? []
+                    : $this->deductionScheduleService->buildPayslipDeductionDisplayLines(
+                        $deductionSchedule['government'] ?? [],
+                        $withholdingMonthlyFull
+                    ),
                 'payslip_custom_deduction_lines' => $this->deductionScheduleService->buildPayslipCustomDeductionDisplayLines(
                     $deductionSchedule['custom_lines'] ?? []
                 ),

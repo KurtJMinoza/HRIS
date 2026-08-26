@@ -4034,6 +4034,34 @@ export async function generateStatutoryRemittance(payload) {
   return data
 }
 
+export async function getStatutoryRemittance(id) {
+  const res = await authenticatedFetch(`/admin/payroll/remittances/${id}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load saved roster')
+  return data
+}
+
+/** Per-employee gov + loan deductions for a company pay period (payroll engine). */
+export async function generateGovernmentEmployeeDeductions(payload) {
+  const res = await authenticatedFetch('/admin/payroll/government-deductions/generate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to generate government deductions roster')
+  return data
+}
+
+export async function saveGovernmentEmployeeDeductions(payload) {
+  const res = await authenticatedFetch('/admin/payroll/government-deductions/save', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to save government deductions roster')
+  return data
+}
+
 export async function getEmployeeStatutoryContributions(employeeId) {
   const res = await authenticatedFetch(`/admin/employees/${employeeId}/statutory-contributions`)
   const data = await res.json().catch(() => ({}))
