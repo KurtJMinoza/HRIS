@@ -323,6 +323,32 @@ class PayrollEmployeeEligibilityTest extends TestCase
         $this->assertDatabaseMissing('payslips', ['id' => (int) $stale->id]);
     }
 
+    public function test_finalized_batch_aggregate_keeps_payslips_outside_current_eligibility(): void
+    {
+        $company = Company::query()->create(['name' => 'ACI']);
+        $stillEligible = $this->employee($company, ['hire_date' => '2026-01-01', 'employee_code' => 'OLD-003']);
+        $laterIneligible = $this->employee($company, ['hire_date' => '2026-01-01', 'employee_code' => 'OLD-004']);
+
+        $run = PayrollBatchRun::query()->create([
+            'batch_key' => 'eligibility-finalized-'.uniqid('', true),
+            'payroll_module' => PayrollBatchRun::MODULE_STANDARD,
+            'company_id' => (int) $company->id,
+            'pay_period_start' => '2026-07-26',
+            'pay_period_end' => '2026-08-10',
+            'status' => PayrollBatchRun::STATUS_FINALIZED,
+        ]);
+
+        $this->createDraftPayslip($run, $stillEligible, 1000)->update(['status' => Payslip::STATUS_FINALIZED]);
+        $this->createDraftPayslip($run, $laterIneligible, 2000)->update(['status' => Payslip::STATUS_FINALIZED]);
+
+        $laterIneligible->update(['is_active' => false]);
+
+        $aggregate = app(PayslipService::class)->aggregateForBatchRun($run);
+
+        $this->assertSame(2, $aggregate['payslip_count']);
+        $this->assertSame(3000.0, $aggregate['total_net_pay']);
+    }
+
     public function test_find_ineligible_draft_employee_ids_flags_post_period_hires(): void
     {
         $company = Company::query()->create(['name' => 'ACI']);

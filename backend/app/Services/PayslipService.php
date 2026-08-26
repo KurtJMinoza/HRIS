@@ -6694,8 +6694,8 @@ class PayslipService
     /**
      * Payslip totals for rows belonging to this batch scope (company/branch/dept + pay window).
      *
-     * Queries payslips directly by company_id + pay_period dates instead of relying on currently-active
-     * employee IDs, which would miss payslips for employees deactivated after generation.
+     * Queries payslips linked to the batch run. Draft rows are limited to the current
+     * eligibility scope; finalized rows include every linked payslip (immutable snapshot).
      * Totals use one row per employee (latest active payslip id) to avoid duplicate SUM inflation.
      *
      * @return array{payslip_count: int, total_net_pay: float, generated_at: ?\Carbon\Carbon, finalized_count: int, payslip_ids: list<int>, company_id: ?int, total_gross_pay: float, total_deductions: float}
@@ -6726,10 +6726,13 @@ class PayslipService
             $run,
             $isFinalizedBatch ? Payslip::lockingStatuses() : $this->draftSnapshotStatuses()
         );
-        if ($eligibleEmployeeIds !== []) {
-            $q->whereIn('user_id', $eligibleEmployeeIds);
-        } elseif (! $isFinalizedBatch) {
-            $q->whereRaw('1 = 0');
+        // Finalized batches are immutable: sum every linked payslip, not today's eligibility scope.
+        if (! $isFinalizedBatch) {
+            if ($eligibleEmployeeIds !== []) {
+                $q->whereIn('user_id', $eligibleEmployeeIds);
+            } else {
+                $q->whereRaw('1 = 0');
+            }
         }
 
         $uniqueIds = $this->latestUniquePayslipIdsForQuery($q);
