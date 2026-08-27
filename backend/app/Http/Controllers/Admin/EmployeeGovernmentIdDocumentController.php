@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Admin\Concerns\AssertsEmployeeOrgScope;
 use App\Http\Controllers\Controller;
+use App\Models\EmployeeGovernmentId;
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\User;
 use App\Services\GovernmentIdFormatter;
@@ -98,7 +99,7 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'id_number' => ['required', 'string', 'max:120'],
             'issuing_agency' => ['required', 'string', 'max:180'],
             'expiry_date' => ['nullable', 'date'],
-            'document_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
+            'document_file' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
         $idType = trim((string) $validated['id_type']);
@@ -110,10 +111,15 @@ class EmployeeGovernmentIdDocumentController extends Controller
             throw ValidationException::withMessages(['id_number' => ['Duplicate ID number for this employee.']]);
         }
 
-        $file = $request->file('document_file');
-        $path = $file->store('government-ids', 'public');
-        $mime = $file->getClientMimeType() ?: $file->getMimeType();
-        $size = (int) $file->getSize();
+        $path = null;
+        $mime = null;
+        $size = 0;
+        if ($request->hasFile('document_file')) {
+            $file = $request->file('document_file');
+            $path = $file->store('government-ids', 'public');
+            $mime = $file->getClientMimeType() ?: $file->getMimeType();
+            $size = (int) $file->getSize();
+        }
 
         // Admin-submitted uploads are auto-approved on create; the admin is the verifier.
         $doc = EmployeeGovernmentIdDocument::create([
@@ -131,8 +137,10 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'rejection_reason' => null,
         ]);
 
+        $this->syncRegistryFromDocument((int) $employee->id, $idType, $idNumber);
+
         return response()->json([
-            'message' => 'Government ID uploaded.',
+            'message' => 'Government ID saved.',
             'government_id' => $this->serialize($doc),
         ], 201);
     }
@@ -185,10 +193,99 @@ class EmployeeGovernmentIdDocumentController extends Controller
         $doc->rejection_reason = null;
         $doc->save();
 
+        $this->syncRegistryFromDocument((int) $employee->id, $idType, $idNumber);
+
         return response()->json([
             'message' => 'Government ID updated.',
             'government_id' => $this->serialize($doc),
         ]);
+    }
+
+    /**
+     * Upsert SSS / PhilHealth / Pag-IBIG / TIN numbers used by payroll missing-info checks.
+     * Picture/document is optional — numbers alone are enough for Employee Deductions.
+     */
+    public function upsertNumbers(Request $request, int $userId): JsonResponse
+    {
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
+        $this->assertEmployeeOrgScope($request, $employee);
+
+        $validated = $request->validate([
+            'sss_number' => ['nullable', 'string', 'max:30', 'regex:/^\d{2}-\d{7}-\d{1}$/u'],
+            'philhealth_number' => ['nullable', 'string', 'max:30', 'regex:/^\d{2}-\d{9}-\d{1}$/u'],
+            'pagibig_number' => ['nullable', 'string', 'max:30', 'regex:/^\d{4}-\d{4}-\d{4}$/u'],
+            'tin_number' => ['nullable', 'string', 'max:30', 'regex:/^\d{3}-\d{3}-\d{3}-\d{3}$/u'],
+        ], [
+            'tin_number.regex' => 'TIN must use format 000-000-000-000.',
+            'sss_number.regex' => 'SSS Number must use format 00-0000000-0.',
+            'philhealth_number.regex' => 'PhilHealth Number must use format 00-000000000-0.',
+            'pagibig_number.regex' => 'Pag-IBIG Number must use format 0000-0000-0000.',
+        ]);
+
+        $record = EmployeeGovernmentId::query()->firstOrNew(['user_id' => (int) $employee->id]);
+        foreach (['sss_number', 'philhealth_number', 'pagibig_number', 'tin_number'] as $field) {
+            if (! array_key_exists($field, $validated)) {
+                continue;
+            }
+            $value = trim((string) ($validated[$field] ?? ''));
+            $record->{$field} = $value !== '' ? $value : null;
+        }
+        $record->save();
+
+        $actorId = (int) $request->user()->id;
+        $this->mirrorDocumentRow((int) $employee->id, GovernmentIdFormatter::TYPE_SSS, $record->sss_number, $actorId);
+        $this->mirrorDocumentRow((int) $employee->id, GovernmentIdFormatter::TYPE_PHILHEALTH, $record->philhealth_number, $actorId);
+        $this->mirrorDocumentRow((int) $employee->id, GovernmentIdFormatter::TYPE_PAGIBIG, $record->pagibig_number, $actorId);
+        $this->mirrorDocumentRow((int) $employee->id, GovernmentIdFormatter::TYPE_TIN, $record->tin_number, $actorId);
+
+        return response()->json([
+            'message' => 'Government IDs updated.',
+            'government_ids' => [
+                'sss_number' => $record->sss_number,
+                'philhealth_number' => $record->philhealth_number,
+                'pagibig_number' => $record->pagibig_number,
+                'tin_number' => $record->tin_number,
+            ],
+        ]);
+    }
+
+    private function syncRegistryFromDocument(int $userId, string $idType, string $idNumber): void
+    {
+        $field = GovernmentIdFormatter::registryFieldForType($idType);
+        if ($field === null) {
+            return;
+        }
+
+        $record = EmployeeGovernmentId::query()->firstOrNew(['user_id' => $userId]);
+        $record->{$field} = $idNumber;
+        $record->save();
+    }
+
+    private function mirrorDocumentRow(int $userId, string $idType, ?string $idNumber, int $actorId): void
+    {
+        $idNumber = is_string($idNumber) ? trim($idNumber) : '';
+        if ($idNumber === '' || ! GovernmentIdFormatter::isValidFormatted($idType, $idNumber)) {
+            return;
+        }
+
+        try {
+            EmployeeGovernmentIdDocument::query()->updateOrCreate(
+                [
+                    'user_id' => $userId,
+                    'id_type' => $idType,
+                ],
+                [
+                    'id_number' => $idNumber,
+                    'issuing_agency' => GovernmentIdFormatter::agencyFor($idType) ?? '—',
+                    'status' => 'approved',
+                    'verified_by' => $actorId,
+                    'verified_at' => now(),
+                    'rejection_reason' => null,
+                ]
+            );
+        } catch (\Throwable) {
+            // Unique id_number collision under another type — numbers registry already saved.
+        }
     }
 
     public function destroy(Request $request, int $userId, int $id): JsonResponse

@@ -15,6 +15,7 @@ import {
   Save,
   Search,
   ShieldCheck,
+  Upload,
   UserRound,
 } from 'lucide-react'
 import {
@@ -27,11 +28,20 @@ import {
   listStatutoryRemittances,
   previewPayCycle,
   saveGovernmentEmployeeDeductions,
+  updateEmployeeGovernmentIds,
 } from '@/api'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -130,6 +140,89 @@ function MissingBadges({ items }) {
   )
 }
 
+const GOV_ID_FIELDS = [
+  {
+    key: 'sss_number',
+    missingField: 'sss_number',
+    label: 'SSS',
+    placeholder: '00-0000000-0',
+    pattern: /^\d{2}-\d{7}-\d$/,
+    format: (digits) => {
+      const d = String(digits || '').replace(/\D/g, '').slice(0, 10)
+      return [d.slice(0, 2), d.slice(2, 9), d.slice(9, 10)].filter(Boolean).join('-')
+    },
+  },
+  {
+    key: 'philhealth_number',
+    missingField: 'philhealth_number',
+    label: 'PhilHealth',
+    placeholder: '00-000000000-0',
+    pattern: /^\d{2}-\d{9}-\d$/,
+    format: (digits) => {
+      const d = String(digits || '').replace(/\D/g, '').slice(0, 12)
+      return [d.slice(0, 2), d.slice(2, 11), d.slice(11, 12)].filter(Boolean).join('-')
+    },
+  },
+  {
+    key: 'pagibig_number',
+    missingField: 'pagibig_number',
+    label: 'Pag-IBIG',
+    placeholder: '0000-0000-0000',
+    pattern: /^\d{4}-\d{4}-\d{4}$/,
+    format: (digits) => {
+      const d = String(digits || '').replace(/\D/g, '').slice(0, 12)
+      return [d.slice(0, 4), d.slice(4, 8), d.slice(8, 12)].filter(Boolean).join('-')
+    },
+  },
+  {
+    key: 'tin_number',
+    missingField: 'tin_number',
+    label: 'TIN',
+    placeholder: '000-000-000-000',
+    pattern: /^\d{3}-\d{3}-\d{3}-\d{3}$/,
+    format: (digits) => {
+      const d = String(digits || '').replace(/\D/g, '').slice(0, 12)
+      return [d.slice(0, 3), d.slice(3, 6), d.slice(6, 9), d.slice(9, 12)].filter(Boolean).join('-')
+    },
+  },
+]
+
+function blankGovIdForm(ids = {}) {
+  return {
+    sss_number: ids?.sss_number || '',
+    philhealth_number: ids?.philhealth_number || '',
+    pagibig_number: ids?.pagibig_number || '',
+    tin_number: ids?.tin_number || '',
+  }
+}
+
+function reassessMissingInfo(row, governmentIds) {
+  const exemptions = row?.exemptions || {}
+  const withholding = Number(row?.deductions?.withholding_tax || 0)
+  const missing = []
+  const present = (value) => String(value || '').trim() !== ''
+
+  if (!exemptions.exempt_sss && !present(governmentIds.sss_number)) {
+    missing.push({ field: 'sss_number', label: 'SSS number', severity: 'error' })
+  }
+  if (!exemptions.exempt_philhealth && !present(governmentIds.philhealth_number)) {
+    missing.push({ field: 'philhealth_number', label: 'PhilHealth number', severity: 'error' })
+  }
+  if (!exemptions.exempt_pagibig && !present(governmentIds.pagibig_number)) {
+    missing.push({ field: 'pagibig_number', label: 'Pag-IBIG number', severity: 'error' })
+  }
+  if (!exemptions.exempt_withholding_tax && withholding > 0.0001 && !present(governmentIds.tin_number)) {
+    missing.push({ field: 'tin_number', label: 'TIN', severity: 'error' })
+  }
+
+  for (const item of row?.missing_info || []) {
+    if (['sss_number', 'philhealth_number', 'pagibig_number', 'tin_number'].includes(item.field)) continue
+    missing.push(item)
+  }
+
+  return missing
+}
+
 export default function GovernmentDeductionGeneratorPanel() {
   const { toast } = useToast()
   const suppressCycleApplyRef = useRef(false)
@@ -163,6 +256,10 @@ export default function GovernmentDeductionGeneratorPanel() {
   const [loadingSavedRosters, setLoadingSavedRosters] = useState(false)
   const [loadingSavedRosterId, setLoadingSavedRosterId] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [govIdModalRow, setGovIdModalRow] = useState(null)
+  const [govIdForm, setGovIdForm] = useState(blankGovIdForm())
+  const [govIdErrors, setGovIdErrors] = useState({})
+  const [govIdSaving, setGovIdSaving] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -570,6 +667,116 @@ export default function GovernmentDeductionGeneratorPanel() {
     return d.employee_statutory
   }
 
+  function openGovIdModal(row) {
+    setGovIdModalRow(row)
+    setGovIdForm(blankGovIdForm(row?.government_ids))
+    setGovIdErrors({})
+  }
+
+  function closeGovIdModal() {
+    if (govIdSaving) return
+    setGovIdModalRow(null)
+    setGovIdErrors({})
+  }
+
+  function updateGovIdField(field, rawValue) {
+    const def = GOV_ID_FIELDS.find((item) => item.key === field)
+    const nextValue = def ? def.format(rawValue) : rawValue
+    setGovIdForm((prev) => ({ ...prev, [field]: nextValue }))
+    setGovIdErrors((prev) => {
+      if (!prev[field]) return prev
+      const next = { ...prev }
+      delete next[field]
+      return next
+    })
+  }
+
+  async function saveGovIdModal() {
+    if (!govIdModalRow?.user_id) return
+    const errs = {}
+    for (const field of GOV_ID_FIELDS) {
+      const value = String(govIdForm[field.key] || '').trim()
+      if (value && !field.pattern.test(value)) {
+        errs[field.key] = `Use format ${field.placeholder}`
+      }
+    }
+    setGovIdErrors(errs)
+    if (Object.keys(errs).length) return
+
+    setGovIdSaving(true)
+    try {
+      const payload = {
+        sss_number: String(govIdForm.sss_number || '').trim() || null,
+        philhealth_number: String(govIdForm.philhealth_number || '').trim() || null,
+        pagibig_number: String(govIdForm.pagibig_number || '').trim() || null,
+        tin_number: String(govIdForm.tin_number || '').trim() || null,
+      }
+      const data = await updateEmployeeGovernmentIds(govIdModalRow.user_id, payload)
+      const nextIds = data.government_ids || payload
+      setAllRows((prev) => prev.map((row) => {
+        if (Number(row.user_id) !== Number(govIdModalRow.user_id)) return row
+        const missingInfo = reassessMissingInfo(row, nextIds)
+        return {
+          ...row,
+          government_ids: nextIds,
+          missing_info: missingInfo,
+          has_missing_info: missingInfo.length > 0,
+        }
+      }))
+      setResult((prev) => {
+        if (!prev?.summary) return prev
+        const nextRows = (prev.data || []).map((row) => {
+          if (Number(row.user_id) !== Number(govIdModalRow.user_id)) return row
+          const missingInfo = reassessMissingInfo(row, nextIds)
+          return {
+            ...row,
+            government_ids: nextIds,
+            missing_info: missingInfo,
+            has_missing_info: missingInfo.length > 0,
+          }
+        })
+        const withMissing = nextRows.filter((row) => row.has_missing_info).length
+        return {
+          ...prev,
+          data: nextRows,
+          summary: {
+            ...prev.summary,
+            employees_with_missing_info: withMissing,
+          },
+        }
+      })
+      toast({ title: 'Government IDs saved', description: `${govIdModalRow.name} numbers updated.` })
+      setGovIdModalRow(null)
+    } catch (err) {
+      toast({ title: 'Save failed', description: err?.message || 'Could not update government IDs.', variant: 'destructive' })
+    } finally {
+      setGovIdSaving(false)
+    }
+  }
+
+  function renderMissingCell(row) {
+    const hasGovMissing = (row.missing_info || []).some((item) => (
+      ['sss_number', 'philhealth_number', 'pagibig_number', 'tin_number'].includes(item.field)
+    ))
+    return (
+      <td className={TABLE_TD}>
+        <div className="flex flex-col items-start gap-2">
+          <MissingBadges items={row.missing_info} />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1.5 px-2 text-[11px] font-semibold"
+            onClick={() => openGovIdModal(row)}
+          >
+            <Upload className="size-3.5" />
+            {hasGovMissing ? 'Fill missing IDs' : 'Update IDs'}
+          </Button>
+        </div>
+      </td>
+    )
+  }
+
   const govHighlight = rosterTab === 'SSS'
     ? 'sss'
     : rosterTab === 'PHILHEALTH'
@@ -693,7 +900,7 @@ export default function GovernmentDeductionGeneratorPanel() {
           <td className={cn(TABLE_TD, 'font-mono text-[11px]')}>{ids.philhealth_number || '—'}</td>
           <td className={cn(TABLE_TD, 'font-mono text-[11px]')}>{ids.pagibig_number || '—'}</td>
           <td className={cn(TABLE_TD, 'font-mono text-[11px]')}>{ids.tin_number || '—'}</td>
-          <td className={TABLE_TD}><MissingBadges items={row.missing_info} /></td>
+          {renderMissingCell(row)}
         </tr>
       )
     }
@@ -721,7 +928,7 @@ export default function GovernmentDeductionGeneratorPanel() {
               <span className="text-muted-foreground">—</span>
             )}
           </td>
-          <td className={TABLE_TD}><MissingBadges items={row.missing_info} /></td>
+          {renderMissingCell(row)}
         </tr>
       )
     }
@@ -732,7 +939,7 @@ export default function GovernmentDeductionGeneratorPanel() {
         {renderEmployeeCell(row)}
         <td className={cn(TABLE_TD, 'text-right text-sm font-semibold tabular-nums')}>₱{formatMoney(amountForTab(row, rosterTab))}</td>
         <td className={cn(TABLE_TD, 'text-right text-sm tabular-nums text-muted-foreground')}>₱{formatMoney(monthly[tabKey])}</td>
-        <td className={TABLE_TD}><MissingBadges items={row.missing_info} /></td>
+        {renderMissingCell(row)}
       </tr>
     )
   }
@@ -1024,6 +1231,53 @@ export default function GovernmentDeductionGeneratorPanel() {
           </div>
         ) : null}
       </div>
+
+      <Dialog open={Boolean(govIdModalRow)} onOpenChange={(open) => { if (!open) closeGovIdModal() }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Update government IDs</DialogTitle>
+            <DialogDescription>
+              {govIdModalRow
+                ? `Enter SSS, PhilHealth, Pag-IBIG, and TIN for ${govIdModalRow.name}. No picture required.`
+                : 'Enter government ID numbers. No picture required.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {GOV_ID_FIELDS.map((field) => {
+              const highlighted = (govIdModalRow?.missing_info || []).some((item) => item.field === field.missingField)
+              return (
+                <div key={field.key} className="space-y-1.5">
+                  <Label className={cn('text-xs font-semibold', highlighted && 'text-rose-700 dark:text-rose-300')}>
+                    {field.label}
+                    {highlighted ? ' (missing)' : ''}
+                  </Label>
+                  <Input
+                    className={cn(
+                      'h-10 font-mono text-sm',
+                      highlighted && 'border-rose-300 focus-visible:ring-rose-200',
+                      govIdErrors[field.key] && 'border-destructive',
+                    )}
+                    placeholder={field.placeholder}
+                    value={govIdForm[field.key] || ''}
+                    onChange={(e) => updateGovIdField(field.key, e.target.value)}
+                  />
+                  {govIdErrors[field.key] ? (
+                    <p className="text-[11px] text-destructive">{govIdErrors[field.key]}</p>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={closeGovIdModal} disabled={govIdSaving}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void saveGovIdModal()} disabled={govIdSaving}>
+              {govIdSaving ? 'Saving…' : 'Save IDs'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

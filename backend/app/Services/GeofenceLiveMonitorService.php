@@ -40,6 +40,7 @@ class GeofenceLiveMonitorService
         $status = $this->blankToNull($filters['status'] ?? null);
         $deviceType = $this->blankToNull($filters['device_type'] ?? null);
         $clockType = $this->blankToNull($filters['clock_type'] ?? null);
+        $employeeQuery = trim((string) ($filters['q'] ?? $filters['employee'] ?? $filters['search'] ?? ''));
         $scopedBranchIds = $this->scopedBranchIds($actor);
         $scopeKey = $scopedBranchIds === null ? 'global' : sha1(implode(',', $scopedBranchIds));
         $version = (int) Cache::get($this->eventsVersionKey($date), 1);
@@ -51,10 +52,11 @@ class GeofenceLiveMonitorService
             'status' => $status,
             'device_type' => $deviceType,
             'clock_type' => $clockType,
+            'q' => mb_strtolower($employeeQuery),
             'version' => $version,
         ], JSON_THROW_ON_ERROR)));
 
-        $events = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $scopedBranchIds): array {
+        $events = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $employeeQuery, $scopedBranchIds): array {
             $query = AttendanceGeofenceEvent::query()
                 ->with([
                     'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
@@ -67,10 +69,6 @@ class GeofenceLiveMonitorService
                 ])
                 ->whereNotNull('latitude')
                 ->whereNotNull('longitude')
-                ->where(function (Builder $q): void {
-                    $q->whereNotNull('attendance_log_id')
-                        ->orWhereIn('geofence_status', ['outside', 'failed']);
-                })
                 ->whereDate('created_at', $date);
 
             if ($scopedBranchIds !== null) {
@@ -96,7 +94,23 @@ class GeofenceLiveMonitorService
             if ($clockType !== null) {
                 $query->where('clock_type', $this->normalizeClockType($clockType));
             }
+            if ($employeeQuery !== '') {
+                $needle = '%'.mb_strtolower($employeeQuery).'%';
+                $query->whereHas('employee', function (Builder $employee) use ($needle): void {
+                    $employee->where(function (Builder $inner) use ($needle): void {
+                        $inner->whereRaw('LOWER(COALESCE(users.name, \'\')) LIKE ?', [$needle])
+                            ->orWhereRaw('LOWER(COALESCE(users.employee_code, \'\')) LIKE ?', [$needle])
+                            ->orWhereRaw('LOWER(COALESCE(users.first_name, \'\')) LIKE ?', [$needle])
+                            ->orWhereRaw('LOWER(COALESCE(users.last_name, \'\')) LIKE ?', [$needle])
+                            ->orWhereRaw(
+                                "LOWER(TRIM(CONCAT_WS(' ', COALESCE(users.first_name, ''), COALESCE(users.middle_name, ''), COALESCE(users.last_name, ''), COALESCE(users.suffix, '')))) LIKE ?",
+                                [$needle]
+                            );
+                    });
+                });
+            }
 
+            // ponytail: no LIMIT — live monitor must return every matching event for the day.
             return $query
                 ->latest('created_at')
                 ->get()
@@ -114,6 +128,7 @@ class GeofenceLiveMonitorService
                 'status' => $status,
                 'device_type' => $deviceType,
                 'clock_type' => $clockType,
+                'q' => $employeeQuery !== '' ? $employeeQuery : null,
             ],
         ];
     }
@@ -133,10 +148,8 @@ class GeofenceLiveMonitorService
 
         return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($date, $scopedBranchIds): array {
             $query = AttendanceGeofenceEvent::query()
-                ->where(function (Builder $q): void {
-                    $q->whereNotNull('attendance_log_id')
-                        ->orWhereIn('geofence_status', ['outside', 'failed']);
-                })
+                ->whereNotNull('latitude')
+                ->whereNotNull('longitude')
                 ->whereDate('created_at', $date);
             if ($scopedBranchIds !== null) {
                 if ($scopedBranchIds === []) {
@@ -490,10 +503,10 @@ class GeofenceLiveMonitorService
             $query->where('branch_id', $branchId);
         }
 
+        // ponytail: no LIMIT — map must show every active geofence boundary in scope.
         return $query
             ->orderBy('branch_id')
             ->orderBy('priority')
-            ->limit(250)
             ->get()
             ->map(fn (BranchGeofence $geofence): array => [
                 'id' => (int) $geofence->id,

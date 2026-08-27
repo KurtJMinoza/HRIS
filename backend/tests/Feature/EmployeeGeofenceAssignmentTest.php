@@ -8,6 +8,7 @@ use App\Models\Company;
 use App\Models\EmployeeGeofenceAssignment;
 use App\Models\User;
 use App\Services\EmployeeGeofenceAssignmentService;
+use App\Services\EmployeeGeofenceResolver;
 use App\Services\GeofenceValidationService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -188,6 +189,52 @@ class EmployeeGeofenceAssignmentTest extends TestCase
         $this->assertTrue($result['allowed']);
         $this->assertSame('inside', $result['validation_status']);
         $this->assertSame((int) $personal->id, (int) ($result['matched_geofence_id'] ?? 0));
+    }
+
+    public function test_disabled_enforcement_on_one_employee_geofence_does_not_disable_another_employee(): void
+    {
+        $other = User::factory()->create([
+            'company_id' => $this->branch->company_id,
+            'branch_id' => $this->branch->id,
+            'is_active' => true,
+        ]);
+
+        $disabledGeofence = $this->createCircle('Disabled Office');
+        $disabledGeofence->forceFill([
+            'enforcement_mode' => 'disabled',
+            'owner_employee_id' => (int) $this->employee->id,
+            'ownership_type' => 'employee_specific',
+        ])->save();
+
+        $enforcedGeofence = $this->createCircle('Other Employee Office');
+        $enforcedGeofence->forceFill([
+            'enforcement_mode' => 'enforce',
+            'owner_employee_id' => (int) $other->id,
+            'ownership_type' => 'employee_specific',
+        ])->save();
+
+        $this->assign($this->employee, $disabledGeofence, ['is_primary' => true]);
+        $this->assign($other, $enforcedGeofence, ['is_primary' => true]);
+
+        EmployeeGeofenceResolver::forgetEmployeeCache((int) $this->employee->id);
+        EmployeeGeofenceResolver::forgetEmployeeCache((int) $other->id);
+        GeofenceValidationService::forgetBranchCache((int) $this->branch->id);
+
+        $disabledEmployeeResult = $this->service->validateForEmployee($this->employee, 8.0, 126.0, 20, [
+            'device_type' => 'mobile',
+            'log' => false,
+        ]);
+        $enforcedEmployeeResult = $this->service->validateForEmployee($other, 8.0, 126.0, 20, [
+            'device_type' => 'mobile',
+            'log' => false,
+        ]);
+
+        $this->assertTrue($disabledEmployeeResult['allowed']);
+        $this->assertSame('skipped', $disabledEmployeeResult['validation_status']);
+        $this->assertFalse($enforcedEmployeeResult['allowed']);
+        $this->assertSame('outside', $enforcedEmployeeResult['validation_status']);
+        $this->assertSame('enforce', $enforcedGeofence->fresh()->enforcement_mode);
+        $this->assertSame('disabled', $disabledGeofence->fresh()->enforcement_mode);
     }
 
     private function assign(User $employee, BranchGeofence $geofence, array $overrides = []): EmployeeGeofenceAssignment

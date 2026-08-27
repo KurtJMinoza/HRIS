@@ -2791,7 +2791,6 @@ export default function AdminEmployeeProfile() {
       errs.id_number = `Format: ${govIdDefs[type]?.format || 'invalid'} (e.g. ${govIdDefs[type]?.example || '—'})`
     }
     const file = next.document_file
-    if (!activeId && !(file instanceof File)) errs.document_file = 'Document file is required.'
     if (file instanceof File) {
       const t = String(file.type || '').toLowerCase()
       const allowed = ['application/pdf', 'image/jpeg', 'image/png']
@@ -7371,8 +7370,8 @@ export default function AdminEmployeeProfile() {
       }}>
         <DialogContent className="max-w-xl border-border/40 bg-white shadow-lg dark:bg-[#111827]">
           <DialogHeader>
-            <DialogTitle className="text-[#0A0A0A] dark:text-white">Upload Government ID</DialogTitle>
-            <DialogDescription>Upload a clear scan or photo (PDF, JPG, or PNG, max 10 MB) for HR verification.</DialogDescription>
+            <DialogTitle className="text-[#0A0A0A] dark:text-white">Add Government ID</DialogTitle>
+            <DialogDescription>Enter the ID number. A scan or photo is optional (PDF, JPG, or PNG, max 10 MB).</DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 @sm:grid-cols-2">
@@ -7476,8 +7475,8 @@ export default function AdminEmployeeProfile() {
                     <div className="flex size-10 items-center justify-center rounded-full bg-muted/40 transition-colors group-hover:bg-primary/10">
                       <Upload className="size-5 text-muted-foreground transition-colors group-hover:text-primary" />
                     </div>
-                    <p className="mt-2 text-sm font-medium text-[#0A0A0A] dark:text-white">Click to upload or drag and drop</p>
-                    <p className="text-xs text-muted-foreground">PDF, JPG, or PNG · max 10 MB</p>
+                    <p className="mt-2 text-sm font-medium text-[#0A0A0A] dark:text-white">Optional scan or photo</p>
+                    <p className="text-xs text-muted-foreground">PDF, JPG, or PNG · max 10 MB (optional)</p>
                   </>
                 )}
               </div>
@@ -7491,12 +7490,12 @@ export default function AdminEmployeeProfile() {
               {govDocsSaving ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" />
-                  Uploading…
+                  Saving…
                 </>
               ) : (
                 <>
                   <Upload className="mr-2 size-4" />
-                  Upload ID
+                  Save ID
                 </>
               )}
             </Button>

@@ -1911,7 +1911,6 @@ export default function EmployeeProfile() {
     }
 
     const file = next.document_file
-    if (!activeId && !(file instanceof File)) errs.document_file = 'Document file is required.'
     if (file instanceof File) {
       const t = String(file.type || '').toLowerCase()
       const allowed = ['application/pdf', 'image/jpeg', 'image/png']
@@ -4848,9 +4847,9 @@ export default function EmployeeProfile() {
         >
           <div className={ADMIN_FORM_DIALOG_HEADER_WRAP_CLASS}>
             <DialogHeader className={ADMIN_FORM_DIALOG_HEADER_INNER_CLASS}>
-              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Upload Government ID</DialogTitle>
+              <DialogTitle className={ADMIN_FORM_DIALOG_TITLE_CLASS}>Add Government ID</DialogTitle>
               <p id="emp-profile-gov-add-desc" className={ADMIN_FORM_DIALOG_DESC_CLASS}>
-                Upload a clear scan or photo (PDF, JPG, or PNG, max 10 MB). It will be saved as approved on your profile.
+                Enter the ID number. A scan or photo is optional (PDF, JPG, or PNG, max 10 MB). It will be saved as approved on your profile.
               </p>
             </DialogHeader>
           </div>
@@ -4977,12 +4976,12 @@ export default function EmployeeProfile() {
               {govIdDocsSaving ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" />
-                  Uploading...
+                  Saving...
                 </>
               ) : (
                 <>
                   <Upload className="mr-2 size-4" />
-                  Upload ID
+                  Save ID
                 </>
               )}
             </Button>

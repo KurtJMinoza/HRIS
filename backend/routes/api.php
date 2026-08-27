@@ -502,6 +502,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/admin/employees/{userId}/government-id-documents/{id}', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'update']);
             Route::delete('/admin/employees/{userId}/government-id-documents/{id}', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'destroy']);
             Route::post('/admin/employees/{userId}/government-id-documents/{id}/verify', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'verify']);
+            Route::patch('/admin/employees/{userId}/government-ids', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'upsertNumbers']);
             Route::post('/admin/employees/{userId}/documents', [\App\Http\Controllers\Admin\EmployeeDocumentController::class, 'store']);
             Route::post('/admin/employees/{userId}/documents/{id}', [\App\Http\Controllers\Admin\EmployeeDocumentController::class, 'update']);
             Route::delete('/admin/employees/{userId}/documents/{id}', [\App\Http\Controllers\Admin\EmployeeDocumentController::class, 'destroy']);

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\EmployeeGovernmentId;
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\User;
 use App\Services\GovernmentIdFormatter;
@@ -94,7 +95,7 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'id_number' => ['required', 'string', 'max:120'],
             'issuing_agency' => ['required', 'string', 'max:180'],
             'expiry_date' => ['nullable', 'date'],
-            'document_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
+            'document_file' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
         // Canonicalize before validating so "09-1234567-8" and "0912345678"
@@ -107,10 +108,15 @@ class EmployeeGovernmentIdDocumentController extends Controller
             throw ValidationException::withMessages(['id_number' => ['Duplicate ID number for this employee.']]);
         }
 
-        $file = $request->file('document_file');
-        $path = $file->store('government-ids', 'public');
-        $mime = $file->getClientMimeType() ?: $file->getMimeType();
-        $size = (int) $file->getSize();
+        $path = null;
+        $mime = null;
+        $size = 0;
+        if ($request->hasFile('document_file')) {
+            $file = $request->file('document_file');
+            $path = $file->store('government-ids', 'public');
+            $mime = $file->getClientMimeType() ?: $file->getMimeType();
+            $size = (int) $file->getSize();
+        }
 
         $doc = EmployeeGovernmentIdDocument::create([
             'user_id' => $user->id,
@@ -127,8 +133,10 @@ class EmployeeGovernmentIdDocumentController extends Controller
             'rejection_reason' => null,
         ]);
 
+        $this->syncRegistryFromDocument((int) $user->id, $idType, $idNumber);
+
         return response()->json([
-            'message' => 'Government ID uploaded.',
+            'message' => 'Government ID saved.',
             'government_id' => $this->serialize($doc),
         ], 201);
     }
@@ -180,10 +188,24 @@ class EmployeeGovernmentIdDocumentController extends Controller
         $doc->rejection_reason = null;
         $doc->save();
 
+        $this->syncRegistryFromDocument((int) $user->id, $idType, $idNumber);
+
         return response()->json([
             'message' => 'Government ID updated.',
             'government_id' => $this->serialize($doc),
         ]);
+    }
+
+    private function syncRegistryFromDocument(int $userId, string $idType, string $idNumber): void
+    {
+        $field = GovernmentIdFormatter::registryFieldForType($idType);
+        if ($field === null) {
+            return;
+        }
+
+        $record = EmployeeGovernmentId::query()->firstOrNew(['user_id' => $userId]);
+        $record->{$field} = $idNumber;
+        $record->save();
     }
 
     public function destroy(Request $request, int $id): JsonResponse

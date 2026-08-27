@@ -1,7 +1,7 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Laptop, LocateFixed, MapPin, Monitor, RefreshCw, ScanLine, Smartphone, Tablet, Trash2 } from 'lucide-react'
+import { Laptop, LocateFixed, MapPin, Monitor, RefreshCw, ScanLine, Search, Smartphone, Tablet, Trash2 } from 'lucide-react'
 import {
   getAdminGeofencing,
   getGeofenceLiveMonitorBoundaries,
@@ -189,6 +189,20 @@ function passesClientToggles(event, toggles) {
   return true
 }
 
+function passesEmployeeSearch(event, employeeSearch) {
+  const needle = String(employeeSearch || '').trim().toLowerCase()
+  if (!needle) return true
+  const haystack = [
+    event.employee_name,
+    event.employee_number,
+    event.company_name,
+    event.branch_name,
+    event.department,
+    event.matched_geofence,
+  ].map((value) => String(value || '').toLowerCase()).join(' ')
+  return haystack.includes(needle)
+}
+
 function uniqueById(items) {
   const map = new Map()
   items.forEach((item) => map.set(String(item.event_id), item))
@@ -361,10 +375,11 @@ export default function AdminGeofenceLiveMonitor() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [focusedEventId, setFocusedEventId] = useState('')
+  const [employeeSearch, setEmployeeSearch] = useState('')
 
   const filteredEvents = useMemo(
-    () => events.filter((event) => passesClientToggles(event, toggles)),
-    [events, toggles],
+    () => events.filter((event) => passesClientToggles(event, toggles) && passesEmployeeSearch(event, employeeSearch)),
+    [events, toggles, employeeSearch],
   )
 
   const loadBranches = useCallback(async () => {
@@ -376,6 +391,7 @@ export default function AdminGeofenceLiveMonitor() {
     setLoading(true)
     setError('')
     try {
+      // Always fetch the full day set (no limit). Employee search filters client-side so live events stay searchable.
       const [eventsData, summaryData] = await Promise.all([
         getGeofenceLiveMonitorEvents({ ...filters }),
         getGeofenceLiveMonitorSummary({ date: filters.date }),
@@ -591,7 +607,9 @@ export default function AdminGeofenceLiveMonitor() {
           ) : null}
           <Badge variant="outline" className="h-8 rounded-md border-emerald-100 bg-emerald-50 px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
             <span className="mr-1 size-1.5 rounded-full bg-emerald-500" />
-            {filteredEvents.length} dots
+            {employeeSearch.trim()
+              ? `${filteredEvents.length} of ${events.length} shown`
+              : `${filteredEvents.length} events`}
           </Badge>
           <Button variant="outline" size="sm" className="h-9 rounded-md border-slate-200 bg-white px-4 text-xs font-semibold shadow-sm" onClick={loadRecent} disabled={loading}>
             <RefreshCw className={cn('mr-2 size-3.5', loading && 'animate-spin')} />
@@ -626,7 +644,21 @@ export default function AdminGeofenceLiveMonitor() {
           </div>
         </div>
 
-        <aside className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <aside className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-2 sm:col-span-2 lg:col-span-3 xl:col-span-2">
+            <Label className="text-xs font-bold text-slate-700">Search employee</Label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
+              <Input
+                className={cn(inputClassName, 'pl-9')}
+                type="search"
+                placeholder="Name or employee #"
+                value={employeeSearch}
+                onChange={(e) => setEmployeeSearch(e.target.value)}
+              />
+            </div>
+          </div>
+
           <div className="grid gap-2">
             <Label className="text-xs font-bold text-slate-700">Branch</Label>
             <select className={selectClassName} value={filters.branch_id} onChange={(e) => updateFilter('branch_id', e.target.value)}>
@@ -708,7 +740,13 @@ export default function AdminGeofenceLiveMonitor() {
             />
           ))}
           {filteredEvents.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm font-medium text-slate-500">No live geofence events yet.</div>
+            <div className="px-4 py-10 text-center text-sm font-medium text-slate-500">
+              {employeeSearch.trim()
+                ? 'No events match this employee search.'
+                : loading
+                  ? 'Loading live geofence events…'
+                  : 'No live geofence events yet.'}
+            </div>
           ) : null}
         </div>
       </div>

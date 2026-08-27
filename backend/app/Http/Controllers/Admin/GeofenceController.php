@@ -272,6 +272,9 @@ class GeofenceController extends Controller
         });
 
         GeofenceValidationService::forgetBranchCache((int) $branch->id);
+        if ($geofence->owner_employee_id !== null) {
+            EmployeeGeofenceResolver::forgetEmployeeCache((int) $geofence->owner_employee_id);
+        }
 
         return response()->json([
             'message' => 'Geofence updated.',

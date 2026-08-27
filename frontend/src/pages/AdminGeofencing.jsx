@@ -155,6 +155,12 @@ function blankForm(branchId = null, branchName = '') {
   }
 }
 
+const GEOFENCE_ENFORCEMENT_OPTIONS = [
+  { value: 'enforce', label: 'Enforce' },
+  { value: 'warn_only', label: 'Warn only' },
+  { value: 'disabled', label: 'Disabled' },
+]
+
 function geofenceBelongsToEmployee(geofence, employeeId, assignedGeofenceIds = []) {
   if (!employeeId) {
     return !geofence?.owner_employee_id
@@ -1450,6 +1456,7 @@ export default function AdminGeofencing() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deletingGeofenceId, setDeletingGeofenceId] = useState(null)
+  const [enforcementSavingId, setEnforcementSavingId] = useState(null)
   const [mapillaryImage, setMapillaryImage] = useState(null)
   const [mapillaryLoading, setMapillaryLoading] = useState(false)
   const [mapillaryError, setMapillaryError] = useState('')
@@ -1857,10 +1864,7 @@ export default function AdminGeofencing() {
       payload.employee_id = Number(createEmployeeId)
     }
     try {
-      const scopeGeofences = selectedEmployeeId
-        ? listedGeofences
-        : geofences.filter((geofence) => !geofence.owner_employee_id || String(geofence.owner_employee_id) === String(form.owner_employee_id || ''))
-      const shouldUpdate = form.id && scopeGeofences.some((geofence) => String(geofence.id) === String(form.id))
+      const shouldUpdate = Boolean(form.id)
       const data = shouldUpdate
         ? await updateBranchGeofence(selectedBranchId, form.id, payload)
         : await createBranchGeofence(selectedBranchId, payload)
@@ -1963,6 +1967,30 @@ export default function AdminGeofencing() {
         await loadBranch(selectedBranchId, { focusMap: false })
       }
       toast({ title: 'Update failed', description: error.message, variant: 'error' })
+    }
+  }
+
+  async function updateGeofenceEnforcementMode(geofence, enforcementMode) {
+    if (!selectedBranchId || !geofence?.id || !enforcementMode) return
+    if (String(geofence.enforcement_mode || 'enforce') === String(enforcementMode)) return
+
+    setEnforcementSavingId(geofence.id)
+    try {
+      await updateBranchGeofence(selectedBranchId, geofence.id, { enforcement_mode: enforcementMode })
+      setGeofences((list) => list.map((row) => (
+        String(row.id) === String(geofence.id)
+          ? { ...row, enforcement_mode: enforcementMode }
+          : row
+      )))
+      if (String(form.id) === String(geofence.id)) {
+        setForm((current) => ({ ...current, enforcement_mode: enforcementMode }))
+      }
+      toast({ title: 'Geofence enforcement updated', variant: 'success' })
+    } catch (error) {
+      toast({ title: 'Enforcement update failed', description: error.message, variant: 'error' })
+      await loadBranch(selectedBranchId, { preferredGeofenceId: geofence.id, focusMap: false })
+    } finally {
+      setEnforcementSavingId(null)
     }
   }
 
@@ -2474,12 +2502,15 @@ export default function AdminGeofencing() {
               </div>
 
               <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
-                Geofence enforcement
+                This geofence enforcement
                 <SelectBox className="mt-1" value={form.enforcement_mode || 'enforce'} onChange={(e) => setForm((s) => ({ ...s, enforcement_mode: e.target.value }))}>
-                  <option value="enforce">Use for validation</option>
-                  <option value="warn_only">Warn only</option>
-                  <option value="disabled">Disabled geofence</option>
+                  {GEOFENCE_ENFORCEMENT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </SelectBox>
+                <span className="mt-1 block text-[11px] font-normal text-slate-500 dark:text-muted-foreground">
+                  Applies only to this geofence row, not other employees or locations.
+                </span>
               </Label>
 
               <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
@@ -2565,6 +2596,7 @@ export default function AdminGeofencing() {
                       const selected = String(form.id || '') === String(geofence.id)
                       const status = geofence.status || (normalizeBoolean(geofence.is_active) ? 'active' : 'inactive')
                       const deleting = String(deletingGeofenceId || '') === String(geofence.id)
+                      const enforcementSaving = String(enforcementSavingId || '') === String(geofence.id)
                       return (
                         <tr key={geofence.id} className={cn('hover:bg-orange-50/50 dark:hover:bg-orange-500/5', selected && 'bg-orange-50 dark:bg-orange-500/10')}>
                           <td className="px-3 py-2 font-bold">
@@ -2580,7 +2612,18 @@ export default function AdminGeofencing() {
                           <td className="px-3 py-2">{geofence.type === 'circle' ? `${Number(geofence.radius_meters || 0)}m` : '-'}</td>
                           <td className="px-3 py-2 capitalize">{status}</td>
                           <td className="px-3 py-2">{Number(geofence.accuracy_threshold_meters || 0)}m</td>
-                          <td className="px-3 py-2">{geofence.enforcement_mode || 'enforce'}</td>
+                          <td className="px-3 py-2">
+                            <SelectBox
+                              className="h-8 min-w-[112px] text-[11px] capitalize"
+                              value={geofence.enforcement_mode || 'enforce'}
+                              disabled={enforcementSaving || deleting}
+                              onChange={(e) => updateGeofenceEnforcementMode(geofence, e.target.value)}
+                            >
+                              {GEOFENCE_ENFORCEMENT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </SelectBox>
+                          </td>
                           <td className="px-3 py-2">{formatDate(geofence.updated_at)}</td>
                           <td className="px-3 py-2">
                             <div className="flex gap-2">
@@ -2681,15 +2724,18 @@ export default function AdminGeofencing() {
           </div>
           <div className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-4">
             <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-border dark:bg-muted/20">
-              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-muted-foreground">Enforcement</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-muted-foreground">Branch default enforcement</h3>
               <div className="mt-3 grid gap-3">
                 <Label className="text-xs font-semibold text-slate-700 dark:text-muted-foreground">
                   Mode
                   <SelectBox className="mt-1" value={selectedBranch?.geofence_enforcement_mode || 'enforce'} onChange={(e) => updateSettings({ geofence_enforcement_mode: e.target.value })}>
-                    <option value="enforce">Enforce</option>
-                    <option value="warn_only">Warn only</option>
-                    <option value="disabled">Disabled</option>
+                    {GEOFENCE_ENFORCEMENT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
                   </SelectBox>
+                  <span className="mt-1 block text-[11px] font-normal text-slate-500 dark:text-muted-foreground">
+                    Branch-wide fallback. Per-geofence enforcement in the table overrides this for each location.
+                  </span>
                 </Label>
               </div>
             </div>

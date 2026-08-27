@@ -67,6 +67,18 @@ class GovernmentIdFormatter
         };
     }
 
+    /** @return 'sss_number'|'philhealth_number'|'pagibig_number'|'tin_number'|null */
+    public static function registryFieldForType(?string $type): ?string
+    {
+        return match (self::canonicalType($type)) {
+            self::TYPE_SSS => 'sss_number',
+            self::TYPE_PHILHEALTH => 'philhealth_number',
+            self::TYPE_PAGIBIG => 'pagibig_number',
+            self::TYPE_TIN => 'tin_number',
+            default => null,
+        };
+    }
+
     /**
      * Format a raw ID value (may contain dashes, letters, spaces) into the canonical
      * dashed form for the given type. Returns null when the digit count does not

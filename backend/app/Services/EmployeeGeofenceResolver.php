@@ -241,6 +241,7 @@ class EmployeeGeofenceResolver
             'type' => $geofence->type,
             'polygon_geojson' => $geofence->polygon_geojson,
             'device_scope' => $geofence->device_scope ?? 'all_devices',
+            'enforcement_mode' => $geofence->enforcement_mode ?? 'enforce',
             'assignment_type' => $assignment?->assignment_type ?? 'permanent',
             'is_primary' => (bool) ($assignment?->is_primary ?? false),
             'ownership_type' => $geofence->ownership_type ?? 'shared',

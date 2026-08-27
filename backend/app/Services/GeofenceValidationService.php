@@ -252,19 +252,19 @@ class GeofenceValidationService
             'selected_best_accuracy' => isset($options['selected_best_accuracy']) ? (float) $options['selected_best_accuracy'] : $accuracyMeters,
         ];
 
-        $enforcementMode = $branch ? $this->branchEnforcementMode($branch) : 'enforce';
+        $branchEnforcementMode = $branch ? $this->branchEnforcementMode($branch) : 'enforce';
 
         if ($latitude === null || $longitude === null) {
             return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
                 ...$context,
                 'allowed' => false,
                 'validation_status' => 'blocked',
-                'enforcement_mode' => $enforcementMode,
+                'enforcement_mode' => $branchEnforcementMode,
                 'failure_reason' => 'Location permission is required before attendance can continue.',
             ]);
         }
 
-        $geofences = [];
+        $deviceMatched = [];
         foreach ($allowedGeofences as $allowed) {
             if (! $this->deviceScopeMatches(
                 (string) ($allowed['device_scope'] ?? 'all_devices'),
@@ -272,11 +272,12 @@ class GeofenceValidationService
             )) {
                 continue;
             }
-            $geofences[] = [
+            $deviceMatched[] = [
                 'id' => (int) $allowed['id'],
                 'name' => $allowed['name'] ?? null,
                 'type' => $allowed['type'] ?? 'circle',
                 'device_scope' => $allowed['device_scope'] ?? 'all_devices',
+                'enforcement_mode' => $allowed['enforcement_mode'] ?? 'enforce',
                 'center_lat' => $allowed['latitude'] ?? $allowed['center_lat'] ?? null,
                 'center_lng' => $allowed['longitude'] ?? $allowed['center_lng'] ?? null,
                 'radius_meters' => $allowed['radius_meters'] ?? null,
@@ -285,15 +286,34 @@ class GeofenceValidationService
             ];
         }
 
-        if ($geofences === []) {
+        if ($deviceMatched === []) {
             return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
                 ...$context,
                 'allowed' => false,
                 'validation_status' => 'blocked',
-                'enforcement_mode' => $enforcementMode,
+                'enforcement_mode' => $branchEnforcementMode,
                 'failure_reason' => 'No active assigned geofence matches this device.',
             ]);
         }
+
+        $enforceableGeofences = array_values(array_filter(
+            $deviceMatched,
+            fn (array $geofence): bool => $this->effectiveEnforcementModeForGeofence($branch, $geofence) !== 'disabled',
+        ));
+
+        if ($enforceableGeofences === []) {
+            return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
+                ...$context,
+                'allowed' => true,
+                'validation_status' => 'skipped',
+                'enforcement_mode' => 'disabled',
+                'skip_reason' => 'assigned_geofence_enforcement_disabled',
+                'failure_reason' => null,
+                'message' => 'Assigned geofence enforcement is disabled for this employee.',
+            ]);
+        }
+
+        $geofences = $enforceableGeofences;
 
         $policyBranch = $branch ?? Branch::query()->find((int) ($allowedGeofences[0]['branch_id'] ?? 0));
         if (! $policyBranch) {
@@ -328,13 +348,14 @@ class GeofenceValidationService
                 }
             }
             if ($result['inside']) {
+                $geofenceMode = $this->effectiveEnforcementModeForGeofence($policyBranch, $geofence);
                 $poorAccuracy = $accuracyMeters !== null && $accuracyMeters > $threshold;
-                if ($poorAccuracy && $enforcementMode === 'enforce') {
+                if ($poorAccuracy && $geofenceMode === 'enforce') {
                     return $this->finalizeResult($policyBranch, $latitude, $longitude, $accuracyMeters, [
                         ...$context,
                         'allowed' => false,
                         'validation_status' => 'blocked',
-                        'enforcement_mode' => $enforcementMode,
+                        'enforcement_mode' => $geofenceMode,
                         'failure_reason' => 'Location accuracy is too low. Please enable WiFi/location services and try again.',
                         'matched_geofence' => $this->publicGeofencePayload($geofence),
                         'matched_geofence_id' => (int) $geofence['id'],
@@ -352,7 +373,7 @@ class GeofenceValidationService
                     ...$context,
                     'allowed' => true,
                     'validation_status' => $poorAccuracy ? 'warn_only' : 'inside',
-                    'enforcement_mode' => $enforcementMode,
+                    'enforcement_mode' => $geofenceMode,
                     'warning' => $poorAccuracy ? 'GPS accuracy is low, but coordinates are inside an assigned geofence.' : null,
                     'matched_geofence' => $this->publicGeofencePayload($geofence),
                     'matched_geofence_id' => (int) $geofence['id'],
@@ -367,6 +388,7 @@ class GeofenceValidationService
             }
         }
 
+        $outsideMode = $this->strictestEnforcementMode($policyBranch, $enforceableGeofences);
         $poorAccuracy = $accuracyMeters !== null
             && $reportedThreshold !== null
             && $accuracyMeters > $reportedThreshold;
@@ -376,10 +398,10 @@ class GeofenceValidationService
 
         return $this->finalizeResult($policyBranch, $latitude, $longitude, $accuracyMeters, [
             ...$context,
-            'allowed' => $enforcementMode === 'warn_only',
-            'validation_status' => $enforcementMode === 'warn_only' ? 'warn_only' : 'outside',
-            'enforcement_mode' => $enforcementMode,
-            'warning' => $enforcementMode === 'warn_only' ? $outsideReason : null,
+            'allowed' => $outsideMode === 'warn_only',
+            'validation_status' => $outsideMode === 'warn_only' ? 'warn_only' : 'outside',
+            'enforcement_mode' => $outsideMode,
+            'warning' => $outsideMode === 'warn_only' ? $outsideReason : null,
             'failure_reason' => $outsideReason,
             'distance' => $bestDistance,
             'distance_to_center' => $bestCenterDistance,
@@ -1477,6 +1499,42 @@ class GeofenceValidationService
             : 'enforce';
 
         return in_array($value, ['disabled', 'warn_only', 'enforce'], true) ? $value : 'enforce';
+    }
+
+    /**
+     * @param  array<string, mixed>  $geofence
+     */
+    private function effectiveEnforcementModeForGeofence(?Branch $branch, array $geofence): string
+    {
+        $branchMode = $branch ? $this->branchEnforcementMode($branch) : 'enforce';
+        if ($branchMode === 'disabled') {
+            return 'disabled';
+        }
+
+        $geofenceMode = strtolower((string) ($geofence['enforcement_mode'] ?? 'enforce'));
+
+        return in_array($geofenceMode, ['disabled', 'warn_only', 'enforce'], true)
+            ? $geofenceMode
+            : $branchMode;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $geofences
+     */
+    private function strictestEnforcementMode(?Branch $branch, array $geofences): string
+    {
+        $strictest = 'warn_only';
+        foreach ($geofences as $geofence) {
+            $mode = $this->effectiveEnforcementModeForGeofence($branch, $geofence);
+            if ($mode === 'enforce') {
+                return 'enforce';
+            }
+            if ($mode === 'warn_only') {
+                $strictest = 'warn_only';
+            }
+        }
+
+        return $strictest;
     }
 
     private function normalizeClockType(mixed $value): ?string

@@ -1920,6 +1920,20 @@ export async function updateMyGovernmentIds(payload) {
   return data
 }
 
+/** Admin: upsert SSS / PhilHealth / Pag-IBIG / TIN numbers (no picture required). */
+export async function updateEmployeeGovernmentIds(employeeId, payload) {
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/government-ids`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = data.errors ? Object.values(data.errors).flat().filter(Boolean)[0] || data.message : data.message
+    throw new Error(msg || 'Failed to update government IDs')
+  }
+  return data
+}
+
 /**
  * Replace authenticated employee emergency contacts (Emergency Contacts tab).
  * @param {Array<{ full_name: string, relationship: string, phone_number: string, address?: string|null, is_primary?: boolean }>} contacts
