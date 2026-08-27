@@ -239,6 +239,19 @@ class PayrollComputationService implements PayrollBulkComputation
     /**
      * @param  list<int>  $userIds
      */
+    public function preloadGovernmentExemptionSettings(array $userIds): void
+    {
+        $this->governmentExemptionResolver->preloadSettings($userIds);
+    }
+
+    public function clearGovernmentExemptionPreload(): void
+    {
+        $this->governmentExemptionResolver->clearPreload();
+    }
+
+    /**
+     * @param  list<int>  $userIds
+     */
     private function seedBulkLeaveCachesForPayWindow(array $userIds, Carbon $from, Carbon $to): void
     {
         $ids = array_values(array_unique(array_map(static fn ($id) => (int) $id, $userIds)));
@@ -1916,12 +1929,18 @@ class PayrollComputationService implements PayrollBulkComputation
         }
         $__segStart = microtime(true);
 
-        $this->ensureApprovedOvertimeLoadedForPeriod($user, $from, $to);
+        // ponytail: gov deduction roster only needs schedule-aligned amounts, not per-day attendance engine.
+        $runFullDailyComputation = ! $deductionRosterMode
+            || ($isConsultant && $consultantAttendanceEarnings);
+
+        if ($runFullDailyComputation) {
+            $this->ensureApprovedOvertimeLoadedForPeriod($user, $from, $to);
+        }
 
         $days = [];
         if ($isConsultant && ! $consultantAttendanceEarnings) {
             $days = $this->consultantAutoPresentDays($from, $to);
-        } else {
+        } elseif ($runFullDailyComputation) {
             $cursor = $from->copy();
             while ($cursor->lessThanOrEqualTo($to)) {
                 $dateKey = $cursor->toDateString();
@@ -1969,6 +1988,7 @@ class PayrollComputationService implements PayrollBulkComputation
         $dailyBreakdownMinutes = [];
         $dailyBreakdownDays = [];
         $dailyBreakdownDayUnits = [];
+        if ($runFullDailyComputation) {
         foreach ($days as $d) {
             $dayTotalPay = (float) ($d['total_pay'] ?? 0);
             $regularPaidMinutes = (int) (($d['regular_day_minutes'] ?? 0) + ($d['regular_night_minutes'] ?? 0));
@@ -2057,12 +2077,17 @@ class PayrollComputationService implements PayrollBulkComputation
                 }
             }
         }
+        }
 
         // Needed before daily earning lines so "Regular pay" units match regular-rate attendance days
         // (premium holidays excluded — same filter as buildAttendanceDisplaySummary()).
-        $attendanceDisplaySummary = $isConsultant
-            ? $this->consultantAttendanceDisplaySummary($days)
-            : $this->buildAttendanceDisplaySummary($days, $effectiveSchedule, $tz);
+        $attendanceDisplaySummary = $runFullDailyComputation
+            ? ($isConsultant
+                ? $this->consultantAttendanceDisplaySummary($days)
+                : $this->buildAttendanceDisplaySummary($days, $effectiveSchedule, $tz))
+            : ($isConsultant
+                ? $this->consultantAttendanceDisplaySummary($days)
+                : []);
 
         if ($deductionRosterMode) {
             $dailyComputationEarningLines = [];
@@ -2199,13 +2224,21 @@ class PayrollComputationService implements PayrollBulkComputation
         }
         }
 
-        $attendanceProration = $isConsultant
-            ? $this->consultantAttendanceProration(count($days))
-            : $this->computeScheduleAttendanceProrationForPeriod(
-                $days,
-                $dailyRateDivisorDays,
-                $scheduledDailyHours > 0.0 ? $scheduledDailyHours : 8.0
-            );
+        $attendanceProration = $runFullDailyComputation
+            ? ($isConsultant
+                ? $this->consultantAttendanceProration(count($days))
+                : $this->computeScheduleAttendanceProrationForPeriod(
+                    $days,
+                    $dailyRateDivisorDays,
+                    $scheduledDailyHours > 0.0 ? $scheduledDailyHours : 8.0
+                ))
+            : ($isConsultant
+                ? $this->consultantAttendanceProration(count($days))
+                : [
+                    'factor' => 1.0,
+                    'scheduled_workdays' => 0.0,
+                    'credited_day_units' => 0.0,
+                ]);
 
         if (is_object($timingSink)) {
             $timingSink->compute_loop_ms = ($timingSink->compute_loop_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
@@ -2234,8 +2267,8 @@ class PayrollComputationService implements PayrollBulkComputation
             'philhealth' => $basicSalary,
             'pagibig' => $basicSalary,
         ]);
-        $governmentExemption = $this->governmentExemptionResolver->resolve(
-            (int) $user->id,
+        $governmentExemption = $this->governmentExemptionResolver->resolveForEmployee(
+            $user,
             GovernmentDeductionExemptionResolver::PAYROLL_REGULAR,
             $from,
             $to
@@ -2320,6 +2353,9 @@ class PayrollComputationService implements PayrollBulkComputation
             $periodStartDate,
             $periodEndDate
         );
+        if (! $runFullDailyComputation && ! $isConsultant && $basicPayThisPeriod <= 0.0001 && $basicSalary > 0) {
+            $basicPayThisPeriod = round($basicSalary * $basicFactor, 2);
+        }
         // Keep schedule metadata for traceability, but DO NOT override attendance-derived regular pay.
         // Basic pay for payroll/payslip must come from daily computation (worked minutes, leave, holidays, OT context).
         // Overriding here with prorated monthly basic causes inaccurate finalize/preview totals.
@@ -2485,16 +2521,18 @@ class PayrollComputationService implements PayrollBulkComputation
                 $overtimeTotalAmount += (float) ($item['amount'] ?? 0);
             }
         }
-        $this->overtimePayroll->logPayrollOvertimeDebug(
-            (int) $user->id,
-            $this->activePayrollBatchRunId,
-            $this->activePayrollCompanyId,
-            $from->toDateString(),
-            $to->toDateString(),
-            $overtimeBreakdown,
-            $overtimeTotalHours,
-            $overtimeTotalAmount
-        );
+        if (! $deductionRosterMode) {
+            $this->overtimePayroll->logPayrollOvertimeDebug(
+                (int) $user->id,
+                $this->activePayrollBatchRunId,
+                $this->activePayrollCompanyId,
+                $from->toDateString(),
+                $to->toDateString(),
+                $overtimeBreakdown,
+                $overtimeTotalHours,
+                $overtimeTotalAmount
+            );
+        }
 
         $this->activePayrollBatchRunId = null;
 

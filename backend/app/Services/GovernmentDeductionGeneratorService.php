@@ -72,9 +72,10 @@ class GovernmentDeductionGeneratorService
                 && ! isset($payslipsByUserId[(int) $employee->id])
         )->values();
 
-        if ($needsLiveCompute->isNotEmpty()) {
-            $liveIds = $needsLiveCompute->pluck('id')->map(fn ($id) => (int) $id)->all();
-            $this->payrollComputation->beginBulkPayrollAttendancePrefetch($liveIds, $from, $to, $companyId);
+        $liveIds = $needsLiveCompute->pluck('id')->map(fn ($id) => (int) $id)->all();
+        if ($liveIds !== []) {
+            $this->payrollComputation->preloadGovernmentExemptionSettings($liveIds);
+            $this->payrollCalculator->preloadCompensationRows($liveIds, $to->toDateString());
         }
 
         BulkPayrollDraftContext::$active = true;
@@ -141,8 +142,9 @@ class GovernmentDeductionGeneratorService
             }
         } finally {
             BulkPayrollDraftContext::$active = false;
-            if ($needsLiveCompute->isNotEmpty()) {
-                $this->payrollComputation->endBulkPayrollAttendancePrefetch();
+            if ($liveIds !== []) {
+                $this->payrollComputation->clearGovernmentExemptionPreload();
+                $this->payrollCalculator->clearCompensationRowPreload();
             }
         }
 
@@ -202,23 +204,34 @@ class GovernmentDeductionGeneratorService
             return [];
         }
 
-        $query = Payslip::query()
-            ->select(['id', 'user_id', 'snapshot', 'status'])
+        $fromDate = $from->toDateString();
+        $toDate = $to->toDateString();
+
+        $latestIdsQuery = Payslip::query()
+            ->selectRaw('MAX(id) as id')
             ->whereIn('user_id', $employeeIds)
-            ->whereDate('pay_period_start', $from->toDateString())
-            ->whereDate('pay_period_end', $to->toDateString())
+            ->whereDate('pay_period_start', $fromDate)
+            ->whereDate('pay_period_end', $toDate)
             ->where('status', '!=', Payslip::STATUS_VOIDED)
             ->whereNotNull('snapshot')
-            ->orderByDesc('id');
+            ->groupBy('user_id');
 
         if ($companyId > 0) {
-            $query->where(function ($q) use ($companyId): void {
+            $latestIdsQuery->where(function ($q) use ($companyId): void {
                 $q->where('company_id', $companyId)->orWhereNull('company_id');
             });
         }
 
+        $latestIds = $latestIdsQuery->pluck('id')->map(fn ($id) => (int) $id)->filter(fn ($id) => $id > 0)->all();
+        if ($latestIds === []) {
+            return [];
+        }
+
         $out = [];
-        foreach ($query->get() as $payslip) {
+        foreach (Payslip::query()
+            ->select(['id', 'user_id', 'snapshot', 'status'])
+            ->whereIn('id', $latestIds)
+            ->get() as $payslip) {
             if (! $payslip instanceof Payslip) {
                 continue;
             }
@@ -632,29 +645,31 @@ class GovernmentDeductionGeneratorService
         $scopeBranchId = $branchId > 0 ? $branchId : null;
         $scopeDepartmentId = $departmentId > 0 ? $departmentId : null;
 
-        $eligibleIds = collect([
-            $this->eligibility->query(
-                $companyId,
-                $scopeBranchId,
-                $scopeDepartmentId,
-                $from,
-                $to,
-                $actor,
-                $this->dataScopeService,
-                PayrollBatchRun::MODULE_STANDARD,
-            )->pluck('users.id'),
-            $this->eligibility->query(
-                $companyId,
-                $scopeBranchId,
-                $scopeDepartmentId,
-                $from,
-                $to,
-                $actor,
-                $this->dataScopeService,
-                PayrollBatchRun::MODULE_CONSULTANT,
-            )->pluck('users.id'),
-        ])
-            ->flatten()
+        $standardIdsQuery = $this->eligibility->query(
+            $companyId,
+            $scopeBranchId,
+            $scopeDepartmentId,
+            $from,
+            $to,
+            $actor,
+            $this->dataScopeService,
+            PayrollBatchRun::MODULE_STANDARD,
+        )->select('users.id');
+
+        $consultantIdsQuery = $this->eligibility->query(
+            $companyId,
+            $scopeBranchId,
+            $scopeDepartmentId,
+            $from,
+            $to,
+            $actor,
+            $this->dataScopeService,
+            PayrollBatchRun::MODULE_CONSULTANT,
+        )->select('users.id');
+
+        $eligibleIds = $standardIdsQuery
+            ->union($consultantIdsQuery)
+            ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->filter(fn ($id) => $id > 0)
             ->unique()

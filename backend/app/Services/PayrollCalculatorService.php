@@ -2051,6 +2051,77 @@ class PayrollCalculatorService
         }, $lines);
     }
 
+    /** @var array<int, Collection<int, EmployeeCompensationComponent>> */
+    private array $preloadedCompensationRowsByUserId = [];
+
+    /**
+     * @param  list<int>  $userIds
+     */
+    public function preloadCompensationRows(array $userIds, string $asOfDate): void
+    {
+        if (! class_exists(EmployeeCompensationComponent::class)) {
+            return;
+        }
+
+        $ids = array_values(array_unique(array_filter(
+            array_map(static fn ($id) => (int) $id, $userIds),
+            static fn (int $id) => $id > 0
+        )));
+        if ($ids === []) {
+            return;
+        }
+
+        $missing = array_values(array_diff($ids, array_keys($this->preloadedCompensationRowsByUserId)));
+        if ($missing === []) {
+            return;
+        }
+
+        try {
+            $rows = EmployeeCompensationComponent::query()
+                ->with('payComponent')
+                ->whereIn('user_id', $missing)
+                ->where('is_active', true)
+                ->where(function ($query) {
+                    $query->whereExists(function ($sub): void {
+                        $sub->selectRaw('1')
+                            ->from('pay_components')
+                            ->whereColumn('pay_components.id', 'employee_compensation_components.pay_component_id');
+                    })->orWhere('is_custom', true);
+                })
+                ->where(function ($query) use ($asOfDate) {
+                    $query->whereNull('effective_from')
+                        ->orWhereDate('effective_from', '<=', $asOfDate);
+                })
+                ->where(function ($query) use ($asOfDate) {
+                    $query->whereNull('effective_to')
+                        ->orWhereDate('effective_to', '>=', $asOfDate);
+                })
+                ->orderByRaw("case when upper(code) = 'BASIC_SALARY' then 0 else 1 end")
+                ->orderBy('type')
+                ->orderBy('name')
+                ->get()
+                ->groupBy('user_id');
+
+            foreach ($missing as $userId) {
+                $group = $rows->get($userId);
+                $this->preloadedCompensationRowsByUserId[$userId] = $group instanceof Collection
+                    ? $group->values()
+                    : collect();
+            }
+        } catch (QueryException $e) {
+            Log::warning('Payroll calculator bulk compensation preload failed', [
+                'employee_count' => count($missing),
+                'as_of_date' => $asOfDate,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    public function clearCompensationRowPreload(): void
+    {
+        $this->preloadedCompensationRowsByUserId = [];
+    }
+
     /**
      * @return Collection<int, EmployeeCompensationComponent>
      */
@@ -2058,6 +2129,11 @@ class PayrollCalculatorService
     {
         if (! class_exists(EmployeeCompensationComponent::class)) {
             return collect();
+        }
+
+        $userId = (int) $employee->id;
+        if (array_key_exists($userId, $this->preloadedCompensationRowsByUserId)) {
+            return $this->preloadedCompensationRowsByUserId[$userId];
         }
 
         try {

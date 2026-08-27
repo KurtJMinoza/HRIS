@@ -16,6 +16,9 @@ class GovernmentDeductionExemptionResolver
 
     public const PAYROLL_EXECOM = 'execom';
 
+    /** @var array<int, EmployeeGovernmentDeductionSetting|null> */
+    private array $preloadedSettingsByUserId = [];
+
     /** @var array<string, string> */
     public const DEDUCTION_FIELDS = [
         'sss' => 'deduct_sss',
@@ -101,11 +104,59 @@ class GovernmentDeductionExemptionResolver
         return $this->activeSettingsForPayrollPeriod($employee, $payrollPeriodStart, $payrollPeriodEnd, $payrollType);
     }
 
+    public function resolveForEmployee(
+        User $employee,
+        string $payrollType,
+        Carbon $payrollPeriodStart,
+        Carbon $payrollPeriodEnd
+    ): array {
+        return $this->activeSettingsForPayrollPeriod($employee, $payrollPeriodStart, $payrollPeriodEnd, $payrollType);
+    }
+
+    /**
+     * @param  list<int>  $employeeIds
+     */
+    public function preloadSettings(array $employeeIds): void
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map(static fn ($id) => (int) $id, $employeeIds),
+            static fn (int $id) => $id > 0
+        )));
+        if ($ids === []) {
+            return;
+        }
+
+        $missing = array_values(array_diff($ids, array_keys($this->preloadedSettingsByUserId)));
+        if ($missing === []) {
+            return;
+        }
+
+        $settings = EmployeeGovernmentDeductionSetting::query()
+            ->whereIn('user_id', $missing)
+            ->get()
+            ->keyBy('user_id');
+
+        foreach ($missing as $userId) {
+            $row = $settings->get($userId);
+            $this->preloadedSettingsByUserId[$userId] = $row instanceof EmployeeGovernmentDeductionSetting ? $row : null;
+        }
+    }
+
+    public function clearPreload(): void
+    {
+        $this->preloadedSettingsByUserId = [];
+    }
+
     public function activeSettingsForPayrollPeriod(User $employee, Carbon $from, Carbon $to, string $payrollType = self::PAYROLL_REGULAR): array
     {
-        $setting = EmployeeGovernmentDeductionSetting::query()
-            ->where('user_id', (int) $employee->id)
-            ->first();
+        $userId = (int) $employee->id;
+        if (array_key_exists($userId, $this->preloadedSettingsByUserId)) {
+            $setting = $this->preloadedSettingsByUserId[$userId];
+        } else {
+            $setting = EmployeeGovernmentDeductionSetting::query()
+                ->where('user_id', $userId)
+                ->first();
+        }
 
         $normalizedPayrollType = $this->normalizePayrollType($payrollType);
         $payload = $this->defaultPayload($setting);
