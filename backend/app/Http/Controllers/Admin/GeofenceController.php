@@ -12,6 +12,7 @@ use App\Models\UserAdminActivityLog;
 use App\Models\EmployeeGeofenceAssignment;
 use App\Services\BranchEmployeeResolver;
 use App\Services\DataScopeService;
+use App\Services\EmployeeGeofenceAssignmentService;
 use App\Services\EmployeeGeofenceResolver;
 use App\Services\GeofenceLiveMonitorService;
 use App\Services\GeofenceValidationService;
@@ -33,6 +34,7 @@ class GeofenceController extends Controller
         private readonly GeofenceValidationService $geofenceValidation,
         private readonly GeofenceLiveMonitorService $geofenceLiveMonitor,
         private readonly EmployeeGeofenceResolver $employeeGeofenceResolver,
+        private readonly EmployeeGeofenceAssignmentService $employeeGeofenceAssignmentService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -121,6 +123,49 @@ class GeofenceController extends Controller
             'employee_exemptions' => [
                 'employee_ids' => $requestedIds->all(),
                 'employees' => $this->employeeExemptionCandidates($request),
+            ],
+        ]);
+    }
+
+    public function updateEmployeeGeofenceEnforcement(Request $request, int $employeeId): JsonResponse
+    {
+        $validated = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $employeeQuery = User::query()->activeRoster()->whereKey($employeeId);
+        $this->dataScopeService->restrictEmployeeQuery($request->user(), $employeeQuery);
+        $employee = $employeeQuery->first();
+        if (! $employee) {
+            abort(404, 'Employee not found.');
+        }
+
+        if ($this->geofenceValidation->employeeExemptFromGeofence($employee)) {
+            abort(422, 'This employee is fully exempt from geofencing. Remove the exemption before changing enforcement.');
+        }
+
+        $resolved = $this->employeeGeofenceAssignmentService->setLocationOnlyMode(
+            (int) $employee->id,
+            ! (bool) $validated['enabled'],
+            $request->user(),
+            $validated['reason'] ?? null,
+        );
+
+        $this->audit($request, (bool) $validated['enabled'] ? 'employee_geofence_enforcement_enabled' : 'employee_geofence_enforcement_disabled', null, null, [
+            'employee_id' => (int) $employee->id,
+            'enabled' => (bool) $validated['enabled'],
+        ]);
+
+        return response()->json([
+            'message' => (bool) $validated['enabled']
+                ? 'Geofence enforcement enabled for this employee.'
+                : 'Geofence enforcement disabled for this employee. Location is still required.',
+            'employee' => [
+                ...$this->employeeAssignmentEmployeePayload($employee),
+                'geofence_enforcement_enabled' => (bool) $validated['enabled'],
+                'geofence_status' => (bool) $validated['enabled'] ? 'active' : 'location_only',
+                'validation_mode' => $resolved['validation_mode'] ?? 'any_assigned_geofence',
             ],
         ]);
     }
@@ -951,6 +996,8 @@ class GeofenceController extends Controller
 
         if ($resolved['has_active_exemption'] ?? false) {
             $status = 'exempt';
+        } elseif (($resolved['validation_mode'] ?? '') === 'location_only') {
+            $status = 'location_only';
         } elseif ($active->where('geofence_id', '!=', null)->isNotEmpty()) {
             $status = 'active';
         } else {
@@ -998,6 +1045,7 @@ class GeofenceController extends Controller
             'validation_mode' => $resolved['validation_mode'] ?? 'any_assigned_geofence',
             'effective_period' => $effectivePeriod,
             'status' => $status,
+            'geofence_enforcement_enabled' => ($resolved['validation_mode'] ?? '') !== 'location_only',
         ];
     }
 
@@ -1017,6 +1065,7 @@ class GeofenceController extends Controller
             'assigned_geofence_ids' => $row['assigned_geofence_ids'] ?? [],
             'validation_mode' => $row['validation_mode'],
             'geofence_status' => $row['status'],
+            'geofence_enforcement_enabled' => $row['geofence_enforcement_enabled'] ?? true,
         ];
     }
 

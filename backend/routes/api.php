@@ -331,6 +331,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:geofence.update|geofence.enable_disable')->patch('/admin/branches/{id}/geofence-settings', [GeofenceController::class, 'updateBranchSettings'])->whereNumber('id');
         Route::middleware('permission:geofence.update|geofence.enable_disable')->put('/admin/geofencing/module-settings', [GeofenceController::class, 'updateModuleSettings']);
         Route::middleware('permission:geofence.update|geofence.enable_disable')->put('/admin/geofencing/employee-exemptions', [GeofenceController::class, 'updateEmployeeExemptions']);
+        Route::middleware('permission:geofence.update|geofence.enable_disable')->patch('/admin/employees/{employeeId}/geofence-enforcement', [GeofenceController::class, 'updateEmployeeGeofenceEnforcement'])->whereNumber('employeeId');
         Route::middleware('permission:geofence.update|geofence.enable_disable')->patch('/admin/branches/{branchId}/geofences/{geofenceId}', [GeofenceController::class, 'update'])->whereNumber('branchId')->whereNumber('geofenceId');
         Route::middleware('permission:geofence.update|geofence.enable_disable')->put('/geofencing/geofences/{geofenceId}', [GeofenceController::class, 'updateFlat'])->whereNumber('geofenceId');
         Route::middleware('permission:geofence.delete')->delete('/admin/branches/{branchId}/geofences/{geofenceId}', [GeofenceController::class, 'destroy'])->whereNumber('branchId')->whereNumber('geofenceId');

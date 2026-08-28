@@ -85,11 +85,30 @@ class EmployeeGeofenceResolver
             return [
                 'employee_id' => $employeeId,
                 'requires_geofence' => false,
+                'requires_location' => false,
                 'validation_mode' => 'no_geofence_required',
                 'primary_geofence_id' => null,
                 'allowed_geofences' => [],
                 'has_active_exemption' => true,
                 'exemption' => $this->assignmentPayload($exemption),
+                'no_assignment_policy' => null,
+            ];
+        }
+
+        $locationOnly = $effective->first(
+            fn (EmployeeGeofenceAssignment $a): bool => $a->validation_mode === 'location_only',
+        );
+
+        if ($locationOnly) {
+            return [
+                'employee_id' => $employeeId,
+                'requires_geofence' => false,
+                'requires_location' => true,
+                'validation_mode' => 'location_only',
+                'primary_geofence_id' => null,
+                'allowed_geofences' => [],
+                'has_active_exemption' => false,
+                'location_only' => $this->assignmentPayload($locationOnly),
                 'no_assignment_policy' => null,
             ];
         }

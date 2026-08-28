@@ -8775,6 +8775,16 @@ export async function updateGeofenceEmployeeExemptions(payload) {
   return data
 }
 
+export async function updateEmployeeGeofenceEnforcement(employeeId, payload) {
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/geofence-enforcement`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(firstValidationMessage(data) || data.message || 'Failed to update employee geofence enforcement')
+  return data
+}
+
 function geofenceLiveMonitorQuery(params = {}) {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {

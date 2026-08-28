@@ -159,6 +159,75 @@ class EmployeeGeofenceAssignmentService
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    public function setLocationOnlyMode(int $employeeId, bool $enabled, User $actor, ?string $reason = null): array
+    {
+        if ($employeeId <= 0) {
+            throw ValidationException::withMessages(['employee_id' => ['Employee is required.']]);
+        }
+
+        $previous = $this->currentAssignmentState($employeeId);
+
+        if ($enabled) {
+            $existing = EmployeeGeofenceAssignment::query()
+                ->where('employee_id', $employeeId)
+                ->where('validation_mode', 'location_only')
+                ->whereNotIn('status', ['removed', 'replaced'])
+                ->first();
+
+            if ($existing) {
+                $existing->fill([
+                    'status' => 'active',
+                    'effective_start_date' => now()->toDateString(),
+                    'effective_end_date' => null,
+                    'reason' => $reason ?? $existing->reason,
+                ])->save();
+            } else {
+                $this->createAssignment([
+                    'employee_id' => $employeeId,
+                    'geofence_id' => null,
+                    'assignment_type' => 'permanent',
+                    'validation_mode' => 'location_only',
+                    'is_primary' => false,
+                    'effective_start_date' => now()->toDateString(),
+                    'effective_end_date' => null,
+                    'reason' => $reason ?? 'Geofence boundary check disabled; location still required.',
+                    'approved_by' => null,
+                    'created_by' => (int) $actor->id,
+                ]);
+            }
+
+            $event = 'location_only_enabled';
+        } else {
+            EmployeeGeofenceAssignment::query()
+                ->where('employee_id', $employeeId)
+                ->where('validation_mode', 'location_only')
+                ->whereNotIn('status', ['removed', 'replaced'])
+                ->update([
+                    'status' => 'removed',
+                    'effective_end_date' => now()->toDateString(),
+                ]);
+
+            $event = 'location_only_disabled';
+        }
+
+        $this->audit(
+            $employeeId,
+            $event,
+            $previous,
+            $this->currentAssignmentState($employeeId),
+            $reason,
+            (int) $actor->id,
+            null,
+        );
+
+        EmployeeGeofenceResolver::forgetEmployeeCache($employeeId);
+
+        return app(EmployeeGeofenceResolver::class)->resolveForAttendance($employeeId);
+    }
+
+    /**
      * @param  array<string, mixed>  $data
      */
     public function createCustomGeofence(array $data, User $actor): BranchGeofence

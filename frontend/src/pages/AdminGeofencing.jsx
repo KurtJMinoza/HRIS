@@ -32,6 +32,7 @@ import {
   testAttendanceGeofence,
   updateBranchGeofence,
   updateBranchGeofenceSettings,
+  updateEmployeeGeofenceEnforcement,
   updateGeofenceModuleSettings,
 } from '@/api'
 import { useAuth } from '@/contexts/AuthContext'
@@ -1457,6 +1458,7 @@ export default function AdminGeofencing() {
   const [saving, setSaving] = useState(false)
   const [deletingGeofenceId, setDeletingGeofenceId] = useState(null)
   const [enforcementSavingId, setEnforcementSavingId] = useState(null)
+  const [employeeEnforcementSavingId, setEmployeeEnforcementSavingId] = useState(null)
   const [mapillaryImage, setMapillaryImage] = useState(null)
   const [mapillaryLoading, setMapillaryLoading] = useState(false)
   const [mapillaryError, setMapillaryError] = useState('')
@@ -1991,6 +1993,47 @@ export default function AdminGeofencing() {
       await loadBranch(selectedBranchId, { preferredGeofenceId: geofence.id, focusMap: false })
     } finally {
       setEnforcementSavingId(null)
+    }
+  }
+
+  async function toggleEmployeeGeofenceEnforcement(employee, enabled) {
+    if (!employee?.id) return
+    if (employee.geofence_status === 'exempt') {
+      toast({
+        title: 'Cannot change enforcement',
+        description: 'This employee is fully exempt from geofencing.',
+        variant: 'error',
+      })
+      return
+    }
+
+    setEmployeeEnforcementSavingId(employee.id)
+    try {
+      const data = await updateEmployeeGeofenceEnforcement(employee.id, { enabled })
+      setBranchEmployees((list) => list.map((row) => (
+        String(row.id) === String(employee.id)
+          ? {
+              ...row,
+              geofence_enforcement_enabled: data?.employee?.geofence_enforcement_enabled ?? enabled,
+              geofence_status: data?.employee?.geofence_status ?? (enabled ? row.geofence_status : 'location_only'),
+              validation_mode: data?.employee?.validation_mode ?? row.validation_mode,
+            }
+          : row
+      )))
+      toast({
+        title: enabled ? 'Geofence enforcement enabled' : 'Geofence boundary disabled',
+        description: enabled
+          ? `${employee.name} must clock in inside an assigned geofence again.`
+          : `${employee.name} can clock in anywhere, but location is still required.`,
+        variant: 'success',
+      })
+    } catch (error) {
+      toast({ title: 'Update failed', description: error.message, variant: 'error' })
+      if (selectedBranchId) {
+        await loadBranch(selectedBranchId, { focusMap: false })
+      }
+    } finally {
+      setEmployeeEnforcementSavingId(null)
     }
   }
 
@@ -2650,7 +2693,7 @@ export default function AdminGeofencing() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-bold text-slate-950 dark:text-foreground">Assigned employees</h2>
-                <p className="text-xs text-slate-500 dark:text-muted-foreground">Employee-specific geofence assignments for this branch.</p>
+                <p className="text-xs text-slate-500 dark:text-muted-foreground">Turn off geofence boundary checks per employee while still requiring GPS location.</p>
               </div>
               <Badge variant="secondary" className="rounded-md bg-slate-100 text-slate-700 hover:bg-slate-100 dark:bg-muted dark:text-muted-foreground">
                 {Number(selectedBranch?.employee_count || branchEmployees.length || 0)}
@@ -2666,6 +2709,8 @@ export default function AdminGeofencing() {
                 <div className="divide-y divide-slate-100 dark:divide-border">
                   {branchEmployees.map((employee) => {
                     const exempt = employee.geofence_status === 'exempt' || geofenceExemptEmployeeIds.some((id) => String(id) === String(employee.id))
+                    const locationOnly = employee.geofence_status === 'location_only' || employee.geofence_enforcement_enabled === false
+                    const enforcementEnabled = !locationOnly && employee.geofence_enforcement_enabled !== false
                     const selected = String(selectedEmployeeId) === String(employee.id)
                     const geofenceLabels = [
                       employee.primary_geofence,
@@ -2673,25 +2718,46 @@ export default function AdminGeofencing() {
                       ...(employee.temporary_geofences || []),
                     ].filter(Boolean)
                     return (
-                      <button
+                      <div
                         key={employee.id}
-                        type="button"
-                        onClick={() => selectEmployee(employee)}
                         className={cn(
                           'grid w-full grid-cols-[1fr_auto] gap-3 py-2.5 text-left text-xs transition',
                           selected ? 'rounded-md bg-orange-50 px-2 dark:bg-orange-500/10' : 'hover:bg-slate-50 dark:hover:bg-muted/30',
                         )}
                       >
-                        <div className="min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => selectEmployee(employee)}
+                          className="min-w-0 text-left"
+                        >
                           <div className="truncate font-bold text-slate-950 dark:text-foreground">{employee.name}</div>
                           <div className="mt-0.5 truncate text-slate-500 dark:text-muted-foreground">
                             {employee.employee_number || 'No number'} - {employee.department || 'No department'}
                           </div>
                           <div className="mt-1 truncate text-slate-500 dark:text-muted-foreground">
-                            {geofenceLabels.length ? geofenceLabels.join(', ') : 'No geofences assigned'}
+                            {locationOnly
+                              ? 'Geofence off — location still required'
+                              : geofenceLabels.length
+                                ? geofenceLabels.join(', ')
+                                : 'No geofences assigned'}
                           </div>
-                        </div>
+                        </button>
                         <div className="flex flex-col items-end gap-1">
+                          <div
+                            className="flex items-center gap-2"
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-muted-foreground">
+                              Geofence
+                            </span>
+                            <Switch
+                              checked={enforcementEnabled}
+                              disabled={exempt || String(employeeEnforcementSavingId) === String(employee.id)}
+                              onCheckedChange={(checked) => toggleEmployeeGeofenceEnforcement(employee, checked)}
+                              aria-label={`Geofence enforcement for ${employee.name}`}
+                            />
+                          </div>
                           <Badge variant={employee.active ? 'default' : 'secondary'} className={cn('h-6 rounded-md', employee.active ? 'bg-emerald-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-200')}>
                             {employee.active ? 'Active' : 'Inactive'}
                           </Badge>
@@ -2705,8 +2771,13 @@ export default function AdminGeofencing() {
                               Exempt
                             </Badge>
                           ) : null}
+                          {locationOnly && !exempt ? (
+                            <Badge variant="secondary" className="h-6 rounded-md bg-sky-100 text-sky-700 hover:bg-sky-100 dark:bg-sky-500/10 dark:text-sky-200">
+                              Location only
+                            </Badge>
+                          ) : null}
                         </div>
-                      </button>
+                      </div>
                     )
                   })}
                 </div>

@@ -12,7 +12,7 @@ class EmployeeGeofenceAssignment extends Model
 
     public const ASSIGNMENT_TYPES = ['permanent', 'temporary', 'exemption'];
 
-    public const VALIDATION_MODES = ['any_assigned_geofence', 'primary_geofence_only', 'no_geofence_required'];
+    public const VALIDATION_MODES = ['any_assigned_geofence', 'primary_geofence_only', 'no_geofence_required', 'location_only'];
 
     public const STATUSES = ['active', 'upcoming', 'expired', 'removed', 'replaced'];
 

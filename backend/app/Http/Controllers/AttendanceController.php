@@ -701,7 +701,8 @@ class AttendanceController extends Controller
         }
 
         $enforcementMode = $result['enforcement_mode'] ?? null;
-        if ($enforcementMode === 'disabled') {
+        $skipReason = $result['skip_reason'] ?? null;
+        if ($enforcementMode === 'disabled' && $skipReason !== 'location_tracking_only') {
             return;
         }
 
@@ -713,6 +714,8 @@ class AttendanceController extends Controller
             abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
         }
 
+        $isLocationTrackingOnly = $status === 'skipped' && $skipReason === 'location_tracking_only';
+
         $isAuthorizedSkip = $status === 'skipped'
             && ($result['skip_reason'] ?? null) === 'branch_allowed_without_geofence'
             && $branch
@@ -720,7 +723,7 @@ class AttendanceController extends Controller
 
         $isStrictInside = in_array($status, ['inside', 'passed'], true) && $publicStatus === 'inside' && ! empty($result['matched_geofence_id']);
         $isExplicitWarnOnly = $enforcementMode === 'warn_only' && $status === 'warn_only';
-        if (! $isStrictInside && ! $isExplicitWarnOnly && ! $isAuthorizedSkip) {
+        if (! $isStrictInside && ! $isExplicitWarnOnly && ! $isAuthorizedSkip && ! $isLocationTrackingOnly) {
             abort(403, $result['failure_reason'] ?? 'You are outside the allowed attendance geofence.');
         }
 
@@ -743,6 +746,14 @@ class AttendanceController extends Controller
         }
         if ($isAuthorizedSkip && ($validation->validation_status !== 'skipped' || $validation->skip_reason !== 'branch_allowed_without_geofence')) {
             abort(403, 'Attendance without geofence is not authorized for this branch.');
+        }
+        if ($isLocationTrackingOnly && (
+            $validation->validation_status !== 'skipped'
+            || $validation->skip_reason !== 'location_tracking_only'
+            || $validation->latitude === null
+            || $validation->longitude === null
+        )) {
+            abort(403, 'Location is required before attendance can be saved.');
         }
 
         if ((int) ($validation->employee_id ?? 0) !== (int) $user->id) {

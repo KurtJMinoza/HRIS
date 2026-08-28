@@ -171,6 +171,10 @@ class GeofenceValidationService
                 $clockType,
             );
 
+            if (($resolved['validation_mode'] ?? '') === 'location_only') {
+                return $this->validateLocationOnly($branch, $latitude, $longitude, $accuracyMeters, $context);
+            }
+
             if (($resolved['allowed_geofences'] ?? []) !== []) {
                 return $this->validateAssignedGeofences(
                     $branch,
@@ -588,6 +592,54 @@ class GeofenceValidationService
         ]);
     }
 
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    private function validateLocationOnly(
+        ?Branch $branch,
+        ?float $latitude,
+        ?float $longitude,
+        ?float $accuracyMeters,
+        array $context,
+    ): array {
+        if ($latitude === null || $longitude === null) {
+            return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
+                ...$context,
+                'allowed' => false,
+                'validation_status' => 'blocked',
+                'enforcement_mode' => 'disabled',
+                'failure_reason' => 'Location permission is required before attendance can continue.',
+            ]);
+        }
+
+        $threshold = $branch
+            ? $this->deviceAccuracyThreshold($branch, $context['device_type'] ?? null)
+            : self::DEFAULT_DESKTOP_ACCURACY_THRESHOLD_METERS;
+
+        if ($accuracyMeters !== null && $accuracyMeters > $threshold) {
+            return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
+                ...$context,
+                'allowed' => false,
+                'validation_status' => 'blocked',
+                'enforcement_mode' => 'disabled',
+                'failure_reason' => 'Location accuracy is too low. Please enable WiFi/location services and try again.',
+                'accuracy_threshold_meters' => $threshold,
+            ]);
+        }
+
+        return $this->finalizeResult($branch, $latitude, $longitude, $accuracyMeters, [
+            ...$context,
+            'allowed' => true,
+            'validation_status' => 'skipped',
+            'enforcement_mode' => 'disabled',
+            'skip_reason' => 'location_tracking_only',
+            'failure_reason' => null,
+            'message' => 'Geofence boundary check is disabled for this employee. Location is still recorded.',
+            'accuracy_threshold_meters' => $threshold,
+        ]);
+    }
+
     public function enforceForRequest(User $employee, \Illuminate\Http\Request $request, ?string $method = null): ?array
     {
         if (! Schema::hasTable('branch_geofences')) {
@@ -860,6 +912,29 @@ class GeofenceValidationService
                 'status' => 'skipped',
                 'skip_reason' => 'employee_geofence_exempt',
                 'suppress_location_capture' => true,
+                'geofence_validation_id' => (int) $validation->id,
+                'id' => (int) $validation->id,
+                'latitude' => $validation->latitude,
+                'longitude' => $validation->longitude,
+                'accuracy_meters' => $validation->accuracy_meters,
+                'device_type' => $validation->device_type,
+                'branch' => $branch ? [
+                    'id' => (int) $branch->id,
+                    'name' => $branch->name,
+                    'company_id' => (int) $branch->company_id,
+                ] : null,
+            ];
+        }
+
+        if ($validation->validation_status === 'skipped'
+            && $validation->skip_reason === 'location_tracking_only'
+            && $validation->latitude !== null
+            && $validation->longitude !== null) {
+            return [
+                'allowed' => true,
+                'validation_status' => 'skipped',
+                'status' => 'skipped',
+                'skip_reason' => 'location_tracking_only',
                 'geofence_validation_id' => (int) $validation->id,
                 'id' => (int) $validation->id,
                 'latitude' => $validation->latitude,

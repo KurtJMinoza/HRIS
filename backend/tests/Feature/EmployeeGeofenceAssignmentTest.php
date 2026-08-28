@@ -237,6 +237,32 @@ class EmployeeGeofenceAssignmentTest extends TestCase
         $this->assertSame('disabled', $disabledGeofence->fresh()->enforcement_mode);
     }
 
+    public function test_employee_location_only_requires_location_but_skips_boundary(): void
+    {
+        $geofence = $this->createCircle('Branch Office', 50);
+        $this->assign($this->employee, $geofence, ['is_primary' => true]);
+
+        app(EmployeeGeofenceAssignmentService::class)->setLocationOnlyMode(
+            (int) $this->employee->id,
+            true,
+            $this->employee,
+        );
+
+        $missingLocation = $this->service->validateForEmployee($this->employee, null, null, null, [
+            'device_type' => 'mobile',
+            'log' => false,
+        ]);
+        $withLocation = $this->service->validateForEmployee($this->employee, 8.0, 126.0, 20, [
+            'device_type' => 'mobile',
+            'log' => false,
+        ]);
+
+        $this->assertFalse($missingLocation['allowed']);
+        $this->assertTrue($withLocation['allowed']);
+        $this->assertSame('location_tracking_only', $withLocation['skip_reason']);
+        $this->assertNotTrue($withLocation['suppress_location_capture'] ?? false);
+    }
+
     private function assign(User $employee, BranchGeofence $geofence, array $overrides = []): EmployeeGeofenceAssignment
     {
         return EmployeeGeofenceAssignment::query()->create([
