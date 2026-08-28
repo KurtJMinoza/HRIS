@@ -1405,7 +1405,9 @@ class GeofenceValidationService
                 $payload['id'] = (int) $log->id;
                 $payload['log_created'] = true;
 
-                if (! ($payload['allowed'] ?? false)) {
+                if ($latitude !== null && $longitude !== null) {
+                    $this->recordLiveMonitorAttempt((int) $log->id);
+                } elseif (! ($payload['allowed'] ?? false)) {
                     $this->recordLiveMonitorBlockedAttempt((int) $log->id);
                 }
             } catch (\Throwable $e) {
@@ -1454,13 +1456,18 @@ class GeofenceValidationService
 
     private function recordLiveMonitorBlockedAttempt(int $validationLogId, ?\Illuminate\Http\Request $request = null): void
     {
+        $this->recordLiveMonitorAttempt($validationLogId, $request);
+    }
+
+    private function recordLiveMonitorAttempt(int $validationLogId, ?\Illuminate\Http\Request $request = null): void
+    {
         try {
             app(GeofenceLiveMonitorService::class)->recordFromValidationLog(
                 $validationLogId,
                 $request ?? request(),
             );
         } catch (\Throwable $e) {
-            Log::warning('Unable to record geofence live monitor blocked attempt', [
+            Log::warning('Unable to record geofence live monitor attempt', [
                 'geofence_validation_log_id' => $validationLogId,
                 'error' => $e->getMessage(),
             ]);

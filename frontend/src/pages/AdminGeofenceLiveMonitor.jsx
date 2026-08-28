@@ -193,6 +193,7 @@ function passesEmployeeSearch(event, employeeSearch) {
   const needle = String(employeeSearch || '').trim().toLowerCase()
   if (!needle) return true
   const haystack = [
+    event.employee_id,
     event.employee_name,
     event.employee_number,
     event.company_name,
@@ -376,10 +377,16 @@ export default function AdminGeofenceLiveMonitor() {
   const [error, setError] = useState('')
   const [focusedEventId, setFocusedEventId] = useState('')
   const [employeeSearch, setEmployeeSearch] = useState('')
+  const [debouncedEmployeeSearch, setDebouncedEmployeeSearch] = useState('')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedEmployeeSearch(employeeSearch.trim()), 350)
+    return () => window.clearTimeout(timer)
+  }, [employeeSearch])
 
   const filteredEvents = useMemo(
-    () => events.filter((event) => passesClientToggles(event, toggles) && passesEmployeeSearch(event, employeeSearch)),
-    [events, toggles, employeeSearch],
+    () => events.filter((event) => passesClientToggles(event, toggles) && passesEmployeeSearch(event, debouncedEmployeeSearch)),
+    [events, toggles, debouncedEmployeeSearch],
   )
 
   const loadBranches = useCallback(async () => {
@@ -391,9 +398,12 @@ export default function AdminGeofenceLiveMonitor() {
     setLoading(true)
     setError('')
     try {
-      // Always fetch the full day set (no limit). Employee search filters client-side so live events stay searchable.
+      const query = {
+        ...filters,
+        ...(debouncedEmployeeSearch ? { q: debouncedEmployeeSearch } : {}),
+      }
       const [eventsData, summaryData] = await Promise.all([
-        getGeofenceLiveMonitorEvents({ ...filters }),
+        getGeofenceLiveMonitorEvents(query),
         getGeofenceLiveMonitorSummary({ date: filters.date }),
       ])
       setEvents((eventsData.events || []).map(normalizeEvent).filter(Boolean))
@@ -403,7 +413,7 @@ export default function AdminGeofenceLiveMonitor() {
     } finally {
       setLoading(false)
     }
-  }, [filters])
+  }, [filters, debouncedEmployeeSearch])
 
   const loadBoundaries = useCallback(async () => {
     if (!mapRef.current) return
@@ -486,6 +496,13 @@ export default function AdminGeofenceLiveMonitor() {
 
   useEffect(() => {
     loadRecent()
+  }, [loadRecent])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      loadRecent()
+    }, 30000)
+    return () => window.clearInterval(timer)
   }, [loadRecent])
 
   useEffect(() => {

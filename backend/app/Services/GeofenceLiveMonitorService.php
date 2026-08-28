@@ -43,6 +43,10 @@ class GeofenceLiveMonitorService
         $employeeQuery = trim((string) ($filters['q'] ?? $filters['employee'] ?? $filters['search'] ?? ''));
         $scopedBranchIds = $this->scopedBranchIds($actor);
         $scopeKey = $scopedBranchIds === null ? 'global' : sha1(implode(',', $scopedBranchIds));
+
+        // ponytail: backfill missing rows from validation logs so employees who clocked in still appear.
+        $this->syncMissingEventsForDate($date, $scopedBranchIds, $companyId, $branchId);
+
         $version = (int) Cache::get($this->eventsVersionKey($date), 1);
 
         $cacheKey = GeofenceValidationService::scopedCacheKey('geofence_live:events:'.$date.':'.sha1(json_encode([
@@ -56,68 +60,14 @@ class GeofenceLiveMonitorService
             'version' => $version,
         ], JSON_THROW_ON_ERROR)));
 
-        $events = Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $employeeQuery, $scopedBranchIds): array {
-            $query = AttendanceGeofenceEvent::query()
-                ->with([
-                    'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
-                    'employee.company:id,name',
-                    'employee.departmentRelation:id,name',
-                    'branch:id,name,company_id',
-                    'branch.company:id,name',
-                    'company:id,name',
-                    'matchedGeofence:id,name',
-                ])
-                ->whereNotNull('latitude')
-                ->whereNotNull('longitude')
-                ->whereDate('created_at', $date);
+        $fetchEvents = function () use ($companyId, $branchId, $date, $status, $deviceType, $clockType, $employeeQuery, $scopedBranchIds): array {
+            return $this->queryRecentEvents($companyId, $branchId, $date, $status, $deviceType, $clockType, $employeeQuery, $scopedBranchIds);
+        };
 
-            if ($scopedBranchIds !== null) {
-                if ($scopedBranchIds === []) {
-                    return [];
-                }
-                $query->where(function (Builder $q) use ($scopedBranchIds): void {
-                    $q->whereIn('branch_id', $scopedBranchIds);
-                });
-            }
-            if ($companyId !== null) {
-                $query->where('company_id', $companyId);
-            }
-            if ($branchId !== null) {
-                $query->where('branch_id', $branchId);
-            }
-            if ($status !== null) {
-                $query->where('geofence_status', $this->normalizeStatus($status));
-            }
-            if ($deviceType !== null) {
-                $query->where('device_type', $deviceType);
-            }
-            if ($clockType !== null) {
-                $query->where('clock_type', $this->normalizeClockType($clockType));
-            }
-            if ($employeeQuery !== '') {
-                $needle = '%'.mb_strtolower($employeeQuery).'%';
-                $query->whereHas('employee', function (Builder $employee) use ($needle): void {
-                    $employee->where(function (Builder $inner) use ($needle): void {
-                        $inner->whereRaw('LOWER(COALESCE(users.name, \'\')) LIKE ?', [$needle])
-                            ->orWhereRaw('LOWER(COALESCE(users.employee_code, \'\')) LIKE ?', [$needle])
-                            ->orWhereRaw('LOWER(COALESCE(users.first_name, \'\')) LIKE ?', [$needle])
-                            ->orWhereRaw('LOWER(COALESCE(users.last_name, \'\')) LIKE ?', [$needle])
-                            ->orWhereRaw(
-                                "LOWER(TRIM(CONCAT_WS(' ', COALESCE(users.first_name, ''), COALESCE(users.middle_name, ''), COALESCE(users.last_name, ''), COALESCE(users.suffix, '')))) LIKE ?",
-                                [$needle]
-                            );
-                    });
-                });
-            }
-
-            // ponytail: no LIMIT — live monitor must return every matching event for the day.
-            return $query
-                ->latest('created_at')
-                ->get()
-                ->map(fn (AttendanceGeofenceEvent $event): array => $this->payloadFromEvent($event, includeDetail: true))
-                ->values()
-                ->all();
-        });
+        // Skip cache while searching so employee lookups always hit the database.
+        $events = $employeeQuery !== ''
+            ? $fetchEvents()
+            : Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, $fetchEvents);
 
         return [
             'events' => $events,
@@ -238,7 +188,7 @@ class GeofenceLiveMonitorService
         Cache::forget("geofence:branch_boundaries:{$branchId}");
     }
 
-    public function recordFromValidationLog(int $validationLogId, ?Request $request = null, ?int $attendanceLogId = null): ?AttendanceGeofenceEvent
+    public function recordFromValidationLog(int $validationLogId, ?Request $request = null, ?int $attendanceLogId = null, bool $broadcast = true): ?AttendanceGeofenceEvent
     {
         if (! Schema::hasTable('attendance_geofence_events')) {
             return null;
@@ -272,9 +222,6 @@ class GeofenceLiveMonitorService
             if (! $attendanceLog && $attendanceLogId) {
                 $attendanceLog = AttendanceLog::query()->select(['id', 'type'])->find($attendanceLogId);
             }
-            if (! $attendanceLog && ! in_array($status, ['outside', 'failed'], true)) {
-                return null;
-            }
 
             $clockType = $this->normalizeClockType($attendanceLog?->type ?? $log->clock_type);
 
@@ -301,7 +248,9 @@ class GeofenceLiveMonitorService
             );
 
             $this->invalidateForDate($event->created_at?->toDateString() ?? now()->toDateString());
-            $this->broadcastEventAfterCommit($event);
+            if ($broadcast) {
+                $this->broadcastEventAfterCommit($event);
+            }
 
             return $event;
         } catch (\Throwable $e) {
@@ -573,5 +522,149 @@ class GeofenceLiveMonitorService
         $this->dataScopeService->restrictBranchQuery($actor, $query);
 
         return $query->pluck('id')->map(fn ($id): int => (int) $id)->values()->all();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function queryRecentEvents(
+        ?int $companyId,
+        ?int $branchId,
+        string $date,
+        ?string $status,
+        ?string $deviceType,
+        ?string $clockType,
+        string $employeeQuery,
+        ?array $scopedBranchIds,
+    ): array {
+        $query = AttendanceGeofenceEvent::query()
+            ->with([
+                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,branch_id,department_id',
+                'employee.company:id,name',
+                'employee.departmentRelation:id,name',
+                'branch:id,name,company_id',
+                'branch.company:id,name',
+                'company:id,name',
+                'matchedGeofence:id,name',
+            ])
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->whereDate('created_at', $date);
+
+        if ($scopedBranchIds !== null) {
+            if ($scopedBranchIds === []) {
+                return [];
+            }
+            $query->where(function (Builder $q) use ($scopedBranchIds): void {
+                $q->whereIn('branch_id', $scopedBranchIds)
+                    ->orWhereNull('branch_id');
+            });
+        }
+        if ($companyId !== null) {
+            $query->where(function (Builder $q) use ($companyId): void {
+                $q->where('company_id', $companyId)->orWhereNull('company_id');
+            });
+        }
+        if ($branchId !== null) {
+            $query->where(function (Builder $q) use ($branchId): void {
+                $q->where('branch_id', $branchId)->orWhereNull('branch_id');
+            });
+        }
+        if ($status !== null) {
+            $query->where('geofence_status', $this->normalizeStatus($status));
+        }
+        if ($deviceType !== null) {
+            $query->where('device_type', $deviceType);
+        }
+        if ($clockType !== null) {
+            $query->where('clock_type', $this->normalizeClockType($clockType));
+        }
+        if ($employeeQuery !== '') {
+            $this->applyEmployeeSearch($query, $employeeQuery);
+        }
+
+        return $query
+            ->latest('created_at')
+            ->get()
+            ->map(fn (AttendanceGeofenceEvent $event): array => $this->payloadFromEvent($event, includeDetail: true))
+            ->values()
+            ->all();
+    }
+
+    private function applyEmployeeSearch(Builder $query, string $employeeQuery): void
+    {
+        $needle = '%'.mb_strtolower($employeeQuery).'%';
+        $query->where(function (Builder $outer) use ($needle, $employeeQuery): void {
+            $outer->whereHas('employee', function (Builder $employee) use ($needle): void {
+                $employee->where(function (Builder $inner) use ($needle): void {
+                    $inner->whereRaw('LOWER(COALESCE(users.name, \'\')) LIKE ?', [$needle])
+                        ->orWhereRaw('LOWER(COALESCE(users.employee_code, \'\')) LIKE ?', [$needle])
+                        ->orWhereRaw('LOWER(COALESCE(users.first_name, \'\')) LIKE ?', [$needle])
+                        ->orWhereRaw('LOWER(COALESCE(users.last_name, \'\')) LIKE ?', [$needle])
+                        ->orWhereRaw(
+                            "LOWER(TRIM(CONCAT_WS(' ', COALESCE(users.first_name, ''), COALESCE(users.middle_name, ''), COALESCE(users.last_name, ''), COALESCE(users.suffix, '')))) LIKE ?",
+                            [$needle]
+                        );
+                });
+            });
+            if (ctype_digit($employeeQuery)) {
+                $outer->orWhere('employee_id', (int) $employeeQuery);
+            }
+        });
+    }
+
+    private function syncMissingEventsForDate(
+        string $date,
+        ?array $scopedBranchIds,
+        ?int $companyId,
+        ?int $branchId,
+    ): void {
+        if (! Schema::hasTable('geofence_validation_logs')) {
+            return;
+        }
+
+        $syncKey = GeofenceValidationService::scopedCacheKey("geofence_live:sync:{$date}");
+        if (! Cache::add($syncKey, 1, 30)) {
+            return;
+        }
+
+        $existingValidationIds = AttendanceGeofenceEvent::query()
+            ->whereDate('created_at', $date)
+            ->whereNotNull('geofence_validation_log_id')
+            ->pluck('geofence_validation_log_id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+
+        $query = GeofenceValidationLog::query()
+            ->whereDate('created_at', $date)
+            ->whereNotNull('employee_id')
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude');
+
+        if ($existingValidationIds !== []) {
+            $query->whereNotIn('id', $existingValidationIds);
+        }
+        if ($scopedBranchIds !== null) {
+            if ($scopedBranchIds === []) {
+                return;
+            }
+            $query->where(function (Builder $q) use ($scopedBranchIds): void {
+                $q->whereIn('branch_id', $scopedBranchIds)->orWhereNull('branch_id');
+            });
+        }
+        if ($companyId !== null) {
+            $query->where(function (Builder $q) use ($companyId): void {
+                $q->where('company_id', $companyId)->orWhereNull('company_id');
+            });
+        }
+        if ($branchId !== null) {
+            $query->where(function (Builder $q) use ($branchId): void {
+                $q->where('branch_id', $branchId)->orWhereNull('branch_id');
+            });
+        }
+
+        foreach ($query->orderBy('id')->limit(250)->pluck('id') as $validationLogId) {
+            $this->recordFromValidationLog((int) $validationLogId, null, null, false);
+        }
     }
 }
