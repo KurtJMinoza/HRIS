@@ -197,4 +197,59 @@ class EmploymentPayrollPolicyApplicatorTest extends TestCase
             'allow_paid_leave' => false,
         ]));
     }
+
+    public function test_refund_lines_with_holiday_labels_are_not_stripped_by_holiday_policy(): void
+    {
+        $resolver = $this->createMock(EmploymentPayrollPolicyResolver::class);
+        $applicator = new EmploymentPayrollPolicyApplicator($resolver);
+
+        $summary = [
+            'basic_pay_this_period' => 1000.0,
+            'daily_computation_earning_lines' => [
+                ['key' => 'daily:regular_pay', 'component' => 'regular_pay', 'amount' => 1000.0],
+            ],
+            'payslip_earning_lines' => [
+                [
+                    'key' => 'refund_basic_pay',
+                    'component_code' => 'refund_basic_pay',
+                    'label' => 'Missing Holiday Pay',
+                    'amount' => 1231.0,
+                    'metadata' => ['refund_request_id' => 52],
+                ],
+                [
+                    'key' => 'refund_basic_pay',
+                    'component_code' => 'refund_basic_pay',
+                    'label' => 'Incorrect Holiday Pay',
+                    'amount' => 1231.0,
+                    'metadata' => ['refund_request_id' => 55],
+                ],
+                [
+                    'key' => 'daily:holiday_premium',
+                    'component' => 'holiday_premium',
+                    'label' => 'Holiday Premium',
+                    'amount' => 500.0,
+                ],
+            ],
+            'employee_statutory_this_period' => 0.0,
+            'withholding_tax_this_period_estimate' => 0.0,
+        ];
+
+        $result = $applicator->applyToSummary($summary, [
+            'employment_type' => 'regular',
+            'apply_custom_deductions' => true,
+            'apply_allowances' => true,
+            'allow_paid_leave' => true,
+            'allow_overtime' => true,
+            'allow_holiday_pay' => false,
+        ]);
+
+        $labels = array_map(
+            fn ($line) => (string) ($line['label'] ?? ''),
+            $result['payslip_earning_lines']
+        );
+
+        $this->assertContains('Missing Holiday Pay', $labels);
+        $this->assertContains('Incorrect Holiday Pay', $labels);
+        $this->assertNotContains('Holiday Premium', $labels);
+    }
 }

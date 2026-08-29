@@ -217,28 +217,50 @@ class HolidayController extends Controller
     {
         $holiday = $this->holiday->newQuery()->findOrFail($id);
         $valid = $this->validateHolidayPayload($request);
-        $payload = $this->payloadsForWrite($valid)[0] ?? $this->payloadForWrite($valid);
+        $payloads = $this->payloadsForWrite($valid);
+        $siblingIds = $this->findSiblingHolidayIds($holiday);
 
-        if ($this->holidayExistsForScope($payload, $id)) {
-            return response()->json(['message' => 'A holiday already exists on this date for the selected scope'], 422);
+        foreach ($payloads as $payload) {
+            if (($payload['status'] ?? 'active') !== 'inactive' && $this->holidayExistsForScope($payload, $siblingIds)) {
+                return response()->json(['message' => 'A holiday already exists on this date for one of the selected scopes'], 422);
+            }
         }
 
         try {
-            $oldTargets = $this->scopeTargetsFromHoliday($holiday);
-            $this->assertHolidayDatesMutable([$holiday->date?->toDateString()], $oldTargets);
-            $this->assertHolidayDatesMutable([$valid['date']], $payload);
+            foreach ($siblingIds as $siblingId) {
+                $sibling = $this->holiday->newQuery()->find($siblingId);
+                if ($sibling) {
+                    $this->assertHolidayDatesMutable(
+                        [$sibling->date?->toDateString()],
+                        $this->scopeTargetsFromHoliday($sibling)
+                    );
+                }
+            }
+            foreach ($payloads as $payload) {
+                $this->assertHolidayDatesMutable([$valid['date']], $payload);
+            }
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $holiday->update($payload);
-        $holiday->refresh();
-        $holiday->syncHolidayScopes();
+        $updated = DB::transaction(function () use ($siblingIds, $payloads) {
+            if ($siblingIds !== []) {
+                $this->holiday->newQuery()->whereIn('id', $siblingIds)->delete();
+            }
+
+            $rows = [];
+            foreach ($payloads as $payload) {
+                $rows[] = $this->upsertHolidayRow($payload);
+            }
+
+            return $rows[0] ?? null;
+        });
+
         $this->holidayCalendar->flushMergedYearCaches();
         $this->holidayService->flushRuntimeCaches();
 
         return response()->json([
-            'holiday' => $this->holidayPayload($holiday),
+            'holiday' => $this->holidayPayload($updated ?? $holiday),
         ]);
     }
 
@@ -757,6 +779,8 @@ class HolidayController extends Controller
             'section_unit_ids.*' => ['integer', Rule::exists('sections_or_units', 'id')],
             'employee_ids' => ['nullable', 'array', 'max:500'],
             'employee_ids.*' => ['integer', Rule::exists('users', 'id')],
+            'coverage_scopes' => ['nullable', 'array', 'max:8'],
+            'coverage_scopes.*' => ['string', Rule::in(['nationwide', 'regional', 'company', 'branch', 'division', 'department', 'section_unit', 'employee'])],
             'description' => ['nullable', 'string', 'max:1000'],
             'regions' => ['nullable', 'array', 'max:50'],
             'regions.*' => ['string', 'max:120'],
@@ -776,26 +800,42 @@ class HolidayController extends Controller
         $valid['employee_ids'] = $this->normalizedIdList($valid['employee_ids'] ?? null, $valid['employee_id'] ?? null);
 
         $scope = (string) ($valid['scope'] ?? 'nationwide');
+        $coverageScopes = $this->normalizedCoverageScopes($valid);
+        if ($coverageScopes !== []) {
+            $scope = $coverageScopes[0];
+            $valid['scope'] = $scope;
+        }
+        if (in_array('nationwide', $coverageScopes, true) && count($coverageScopes) > 1) {
+            abort(response()->json(['message' => 'Nationwide cannot be combined with other coverage scopes'], 422));
+        }
         if ($scope === 'regional' && empty($valid['regions'])) {
             abort(response()->json(['message' => 'Select at least one region for a regional holiday'], 422));
         }
-        if (in_array($scope, ['company', 'branch', 'division', 'department', 'section_unit', 'employee'], true) && empty($valid['company_ids'])) {
+        if ($coverageScopes !== [] && ! in_array('nationwide', $coverageScopes, true) && empty($valid['company_ids'])) {
             abort(response()->json(['message' => 'Select at least one company for this holiday scope'], 422));
         }
-        if (in_array($scope, ['branch', 'division', 'department', 'section_unit'], true) && empty($valid['branch_ids'])) {
+        if (in_array('branch', $coverageScopes, true) && empty($valid['branch_ids'])) {
             abort(response()->json(['message' => 'Select at least one branch for this holiday scope'], 422));
         }
-        if (in_array($scope, ['department', 'section_unit'], true) && empty($valid['department_ids'])) {
-            abort(response()->json(['message' => 'Select at least one department for this holiday scope'], 422));
-        }
-        if ($scope === 'division' && empty($valid['division_ids'])) {
+        if (in_array('division', $coverageScopes, true) && empty($valid['division_ids'])) {
             abort(response()->json(['message' => 'Select at least one division for this holiday scope'], 422));
         }
-        if ($scope === 'section_unit' && empty($valid['section_unit_ids'])) {
+        if (in_array('department', $coverageScopes, true) && empty($valid['department_ids'])) {
+            abort(response()->json(['message' => 'Select at least one department for this holiday scope'], 422));
+        }
+        if (in_array('section_unit', $coverageScopes, true) && empty($valid['section_unit_ids'])) {
             abort(response()->json(['message' => 'Select at least one section/unit for this holiday scope'], 422));
         }
-        if ($scope === 'employee' && empty($valid['employee_ids'])) {
+        if (in_array('employee', $coverageScopes, true) && empty($valid['employee_ids'])) {
             abort(response()->json(['message' => 'Select at least one employee for this holiday scope'], 422));
+        }
+        if (in_array('section_unit', $coverageScopes, true)
+            && ! in_array('department', $coverageScopes, true)
+            && empty($valid['branch_ids'])) {
+            abort(response()->json(['message' => 'Select at least one branch for this holiday scope'], 422));
+        }
+        if (in_array('department', $coverageScopes, true) && empty($valid['branch_ids'])) {
+            abort(response()->json(['message' => 'Select at least one branch for this holiday scope'], 422));
         }
 
         $this->validateScopeHierarchy($valid);
@@ -1061,14 +1101,23 @@ class HolidayController extends Controller
     /**
      * @param  array<string, mixed>  $valid
      */
-    private function holidayExistsForScope(array $valid, ?int $ignoreId = null): bool
+    /**
+     * @param  array<string, mixed>  $valid
+     * @param  list<int>|int|null  $ignoreIds
+     */
+    private function holidayExistsForScope(array $valid, array|int|null $ignoreIds = null): bool
     {
         $query = $this->holiday->newQuery()
             ->where('date', $valid['date'])
             ->whereIn('status', ['active', 'draft']);
 
-        if ($ignoreId !== null) {
-            $query->where('id', '!=', $ignoreId);
+        $ignored = match (true) {
+            is_array($ignoreIds) => array_values(array_filter(array_map('intval', $ignoreIds))),
+            $ignoreIds !== null => [(int) $ignoreIds],
+            default => [],
+        };
+        if ($ignored !== []) {
+            $query->whereNotIn('id', $ignored);
         }
 
         $scope = $valid['scope'] ?? 'nationwide';
@@ -1208,6 +1257,26 @@ class HolidayController extends Controller
         }
     }
 
+    /** @return list<int> */
+    private function findSiblingHolidayIds(Holiday $holiday): array
+    {
+        $date = $holiday->date instanceof Carbon
+            ? $holiday->date->toDateString()
+            : (string) $holiday->date;
+
+        return $this->holiday->newQuery()
+            ->where('date', $date)
+            ->where('name', $holiday->name)
+            ->where('type', $holiday->type)
+            ->where('description', $holiday->description)
+            ->where('status', $holiday->status ?? 'active')
+            ->where('is_swap', (bool) $holiday->is_swap)
+            ->where('is_recurring', (bool) $holiday->is_recurring)
+            ->pluck('id')
+            ->map(fn ($rowId) => (int) $rowId)
+            ->all();
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -1298,6 +1367,22 @@ class HolidayController extends Controller
         $this->holiday->newQuery()->create(array_merge($keys, $payload));
     }
 
+    /** @return list<string> */
+    private function normalizedCoverageScopes(array $valid): array
+    {
+        $raw = $valid['coverage_scopes'] ?? null;
+        if (is_array($raw) && $raw !== []) {
+            return array_values(array_unique(array_filter(array_map(
+                static fn ($scope): string => strtolower(trim((string) $scope)),
+                $raw
+            ))));
+        }
+
+        $scope = strtolower(trim((string) ($valid['scope'] ?? 'nationwide')));
+
+        return $scope !== '' ? [$scope] : ['nationwide'];
+    }
+
     /**
      * Expand plural UI selections into the existing one-target-per-row holiday model.
      *
@@ -1306,8 +1391,21 @@ class HolidayController extends Controller
      */
     private function payloadsForWrite(array $valid): array
     {
-        $scope = (string) ($valid['scope'] ?? 'nationwide');
-        $base = $this->payloadForWrite($valid);
+        $coverageScopes = $this->normalizedCoverageScopes($valid);
+        if (count($coverageScopes) > 1) {
+            $payloads = [];
+            foreach ($coverageScopes as $scope) {
+                $payloads = array_merge($payloads, $this->payloadsForWrite(array_merge($valid, [
+                    'scope' => $scope,
+                    'coverage_scopes' => [$scope],
+                ])));
+            }
+
+            return $payloads;
+        }
+
+        $scope = $coverageScopes[0] ?? (string) ($valid['scope'] ?? 'nationwide');
+        $base = $this->payloadForWrite(array_merge($valid, ['scope' => $scope]));
 
         if ($scope === 'company') {
             return array_map(fn (int $companyId) => array_merge($base, [
@@ -1363,6 +1461,7 @@ class HolidayController extends Controller
                 ->keyBy('id');
 
             return $departments->map(fn (Department $department) => array_merge($base, [
+                'scope' => 'department',
                 'company_id' => (int) ($department->branch?->company_id ?? $valid['company_id'] ?? 0) ?: null,
                 'branch_id' => (int) $department->branch_id,
                 'division_id' => $department->division_id !== null ? (int) $department->division_id : null,
@@ -1380,6 +1479,7 @@ class HolidayController extends Controller
                 ->keyBy('id');
 
             return $sections->map(fn (SectionUnit $section) => array_merge($base, [
+                'scope' => 'section_unit',
                 'company_id' => (int) $section->company_id,
                 'branch_id' => (int) $section->branch_id,
                 'division_id' => $section->division_id !== null ? (int) $section->division_id : null,

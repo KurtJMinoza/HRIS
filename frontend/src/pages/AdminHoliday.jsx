@@ -403,7 +403,9 @@ function holidayScopeTypeLabel(holiday) {
   const scope = holiday?.scope || 'nationwide'
   if (scope === 'company') return 'Company'
   if (scope === 'branch') return 'Branch'
+  if (scope === 'division') return 'Division'
   if (scope === 'department') return 'Department'
+  if (scope === 'section_unit') return 'Section / Unit'
   if (scope === 'employee') return 'Employee'
   if (scope === 'regional') return 'Regional'
   return 'Nationwide'
@@ -437,7 +439,6 @@ function groupHolidayRows(rows) {
       holiday.date,
       holiday.name,
       holiday.type,
-      holiday.scope || 'nationwide',
       holiday.description || '',
       holiday.status || 'active',
       holiday.source || 'custom',
@@ -447,8 +448,14 @@ function groupHolidayRows(rows) {
       existing.holidays.push(holiday)
       existing.company_ids = [...new Set([...existing.company_ids, holiday.company_id].filter((id) => id != null))]
       existing.branch_ids = [...new Set([...existing.branch_ids, holiday.branch_id].filter((id) => id != null))]
+      existing.division_ids = [...new Set([...existing.division_ids, holiday.division_id].filter((id) => id != null))]
       existing.department_ids = [...new Set([...existing.department_ids, holiday.department_id].filter((id) => id != null))]
+      existing.section_unit_ids = [...new Set([...existing.section_unit_ids, holiday.section_unit_id].filter((id) => id != null))]
       existing.employee_ids = [...new Set([...existing.employee_ids, holiday.employee_id].filter((id) => id != null))]
+      existing.holiday_ids = [...new Set([...existing.holiday_ids, holiday.id].filter((id) => id != null))]
+      if (Array.isArray(holiday.regions) && holiday.regions.length > 0) {
+        existing.regions = [...new Set([...(existing.regions || []), ...holiday.regions])]
+      }
       return
     }
     groups.set(key, {
@@ -457,14 +464,18 @@ function groupHolidayRows(rows) {
       holidays: [holiday],
       company_ids: holiday.company_id != null ? [holiday.company_id] : [],
       branch_ids: holiday.branch_id != null ? [holiday.branch_id] : [],
+      division_ids: holiday.division_id != null ? [holiday.division_id] : [],
       department_ids: holiday.department_id != null ? [holiday.department_id] : [],
+      section_unit_ids: holiday.section_unit_id != null ? [holiday.section_unit_id] : [],
       employee_ids: holiday.employee_id != null ? [holiday.employee_id] : [],
+      holiday_ids: holiday.id != null ? [holiday.id] : [],
+      regions: Array.isArray(holiday.regions) ? holiday.regions : [],
     })
   })
 
   return Array.from(groups.values()).map((group) => ({
     ...group,
-    id: group.holidays.length === 1 ? group.id : undefined,
+    id: group.holiday_ids?.[0] ?? group.id,
     company_logos: Array.from(new Set(group.holidays.map(targetLogoUrl).filter(Boolean))),
   }))
 }
@@ -923,9 +934,10 @@ export default function AdminHoliday({ mode = 'admin' }) {
       toast.error('Permission denied', { description: 'You do not have permission to update holidays.' })
       return
     }
-    if (!holiday?.id || typeof holiday.id !== 'number') return
+    const editId = holiday?.holiday_ids?.[0] ?? holiday?.id
+    if (!editId || typeof editId !== 'number') return
     setHolidayModalMode('edit')
-    setHolidayModalId(holiday.id)
+    setHolidayModalId(editId)
     setHolidayModalInitial(holiday)
     setHolidayModalOpen(true)
     setSelectedCell(null)
@@ -1597,7 +1609,7 @@ export default function AdminHoliday({ mode = 'admin' }) {
               <div className="sticky bottom-0 z-10 shrink-0 border-t border-slate-950/10 bg-white/95 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-white/90 @sm:px-6 dark:border-orange-500/15 dark:bg-slate-950/95">
                 {selectedCell.holiday && (canUpdateHoliday || canDeleteHoliday) ? (
                   <div className="grid grid-cols-1 gap-2 @sm:grid-cols-3 @sm:gap-3">
-                    {canUpdateHoliday && typeof selectedCell.holiday.id === 'number' && (
+                    {canUpdateHoliday && (selectedCell.holiday.holiday_ids?.length > 0 || typeof selectedCell.holiday.id === 'number') && (
                       <Button
                         size="sm"
                         className="h-11 gap-2 rounded-xl bg-orange-600 px-3 text-sm font-black text-white shadow-sm hover:bg-orange-700"

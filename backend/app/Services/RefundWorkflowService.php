@@ -20,6 +20,7 @@ class RefundWorkflowService
     public function __construct(
         private readonly RefundCalculationService $calculationService,
         private readonly DataScopeService $dataScopeService,
+        private readonly PayslipService $payslipService,
         private readonly RbacService $rbac,
     ) {}
 
@@ -203,6 +204,10 @@ class RefundWorkflowService
 
             $refund->save();
             $this->writeAudit($refund, $actor, $action, $fromStatus, $refund->status, $remarks !== '' ? $remarks : null);
+
+            if ($action === 'approve') {
+                $this->payslipService->refreshDraftPayslipsForRefund($refund);
+            }
 
             return $refund->fresh(['employee', 'audits']);
         });

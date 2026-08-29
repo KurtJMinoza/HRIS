@@ -1642,6 +1642,8 @@ class FinalizePayrollService
                         'paid_at' => null,
                     ]);
             }
+
+            app(RefundPayrollApplicationService::class)->revertProcessedForVoidedBatch($run, $actor);
         });
 
         UserAdminActivityLog::query()->create([
@@ -1784,6 +1786,7 @@ class FinalizePayrollService
                 $snapshot = [];
             }
 
+            $draftPayslip = $this->payslipService->applyPendingRefundsToPayslip($draftPayslip, $employee);
             $draftPayslip = $this->assertDraftPayslipLinesArePersisted($draftPayslip);
             $draftMetrics = $this->payslipService->frozenPayslipLineMetrics($draftPayslip);
             $snapshot = $this->snapshotArrayFromPayslip($draftPayslip);
@@ -2255,6 +2258,7 @@ class FinalizePayrollService
                     }
 
                     // ponytail: fast path trusts admin-reviewed draft snapshots; live recompute runs at draft generation only.
+                    $payslip = $this->payslipService->applyPendingRefundsToPayslip($payslip, $user);
                     $payslip = $this->assertDraftPayslipLinesArePersisted($payslip);
 
                     $snapshotRaw = $payslip->snapshot;

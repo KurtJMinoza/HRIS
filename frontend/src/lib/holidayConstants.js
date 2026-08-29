@@ -70,6 +70,17 @@ export const HOLIDAY_STATUS_OPTIONS = [
   { value: 'draft', label: 'Draft' },
 ]
 
+/** Coverage scope for Add/Edit Holiday modal (matches API `scope`). */
+export const HOLIDAY_SCOPE_OPTIONS = [
+  { value: 'company', label: 'Company - all selected companies' },
+  { value: 'nationwide', label: 'Nationwide - all employees' },
+  { value: 'branch', label: 'Selected branches' },
+  { value: 'division', label: 'Selected divisions' },
+  { value: 'department', label: 'Selected departments' },
+  { value: 'section_unit', label: 'Selected sections / units' },
+  { value: 'employee', label: 'Selected employees only' },
+]
+
 /** Preview multiplier label for impact badge (first 8h, ordinary day worked — reference only). */
 export function holidayImpactPreview(type) {
   switch (type) {

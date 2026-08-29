@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\PayrollBatchRun;
+use App\Models\Payslip;
 use App\Models\RefundRequest;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -149,10 +150,20 @@ class RefundPayrollApplicationService
                 ->lockForUpdate()
                 ->get();
 
+            $payslipsByUser = Payslip::query()
+                ->where('payroll_batch_run_id', $batch->id)
+                ->where('status', '!=', Payslip::STATUS_VOIDED)
+                ->get(['id', 'user_id', 'snapshot'])
+                ->keyBy(fn (Payslip $payslip) => (int) $payslip->user_id);
+
             $count = 0;
             $now = now();
             foreach ($refunds as $refund) {
                 if (! $this->isEligibleForPayWindow($refund, $start, $end)) {
+                    continue;
+                }
+                $payslip = $payslipsByUser->get((int) $refund->employee_id);
+                if (! $payslip instanceof Payslip || ! $this->payslipContainsRefund($payslip, $refund)) {
                     continue;
                 }
                 $fromStatus = $refund->status;
@@ -175,6 +186,88 @@ class RefundPayrollApplicationService
 
             return $count;
         });
+    }
+
+    /**
+     * When a payroll batch is voided, refunds marked processed on that batch must be re-queued.
+     *
+     * @return int number of refunds returned to approved
+     */
+    public function revertProcessedForVoidedBatch(PayrollBatchRun $batch, ?User $actor = null): int
+    {
+        return DB::transaction(function () use ($batch, $actor) {
+            $refunds = RefundRequest::query()
+                ->where('processed_batch_run_id', $batch->id)
+                ->where('status', RefundRequest::STATUS_PROCESSED)
+                ->lockForUpdate()
+                ->get();
+
+            $count = 0;
+            foreach ($refunds as $refund) {
+                $fromStatus = $refund->status;
+                $refund->status = RefundRequest::STATUS_APPROVED;
+                $refund->processed_at = null;
+                $refund->processed_by = null;
+                $refund->processed_batch_run_id = null;
+                $refund->save();
+
+                app(RefundWorkflowService::class)->writeAudit(
+                    $refund,
+                    $actor,
+                    'payroll-reverted',
+                    $fromStatus,
+                    RefundRequest::STATUS_APPROVED,
+                    "Re-queued because payroll batch #{$batch->id} was voided."
+                );
+                $count++;
+            }
+
+            return $count;
+        });
+    }
+
+    public function payslipContainsRefund(Payslip $payslip, RefundRequest $refund): bool
+    {
+        return in_array((int) $refund->id, $this->refundRequestIdsOnPayslip($payslip), true);
+    }
+
+    /** @return list<int> */
+    public function refundRequestIdsOnPayslip(Payslip $payslip): array
+    {
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            return [];
+        }
+
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $ids = [];
+        foreach ($summary['payroll_adjustment_lines'] ?? [] as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $refundId = (int) ($line['refund_request_id'] ?? 0);
+            if ($refundId > 0) {
+                $ids[] = $refundId;
+            }
+        }
+        foreach (array_merge(
+            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
+            is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
+        ) as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+            $refundId = (int) ($metadata['refund_request_id'] ?? 0);
+            if ($refundId > 0) {
+                $ids[] = $refundId;
+            }
+        }
+
+        return array_values(array_unique($ids));
     }
 
     /** @return array<string, array<string, mixed>> */
@@ -233,10 +326,17 @@ class RefundPayrollApplicationService
             return false;
         }
         $affectedTo = optional($refund->affected_date_to)->toDateString() ?? $affectedFrom;
+        $cutoffStart = optional($refund->cutoff_start_date)->toDateString();
         $cutoffEnd = optional($refund->cutoff_end_date)->toDateString();
 
         if ($this->referencesFinalizedOriginalPayroll($refund) && $cutoffEnd !== null) {
             return $from > $cutoffEnd;
+        }
+
+        $applicationTiming = (string) data_get($refund->calculation, 'application_timing', '');
+        if ($applicationTiming === 'selected_payroll_cycle' && $cutoffStart !== null && $cutoffEnd !== null) {
+            // Must match the admin-selected pay cycle window exactly — not merely overlap.
+            return $from === $cutoffStart && $to === $cutoffEnd;
         }
 
         return $affectedFrom <= $to && $affectedTo >= $from;

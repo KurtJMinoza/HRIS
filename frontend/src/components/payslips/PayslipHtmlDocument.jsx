@@ -149,6 +149,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
         const key = [
           String(line?.component_code || line?.code || '').trim().toLowerCase(),
           String(line?.pay_component_id || '').trim().toLowerCase(),
+          String(line?.metadata?.refund_request_id || line?.refund_request_id || '').trim().toLowerCase(),
           String(line?.label || line?.name || '').trim().toLowerCase(),
           Number(line?.amount || 0).toFixed(2),
         ].join('|')

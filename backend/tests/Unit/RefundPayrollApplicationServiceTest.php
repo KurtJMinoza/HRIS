@@ -113,4 +113,23 @@ class RefundPayrollApplicationServiceTest extends TestCase
         $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-01-01', '2026-01-15'));
         $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-01-16', '2026-01-31'));
     }
+
+    public function test_selected_payroll_cycle_applies_on_matching_cutoff_window(): void
+    {
+        $service = app(RefundPayrollApplicationService::class);
+        $refund = new RefundRequest([
+            'affected_date' => '2026-08-11',
+            'affected_date_to' => '2026-08-25',
+            'cutoff_start_date' => '2026-08-11',
+            'cutoff_end_date' => '2026-08-25',
+            'calculation' => [
+                'finalized' => false,
+                'application_timing' => 'selected_payroll_cycle',
+            ],
+        ]);
+
+        $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-11', '2026-08-25'));
+        $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-26', '2026-09-10'));
+        $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-01', '2026-08-15'));
+    }
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { z } from 'zod'
 import { format, parseISO, isValid } from 'date-fns'
-import { Building2, CalendarIcon, Gift, Info, Loader2, Save, Users } from 'lucide-react'
+import { Building2, CalendarIcon, Gift, Info, Loader2, Save, Search, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,6 +30,7 @@ import {
 import {
   HOLIDAY_TYPE_OPTIONS,
   HOLIDAY_STATUS_OPTIONS,
+  HOLIDAY_SCOPE_OPTIONS,
   holidayImpactPreview,
 } from '@/lib/holidayConstants'
 import { HolidayPayReferenceAccordion } from '@/components/holidays/HolidayPayReferenceAccordion'
@@ -52,7 +53,10 @@ const formSchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a valid date'),
     type: z.enum(['regular', 'special']),
     description: z.string().max(1000).optional().or(z.literal('')),
-    scope: z.enum(['nationwide', 'company', 'branch', 'division', 'department', 'section_unit', 'employee']),
+    scope: z.enum(['nationwide', 'company', 'branch', 'division', 'department', 'section_unit', 'employee']).optional(),
+    coverageScopes: z
+      .array(z.enum(['nationwide', 'company', 'branch', 'division', 'department', 'section_unit', 'employee']))
+      .min(1, 'Select at least one coverage scope'),
     companyIds: z.array(z.string()).default([]),
     branchIds: z.array(z.string()).default([]),
     divisionIds: z.array(z.string()).default([]),
@@ -63,23 +67,37 @@ const formSchema = z
     status: z.enum(['active', 'inactive', 'draft']),
   })
   .superRefine((data, ctx) => {
-    if (data.scope !== 'nationwide' && data.companyIds.length === 0) {
+    const scopes = data.coverageScopes || []
+    if (scopes.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one coverage scope', path: ['coverageScopes'] })
+      return
+    }
+    if (scopes.includes('nationwide') && scopes.length > 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Nationwide cannot be combined with other coverage scopes', path: ['coverageScopes'] })
+    }
+    if (scopes.some((scope) => scope !== 'nationwide') && data.companyIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one company', path: ['companyIds'] })
     }
-    if (data.scope === 'branch' && data.branchIds.length === 0) {
+    if (scopes.includes('branch') && data.branchIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one branch', path: ['branchIds'] })
     }
-    if (data.scope === 'division' && data.divisionIds.length === 0) {
+    if (scopes.includes('division') && data.divisionIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one division', path: ['divisionIds'] })
     }
-    if (['department', 'section_unit'].includes(data.scope) && data.departmentIds.length === 0) {
+    if (scopes.includes('department') && data.departmentIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one department', path: ['departmentIds'] })
     }
-    if (data.scope === 'section_unit' && data.sectionUnitIds.length === 0) {
+    if (scopes.includes('section_unit') && data.sectionUnitIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one section/unit', path: ['sectionUnitIds'] })
     }
-    if (data.scope === 'employee' && data.employeeIds.length === 0) {
+    if (scopes.includes('employee') && data.employeeIds.length === 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one employee', path: ['employeeIds'] })
+    }
+    if (scopes.includes('section_unit') && !scopes.includes('department') && data.branchIds.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one branch', path: ['branchIds'] })
+    }
+    if (scopes.includes('department') && data.branchIds.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Select at least one branch', path: ['branchIds'] })
     }
   })
 
@@ -90,6 +108,7 @@ function emptyForm() {
     type: 'regular',
     description: '',
     scope: 'nationwide',
+    coverageScopes: ['nationwide'],
     companyIds: [],
     branchIds: [],
     divisionIds: [],
@@ -109,6 +128,34 @@ function isDemoOrganization(item) {
 
 function orgSubtitle(item, fallback) {
   return item?.company_name || item?.branch_name || item?.employee_code || item?.office_location || fallback
+}
+
+function inferCoverageScopes(initial) {
+  if (!initial) return ['nationwide']
+
+  const scopes = new Set()
+  const companyIds = Array.isArray(initial.company_ids) ? initial.company_ids : initial.company_id != null ? [initial.company_id] : []
+  const branchIds = Array.isArray(initial.branch_ids) ? initial.branch_ids : initial.branch_id != null ? [initial.branch_id] : []
+  const divisionIds = Array.isArray(initial.division_ids) ? initial.division_ids : initial.division_id != null ? [initial.division_id] : []
+  const departmentIds = Array.isArray(initial.department_ids) ? initial.department_ids : initial.department_id != null ? [initial.department_id] : []
+  const sectionUnitIds = Array.isArray(initial.section_unit_ids) ? initial.section_unit_ids : initial.section_unit_id != null ? [initial.section_unit_id] : []
+  const employeeIds = Array.isArray(initial.employee_ids) ? initial.employee_ids : initial.employee_id != null ? [initial.employee_id] : []
+
+  if ((initial.scope || 'nationwide') === 'nationwide' && companyIds.length === 0 && branchIds.length === 0 && divisionIds.length === 0 && departmentIds.length === 0 && sectionUnitIds.length === 0 && employeeIds.length === 0) {
+    return ['nationwide']
+  }
+  if (employeeIds.length > 0) scopes.add('employee')
+  if (sectionUnitIds.length > 0) scopes.add('section_unit')
+  if (departmentIds.length > 0) scopes.add('department')
+  if (divisionIds.length > 0) scopes.add('division')
+  if (branchIds.length > 0) scopes.add('branch')
+  if (companyIds.length > 0) scopes.add('company')
+
+  if (scopes.size === 0 && HOLIDAY_SCOPE_OPTIONS.some((option) => option.value === initial.scope)) {
+    return [initial.scope]
+  }
+
+  return scopes.size > 0 ? Array.from(scopes) : ['nationwide']
 }
 
 function OrganizationLogo({ item, icon = Building2 }) {
@@ -155,6 +202,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
   const [sectionsOrUnits, setSectionsOrUnits] = useState([])
   const [employees, setEmployees] = useState([])
   const [organizationsLoading, setOrganizationsLoading] = useState(false)
+  const [employeeSearch, setEmployeeSearch] = useState('')
 
   const selectedDate = useMemo(() => {
     if (!values.date) return undefined
@@ -171,13 +219,14 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     setSubmitError('')
     setFieldErrors({})
     if (initial && (mode === 'edit' || Object.keys(initial).length)) {
-      const scope = ['nationwide', 'company', 'branch', 'division', 'department', 'section_unit', 'employee'].includes(initial.scope) ? initial.scope : 'company'
+      const coverageScopes = inferCoverageScopes(initial)
       setValues({
         name: initial.name ?? '',
         date: typeof initial.date === 'string' ? initial.date.slice(0, 10) : '',
         type: ['regular', 'special'].includes(initial.type) ? initial.type : 'regular',
         description: initial.description ?? '',
-        scope,
+        scope: coverageScopes[0] ?? 'nationwide',
+        coverageScopes,
         companyIds: Array.isArray(initial.company_ids)
           ? initial.company_ids.map(String)
           : initial.company_id != null ? [String(initial.company_id)] : [],
@@ -202,6 +251,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     } else {
       setValues(emptyForm())
     }
+    setEmployeeSearch('')
   }, [open, mode, initial])
 
   const toList = useCallback((data, key) => {
@@ -316,12 +366,23 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
   }, [open, values.branchIds, toList])
 
   useEffect(() => {
-    if (!open || values.departmentIds.length === 0) {
+    if (!open || !values.coverageScopes.includes('section_unit')) {
+      setSectionsOrUnits([])
+      return
+    }
+    if (values.branchIds.length === 0 && values.departmentIds.length === 0) {
       setSectionsOrUnits([])
       return
     }
     let cancelled = false
-    Promise.all(values.departmentIds.map((departmentId) => getSectionsOrUnits({ department_id: departmentId, status: 'active', fresh: true }).catch(() => ({ sections_or_units: [] }))))
+    const requests = values.departmentIds.length > 0
+      ? values.departmentIds.map((departmentId) =>
+          getSectionsOrUnits({ department_id: departmentId, status: 'active', fresh: true }).catch(() => ({ sections_or_units: [] })),
+        )
+      : values.branchIds.map((branchId) =>
+          getSectionsOrUnits({ branch_id: branchId, status: 'active', fresh: true }).catch(() => ({ sections_or_units: [] })),
+        )
+    Promise.all(requests)
       .then((results) => {
         if (cancelled) return
         const map = new Map()
@@ -336,7 +397,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     return () => {
       cancelled = true
     }
-  }, [open, values.departmentIds, toList])
+  }, [open, values.coverageScopes, values.branchIds, values.departmentIds, toList])
 
   const set = useCallback((patch) => {
     setValues((v) => ({ ...v, ...patch }))
@@ -355,33 +416,92 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     setFieldErrors({})
   }, [])
 
+  const toggleCoverageScope = useCallback((scopeValue) => {
+    setValues((current) => {
+      if (scopeValue === 'nationwide') {
+        const active = current.coverageScopes.includes('nationwide')
+        return {
+          ...current,
+          scope: 'nationwide',
+          coverageScopes: active ? [] : ['nationwide'],
+          companyIds: [],
+          branchIds: [],
+          divisionIds: [],
+          departmentIds: [],
+          sectionUnitIds: [],
+          employeeIds: [],
+        }
+      }
+
+      const nextScopes = new Set(current.coverageScopes.filter((scope) => scope !== 'nationwide'))
+      if (nextScopes.has(scopeValue)) {
+        nextScopes.delete(scopeValue)
+      } else {
+        nextScopes.add(scopeValue)
+      }
+
+      const coverageScopes = Array.from(nextScopes)
+      const patch = {
+        coverageScopes,
+        scope: coverageScopes[0] ?? 'nationwide',
+      }
+
+      if (!coverageScopes.includes('branch') && !coverageScopes.includes('division') && !coverageScopes.includes('department') && !coverageScopes.includes('section_unit')) {
+        patch.branchIds = []
+      }
+      if (!coverageScopes.includes('division')) patch.divisionIds = []
+      if (!coverageScopes.includes('department')) patch.departmentIds = []
+      if (!coverageScopes.includes('section_unit')) patch.sectionUnitIds = []
+      if (!coverageScopes.includes('employee')) patch.employeeIds = []
+      if (!coverageScopes.some((scope) => ['company', 'branch', 'division', 'department', 'section_unit', 'employee'].includes(scope))) {
+        patch.companyIds = []
+      }
+
+      return { ...current, ...patch }
+    })
+    setFieldErrors({})
+  }, [])
+
   const impact = holidayImpactPreview(values.type)
+  const filteredEmployees = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase()
+    if (!q) return employees
+    return employees.filter((employee) => {
+      const hay = [employee.name, employee.employee_code, employee.position, employee.department_name, employee.branch_name]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return hay.includes(q)
+    })
+  }, [employees, employeeSearch])
   const selectedCompanies = companies.filter((company) => values.companyIds.includes(String(company.id)))
   const selectedBranches = branches.filter((branch) => values.branchIds.includes(String(branch.id)))
   const selectedDivisions = divisions.filter((division) => values.divisionIds.includes(String(division.id)))
   const selectedDepartments = departments.filter((department) => values.departmentIds.includes(String(department.id)))
   const selectedSectionsOrUnits = sectionsOrUnits.filter((section) => values.sectionUnitIds.includes(String(section.id)))
   const selectedEmployees = employees.filter((employee) => values.employeeIds.includes(String(employee.id)))
-  const selectedCoverage =
-    values.scope === 'employee'
-      ? selectedEmployees
-      : values.scope === 'section_unit'
-        ? selectedSectionsOrUnits
-        : values.scope === 'department'
-        ? selectedDepartments
-        : values.scope === 'division'
-          ? selectedDivisions
-        : values.scope === 'branch'
-          ? selectedBranches
-          : selectedCompanies
-  const selectedCoverageLabel = {
+  const coverageScopes = values.coverageScopes || []
+  const hasCoverageScope = (scopeValue) => coverageScopes.includes(scopeValue)
+  const needsCompanyPicker = coverageScopes.some((scope) => ['company', 'branch', 'division', 'department', 'section_unit', 'employee'].includes(scope))
+  const needsBranchPicker = coverageScopes.some((scope) => ['branch', 'division', 'department', 'section_unit'].includes(scope))
+  const selectedCoverage = [
+    ...(hasCoverageScope('employee') ? selectedEmployees : []),
+    ...(hasCoverageScope('section_unit') ? selectedSectionsOrUnits : []),
+    ...(hasCoverageScope('department') ? selectedDepartments : []),
+    ...(hasCoverageScope('division') ? selectedDivisions : []),
+    ...(hasCoverageScope('branch') ? selectedBranches : []),
+    ...(hasCoverageScope('company') ? selectedCompanies : []),
+  ]
+  const selectedCoverageLabel = coverageScopes.length > 1 ? 'coverage targets' : ({
+    nationwide: 'nationwide',
     company: 'companies',
     branch: 'branches',
     division: 'divisions',
     department: 'departments',
     section_unit: 'sections/units',
     employee: 'employees',
-  }[values.scope]
+  }[coverageScopes[0]] || 'targets')
+  const showOrgPicker = !hasCoverageScope('nationwide') && coverageScopes.length > 0
 
   const typeIcon = {
     regular: CalendarIcon,
@@ -402,12 +522,14 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
     }
 
     const dateStr = parsed.data.date
+    const primaryScope = parsed.data.coverageScopes[0] || 'nationwide'
     const payload = {
       name: parsed.data.name,
       date: dateStr,
       type: parsed.data.type,
       description: parsed.data.description?.trim() || undefined,
-      scope: parsed.data.scope,
+      scope: primaryScope,
+      coverage_scopes: parsed.data.coverageScopes,
       company_ids: parsed.data.companyIds.map(Number),
       branch_ids: parsed.data.branchIds.map(Number),
       division_ids: parsed.data.divisionIds.map(Number),
@@ -449,8 +571,8 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
       <DialogContent
         showCloseButton
         className={adminFormDialogContentClass(
-          'w-[min(100vw-1.5rem,44rem)] max-w-[min(100vw-1.5rem,44rem)] sm:max-w-[min(100vw-2rem,44rem)]',
-          'max-h-[min(94vh,58rem)] rounded-3xl border-border/70 bg-card shadow-[0_28px_90px_rgba(15,23,42,0.26)] dark:border-border/50 dark:bg-card/95'
+          'w-[min(100vw-1.5rem,80rem)] max-w-[min(100vw-1.5rem,80rem)] sm:max-w-[min(100vw-2rem,80rem)]',
+          'max-h-[min(94vh,62rem)] rounded-3xl border-border/70 bg-card shadow-[0_28px_90px_rgba(15,23,42,0.26)] dark:border-border/50 dark:bg-card/95'
         )}
         innerClassName="gap-0 overflow-hidden p-0"
         closeButtonClassName="right-5 top-5 size-11 rounded-xl"
@@ -497,70 +619,85 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                 </a>
               </div>
 
-              <div className="flex min-h-0 flex-col gap-6">
-                <div className="space-y-5">
-                  <div className="space-y-2">
-                    <Label htmlFor="h-name" className="text-sm font-bold">
-                      Holiday name <span className="text-red-500">*</span>
-                    </Label>
-                    <div className="relative">
-                      <CalendarIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-                      <Input
-                        id="h-name"
-                        value={values.name}
-                        onChange={(e) => set({ name: e.target.value })}
-                        placeholder="e.g. Araw ng Kagitingan"
-                        className={cn('h-11 rounded-xl border-border/70 bg-card pl-9 shadow-sm dark:bg-card/80', fieldErrors.name && 'border-red-500')}
-                        autoComplete="off"
-                        aria-invalid={!!fieldErrors.name}
-                        aria-describedby={fieldErrors.name ? 'err-name' : undefined}
-                      />
-                    </div>
-                    {fieldErrors.name?.[0] && (
-                      <p id="err-name" className="text-xs text-red-600 dark:text-red-400">
-                        {fieldErrors.name[0]}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-sm font-bold">
-                      Date <span className="text-red-500">*</span>
-                    </Label>
-                    <Popover open={calOpen} onOpenChange={setCalOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={cn(
-                            'h-11 w-full justify-between rounded-xl border-border/70 bg-card text-left font-normal shadow-sm hover:bg-card/90 dark:bg-card/80',
-                            !values.date && 'text-muted-foreground',
-                            fieldErrors.date && 'border-red-500 ring-2 ring-red-500/10',
-                          )}
-                          aria-invalid={!!fieldErrors.date}
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            <CalendarIcon className="size-4 shrink-0 opacity-70" aria-hidden />
-                            <span className="truncate">{selectedDate ? format(selectedDate, 'MMMM d, yyyy') : 'Select date'}</span>
-                          </span>
-                          <span className="text-muted-foreground">⌄</span>
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={selectedDate}
-                          onSelect={(d) => {
-                            if (d) {
-                              set({ date: format(d, 'yyyy-MM-dd') })
-                              setCalOpen(false)
-                            }
-                          }}
-                          defaultMonth={selectedDate ?? new Date()}
+              <div className="grid min-h-0 gap-6 lg:grid-cols-[minmax(0,2.15fr)_minmax(0,0.85fr)] lg:items-start">
+                <div className="min-w-0 space-y-5">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="h-name" className="text-sm font-bold">
+                        Holiday name <span className="text-red-500">*</span>
+                      </Label>
+                      <div className="relative">
+                        <CalendarIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                        <Input
+                          id="h-name"
+                          value={values.name}
+                          onChange={(e) => set({ name: e.target.value })}
+                          placeholder="e.g. Araw ng Kagitingan"
+                          className={cn('h-11 rounded-xl border-border/70 bg-card pl-9 shadow-sm dark:bg-card/80', fieldErrors.name && 'border-red-500')}
+                          autoComplete="off"
+                          aria-invalid={!!fieldErrors.name}
+                          aria-describedby={fieldErrors.name ? 'err-name' : undefined}
                         />
-                      </PopoverContent>
-                    </Popover>
-                    {fieldErrors.date?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.date[0]}</p>}
+                      </div>
+                      {fieldErrors.name?.[0] && (
+                        <p id="err-name" className="text-xs text-red-600 dark:text-red-400">
+                          {fieldErrors.name[0]}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-sm font-bold">
+                        Date <span className="text-red-500">*</span>
+                      </Label>
+                      <Popover open={calOpen} onOpenChange={setCalOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              'h-11 w-full justify-between rounded-xl border-border/70 bg-card text-left font-normal shadow-sm hover:bg-card/90 dark:bg-card/80',
+                              !values.date && 'text-muted-foreground',
+                              fieldErrors.date && 'border-red-500 ring-2 ring-red-500/10',
+                            )}
+                            aria-invalid={!!fieldErrors.date}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              <CalendarIcon className="size-4 shrink-0 opacity-70" aria-hidden />
+                              <span className="truncate">{selectedDate ? format(selectedDate, 'MMMM d, yyyy') : 'Select date'}</span>
+                            </span>
+                            <span className="text-muted-foreground">⌄</span>
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="single"
+                            selected={selectedDate}
+                            onSelect={(d) => {
+                              if (d) {
+                                set({ date: format(d, 'yyyy-MM-dd') })
+                                setCalOpen(false)
+                              }
+                            }}
+                            defaultMonth={selectedDate ?? new Date()}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      {fieldErrors.date?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.date[0]}</p>}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="h-status" className="text-sm font-bold">
+                        Status <span className="text-red-500">*</span>
+                      </Label>
+                      <select id="h-status" value={values.status} onChange={(e) => set({ status: e.target.value })} className={cn(FIELD_SELECT_CLASS, 'h-11 rounded-xl bg-card shadow-sm dark:bg-card/80')} aria-label="Holiday status">
+                        {HOLIDAY_STATUS_OPTIONS.map((s) => (
+                          <option key={s.value} value={s.value}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   <div className="space-y-3">
@@ -579,7 +716,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                         </TooltipContent>
                       </Tooltip>
                     </div>
-                    <RadioGroup value={values.type} onValueChange={(v) => set({ type: v })} className="grid gap-3" aria-label="Holiday type">
+                    <RadioGroup value={values.type} onValueChange={(v) => set({ type: v })} className="grid gap-2 sm:grid-cols-2" aria-label="Holiday type">
                       {HOLIDAY_TYPE_OPTIONS.map((opt) => {
                         const Icon = typeIcon[opt.value] || CalendarIcon
                         return (
@@ -627,44 +764,32 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                     <Label className="text-sm font-bold">
                       Coverage <span className="text-red-500">*</span>
                     </Label>
-                    <RadioGroup
-                      value={values.scope}
-                      onValueChange={(v) =>
-                        set({
-                          scope: v,
-                          branchIds: ['branch', 'division', 'department', 'section_unit'].includes(v) ? values.branchIds : [],
-                          divisionIds: ['division', 'department', 'section_unit'].includes(v) ? values.divisionIds : [],
-                          departmentIds: ['department', 'section_unit'].includes(v) ? values.departmentIds : [],
-                          sectionUnitIds: v === 'section_unit' ? values.sectionUnitIds : [],
-                          employeeIds: v === 'employee' ? values.employeeIds : [],
-                        })
-                      }
-                      className="grid gap-2"
-                    >
-                      {[
-                        { value: 'company', label: 'Company - all selected companies' },
-                        { value: 'nationwide', label: 'Nationwide - all employees' },
-                        { value: 'branch', label: 'Selected branches' },
-                        { value: 'division', label: 'Selected divisions' },
-                        { value: 'department', label: 'Selected departments' },
-                        { value: 'section_unit', label: 'Selected sections / units' },
-                        { value: 'employee', label: 'Selected employees only' },
-                      ].map((scope) => (
+                    <div className="grid gap-2">
+                      {HOLIDAY_SCOPE_OPTIONS.map((scope) => (
                         <label key={scope.value} className="flex w-fit cursor-pointer items-center gap-2 text-sm">
-                          <RadioGroupItem value={scope.value} id={`sc-${scope.value}`} className="text-brand data-[state=checked]:border-brand" />
+                          <Checkbox
+                            id={`sc-${scope.value}`}
+                            checked={values.coverageScopes.includes(scope.value)}
+                            onCheckedChange={() => toggleCoverageScope(scope.value)}
+                            className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
+                          />
                           <span>{scope.label}</span>
                         </label>
                       ))}
-                    </RadioGroup>
+                    </div>
+                    {fieldErrors.coverageScopes?.[0] && (
+                      <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.coverageScopes[0]}</p>
+                    )}
 
+                    {showOrgPicker && (
                     <div className={cn('rounded-2xl border border-border/70 bg-card p-3 shadow-sm dark:bg-card/80', fieldErrors.companyIds && 'border-red-500')}>
                       <div className="mb-3 flex flex-wrap items-center gap-2">
                         <div className="flex size-8 items-center justify-center rounded-xl bg-brand/10 text-brand">
-                          {values.scope === 'employee' ? <Users className="size-4" /> : <Building2 className="size-4" />}
+                          {hasCoverageScope('employee') ? <Users className="size-4" /> : <Building2 className="size-4" />}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-bold text-muted-foreground">
-                            Select {values.scope === 'nationwide' ? 'no organization target' : values.scope === 'company' ? 'companies' : values.scope === 'branch' ? 'companies and branches' : values.scope === 'division' ? 'companies, branches, and divisions' : values.scope === 'department' ? 'companies, branches, and departments' : values.scope === 'section_unit' ? 'companies, branches, departments, and sections/units' : 'companies and employees'}
+                            Select targets for {coverageScopes.map((scope) => HOLIDAY_SCOPE_OPTIONS.find((option) => option.value === scope)?.label?.toLowerCase() || scope).join(', ')}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
                             Live from Organizations module{companies.length > 0 ? ` · ${companies.length} companies loaded` : ''}
@@ -686,7 +811,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                         <div className="mb-3 grid grid-cols-1 gap-2 rounded-xl border border-border/60 bg-muted/25 p-2 dark:bg-muted/15">
                           {selectedCoverage.slice(0, 5).map((item) => (
                             <span key={item.id} className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-border/60 bg-card px-2 py-1.5 text-xs font-semibold text-foreground dark:bg-card/80">
-                              <OrganizationLogo item={item} icon={values.scope === 'employee' ? Users : Building2} />
+                              <OrganizationLogo item={item} icon={hasCoverageScope('employee') ? Users : Building2} />
                               <span className="min-w-0">
                                 <span className="block truncate">{item.name || item.employee_code || `#${item.id}`}</span>
                                 <span className="block truncate text-[10px] font-medium text-muted-foreground">{orgSubtitle(item, selectedCoverageLabel)}</span>
@@ -697,7 +822,8 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                         </div>
                       )}
 
-                      <div className="grid grid-cols-1 gap-3">
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        {needsCompanyPicker && (
                         <div className="space-y-2">
                           <Label className="text-xs font-bold text-muted-foreground">Companies</Label>
                           <div className="grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20">
@@ -731,8 +857,9 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                           </div>
                           {fieldErrors.companyIds?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.companyIds[0]}</p>}
                         </div>
+                        )}
 
-                        {['branch', 'division', 'department', 'section_unit'].includes(values.scope) && (
+                        {needsBranchPicker && (
                           <div className="space-y-2">
                             <Label className="text-xs font-bold text-muted-foreground">Branches</Label>
                             <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.branchIds && 'border-red-500')}>
@@ -768,7 +895,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                           </div>
                         )}
 
-                        {['division', 'department', 'section_unit'].includes(values.scope) && (
+                        {hasCoverageScope('division') && (
                           <div className="space-y-2">
                             <Label className="text-xs font-bold text-muted-foreground">Divisions</Label>
                             <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.divisionIds && 'border-red-500')}>
@@ -802,7 +929,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                           </div>
                         )}
 
-                        {['department', 'section_unit'].includes(values.scope) && (
+                        {hasCoverageScope('department') && (
                           <div className="space-y-2">
                             <Label className="text-xs font-bold text-muted-foreground">Departments</Label>
                             <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.departmentIds && 'border-red-500')}>
@@ -816,10 +943,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                                 >
                                   <Checkbox
                                     checked={values.departmentIds.includes(String(department.id))}
-                                    onCheckedChange={() => {
-                                      toggleId('departmentIds', department.id)
-                                      set({ sectionUnitIds: [] })
-                                    }}
+                                    onCheckedChange={() => toggleId('departmentIds', department.id)}
                                     disabled={values.branchIds.length === 0}
                                     className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
                                   />
@@ -838,10 +962,10 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                           </div>
                         )}
 
-                        {values.scope === 'section_unit' && (
-                          <div className="space-y-2">
+                        {hasCoverageScope('section_unit') && (
+                          <div className="space-y-2 lg:col-span-2">
                             <Label className="text-xs font-bold text-muted-foreground">Sections / Units</Label>
-                            <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.sectionUnitIds && 'border-red-500')}>
+                            <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20 sm:grid-cols-2', fieldErrors.sectionUnitIds && 'border-red-500')}>
                               {sectionsOrUnits.map((section) => (
                                 <label
                                   key={section.id}
@@ -853,7 +977,7 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                                   <Checkbox
                                     checked={values.sectionUnitIds.includes(String(section.id))}
                                     onCheckedChange={() => toggleId('sectionUnitIds', section.id)}
-                                    disabled={values.departmentIds.length === 0}
+                                    disabled={values.branchIds.length === 0}
                                     className="data-[state=checked]:border-brand data-[state=checked]:bg-brand"
                                   />
                                   <OrganizationLogo item={section} icon={Users} />
@@ -863,17 +987,31 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                                   </span>
                                 </label>
                               ))}
-                              {sectionsOrUnits.length === 0 && <p className="text-xs text-muted-foreground">Select departments to load sections/units.</p>}
+                              {sectionsOrUnits.length === 0 && (
+                                <p className="text-xs text-muted-foreground sm:col-span-2">
+                                  Select branches (or departments) to load sections/units.
+                                </p>
+                              )}
                             </div>
                             {fieldErrors.sectionUnitIds?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.sectionUnitIds[0]}</p>}
                           </div>
                         )}
 
-                        {values.scope === 'employee' && (
-                          <div className="space-y-2">
+                        {hasCoverageScope('employee') && (
+                          <div className="space-y-2 lg:col-span-2">
                             <Label className="text-xs font-bold text-muted-foreground">Employees</Label>
-                            <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20', fieldErrors.employeeIds && 'border-red-500')}>
-                              {employees.map((employee) => (
+                            <div className="relative">
+                              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+                              <Input
+                                value={employeeSearch}
+                                onChange={(e) => setEmployeeSearch(e.target.value)}
+                                placeholder="Search by name, code, or department..."
+                                className="h-10 rounded-xl border-border/70 bg-card pl-9 text-sm shadow-sm dark:bg-card/80"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div className={cn('grid max-h-56 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-border/50 bg-background/40 p-2 dark:bg-background/20 sm:grid-cols-2', fieldErrors.employeeIds && 'border-red-500')}>
+                              {filteredEmployees.map((employee) => (
                                 <label
                                   key={employee.id}
                                   className={cn(
@@ -896,7 +1034,11 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                                   </span>
                                 </label>
                               ))}
-                              {employees.length === 0 && <p className="text-xs text-muted-foreground">Select companies to load employees.</p>}
+                              {filteredEmployees.length === 0 && (
+                                <p className="text-xs text-muted-foreground sm:col-span-2">
+                                  {employees.length === 0 ? 'Select companies to load employees.' : 'No employees match your search.'}
+                                </p>
+                              )}
                             </div>
                             {fieldErrors.employeeIds?.[0] && <p className="text-xs text-red-600 dark:text-red-400">{fieldErrors.employeeIds[0]}</p>}
                           </div>
@@ -907,27 +1049,14 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                         {selectedCoverage.length} selected {selectedCoverageLabel}. Multiple selections create matching scoped rows for payroll resolution.
                       </p>
                     </div>
-                  </div>
+                    )}
 
-                  <div className="flex flex-col gap-4">
                     <div className="flex items-center gap-3 rounded-2xl border border-border/70 bg-card p-4 shadow-sm dark:bg-card/80">
                       <Switch id="h-rec" checked={values.isRecurring} onCheckedChange={(c) => set({ isRecurring: c })} aria-label="Recurring yearly" />
                       <div>
                         <Label htmlFor="h-rec" className="text-sm font-bold">Recurring yearly</Label>
                         <p className="text-[11px] text-muted-foreground">Creates the same entry for next year if date is free.</p>
                       </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="h-status" className="text-sm font-bold">
-                        Status <span className="text-red-500">*</span>
-                      </Label>
-                      <select id="h-status" value={values.status} onChange={(e) => set({ status: e.target.value })} className={cn(FIELD_SELECT_CLASS, 'h-11 rounded-xl bg-card shadow-sm dark:bg-card/80')} aria-label="Holiday status">
-                        {HOLIDAY_STATUS_OPTIONS.map((s) => (
-                          <option key={s.value} value={s.value}>
-                            {s.label}
-                          </option>
-                        ))}
-                      </select>
                     </div>
                   </div>
 
@@ -938,8 +1067,29 @@ export function HolidayFormModal({ open, onOpenChange, mode, editingId, initial,
                   )}
                 </div>
 
-                <aside className="min-h-0 w-full rounded-3xl border border-brand/15 bg-linear-to-b from-brand/[0.035] to-transparent p-4 dark:border-brand/20 dark:from-brand/10">
-                  <HolidayPayReferenceAccordion />
+                <aside className="min-h-0 shrink-0 space-y-4 lg:sticky lg:top-0 lg:max-w-[19rem] lg:justify-self-end">
+                  {selectedCoverage.length > 0 && (
+                    <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm dark:bg-card/80">
+                      <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Selected coverage</p>
+                      <p className="mt-1 text-sm font-black text-foreground">
+                        {selectedCoverage.length} {selectedCoverageLabel}
+                      </p>
+                      <div className="mt-3 flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                        {selectedCoverage.slice(0, 12).map((item) => (
+                          <Badge key={item.id} variant="outline" className="max-w-full truncate rounded-lg text-[11px]">
+                            {item.name || item.employee_code || item.id}
+                          </Badge>
+                        ))}
+                        {selectedCoverage.length > 12 && (
+                          <Badge variant="secondary" className="rounded-lg text-[11px]">+{selectedCoverage.length - 12}</Badge>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="min-h-0 w-full rounded-3xl border border-brand/15 bg-linear-to-b from-brand/[0.035] to-transparent p-4 dark:border-brand/20 dark:from-brand/10">
+                    <HolidayPayReferenceAccordion />
+                  </div>
                 </aside>
               </div>
             </div>

@@ -15,6 +15,7 @@ use App\Models\PayrollEmployee;
 use App\Models\PayrollLine;
 use App\Models\PayrollPeriod;
 use App\Models\Payslip;
+use App\Models\RefundRequest;
 use App\Models\ThirteenthMonthSetting;
 use App\Models\User;
 use App\Support\BulkPayrollDraftContext;
@@ -1187,6 +1188,99 @@ class PayslipService
         }
 
         return $drafts->count();
+    }
+
+    /**
+     * Append approved refund lines to a draft (or repair a finalized) payslip snapshot.
+     */
+    public function applyPendingRefundsToPayslip(Payslip $payslip, User $employee, bool $force = false): Payslip
+    {
+        if (! $force && in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return $payslip;
+        }
+
+        $from = $payslip->pay_period_start;
+        $to = $payslip->pay_period_end;
+        if ($from === null || $to === null) {
+            return $payslip;
+        }
+
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            $snapshot = [];
+        }
+
+        // Rebuild refund lines so holiday-labeled refunds stripped by older policy gates are restored.
+        $snapshot = $this->stripRefundAdjustmentLinesFromSnapshot($snapshot);
+        $snapshot = $this->applyRefundAdjustmentsToSnapshot($snapshot, $employee, $from->copy(), $to->copy());
+
+        $lineTotals = $this->payslipLineTotalsFromSnapshot($snapshot);
+        $snapshot = $this->snapshotWithPayslipLineTotals($snapshot, $lineTotals);
+
+        $payslip->forceFill([
+            'gross_pay' => $lineTotals['gross_pay'],
+            'total_deductions' => $lineTotals['total_deductions'],
+            'net_pay' => $lineTotals['net_pay'],
+            'snapshot' => $snapshot,
+        ]);
+        $payslip->save();
+
+        if ($force || in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return $payslip->fresh() ?? $payslip;
+        }
+
+        return $this->ensureDraftPayrollLinesSynced($payslip->fresh() ?? $payslip);
+    }
+
+    /**
+     * Re-apply pending refunds to draft payslips eligible for this refund request.
+     */
+    public function refreshDraftPayslipsForRefund(RefundRequest $refund): int
+    {
+        $employee = User::query()->find((int) $refund->employee_id);
+        if (! $employee instanceof User) {
+            return 0;
+        }
+
+        $applicationService = app(RefundPayrollApplicationService::class);
+        $drafts = Payslip::query()
+            ->where('user_id', (int) $employee->id)
+            ->whereIn('status', $this->draftSnapshotStatuses())
+            ->whereNull('voided_at')
+            ->get();
+
+        if ($drafts->isEmpty()) {
+            return 0;
+        }
+
+        $runIds = [];
+        $count = 0;
+        foreach ($drafts as $draft) {
+            $from = $draft->pay_period_start?->toDateString();
+            $to = $draft->pay_period_end?->toDateString();
+            if ($from === null || $to === null || ! $applicationService->isEligibleForPayWindow($refund, $from, $to)) {
+                continue;
+            }
+
+            $this->applyPendingRefundsToPayslip($draft, $employee);
+            $count++;
+            $runId = (int) ($draft->payroll_batch_run_id ?? 0);
+            if ($runId > 0) {
+                $runIds[$runId] = true;
+            }
+        }
+
+        foreach (array_keys($runIds) as $runId) {
+            $run = PayrollBatchRun::query()->find((int) $runId);
+            if ($run) {
+                $this->syncBatchRunTotals($run);
+            }
+        }
+
+        return $count;
     }
 
     /**
@@ -3399,19 +3493,30 @@ class PayslipService
      *
      * @return array<string, mixed>
      */
-    private function applyRefundAdjustmentsToSnapshot(array $snapshot, User $employee, Carbon $from, Carbon $to): array
-    {
+    private function applyRefundAdjustmentsToSnapshot(
+        array $snapshot,
+        User $employee,
+        Carbon $from,
+        Carbon $to,
+        bool $skipExisting = false,
+    ): array {
         $adjustments = app(RefundPayrollApplicationService::class)
             ->pendingAdjustmentsForWindow($employee, $from->toDateString(), $to->toDateString());
         if ($adjustments === []) {
             return $snapshot;
         }
 
+        $existingRefundIds = $skipExisting ? $this->existingRefundIdsInSnapshot($snapshot) : [];
+
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $earnings = is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [];
         $deductions = is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [];
 
         foreach ($adjustments as $adj) {
+            $refundRequestId = (int) ($adj['refund_request_id'] ?? 0);
+            if ($skipExisting && $refundRequestId > 0 && in_array($refundRequestId, $existingRefundIds, true)) {
+                continue;
+            }
             $amount = round((float) ($adj['amount'] ?? 0), 2);
             if ($amount <= 0.004) {
                 continue;
@@ -3443,6 +3548,68 @@ class PayslipService
             $adjustments,
             fn ($row) => is_array($row)
         ));
+        $snapshot['summary'] = $summary;
+
+        return $snapshot;
+    }
+
+    /** @return list<int> */
+    private function existingRefundIdsInSnapshot(array $snapshot): array
+    {
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $ids = [];
+        foreach ($summary['payroll_adjustment_lines'] ?? [] as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $refundId = (int) ($line['refund_request_id'] ?? 0);
+            if ($refundId > 0) {
+                $ids[] = $refundId;
+            }
+        }
+        foreach (array_merge(
+            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
+            is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
+        ) as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+            $refundId = (int) ($metadata['refund_request_id'] ?? 0);
+            if ($refundId > 0) {
+                $ids[] = $refundId;
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    private function stripRefundAdjustmentLinesFromSnapshot(array $snapshot): array
+    {
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+
+        $isRefundLine = function ($line): bool {
+            if (! is_array($line)) {
+                return false;
+            }
+
+            return $this->isPayrollAdjustmentRefundLine($line)
+                || (int) ($line['refund_request_id'] ?? 0) > 0;
+        };
+
+        $summary['payslip_earning_lines'] = array_values(array_filter(
+            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
+            fn ($line) => ! $isRefundLine($line)
+        ));
+        $summary['payslip_deduction_lines'] = array_values(array_filter(
+            is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
+            fn ($line) => ! $isRefundLine($line)
+        ));
+        $summary['payroll_adjustment_lines'] = [];
         $snapshot['summary'] = $summary;
 
         return $snapshot;
@@ -4891,6 +5058,10 @@ class PayslipService
      */
     private function isExecomHolidayEarningLine(array $line): bool
     {
+        if ($this->isPayrollAdjustmentRefundLine($line)) {
+            return false;
+        }
+
         $haystack = strtolower(implode(' ', [
             (string) ($line['key'] ?? ''),
             (string) ($line['component'] ?? ''),
@@ -4902,6 +5073,25 @@ class PayslipService
 
         return str_contains($haystack, 'holiday')
             || str_contains($haystack, 'rest_day_worked');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isPayrollAdjustmentRefundLine(array $line): bool
+    {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if ((int) ($metadata['refund_request_id'] ?? 0) > 0) {
+            return true;
+        }
+
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $component = strtolower(trim((string) ($line['component_code'] ?? $line['component'] ?? '')));
+
+        return str_starts_with($key, 'refund_')
+            || str_starts_with($key, 'payroll_recovery_')
+            || str_starts_with($component, 'refund_')
+            || str_starts_with($component, 'payroll_recovery_');
     }
 
     /**
@@ -5109,6 +5299,7 @@ class PayslipService
                 strtolower(trim((string) ($line['component_code'] ?? $line['code'] ?? ''))),
                 strtolower(trim((string) ($metadata['holiday_id'] ?? ''))),
                 strtolower(trim((string) ($metadata['holiday_date'] ?? ''))),
+                strtolower(trim((string) ($metadata['refund_request_id'] ?? ''))),
                 strtolower(trim((string) ($line['pay_component_id'] ?? ''))),
                 strtolower(trim((string) ($line['label'] ?? $line['name'] ?? ''))),
                 number_format(round((float) ($line['amount'] ?? $line['resolved_amount'] ?? 0), 2), 2, '.', ''),

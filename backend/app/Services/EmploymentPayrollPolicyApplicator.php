@@ -231,7 +231,8 @@ class EmploymentPayrollPolicyApplicator
     {
         $summary['payslip_earning_lines'] = $this->filterLines(
             $summary['payslip_earning_lines'] ?? [],
-            fn (array $line): bool => $this->isBasicSalaryLine($line)
+            fn (array $line): bool => $this->isPayrollAdjustmentRefundLine($line)
+                || $this->isBasicSalaryLine($line)
                 || $this->isPaidLeaveLine($line)
                 || $this->isOvertimeLine($line)
                 || $this->isHolidayLine($line)
@@ -400,6 +401,10 @@ class EmploymentPayrollPolicyApplicator
      */
     private function isPaidLeaveLine(array $line): bool
     {
+        if ($this->isPayrollAdjustmentRefundLine($line)) {
+            return false;
+        }
+
         $component = strtolower(trim((string) ($line['component'] ?? $line['component_code'] ?? '')));
         if (in_array($component, self::PAID_LEAVE_COMPONENTS, true)) {
             return true;
@@ -422,6 +427,10 @@ class EmploymentPayrollPolicyApplicator
      */
     private function isOvertimeLine(array $line): bool
     {
+        if ($this->isPayrollAdjustmentRefundLine($line)) {
+            return false;
+        }
+
         $component = strtolower(trim((string) ($line['component'] ?? $line['component_code'] ?? '')));
         if (in_array($component, self::OT_COMPONENTS, true)) {
             return true;
@@ -446,6 +455,12 @@ class EmploymentPayrollPolicyApplicator
      */
     private function isHolidayLine(array $line): bool
     {
+        // Approved refund/recovery lines keep their reason labels (e.g. "Missing Holiday Pay")
+        // but must never be gated by Holiday Module scope / allow_holiday_pay.
+        if ($this->isPayrollAdjustmentRefundLine($line)) {
+            return false;
+        }
+
         $component = strtolower(trim((string) ($line['component'] ?? $line['component_code'] ?? '')));
         if (in_array($component, self::HOLIDAY_COMPONENTS, true)) {
             return true;
@@ -460,6 +475,25 @@ class EmploymentPayrollPolicyApplicator
 
         return str_contains($haystack, 'holiday')
             || str_contains($haystack, 'rest_day_worked');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isPayrollAdjustmentRefundLine(array $line): bool
+    {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if ((int) ($metadata['refund_request_id'] ?? 0) > 0) {
+            return true;
+        }
+
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $component = strtolower(trim((string) ($line['component_code'] ?? $line['component'] ?? '')));
+
+        return str_starts_with($key, 'refund_')
+            || str_starts_with($key, 'payroll_recovery_')
+            || str_starts_with($component, 'refund_')
+            || str_starts_with($component, 'payroll_recovery_');
     }
 
     /**
@@ -538,6 +572,10 @@ class EmploymentPayrollPolicyApplicator
      */
     private function lineLooksLikeHoliday(array $line, string $haystack): bool
     {
+        if ($this->isPayrollAdjustmentRefundLine($line)) {
+            return false;
+        }
+
         $component = strtolower(trim((string) ($line['component'] ?? $line['component_code'] ?? '')));
 
         return in_array($component, self::HOLIDAY_COMPONENTS, true)

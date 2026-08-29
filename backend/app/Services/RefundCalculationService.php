@@ -240,6 +240,8 @@ class RefundCalculationService
             throw new InvalidArgumentException('Adjustment amount must be greater than zero.');
         }
 
+        [$finalized, $batchRunId, $lockMessage] = $this->detectFinalizedPayroll($employee, $cutoffStart, $cutoffEnd);
+
         $absoluteAmount = abs($signedAmount);
         $components = [
             'regular_pay' => [
@@ -271,12 +273,19 @@ class RefundCalculationService
             'corrected_amount' => $signedAmount > 0 ? $absoluteAmount : 0.0,
             'refund_amount' => $absoluteAmount,
             'refund_signed_amount' => $signedAmount,
-            'finalized' => false,
-            'original_batch_run_id' => null,
-            'lock_message' => null,
-            'application_timing' => 'selected_payroll_cycle',
-            'application_note' => 'This manual adjustment will be reflected on the selected payroll cycle. Enter a positive amount for a refund/additional pay, or a negative amount for a payroll recovery deduction.',
-            'warnings' => ['Manual amount mode: the entered amount is applied directly to the selected payroll cycle.'],
+            'finalized' => $finalized,
+            'original_batch_run_id' => $batchRunId,
+            'lock_message' => $lockMessage,
+            'application_timing' => $finalized ? 'next_payroll' : 'selected_payroll_cycle',
+            'application_note' => $finalized
+                ? 'The selected payroll cycle is already finalized and locked. After approval, this manual adjustment applies on the employee\'s next eligible payroll — as extra pay (positive amount) or a payroll recovery deduction (negative amount).'
+                : 'This manual adjustment will be reflected on the selected payroll cycle. Enter a positive amount for a refund/additional pay, or a negative amount for a payroll recovery deduction.',
+            'warnings' => $finalized
+                ? array_values(array_filter([
+                    'Manual amount mode: the selected payroll cycle is finalized; the amount applies on the next eligible payroll.',
+                    $lockMessage,
+                ]))
+                : ['Manual amount mode: the entered amount is applied directly to the selected payroll cycle.'],
         ];
     }
 
