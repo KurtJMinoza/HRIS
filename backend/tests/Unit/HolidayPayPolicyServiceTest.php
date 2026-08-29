@@ -494,6 +494,40 @@ class HolidayPayPolicyServiceTest extends TestCase
         $this->assertSame('unpaid_absence_previous_workday', $result['rule']);
     }
 
+    public function test_regular_holiday_unworked_denied_when_preceding_special_not_worked_despite_earlier_regular_worked(): void
+    {
+        $service = $this->service(
+            workedDates: ['2026-12-30'],
+            holidays: [
+                '2026-12-30' => ['id' => 10, 'date' => '2026-12-30', 'type' => 'regular', 'name' => 'Rizal Day'],
+                '2026-12-31' => ['id' => 31, 'date' => '2026-12-31', 'type' => 'special', 'name' => 'Last Day of the Year'],
+            ]
+        );
+        $holiday = ['id' => 20, 'date' => '2027-01-01', 'type' => 'regular', 'name' => "New Year's Day"];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2027-01-01', false, null);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('unpaid_absence_previous_workday', $result['rule']);
+    }
+
+    public function test_regular_holiday_unworked_qualifies_when_preceding_special_and_earlier_regular_both_worked(): void
+    {
+        $service = $this->service(
+            workedDates: ['2026-12-30', '2026-12-31'],
+            holidays: [
+                '2026-12-30' => ['id' => 10, 'date' => '2026-12-30', 'type' => 'regular', 'name' => 'Rizal Day'],
+                '2026-12-31' => ['id' => 31, 'date' => '2026-12-31', 'type' => 'special', 'name' => 'Last Day of the Year'],
+            ]
+        );
+        $holiday = ['id' => 20, 'date' => '2027-01-01', 'type' => 'regular', 'name' => "New Year's Day"];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2027-01-01', false, null);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('successive_special_holiday_worked_first', $result['rule']);
+    }
+
     public function test_special_holiday_no_work_no_pay_when_absent(): void
     {
         $service = $this->service();

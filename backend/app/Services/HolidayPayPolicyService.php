@@ -794,15 +794,19 @@ class HolidayPayPolicyService
                 ];
             }
 
-            if ($priorHoliday !== null && $priorType === 'special' && $kind === 'regular'
-                && (bool) ($policy['regular_unworked']['successive_holiday_rule'] ?? true)
-                && $this->workedOn($employee, $priorKey)) {
-                return [
-                    'date' => $includeDate ? $priorKey : null,
-                    'met' => true,
-                    'reason' => 'Work on the immediately preceding special non-working holiday qualifies the regular holiday.',
-                    'rule' => 'successive_special_holiday_worked_first',
-                ];
+            if ($priorHoliday !== null && $priorType === 'special' && $kind === 'regular') {
+                if ((bool) ($policy['regular_unworked']['successive_holiday_rule'] ?? true)
+                    && $this->workedOn($employee, $priorKey)) {
+                    return [
+                        'date' => $includeDate ? $priorKey : null,
+                        'met' => true,
+                        'reason' => 'Work on the immediately preceding special non-working holiday qualifies the regular holiday.',
+                        'rule' => 'successive_special_holiday_worked_first',
+                    ];
+                }
+
+                // Do not skip an unworked SNWH and inherit from an earlier regular holiday (e.g. Rizal Day → SNWH → New Year).
+                return $this->workdayAttendanceResult($employee, $priorKey, $attendance, $includeDate, 'preceding');
             }
 
             if ($this->shouldSkipDate($schedule, $cursor, $priorType, $attendance)) {

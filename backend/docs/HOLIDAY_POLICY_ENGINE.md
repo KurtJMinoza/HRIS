@@ -22,7 +22,7 @@ Holiday Pay Policy is part of the existing versioned `Policy` record and is edit
 - Company multipliers are clamped to statutory minimums and may only be more favorable.
 - The immediately preceding working day accepts attendance or approved paid leave. Rest/non-working days are skipped.
 - Successive regular holidays inherit the condition before the first holiday; working the first restores eligibility for the next.
-- When a special non-working holiday immediately precedes a regular holiday, working the special holiday qualifies unworked pay on the regular holiday.
+- When a special non-working holiday immediately precedes a regular holiday, working the special holiday qualifies unworked pay on the regular holiday; an unworked special holiday blocks inheritance from an earlier regular holiday.
 - Policies may apply to all current employment types or a selected set. `EmploymentTypeResolver` derives the same normalized type for the UI and payroll evaluation from current HRIS employee data.
 - Holiday coverage configured in the Holiday module remains authoritative.
 - Eligible unworked lines use `REGULAR_HOLIDAY_UNWORKED_PAY` and `SPECIAL_HOLIDAY_UNWORKED_PAY` and are generated without requiring a holiday attendance log.
