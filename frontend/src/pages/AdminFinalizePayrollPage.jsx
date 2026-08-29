@@ -35,6 +35,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 import { compareEmployeeRowsBySortKey, formatEmployeeName } from '@/lib/employeeSort'
+import { employmentStatusBadgeClassName, formatEmploymentStatusForViewer } from '@/lib/employmentStatus'
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -92,6 +93,14 @@ function formatDate(value) {
 
 function payrollEmployeeDisplayName(row) {
   return formatEmployeeName(row)
+}
+
+function payrollEmployeeStatusLabel(row, viewerIsAdminHr) {
+  return formatEmploymentStatusForViewer(
+    row?.employment_status,
+    row?.employment_status_label,
+    viewerIsAdminHr
+  )
 }
 
 function initials(name) {
@@ -1612,6 +1621,7 @@ export default function AdminFinalizePayrollPage() {
                         const isConsultantRow = Boolean(row?.consultant_fixed_payroll)
                           || String(row?.employment_status || '').toLowerCase().replace(/[-\s]+/g, '_') === 'consultant'
                           || String(row?.employment_type || '').toLowerCase().replace(/[-\s]+/g, '_') === 'consultant'
+                        const employmentStatusLabel = payrollEmployeeStatusLabel(row, isAdmin)
 
                         return (
                         <TableRow
@@ -1643,10 +1653,10 @@ export default function AdminFinalizePayrollPage() {
                                   <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium', roleBadgeMeta(employeeCompanyPosition(row)).className)}>
                                     {row?.employee_role_label || roleBadgeMeta(employeeCompanyPosition(row)).label}
                                   </span>
-                                  {row?.consultant_fixed_payroll || String(row?.employment_status || '').toLowerCase() === 'consultant' ? (
-                                    <Badge variant="outline" className="h-5 rounded-md border-amber-300 bg-amber-50 px-2 text-[10px] font-semibold uppercase tracking-normal text-amber-700">
-                                      Consultant
-                                    </Badge>
+                                  {employmentStatusLabel && employmentStatusLabel !== '—' ? (
+                                    <span className={employmentStatusBadgeClassName(row?.employment_status)}>
+                                      {employmentStatusLabel}
+                                    </span>
                                   ) : null}
                                   <span className="text-[11px] text-muted-foreground">{row.employee_code}</span>
                                   {periodFinalized && canSendRow && rowIsSent ? (
