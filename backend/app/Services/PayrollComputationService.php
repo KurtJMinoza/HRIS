@@ -4980,6 +4980,11 @@ class PayrollComputationService implements PayrollBulkComputation
             return;
         }
 
+        $worked = (bool) ($evaluation['worked'] ?? false);
+        if (! $worked && (bool) ($days[$index]['is_rest_day'] ?? false)) {
+            return;
+        }
+
         $previousPremium = round((float) ($days[$index]['holiday_premium_pay'] ?? 0), 2);
         $previousTotal = round((float) ($days[$index]['total_pay'] ?? 0), 2);
         $days[$index]['holiday_premium_pay'] = $amount;
@@ -4991,7 +4996,6 @@ class PayrollComputationService implements PayrollBulkComputation
 
         $normalizedType = $this->holidayEligibility->normalizeHolidayType($evaluation['holiday_type'] ?? null) ?? 'regular';
         $isRestDay = (bool) ($days[$index]['is_rest_day'] ?? false);
-        $worked = (bool) ($evaluation['worked'] ?? false);
         $componentCode = (string) ($evaluation['component_code'] ?? $this->holidayEligibility->holidayPayComponentCode(
             $normalizedType,
             ! $worked,

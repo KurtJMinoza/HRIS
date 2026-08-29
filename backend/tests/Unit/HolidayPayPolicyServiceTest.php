@@ -743,6 +743,46 @@ class HolidayPayPolicyServiceTest extends TestCase
         $this->assertSame('special_unworked_company_policy', $result['qualification']['rule']);
     }
 
+    public function test_unworked_special_holiday_pay_does_not_apply_on_scheduled_rest_day(): void
+    {
+        $service = $this->service();
+        $policy = $this->policyWithHolidayRules([
+            'special_unworked' => [
+                'unworked_pay_policy' => 'all_employment_types',
+                'holiday_selection_mode' => 'all_special_holidays',
+            ],
+        ]);
+        $holiday = ['date' => '2026-11-01', 'type' => 'special', 'name' => "All Saints' Day"];
+
+        $result = $service->computeHolidayPay($this->employee(), [
+            'date_key' => '2026-11-01',
+            'worked' => false,
+            'daily_rate' => 1000,
+            'is_rest_day' => true,
+        ], $holiday, $policy);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame(0.0, $result['holiday_premium_pay']);
+        $this->assertSame('unworked_holiday_on_rest_day', $result['qualification']['rule']);
+    }
+
+    public function test_unworked_regular_holiday_pay_does_not_apply_on_scheduled_rest_day(): void
+    {
+        $service = $this->service(workedDates: ['2026-06-11']);
+        $holiday = $this->regularHoliday('2026-06-12');
+
+        $result = $service->computeHolidayPay($this->employee(), [
+            'date_key' => '2026-06-12',
+            'worked' => false,
+            'daily_rate' => 1000,
+            'is_rest_day' => true,
+        ], $holiday);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame(0.0, $result['holiday_premium_pay']);
+        $this->assertSame('unworked_holiday_on_rest_day', $result['qualification']['rule']);
+    }
+
     public function test_special_unworked_attendance_defaults_to_no_previous_workday_requirement(): void
     {
         $service = app(HolidayPayPolicyService::class);

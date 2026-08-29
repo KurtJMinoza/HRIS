@@ -97,6 +97,26 @@ class HolidayPayPolicyService
         $requiredMinutes = (int) ($attendance['required_minutes'] ?? 480);
         $paidRegularMinutes = (int) ($attendance['paid_regular_minutes'] ?? 0);
 
+        if (! $worked && $isRestDay) {
+            $resolvedHolidayType = $this->rulesEngine->holidayTypeFromHolidayRow($holiday);
+
+            return [
+                'eligible' => false,
+                'qualification' => $this->result(
+                    false,
+                    true,
+                    'Unworked holiday pay does not apply on an employee scheduled rest day.',
+                    'unworked_holiday_on_rest_day'
+                ),
+                'unworked_multiplier' => 0.0,
+                'unworked_pay_source' => null,
+                'worked_first8_multiplier' => 1.0,
+                'rule_code' => $this->rulesEngine->resolveRuleCode(true, $resolvedHolidayType),
+                'holiday_premium_pay' => 0.0,
+                'breakdown' => null,
+            ];
+        }
+
         $resolvedPolicy = $this->resolveEffectivePolicy(
             $policy,
             $holiday,
