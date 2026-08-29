@@ -46,14 +46,22 @@ class HolidayPayPolicyService
     {
         $holiday ??= $this->holidayService->resolveHolidayForPayroll($employee, $holidayDate) ?? ['date' => $holidayDate];
         $resolved = $this->resolveEffectivePolicy($policy, $holiday, $employee->getEffectiveCompanyId());
-        return $this->precedingWorkdayRequirement($employee, $holidayDate, $resolved, [], true);
+        $kind = in_array($this->normalizeHolidayType($holiday['type'] ?? null), ['regular', 'double'], true)
+            ? 'regular'
+            : 'special';
+
+        return $this->precedingWorkdayRequirement($employee, $holidayDate, $resolved, [], true, $kind);
     }
 
     public function getFollowingQualifyingWorkday(User $employee, string $holidayDate, ?Policy $policy = null, ?array $holiday = null): array
     {
         $holiday ??= $this->holidayService->resolveHolidayForPayroll($employee, $holidayDate) ?? ['date' => $holidayDate];
         $resolved = $this->resolveEffectivePolicy($policy, $holiday, $employee->getEffectiveCompanyId());
-        return $this->followingWorkdayRequirement($employee, $holidayDate, $resolved, [], true);
+        $kind = in_array($this->normalizeHolidayType($holiday['type'] ?? null), ['regular', 'double'], true)
+            ? 'regular'
+            : 'special';
+
+        return $this->followingWorkdayRequirement($employee, $holidayDate, $resolved, [], true, $kind);
     }
 
     public function isQualifiedForUnworkedRegularHoliday(User $employee, array $holiday, string $dateKey, ?Policy $policy = null): bool
@@ -356,8 +364,8 @@ class HolidayPayPolicyService
         } elseif ($normalizedType === 'special' && ! $employmentTypeMatch) {
             $result = $this->result(false, true, 'Employee employment type is not selected for unworked special holiday pay.', 'special_employment_type_excluded');
         } elseif ($normalizedType === 'special') {
-            $attendance = (array) ($resolved['attendance'] ?? []);
-            $prevRequired = (bool) ($attendance['require_previous_workday_presence'] ?? true);
+            $attendance = $this->resolveUnworkedAttendanceRules($resolved, 'special');
+            $prevRequired = (bool) ($attendance['require_previous_workday_presence'] ?? false);
             $followRequired = (bool) ($attendance['require_following_workday_presence'] ?? false);
 
             if (! $prevRequired && ! $followRequired) {
@@ -368,7 +376,8 @@ class HolidayPayPolicyService
                     $dateKey,
                     $resolved,
                     $prevRequired,
-                    $followRequired
+                    $followRequired,
+                    'special'
                 );
                 $result = $this->result(
                     $qualification['met'],
@@ -386,7 +395,7 @@ class HolidayPayPolicyService
             && (bool) ($resolved['regular_unworked']['always_pay'] ?? false)) {
             $result = $this->result(true, true, 'Always Pay Regular Holiday policy override applies.', 'regular_always_pay_override');
         } else {
-            $attendance = (array) ($resolved['attendance'] ?? []);
+            $attendance = $this->resolveUnworkedAttendanceRules($resolved, 'regular');
             $prevRequired = (bool) ($attendance['require_previous_workday_presence'] ?? true);
             $followRequired = (bool) ($attendance['require_following_workday_presence'] ?? false);
 
@@ -398,7 +407,8 @@ class HolidayPayPolicyService
                     $dateKey,
                     $resolved,
                     $prevRequired,
-                    $followRequired
+                    $followRequired,
+                    'regular'
                 );
                 $result = $this->result(
                     $qualification['met'],
@@ -408,6 +418,11 @@ class HolidayPayPolicyService
                 );
             }
         }
+
+        $appliedAttendance = $this->resolveUnworkedAttendanceRules(
+            $resolved,
+            in_array($normalizedType, ['regular', 'double'], true) ? 'regular' : 'special'
+        );
 
         $payload = [
             'eligible' => $result['eligible'],
@@ -420,8 +435,8 @@ class HolidayPayPolicyService
             'employment_type_match' => $worked ? $workedEmploymentTypeMatch : $employmentTypeMatch,
             'worked_employment_type_rule' => $workedEmploymentRule,
             'worked_allowed_employment_types' => $workedAllowedEmploymentTypes,
-            'company_override' => ($resolved['attendance']['require_previous_workday_presence'] ?? true) === false
-                && ($resolved['attendance']['require_following_workday_presence'] ?? false) === false,
+            'company_override' => ($appliedAttendance['require_previous_workday_presence'] ?? true) === false
+                && ($appliedAttendance['require_following_workday_presence'] ?? false) === false,
             'holiday_scope_match' => $holidayScopeMatch,
             'rule' => $result['rule'],
         ];
@@ -712,15 +727,21 @@ class HolidayPayPolicyService
     }
 
     /** @return array{date: ?string, met: bool, reason: string, rule: string} */
-    private function precedingWorkdayRequirement(User $employee, string $dateKey, array $policy, array $visited, bool $includeDate = false): array
-    {
+    private function precedingWorkdayRequirement(
+        User $employee,
+        string $dateKey,
+        array $policy,
+        array $visited,
+        bool $includeDate = false,
+        string $kind = 'regular'
+    ): array {
         if (isset($visited[$dateKey]) || count($visited) > 370) {
             return ['date' => null, 'met' => false, 'reason' => 'Unable to resolve a preceding working day.', 'rule' => 'attendance_unresolved'];
         }
         $visited[$dateKey] = true;
         $cursor = Carbon::parse($dateKey)->subDay();
         $schedule = EmployeeScheduleResolver::resolve($employee);
-        $attendance = (array) ($policy['attendance'] ?? []);
+        $attendance = $this->resolveUnworkedAttendanceRules($policy, $kind);
 
         while (count($visited) <= 370) {
             $priorKey = $cursor->toDateString();
@@ -741,7 +762,7 @@ class HolidayPayPolicyService
                     ];
                 }
 
-                $chain = $this->precedingWorkdayRequirement($employee, $priorKey, $policy, $visited, $includeDate);
+                $chain = $this->precedingWorkdayRequirement($employee, $priorKey, $policy, $visited, $includeDate, $kind);
 
                 return [
                     'date' => $chain['date'],
@@ -767,9 +788,15 @@ class HolidayPayPolicyService
     }
 
     /** @return array{date: ?string, met: bool, reason: string, rule: string} */
-    private function followingWorkdayRequirement(User $employee, string $dateKey, array $policy, array $visited, bool $includeDate = false): array
-    {
-        $attendance = (array) ($policy['attendance'] ?? []);
+    private function followingWorkdayRequirement(
+        User $employee,
+        string $dateKey,
+        array $policy,
+        array $visited,
+        bool $includeDate = false,
+        string $kind = 'regular'
+    ): array {
+        $attendance = $this->resolveUnworkedAttendanceRules($policy, $kind);
         if (! ($attendance['require_following_workday_presence'] ?? false)) {
             return [
                 'date' => null,
@@ -828,18 +855,19 @@ class HolidayPayPolicyService
         string $dateKey,
         array $policy,
         bool $previousRequired,
-        bool $followingRequired
+        bool $followingRequired,
+        string $kind = 'regular'
     ): array {
         $preceding = null;
         if ($previousRequired) {
-            $preceding = $this->precedingWorkdayRequirement($employee, $dateKey, $policy, []);
+            $preceding = $this->precedingWorkdayRequirement($employee, $dateKey, $policy, [], false, $kind);
             if (! $preceding['met']) {
                 return $preceding;
             }
         }
 
         if ($followingRequired) {
-            return $this->followingWorkdayRequirement($employee, $dateKey, $policy, []);
+            return $this->followingWorkdayRequirement($employee, $dateKey, $policy, [], false, $kind);
         }
 
         if ($preceding !== null) {
@@ -1211,7 +1239,86 @@ class HolidayPayPolicyService
             $resolved['attendance'][$mandatory] = true;
         }
 
+        $resolved['attendance'] = $this->normalizeUnworkedAttendanceBlocks((array) ($resolved['attendance'] ?? []));
+
         return $resolved;
+    }
+
+    /**
+     * @param  array<string, mixed>  $attendance
+     * @return array<string, mixed>
+     */
+    private function normalizeUnworkedAttendanceBlocks(array $attendance): array
+    {
+        $legacyRegular = [
+            'require_previous_workday_presence' => (bool) ($attendance['require_previous_workday_presence'] ?? true),
+            'require_following_workday_presence' => (bool) ($attendance['require_following_workday_presence'] ?? false),
+            'paid_leave_qualifies_previous_workday' => (bool) ($attendance['paid_leave_qualifies_previous_workday'] ?? true),
+            'paid_leave_qualifies_following_workday' => (bool) ($attendance['paid_leave_qualifies_following_workday'] ?? true),
+        ];
+        $attendance['regular_unworked'] = array_merge(
+            $legacyRegular,
+            is_array($attendance['regular_unworked'] ?? null) ? $attendance['regular_unworked'] : []
+        );
+        $attendance['special_unworked'] = array_merge(
+            [
+                'require_previous_workday_presence' => false,
+                'require_following_workday_presence' => false,
+                'paid_leave_qualifies_previous_workday' => true,
+                'paid_leave_qualifies_following_workday' => true,
+            ],
+            is_array($attendance['special_unworked'] ?? null) ? $attendance['special_unworked'] : []
+        );
+        $attendance['require_previous_workday_presence'] = (bool) ($attendance['regular_unworked']['require_previous_workday_presence'] ?? true);
+        $attendance['require_following_workday_presence'] = (bool) ($attendance['regular_unworked']['require_following_workday_presence'] ?? false);
+        $attendance['paid_leave_qualifies_previous_workday'] = (bool) ($attendance['regular_unworked']['paid_leave_qualifies_previous_workday'] ?? true);
+        $attendance['paid_leave_qualifies_following_workday'] = (bool) ($attendance['regular_unworked']['paid_leave_qualifies_following_workday'] ?? true);
+
+        return $attendance;
+    }
+
+    /**
+     * @param  array<string, mixed>  $policy
+     * @return array<string, mixed>
+     */
+    private function resolveUnworkedAttendanceRules(array $policy, string $kind): array
+    {
+        $global = is_array($policy['attendance'] ?? null) ? $policy['attendance'] : [];
+        $blockKey = $kind === 'special' ? 'special_unworked' : 'regular_unworked';
+        $block = is_array($global[$blockKey] ?? null) ? $global[$blockKey] : [];
+
+        $defaults = $kind === 'special'
+            ? [
+                'require_previous_workday_presence' => false,
+                'require_following_workday_presence' => false,
+                'paid_leave_qualifies_previous_workday' => true,
+                'paid_leave_qualifies_following_workday' => true,
+            ]
+            : [
+                'require_previous_workday_presence' => true,
+                'require_following_workday_presence' => false,
+                'paid_leave_qualifies_previous_workday' => true,
+                'paid_leave_qualifies_following_workday' => true,
+            ];
+
+        $legacy = $kind === 'regular' ? [
+            'require_previous_workday_presence' => $global['require_previous_workday_presence'] ?? null,
+            'require_following_workday_presence' => $global['require_following_workday_presence'] ?? null,
+            'paid_leave_qualifies_previous_workday' => $global['paid_leave_qualifies_previous_workday'] ?? null,
+            'paid_leave_qualifies_following_workday' => $global['paid_leave_qualifies_following_workday'] ?? null,
+        ] : [];
+        $legacy = array_filter($legacy, static fn ($value) => $value !== null);
+
+        return array_merge(
+            [
+                'paid_leave_qualifies' => (bool) ($global['paid_leave_qualifies'] ?? true),
+                'skip_rest_days' => (bool) ($global['skip_rest_days'] ?? true),
+                'skip_company_non_working_days' => (bool) ($global['skip_company_non_working_days'] ?? true),
+            ],
+            $defaults,
+            $legacy,
+            $block
+        );
     }
 
     private function normalize(string $value): string

@@ -78,6 +78,18 @@ export const DEFAULT_HOLIDAY_POLICY = {
     paid_leave_qualifies_following_workday: true,
     skip_rest_days: true,
     skip_company_non_working_days: true,
+    regular_unworked: {
+      require_previous_workday_presence: true,
+      require_following_workday_presence: false,
+      paid_leave_qualifies_previous_workday: true,
+      paid_leave_qualifies_following_workday: true,
+    },
+    special_unworked: {
+      require_previous_workday_presence: false,
+      require_following_workday_presence: false,
+      paid_leave_qualifies_previous_workday: true,
+      paid_leave_qualifies_following_workday: true,
+    },
   },
   non_statutory: {
     special_working: { pay_as_ordinary_day: true },
@@ -101,6 +113,26 @@ export const NON_STATUTORY_HOLIDAY_TYPES = [
 export function normalizeHolidayPayPolicy(value) {
   const policy = value && typeof value === 'object' ? value : {}
   const attendance = { ...DEFAULT_HOLIDAY_POLICY.attendance, ...(policy.attendance || {}) }
+  const regularUnworkedAttendance = {
+    ...DEFAULT_HOLIDAY_POLICY.attendance.regular_unworked,
+    ...(attendance.regular_unworked || {}),
+  }
+  const specialUnworkedAttendance = {
+    ...DEFAULT_HOLIDAY_POLICY.attendance.special_unworked,
+    ...(attendance.special_unworked || {}),
+  }
+  if (policy.attendance?.require_previous_workday_presence !== undefined) {
+    regularUnworkedAttendance.require_previous_workday_presence = policy.attendance.require_previous_workday_presence !== false
+  }
+  if (policy.attendance?.require_following_workday_presence !== undefined) {
+    regularUnworkedAttendance.require_following_workday_presence = policy.attendance.require_following_workday_presence === true
+  }
+  if (policy.attendance?.paid_leave_qualifies_previous_workday !== undefined) {
+    regularUnworkedAttendance.paid_leave_qualifies_previous_workday = policy.attendance.paid_leave_qualifies_previous_workday !== false
+  }
+  if (policy.attendance?.paid_leave_qualifies_following_workday !== undefined) {
+    regularUnworkedAttendance.paid_leave_qualifies_following_workday = policy.attendance.paid_leave_qualifies_following_workday !== false
+  }
   const eligibility = { ...DEFAULT_HOLIDAY_POLICY.eligibility, ...(policy.eligibility || {}) }
   const regularUnworked = {
     ...DEFAULT_HOLIDAY_POLICY.regular_unworked,
@@ -189,10 +221,22 @@ export function normalizeHolidayPayPolicy(value) {
     },
     attendance: {
       ...attendance,
-      require_previous_workday_presence: attendance.require_previous_workday_presence !== false,
-      require_following_workday_presence: attendance.require_following_workday_presence === true,
-      paid_leave_qualifies_previous_workday: attendance.paid_leave_qualifies_previous_workday !== false,
-      paid_leave_qualifies_following_workday: attendance.paid_leave_qualifies_following_workday !== false,
+      regular_unworked: {
+        require_previous_workday_presence: regularUnworkedAttendance.require_previous_workday_presence !== false,
+        require_following_workday_presence: regularUnworkedAttendance.require_following_workday_presence === true,
+        paid_leave_qualifies_previous_workday: regularUnworkedAttendance.paid_leave_qualifies_previous_workday !== false,
+        paid_leave_qualifies_following_workday: regularUnworkedAttendance.paid_leave_qualifies_following_workday !== false,
+      },
+      special_unworked: {
+        require_previous_workday_presence: specialUnworkedAttendance.require_previous_workday_presence === true,
+        require_following_workday_presence: specialUnworkedAttendance.require_following_workday_presence === true,
+        paid_leave_qualifies_previous_workday: specialUnworkedAttendance.paid_leave_qualifies_previous_workday !== false,
+        paid_leave_qualifies_following_workday: specialUnworkedAttendance.paid_leave_qualifies_following_workday !== false,
+      },
+      require_previous_workday_presence: regularUnworkedAttendance.require_previous_workday_presence !== false,
+      require_following_workday_presence: regularUnworkedAttendance.require_following_workday_presence === true,
+      paid_leave_qualifies_previous_workday: regularUnworkedAttendance.paid_leave_qualifies_previous_workday !== false,
+      paid_leave_qualifies_following_workday: regularUnworkedAttendance.paid_leave_qualifies_following_workday !== false,
       paid_leave_qualifies: true,
       skip_rest_days: true,
       skip_company_non_working_days: true,
@@ -237,10 +281,22 @@ export function serializeHolidayPayPolicyForSave(policy) {
     },
     non_statutory: normalized.non_statutory,
     attendance: {
-      require_previous_workday_presence: normalized.attendance.require_previous_workday_presence !== false,
-      require_following_workday_presence: normalized.attendance.require_following_workday_presence === true,
-      paid_leave_qualifies_previous_workday: normalized.attendance.paid_leave_qualifies_previous_workday !== false,
-      paid_leave_qualifies_following_workday: normalized.attendance.paid_leave_qualifies_following_workday !== false,
+      require_previous_workday_presence: normalized.attendance.regular_unworked.require_previous_workday_presence !== false,
+      require_following_workday_presence: normalized.attendance.regular_unworked.require_following_workday_presence === true,
+      paid_leave_qualifies_previous_workday: normalized.attendance.regular_unworked.paid_leave_qualifies_previous_workday !== false,
+      paid_leave_qualifies_following_workday: normalized.attendance.regular_unworked.paid_leave_qualifies_following_workday !== false,
+      regular_unworked: {
+        require_previous_workday_presence: normalized.attendance.regular_unworked.require_previous_workday_presence !== false,
+        require_following_workday_presence: normalized.attendance.regular_unworked.require_following_workday_presence === true,
+        paid_leave_qualifies_previous_workday: normalized.attendance.regular_unworked.paid_leave_qualifies_previous_workday !== false,
+        paid_leave_qualifies_following_workday: normalized.attendance.regular_unworked.paid_leave_qualifies_following_workday !== false,
+      },
+      special_unworked: {
+        require_previous_workday_presence: normalized.attendance.special_unworked.require_previous_workday_presence === true,
+        require_following_workday_presence: normalized.attendance.special_unworked.require_following_workday_presence === true,
+        paid_leave_qualifies_previous_workday: normalized.attendance.special_unworked.paid_leave_qualifies_previous_workday !== false,
+        paid_leave_qualifies_following_workday: normalized.attendance.special_unworked.paid_leave_qualifies_following_workday !== false,
+      },
       paid_leave_qualifies: true,
       skip_rest_days: true,
       skip_company_non_working_days: true,

@@ -634,55 +634,106 @@ export function HolidayPayPolicyCard({
           <div>
             <h4 className="text-sm font-semibold text-foreground">Unworked holiday - attendance rules</h4>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Applied when evaluating unworked regular holiday pay, and special non-working unworked pay when enabled.
+              Configure attendance qualification separately for regular holidays and special non-working holidays.
             </p>
           </div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <ToggleRow
-              id="previous-workday-required"
-              checked={holidayPolicy.attendance.require_previous_workday_presence !== false}
-              onCheckedChange={(checked) =>
-                onPolicyChange(['attendance', 'require_previous_workday_presence'], Boolean(checked))
-              }
-              label="Require attendance on the preceding workday"
-              hint="Must be present (clock-in and clock-out) on the last workday before the holiday."
-            />
-            <ToggleRow
-              id="previous-workday-paid-leave"
-              checked={holidayPolicy.attendance.paid_leave_qualifies_previous_workday !== false}
-              onCheckedChange={(checked) =>
-                onPolicyChange(['attendance', 'paid_leave_qualifies_previous_workday'], Boolean(checked))
-              }
-              label="Allow paid leave on the preceding workday"
-              hint="Approved paid leave on the last workday before the holiday also qualifies."
-            />
-            <ToggleRow
-              id="following-workday-required"
-              checked={holidayPolicy.attendance.require_following_workday_presence === true}
-              onCheckedChange={(checked) =>
-                onPolicyChange(['attendance', 'require_following_workday_presence'], Boolean(checked))
-              }
-              label="Require attendance on the following workday"
-              hint="Must be present (clock-in and clock-out) on the first workday after the holiday."
-            />
-            <ToggleRow
-              id="following-workday-paid-leave"
-              checked={holidayPolicy.attendance.paid_leave_qualifies_following_workday !== false}
-              onCheckedChange={(checked) =>
-                onPolicyChange(['attendance', 'paid_leave_qualifies_following_workday'], Boolean(checked))
-              }
-              label="Allow paid leave on the following workday"
-              hint="Approved paid leave on the first workday after the holiday also qualifies."
-            />
-            <ToggleRow
-              id="successive-holiday-rule"
-              checked={holidayPolicy.regular_unworked.successive_holiday_rule !== false}
-              onCheckedChange={(checked) =>
-                onPolicyChange(['regular_unworked', 'successive_holiday_rule'], Boolean(checked))
-              }
-              label="Successive holiday rule"
-              hint="Back-to-back regular holidays share the first holiday's qualifying condition."
-            />
+
+          <div className="mt-4 space-y-4">
+            <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+              <h5 className="text-sm font-medium text-foreground">Regular Holiday</h5>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                <ToggleRow
+                  id="regular-previous-workday-required"
+                  checked={holidayPolicy.attendance.regular_unworked?.require_previous_workday_presence !== false}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'regular_unworked', 'require_previous_workday_presence'], Boolean(checked))
+                  }
+                  label="Require attendance on the preceding workday"
+                  hint="Must be present (clock-in and clock-out) on the last workday before the holiday."
+                />
+                <ToggleRow
+                  id="regular-previous-workday-paid-leave"
+                  checked={holidayPolicy.attendance.regular_unworked?.paid_leave_qualifies_previous_workday !== false}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'regular_unworked', 'paid_leave_qualifies_previous_workday'], Boolean(checked))
+                  }
+                  label="Allow paid leave on the preceding workday"
+                  hint="Approved paid leave on the last workday before the holiday also qualifies."
+                />
+                <ToggleRow
+                  id="regular-following-workday-required"
+                  checked={holidayPolicy.attendance.regular_unworked?.require_following_workday_presence === true}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'regular_unworked', 'require_following_workday_presence'], Boolean(checked))
+                  }
+                  label="Require attendance on the following workday"
+                  hint="Must be present (clock-in and clock-out) on the first workday after the holiday."
+                />
+                <ToggleRow
+                  id="regular-following-workday-paid-leave"
+                  checked={holidayPolicy.attendance.regular_unworked?.paid_leave_qualifies_following_workday !== false}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'regular_unworked', 'paid_leave_qualifies_following_workday'], Boolean(checked))
+                  }
+                  label="Allow paid leave on the following workday"
+                  hint="Approved paid leave on the first workday after the holiday also qualifies."
+                />
+                <ToggleRow
+                  id="successive-holiday-rule"
+                  checked={holidayPolicy.regular_unworked.successive_holiday_rule !== false}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['regular_unworked', 'successive_holiday_rule'], Boolean(checked))
+                  }
+                  label="Successive holiday rule"
+                  hint="Back-to-back regular holidays share the first holiday's qualifying condition."
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+              <h5 className="text-sm font-medium text-foreground">Special Non-Working Holiday</h5>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Default: regular employees receive unworked pay without requiring attendance before the holiday.
+              </p>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                <ToggleRow
+                  id="special-previous-workday-required"
+                  checked={holidayPolicy.attendance.special_unworked?.require_previous_workday_presence === true}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'special_unworked', 'require_previous_workday_presence'], Boolean(checked))
+                  }
+                  label="Require attendance on the preceding workday"
+                  hint="When enabled, the employee must be present on the last workday before the special holiday."
+                />
+                <ToggleRow
+                  id="special-previous-workday-paid-leave"
+                  checked={holidayPolicy.attendance.special_unworked?.paid_leave_qualifies_previous_workday !== false}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'special_unworked', 'paid_leave_qualifies_previous_workday'], Boolean(checked))
+                  }
+                  label="Allow paid leave on the preceding workday"
+                  hint="Approved paid leave on the last workday before the holiday also qualifies."
+                />
+                <ToggleRow
+                  id="special-following-workday-required"
+                  checked={holidayPolicy.attendance.special_unworked?.require_following_workday_presence === true}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'special_unworked', 'require_following_workday_presence'], Boolean(checked))
+                  }
+                  label="Require attendance on the following workday"
+                  hint="When enabled, the employee must be present on the first workday after the special holiday."
+                />
+                <ToggleRow
+                  id="special-following-workday-paid-leave"
+                  checked={holidayPolicy.attendance.special_unworked?.paid_leave_qualifies_following_workday !== false}
+                  onCheckedChange={(checked) =>
+                    onPolicyChange(['attendance', 'special_unworked', 'paid_leave_qualifies_following_workday'], Boolean(checked))
+                  }
+                  label="Allow paid leave on the following workday"
+                  hint="Approved paid leave on the first workday after the holiday also qualifies."
+                />
+              </div>
+            </div>
           </div>
         </section>
 

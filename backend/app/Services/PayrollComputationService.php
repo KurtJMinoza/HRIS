@@ -2708,6 +2708,7 @@ class PayrollComputationService implements PayrollBulkComputation
         $approvedUnpaidLeaveDays = 0.0;
         $unpaidAbsenceWithoutLeaveDays = 0.0;
         $approvedCorrectionDays = 0.0;
+        $unworkedHolidayDays = 0.0;
         $attendanceCounted = [];
         $attendanceExcluded = [];
         $unpaidAbsences = [];
@@ -2747,6 +2748,17 @@ class PayrollComputationService implements PayrollBulkComputation
             $isUnpaidAbsent = $resolution !== null
                 ? (bool) ($resolution['unpaid_absent_day'] ?? false)
                 : ! (bool) ($d['allowance_attendance_valid'] ?? false);
+            if ($isUnpaidAbsent && $this->dayQualifiesForUnworkedHolidayAllowanceProration($d)) {
+                $resolution = [
+                    'payable_day_unit' => 1.0,
+                    'reason' => 'unworked_holiday_pay',
+                    'sources' => array_merge(
+                        is_array($resolution) ? ($resolution['sources'] ?? []) : (array) ($d['allowance_attendance_sources'] ?? []),
+                        ['unworked_holiday_pay' => true]
+                    ),
+                ];
+                $isUnpaidAbsent = false;
+            }
             if ($isUnpaidAbsent) {
                 $isApprovedUnpaidLeave = $resolution !== null
                     && (bool) data_get($resolution, 'sources.approved_unpaid_leave', false);
@@ -2790,6 +2802,8 @@ class PayrollComputationService implements PayrollBulkComputation
                 $approvedPaidLeaveDays += $dayFraction;
             } elseif ($reason === 'approved_attendance_correction' || (bool) ($sources['approved_correction'] ?? false)) {
                 $approvedCorrectionDays += $dayFraction;
+            } elseif ($reason === 'unworked_holiday_pay') {
+                $unworkedHolidayDays += $dayFraction;
             } else {
                 $presentDays += $dayFraction;
             }
@@ -2821,6 +2835,7 @@ class PayrollComputationService implements PayrollBulkComputation
                 'approved_unpaid_leave_day_units' => round($approvedUnpaidLeaveDays, 6),
                 'unpaid_absence_without_leave_day_units' => round($unpaidAbsenceWithoutLeaveDays, 6),
                 'approved_correction_day_units' => round($approvedCorrectionDays, 6),
+                'unworked_holiday_day_units' => round($unworkedHolidayDays, 6),
                 'unpaid_absent_days' => round($unpaidAbsentDays, 6),
                 'non_deductible_days' => round($nonDeductibleDays, 6),
                 'worked_minutes' => 0,
@@ -2872,8 +2887,8 @@ class PayrollComputationService implements PayrollBulkComputation
             ];
         }
 
-        // Scheduled holidays still count toward the cutoff divisor, but allowance is
-        // payable only when the employee is present (or on approved leave/correction).
+        // Scheduled holidays count toward the cutoff divisor. Unworked RH/SNWH entitlement is
+        // applied later in computeScheduleAttendanceProrationForPeriod after holiday pay eval.
         $attendance = $this->resolveAllowanceAttendanceValidity($user, $dateKey, $timeIn, $timeOut, $tz);
         if ((bool) ($attendance['valid'] ?? false)) {
             return array_merge($attendance, [
@@ -3475,6 +3490,27 @@ class PayrollComputationService implements PayrollBulkComputation
         }
 
         return max(1, (int) config('payroll.working_days_per_month', 22));
+    }
+
+    /**
+     * Eligible unworked RH/SNWH pay counts as a paid day for allowance prorate even without attendance.
+     */
+    private function dayQualifiesForUnworkedHolidayAllowanceProration(array $day): bool
+    {
+        $evaluation = is_array($day['holiday_pay_evaluation'] ?? null) ? $day['holiday_pay_evaluation'] : null;
+        if ($evaluation !== null) {
+            if ((bool) ($evaluation['worked'] ?? false)) {
+                return false;
+            }
+
+            $shouldCreateUnworked = (bool) ($evaluation['should_create_unworked_holiday_pay'] ?? false);
+            $amount = round((float) ($evaluation['amount'] ?? 0), 2);
+            if ($shouldCreateUnworked && $amount > 0.0001) {
+                return true;
+            }
+        }
+
+        return $this->dayIsPremiumHolidayExcludedFromRegularAttendanceSummary($day);
     }
 
     /**

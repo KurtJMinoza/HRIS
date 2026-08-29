@@ -130,7 +130,7 @@ class HolidayPayPolicyServiceTest extends TestCase
 
     public function test_selected_special_holiday_receives_unworked_pay(): void
     {
-        $service = $this->service(workedDates: ['2026-08-20']);
+        $service = $this->service();
         $policy = $this->policyWithHolidayRules([
             'special_unworked' => [
                 'unworked_pay_policy' => 'all_employment_types',
@@ -143,12 +143,12 @@ class HolidayPayPolicyServiceTest extends TestCase
         $result = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, $policy);
 
         $this->assertTrue($result['eligible']);
-        $this->assertSame('present_previous_workday', $result['rule']);
+        $this->assertSame('special_unworked_company_policy', $result['rule']);
     }
 
     public function test_unselected_special_holiday_still_pays_employee_inside_holiday_scope(): void
     {
-        $service = $this->service(workedDates: ['2026-08-20']);
+        $service = $this->service();
         $policy = $this->policyWithHolidayRules([
             'special_unworked' => [
                 'unworked_pay_policy' => 'all_employment_types',
@@ -169,7 +169,7 @@ class HolidayPayPolicyServiceTest extends TestCase
 
         $this->assertTrue($result['holiday_scope_match']);
         $this->assertTrue($result['eligible']);
-        $this->assertSame('present_previous_workday', $result['rule']);
+        $this->assertSame('special_unworked_company_policy', $result['rule']);
     }
 
     public function test_admin_regular_holiday_coverage_pays_when_policy_unworked_pay_is_disabled(): void
@@ -478,7 +478,7 @@ class HolidayPayPolicyServiceTest extends TestCase
 
     public function test_special_holiday_company_policy_pays_covered_employee_when_absent(): void
     {
-        $service = $this->service(workedDates: ['2026-08-20']);
+        $service = $this->service();
         $policy = $this->policyWithHolidayRules([
             'pay_unworked_special' => true,
             'special_unworked' => [
@@ -491,12 +491,12 @@ class HolidayPayPolicyServiceTest extends TestCase
         $result = $service->evaluate($this->employee(), $holiday, '2026-08-21', false, $policy);
 
         $this->assertTrue($result['eligible']);
-        $this->assertSame('present_previous_workday', $result['rule']);
+        $this->assertSame('special_unworked_company_policy', $result['rule']);
     }
 
     public function test_special_company_policy_does_not_filter_by_employment_type(): void
     {
-        $service = $this->service(workedDates: ['2026-08-20']);
+        $service = $this->service();
         $policy = $this->policyWithHolidayRules([
             'pay_unworked_special' => true,
             'special_unworked' => [
@@ -505,17 +505,22 @@ class HolidayPayPolicyServiceTest extends TestCase
             ],
         ]);
         $holiday = ['date' => '2026-08-21', 'type' => 'special', 'name' => 'Special Day'];
-        $consultant = new User([
+        $consultant = new class([
             'employment_status' => 'regular',
             'employment_type' => 'consultant',
             'position' => 'Advisor',
             'schedule' => $this->employee()->schedule,
-        ]);
+        ]) extends User {
+            public function getEffectiveCompanyId(): ?int
+            {
+                return 1;
+            }
+        };
 
         $result = $service->evaluate($consultant, $holiday, '2026-08-21', false, $policy);
 
         $this->assertTrue($result['eligible']);
-        $this->assertSame('present_previous_workday', $result['rule']);
+        $this->assertSame('special_unworked_company_policy', $result['rule']);
     }
 
     public function test_regular_holiday_covered_employee_with_previous_attendance(): void
@@ -694,7 +699,7 @@ class HolidayPayPolicyServiceTest extends TestCase
 
     public function test_selected_regular_receives_unworked_special_holiday_pay(): void
     {
-        $service = $this->service(workedDates: ['2026-08-20']);
+        $service = $this->service();
         $policy = $this->policyWithHolidayRules([
             'special_unworked' => [
                 'unworked_pay_policy' => 'selected_employment_types',
@@ -712,6 +717,64 @@ class HolidayPayPolicyServiceTest extends TestCase
         $this->assertTrue($result['eligible']);
         $this->assertSame(1000.0, $result['holiday_premium_pay']);
         $this->assertSame('SPECIAL_HOLIDAY_UNWORKED_PAY', $result['breakdown']['component_code']);
+    }
+
+    public function test_regular_employee_receives_unworked_special_holiday_pay_without_prior_attendance(): void
+    {
+        $service = $this->service();
+        $policy = $this->policyWithHolidayRules([
+            'special_unworked' => [
+                'unworked_pay_policy' => 'selected_employment_types',
+                'holiday_selection_mode' => 'all_special_holidays',
+                'employment_type_mode' => 'selected_employment_types',
+                'eligible_employment_types' => ['regular'],
+            ],
+        ]);
+        $holiday = ['id' => 821, 'date' => '2026-08-21', 'type' => 'special', 'name' => 'Special Day'];
+
+        $result = $service->computeHolidayPay($this->employee(), [
+            'date_key' => '2026-08-21',
+            'worked' => false,
+            'daily_rate' => 1000,
+        ], $holiday, $policy);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame(1000.0, $result['holiday_premium_pay']);
+        $this->assertSame('special_unworked_company_policy', $result['qualification']['rule']);
+    }
+
+    public function test_special_unworked_attendance_defaults_to_no_previous_workday_requirement(): void
+    {
+        $service = app(HolidayPayPolicyService::class);
+        $method = new \ReflectionMethod(HolidayPayPolicyService::class, 'resolveUnworkedAttendanceRules');
+        $method->setAccessible(true);
+
+        /** @var array<string, mixed> $special */
+        $special = $method->invoke($service, Policy::DEFAULT_HOLIDAY_POLICY, 'special');
+        /** @var array<string, mixed> $regular */
+        $regular = $method->invoke($service, Policy::DEFAULT_HOLIDAY_POLICY, 'regular');
+
+        $this->assertFalse((bool) ($special['require_previous_workday_presence'] ?? true));
+        $this->assertTrue((bool) ($regular['require_previous_workday_presence'] ?? false));
+    }
+
+    public function test_special_unworked_can_require_previous_workday_when_policy_enabled(): void
+    {
+        $service = app(HolidayPayPolicyService::class);
+        $method = new \ReflectionMethod(HolidayPayPolicyService::class, 'resolveUnworkedAttendanceRules');
+        $method->setAccessible(true);
+        $policy = array_replace_recursive(Policy::DEFAULT_HOLIDAY_POLICY, [
+            'attendance' => [
+                'special_unworked' => [
+                    'require_previous_workday_presence' => true,
+                ],
+            ],
+        ]);
+
+        /** @var array<string, mixed> $special */
+        $special = $method->invoke($service, $policy, 'special');
+
+        $this->assertTrue((bool) ($special['require_previous_workday_presence'] ?? false));
     }
 
     #[DataProvider('belowMinimumRates')]

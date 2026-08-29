@@ -446,6 +446,16 @@ class PayPolicyController extends Controller
             'holiday_policy.attendance.paid_leave_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.paid_leave_qualifies_previous_workday' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.paid_leave_qualifies_following_workday' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.regular_unworked' => ['sometimes', 'array'],
+            'holiday_policy.attendance.regular_unworked.require_previous_workday_presence' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.regular_unworked.require_following_workday_presence' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.regular_unworked.paid_leave_qualifies_previous_workday' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.regular_unworked.paid_leave_qualifies_following_workday' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.special_unworked' => ['sometimes', 'array'],
+            'holiday_policy.attendance.special_unworked.require_previous_workday_presence' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.special_unworked.require_following_workday_presence' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.special_unworked.paid_leave_qualifies_previous_workday' => ['sometimes', 'boolean'],
+            'holiday_policy.attendance.special_unworked.paid_leave_qualifies_following_workday' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.official_business_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.training_qualifies' => ['sometimes', 'boolean'],
             'holiday_policy.attendance.paid_suspension_qualifies' => ['sometimes', 'boolean'],
@@ -607,6 +617,22 @@ class PayPolicyController extends Controller
             foreach (['require_previous_workday_presence', 'require_following_workday_presence', 'paid_leave_qualifies_previous_workday', 'paid_leave_qualifies_following_workday'] as $attendanceFlag) {
                 if (array_key_exists($attendanceFlag, $incoming['attendance'])) {
                     $merged['attendance'][$attendanceFlag] = (bool) $incoming['attendance'][$attendanceFlag];
+                    $merged['attendance']['regular_unworked'][$attendanceFlag] = (bool) $incoming['attendance'][$attendanceFlag];
+                }
+            }
+            foreach (['regular_unworked', 'special_unworked'] as $attendanceBlock) {
+                if (! isset($incoming['attendance'][$attendanceBlock]) || ! is_array($incoming['attendance'][$attendanceBlock])) {
+                    continue;
+                }
+                foreach (['require_previous_workday_presence', 'require_following_workday_presence', 'paid_leave_qualifies_previous_workday', 'paid_leave_qualifies_following_workday'] as $attendanceFlag) {
+                    if (array_key_exists($attendanceFlag, $incoming['attendance'][$attendanceBlock])) {
+                        $merged['attendance'][$attendanceBlock][$attendanceFlag] = (bool) $incoming['attendance'][$attendanceBlock][$attendanceFlag];
+                    }
+                }
+            }
+            if (isset($merged['attendance']['regular_unworked']) && is_array($merged['attendance']['regular_unworked'])) {
+                foreach (['require_previous_workday_presence', 'require_following_workday_presence', 'paid_leave_qualifies_previous_workday', 'paid_leave_qualifies_following_workday'] as $attendanceFlag) {
+                    $merged['attendance'][$attendanceFlag] = (bool) ($merged['attendance']['regular_unworked'][$attendanceFlag] ?? Policy::DEFAULT_HOLIDAY_POLICY['attendance'][$attendanceFlag] ?? false);
                 }
             }
         }

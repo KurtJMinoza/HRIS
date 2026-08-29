@@ -39,6 +39,18 @@ class Policy extends Model
             'paid_leave_qualifies_following_workday' => true,
             'skip_rest_days' => true,
             'skip_company_non_working_days' => true,
+            'regular_unworked' => [
+                'require_previous_workday_presence' => true,
+                'require_following_workday_presence' => false,
+                'paid_leave_qualifies_previous_workday' => true,
+                'paid_leave_qualifies_following_workday' => true,
+            ],
+            'special_unworked' => [
+                'require_previous_workday_presence' => false,
+                'require_following_workday_presence' => false,
+                'paid_leave_qualifies_previous_workday' => true,
+                'paid_leave_qualifies_following_workday' => true,
+            ],
         ],
         'regular_unworked' => [
             'unworked_pay_policy' => 'dole_default',
