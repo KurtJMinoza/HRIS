@@ -794,6 +794,17 @@ class HolidayPayPolicyService
                 ];
             }
 
+            if ($priorHoliday !== null && $priorType === 'special' && $kind === 'regular'
+                && (bool) ($policy['regular_unworked']['successive_holiday_rule'] ?? true)
+                && $this->workedOn($employee, $priorKey)) {
+                return [
+                    'date' => $includeDate ? $priorKey : null,
+                    'met' => true,
+                    'reason' => 'Work on the immediately preceding special non-working holiday qualifies the regular holiday.',
+                    'rule' => 'successive_special_holiday_worked_first',
+                ];
+            }
+
             if ($this->shouldSkipDate($schedule, $cursor, $priorType, $attendance)) {
                 $visited[$priorKey] = true;
                 $cursor->subDay();

@@ -462,6 +462,38 @@ class HolidayPayPolicyServiceTest extends TestCase
         $this->assertSame('successive_holiday_worked_first', $result['rule']);
     }
 
+    public function test_regular_holiday_unworked_qualifies_when_preceding_special_holiday_was_worked(): void
+    {
+        $service = $this->service(
+            workedDates: ['2026-12-24'],
+            holidays: [
+                '2026-12-24' => ['id' => 30, 'date' => '2026-12-24', 'type' => 'special', 'name' => 'Christmas Eve'],
+            ]
+        );
+        $holiday = ['id' => 20, 'date' => '2026-12-25', 'type' => 'regular', 'name' => 'Christmas Day'];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2026-12-25', false, null);
+
+        $this->assertTrue($result['eligible']);
+        $this->assertSame('successive_special_holiday_worked_first', $result['rule']);
+    }
+
+    public function test_regular_holiday_unworked_denied_when_preceding_special_holiday_not_worked(): void
+    {
+        $service = $this->service(
+            workedDates: [],
+            holidays: [
+                '2026-12-24' => ['id' => 30, 'date' => '2026-12-24', 'type' => 'special', 'name' => 'Christmas Eve'],
+            ]
+        );
+        $holiday = ['id' => 20, 'date' => '2026-12-25', 'type' => 'regular', 'name' => 'Christmas Day'];
+
+        $result = $service->evaluate($this->employee(), $holiday, '2026-12-25', false, null);
+
+        $this->assertFalse($result['eligible']);
+        $this->assertSame('unpaid_absence_previous_workday', $result['rule']);
+    }
+
     public function test_special_holiday_no_work_no_pay_when_absent(): void
     {
         $service = $this->service();
