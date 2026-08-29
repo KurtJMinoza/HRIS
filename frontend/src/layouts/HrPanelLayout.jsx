@@ -1,4 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom'
+import { useMemo } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { HrAppPathProvider } from '@/contexts/HrAppPathContext'
 import { buildAdminNav, buildManagerNav } from '@/config/rbacNav'
@@ -93,7 +94,10 @@ export function HrPanelLayout() {
     }
   }
 
-  const navItems = scope === 'admin' ? buildAdminNav(user) : buildManagerNav(user, hrBase)
+  const navItems = useMemo(
+    () => (scope === 'admin' ? buildAdminNav(user) : buildManagerNav(user, hrBase)),
+    [scope, user, hrBase],
+  )
   const role = scope === 'admin' ? 'admin' : 'manager'
 
   return (

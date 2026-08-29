@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback, memo } from 'react'
 import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   Sheet,
@@ -26,13 +26,18 @@ import { formatEmployeeName } from '@/lib/employeeSort'
 import { markLoginSplashShown } from '@/lib/loginSplash'
 import { dispatchDismissOverlays, scheduleRadixModalLockReset } from '@/lib/radixModalLock'
 import { prefetchOrgModule } from '@/lib/orgModuleNav'
+import { sidebarCollapseStore, useSidebarCollapsed } from '@/lib/sidebarCollapseStore'
 import { useSidebarNavRescue } from '@/hooks/useSidebarNavRescue'
 import { useEmployeeActivityTracking } from '@/hooks/useEmployeeActivityTracking'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
 import { UserAccountMenuContent } from '@/components/layout/UserAccountMenuContent'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
-const SIDEBAR_COLLAPSED_KEY = 'smartdtr_sidebar_collapsed'
+const SIDEBAR_TRANSITION_MS = 200
+const SIDEBAR_TRANSITION_CLASS = 'transition-[width,box-shadow] ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none'
+const SIDEBAR_EXPANDED_PANEL_HIDDEN = 'group-data-[sidebar-collapsed=true]/sidebar:pointer-events-none group-data-[sidebar-collapsed=true]/sidebar:invisible group-data-[sidebar-collapsed=true]/sidebar:absolute group-data-[sidebar-collapsed=true]/sidebar:inset-0 group-data-[sidebar-collapsed=true]/sidebar:-z-10 group-data-[sidebar-collapsed=true]/sidebar:opacity-0 group-data-[sidebar-collapsed=true]/sidebar:[content-visibility:hidden]'
+const SIDEBAR_COLLAPSED_PANEL_HIDDEN = 'group-data-[sidebar-collapsed=false]/sidebar:pointer-events-none group-data-[sidebar-collapsed=false]/sidebar:invisible group-data-[sidebar-collapsed=false]/sidebar:absolute group-data-[sidebar-collapsed=false]/sidebar:inset-0 group-data-[sidebar-collapsed=false]/sidebar:-z-10 group-data-[sidebar-collapsed=false]/sidebar:opacity-0 group-data-[sidebar-collapsed=false]/sidebar:[content-visibility:hidden]'
+const SIDEBAR_MAIN_OFFSET_CLASS = 'md:pl-[var(--hr-sidebar-width,4rem)] md:transition-[padding-left] md:ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:md:transition-none'
 
 const getItemKey = (item, parentKey = '') => item.to || `${parentKey}::${item.label || 'item'}`
 
@@ -207,23 +212,34 @@ function navNotificationModules(item) {
   return modules
 }
 
-function SidebarContent({
+function buildCollapsedRailItems(navItems, pathname, moduleCounts) {
+  return navItems.flatMap((item) => {
+    const to = item.to || getFirstLeafTo(item)
+    if (!to) return []
+    const moduleKeys = navNotificationModules(item)
+    const badgeCount = Array.from(moduleKeys).reduce(
+      (sum, module) => sum + Number(moduleCounts[module] || 0),
+      0,
+    )
+    const active = isItemActive(item, pathname) || hasActiveDescendant(item, pathname)
+    return [{
+      key: getItemKey(item),
+      to,
+      icon: item.icon,
+      label: item.label,
+      active,
+      badgeCount,
+    }]
+  })
+}
+
+const SidebarExpandedNav = memo(function SidebarExpandedNav({
   navItems,
-  homePath,
-  profilePath,
-  user,
-  currentUserDisplayName,
-  initials,
-  onLogout,
+  pathname,
+  moduleCounts,
   onNavClick,
   onNavIntent,
-  collapsed,
-  onToggleCollapse,
-  pathname,
-  moduleCounts = {},
-  navRef,
 }) {
-  const sidebarAvatarSrc = employeeAvatarSrc(user)
   const [manualExpanded, setManualExpanded] = useState({})
   const autoExpanded = useMemo(() => {
     const next = {}
@@ -242,57 +258,17 @@ function SidebarContent({
     return next
   }, [navItems, pathname])
 
-  useEffect(() => {
-    if (collapsed) return
-    const nav = navRef?.current
-    if (!nav) return
-    const activeEl = nav.querySelector(`[data-hr-sidebar-href="${CSS.escape(pathname)}"]`)
-    scrollSidebarNavItemIntoView(nav, activeEl)
-  }, [pathname, navItems, collapsed, autoExpanded, manualExpanded, navRef])
-
   const handleNavIntent = useCallback((to) => {
     onNavIntent?.(to)
   }, [onNavIntent])
 
-  function renderItem(item, depth = 0, parentKey = '') {
+  function renderExpandedItem(item, depth = 0, parentKey = '') {
     const key = getItemKey(item, parentKey)
     const children = Array.isArray(item?.children) ? item.children : []
     const hasChildren = children.length > 0
     const active = isItemActive(item, pathname) || hasActiveDescendant(item, pathname)
-    const leafTo = getFirstLeafTo(item)
     const moduleKeys = navNotificationModules(item)
     const badgeCount = Array.from(moduleKeys).reduce((sum, module) => sum + Number(moduleCounts[module] || 0), 0)
-
-    if (collapsed) {
-      const to = item.to || leafTo
-      if (!to) return null
-      return (
-        <Link
-          key={key}
-          to={to}
-          data-hr-sidebar-nav=""
-          data-hr-sidebar-href={to}
-          className={cn(
-            'relative mx-auto flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all duration-200',
-            active
-              ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
-              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
-          )}
-          onClick={() => {
-            handleNavIntent(to)
-            onNavClick?.()
-          }}
-          title={item.label}
-        >
-          {item.icon && <item.icon className="size-5 shrink-0" />}
-          {badgeCount > 0 ? (
-            <span className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground ring-1 ring-background">
-              {badgeCount > 9 ? '9+' : badgeCount}
-            </span>
-          ) : null}
-        </Link>
-      )
-    }
 
     if (hasChildren) {
       const defaultOpen = item.label === 'Administration' ? true : !!autoExpanded[key]
@@ -302,7 +278,7 @@ function SidebarContent({
           <button
             type="button"
             className={cn(
-              'flex w-full items-start gap-0 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-all duration-200',
+              'flex w-full items-start gap-0 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-colors duration-150',
               depth > 0 && 'ml-4',
               active
                 ? 'bg-orange-50 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300'
@@ -321,7 +297,7 @@ function SidebarContent({
           </button>
           {isOpen && (
             <div className="space-y-1">
-              {children.map((child) => renderItem(child, depth + 1, key))}
+              {children.map((child) => renderExpandedItem(child, depth + 1, key))}
             </div>
           )}
         </div>
@@ -339,7 +315,7 @@ function SidebarContent({
         data-hr-sidebar-href={item.to}
         className={({ isActive }) =>
           cn(
-            'flex items-start gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-all duration-200',
+            'flex items-start gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors duration-150',
             isActive
               ? 'border-l-2 border-orange-500 bg-orange-50 text-orange-600 shadow-sm ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
               : 'border-l-2 border-transparent text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
@@ -364,60 +340,124 @@ function SidebarContent({
   }
 
   return (
+    <div className={cn('sidebar-expanded flex flex-col gap-1 p-3', SIDEBAR_EXPANDED_PANEL_HIDDEN)}>
+      {navItems.map((item) => renderExpandedItem(item))}
+    </div>
+  )
+})
+
+const SidebarCollapsedRail = memo(function SidebarCollapsedRail({
+  navItems,
+  pathname,
+  moduleCounts,
+  onNavClick,
+  onNavIntent,
+}) {
+  const collapsedRailItems = useMemo(
+    () => buildCollapsedRailItems(navItems, pathname, moduleCounts),
+    [navItems, pathname, moduleCounts],
+  )
+
+  const handleNavIntent = useCallback((to) => {
+    onNavIntent?.(to)
+  }, [onNavIntent])
+
+  return (
+    <div className={cn('sidebar-collapsed flex flex-col gap-1 px-2 py-3', SIDEBAR_COLLAPSED_PANEL_HIDDEN)}>
+      {collapsedRailItems.map((item) => (
+        <Link
+          key={item.key}
+          to={item.to}
+          data-hr-sidebar-nav=""
+          data-hr-sidebar-href={item.to}
+          className={cn(
+            'relative flex size-10 items-center justify-center rounded-md text-sm font-medium transition-colors duration-150',
+            item.active
+              ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-100 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-500/25'
+              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+          )}
+          onClick={() => {
+            handleNavIntent(item.to)
+            onNavClick?.()
+          }}
+          title={item.label}
+        >
+          {item.icon ? <item.icon className="size-5 shrink-0" /> : null}
+          {item.badgeCount > 0 ? (
+            <span className="absolute right-0.5 top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[9px] font-bold text-destructive-foreground ring-1 ring-background">
+              {item.badgeCount > 9 ? '9+' : item.badgeCount}
+            </span>
+          ) : null}
+        </Link>
+      ))}
+    </div>
+  )
+})
+
+const SidebarContent = memo(function SidebarContent({
+  navItems,
+  homePath,
+  profilePath,
+  user,
+  currentUserDisplayName,
+  initials,
+  onLogout,
+  onNavClick,
+  onNavIntent,
+  collapsed,
+  onToggleCollapse,
+  pathname,
+  moduleCounts = {},
+  navRef,
+}) {
+  const sidebarAvatarSrc = employeeAvatarSrc(user)
+
+  return (
     <>
       <div
         className={cn(
-          'flex h-16 min-h-16 items-center border-b border-border/40',
-          collapsed ? 'justify-center px-1.5' : 'px-4'
+          'flex h-16 min-h-16 shrink-0 items-center border-b border-border/40',
+          collapsed ? 'w-16 justify-center px-1.5' : 'w-full px-4'
         )}
       >
         <Link
           to={homePath}
           className={cn(
-            'flex min-w-0 overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'flex overflow-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             collapsed
-              ? 'h-full max-h-15 w-full items-center justify-center py-2'
-              : 'items-center justify-start'
+              ? 'size-full items-center justify-center py-2'
+              : 'min-w-0 items-center justify-start'
           )}
           title={collapsed ? 'HRIS home' : undefined}
         >
           <AgcBrandLogo
             className={cn(
               collapsed
-                ? 'mx-auto max-h-11.5 w-full max-w-full object-contain object-center'
+                ? 'h-9 w-auto max-w-12 object-contain object-center'
                 : 'h-9 w-auto max-w-44 object-left'
             )}
           />
           <span className="sr-only">HRIS — home</span>
         </Link>
       </div>
-      <nav ref={navRef} className={cn('flex flex-1 flex-col gap-1 overflow-y-auto p-3', collapsed && 'px-2')}>
-        {navItems.map((item) => renderItem(item))}
+      <nav ref={navRef} className="relative flex flex-1 flex-col overflow-y-auto overflow-x-hidden">
+        <SidebarExpandedNav
+          navItems={navItems}
+          pathname={pathname}
+          moduleCounts={moduleCounts}
+          onNavClick={onNavClick}
+          onNavIntent={onNavIntent}
+        />
+        <SidebarCollapsedRail
+          navItems={navItems}
+          pathname={pathname}
+          moduleCounts={moduleCounts}
+          onNavClick={onNavClick}
+          onNavIntent={onNavIntent}
+        />
       </nav>
-      <div className={cn('border-t border-border/40 p-2', collapsed ? 'space-y-1' : 'space-y-2')}>
-        {collapsed ? (
-          <div className="space-y-1">
-            <Link
-              to={profilePath}
-              className="mx-auto flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
-              onClick={onNavClick}
-              title="Profile"
-            >
-              <User className="size-5" />
-            </Link>
-            <button
-              type="button"
-              className="mx-auto flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive"
-              onClick={async () => {
-                await onLogout?.()
-                onNavClick?.()
-              }}
-              title="Log out"
-            >
-              <LogOut className="size-5" />
-            </button>
-          </div>
-        ) : (
+      <div className={cn('shrink-0 border-t border-border/40 p-2', collapsed ? 'w-16 space-y-1' : 'w-full space-y-2')}>
+        <div className={cn(collapsed && 'pointer-events-none invisible absolute h-0 overflow-hidden opacity-0 [content-visibility:hidden]')} aria-hidden={collapsed}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -465,40 +505,155 @@ function SidebarContent({
               onNavClick={onNavClick}
             />
           </DropdownMenu>
-        )}
-        {collapsed ? (
-          <>
-            {onToggleCollapse && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="mx-auto size-9"
-                onClick={onToggleCollapse}
-                title="Expand sidebar"
-              >
-                <PanelLeft className="size-5" />
-              </Button>
-            )}
-            <p className="text-center text-[10px] text-muted-foreground" title="HRIS v1.0">v1</p>
-          </>
-        ) : (
-          <div className="flex items-center justify-between px-1">
-            <p className="text-xs text-muted-foreground">HRIS v1.0</p>
-            {onToggleCollapse && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={onToggleCollapse}
-                title="Collapse sidebar"
-              >
-                <PanelLeftClose className="size-4" />
-              </Button>
-            )}
-          </div>
-        )}
+        </div>
+        <div className={cn('space-y-1', !collapsed && 'pointer-events-none invisible absolute h-0 overflow-hidden opacity-0 [content-visibility:hidden]')} aria-hidden={!collapsed}>
+          <Link
+            to={profilePath}
+            className="flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+            onClick={onNavClick}
+            title="Profile"
+          >
+            <User className="size-5" />
+          </Link>
+          <button
+            type="button"
+            className="flex size-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive"
+            onClick={async () => {
+              await onLogout?.()
+              onNavClick?.()
+            }}
+            title="Log out"
+          >
+            <LogOut className="size-5" />
+          </button>
+        </div>
+        <div className={cn(collapsed ? 'space-y-1' : 'flex items-center justify-between px-1')}>
+          {collapsed ? (
+            <>
+              {onToggleCollapse && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-9"
+                  onClick={onToggleCollapse}
+                  title="Expand sidebar"
+                >
+                  <PanelLeft className="size-5" />
+                </Button>
+              )}
+              <p className="text-center text-[10px] text-muted-foreground" title="HRIS v1.0">v1</p>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground">HRIS v1.0</p>
+              {onToggleCollapse && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  onClick={onToggleCollapse}
+                  title="Collapse sidebar"
+                >
+                  <PanelLeftClose className="size-4" />
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </>
+  )
+})
+
+function SidebarToggleButton() {
+  const collapsed = useSidebarCollapsed()
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="hidden shrink-0 md:flex size-9"
+      onClick={() => sidebarCollapseStore.toggle()}
+      title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      aria-expanded={!collapsed}
+    >
+      {collapsed ? (
+        <PanelLeft className="size-5 text-muted-foreground" />
+      ) : (
+        <PanelLeftClose className="size-5 text-muted-foreground" />
+      )}
+    </Button>
+  )
+}
+
+function DesktopSidebar({
+  navItems,
+  homePath,
+  profilePath,
+  user,
+  currentUserDisplayName,
+  initials,
+  onLogout,
+  onNavIntent,
+  pathname,
+  moduleCounts,
+  treatAsHrPanel,
+}) {
+  const collapsed = useSidebarCollapsed()
+  const navRef = useRef(null)
+
+  useEffect(() => {
+    if (!treatAsHrPanel) return
+    const activeLeaf = flattenNavItems(navItems).find(
+      (item) => pathname === item.to || pathname.startsWith(`${item.to}/`),
+    )
+    if (!activeLeaf?.to) return
+    const isNestedActive = navItems.some(
+      (group) => Array.isArray(group.children) && group.children.some((child) => child.to === activeLeaf.to),
+    )
+    if (isNestedActive && sidebarCollapseStore.getCollapsed()) {
+      sidebarCollapseStore.setCollapsed(false)
+    }
+  }, [pathname, navItems, treatAsHrPanel])
+
+  useEffect(() => {
+    if (collapsed) return
+    const nav = navRef.current
+    if (!nav) return
+    const activeEl = nav.querySelector(`[data-hr-sidebar-href="${CSS.escape(pathname)}"]`)
+    scrollSidebarNavItemIntoView(nav, activeEl)
+  }, [pathname, navItems, collapsed])
+
+  return (
+    <aside
+      data-hr-sidebar=""
+      data-sidebar-collapsed={collapsed ? 'true' : 'false'}
+      className={cn(
+        'group/sidebar fixed inset-y-0 left-0 z-40 hidden flex-col overflow-hidden border-r border-sidebar-border/70 bg-sidebar text-sidebar-foreground shadow-[4px_0_24px_-18px_rgba(15,23,42,0.18)] contain-[layout_style] will-change-[width] dark:border-sidebar-border/50 dark:shadow-[4px_0_36px_-18px_rgba(0,0,0,0.5)] md:flex',
+        SIDEBAR_TRANSITION_CLASS,
+        collapsed ? 'w-16' : 'w-64',
+      )}
+      style={{ transitionDuration: `${SIDEBAR_TRANSITION_MS}ms` }}
+    >
+      <div className="flex h-full w-64 min-w-64 flex-col">
+        <SidebarContent
+          navItems={navItems}
+          homePath={homePath}
+          profilePath={profilePath}
+          user={user}
+          currentUserDisplayName={currentUserDisplayName}
+          initials={initials}
+          onLogout={onLogout}
+          onNavClick={() => {}}
+          onNavIntent={onNavIntent}
+          collapsed={collapsed}
+          onToggleCollapse={() => sidebarCollapseStore.toggle()}
+          pathname={pathname}
+          moduleCounts={moduleCounts}
+          navRef={navRef}
+        />
+      </div>
+    </aside>
   )
 }
 
@@ -530,13 +685,6 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     scheduleRadixModalLockReset()
   }, [location.pathname])
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
-    } catch {
-      return false
-    }
-  })
   const {
     items: notificationItems,
     unreadCount: notificationCount,
@@ -545,14 +693,6 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
     markAllRead: markAllNotificationsReadBackend,
   } = useNotifications()
   const [notificationTab, setNotificationTab] = useState('all')
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0')
-    } catch {
-      // ignore
-    }
-  }, [sidebarCollapsed])
 
   async function handleLogout() {
     await logout()
@@ -629,23 +769,8 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   const [employeesLoading, setEmployeesLoading] = useState(false)
   const requestSeqRef = useRef(0)
   const closeTimeoutRef = useRef(null)
-  const sidebarNavRef = useRef(null)
 
   const trimmedQuery = searchQuery.trim()
-
-  useEffect(() => {
-    if (!treatAsHrPanel) return
-    const activeLeaf = flattenNavItems(navItems).find(
-      (item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`),
-    )
-    if (!activeLeaf?.to) return
-    const isNestedActive = navItems.some(
-      (group) => Array.isArray(group.children) && group.children.some((child) => child.to === activeLeaf.to),
-    )
-    if (isNestedActive && sidebarCollapsed) {
-      setSidebarCollapsed(false)
-    }
-  }, [location.pathname, navItems, sidebarCollapsed, treatAsHrPanel])
 
   const pageSuggestions = useMemo(() => {
     if (!isHrPanelSearch) return { pages: [], settings: [] }
@@ -760,40 +885,29 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-white dark:bg-background md:flex-row">
-      {/* Desktop sidebar – collapsible, no border */}
-      <aside
-        data-hr-sidebar=""
-        className={cn(
-          'hidden flex-col border-r border-sidebar-border/70 bg-sidebar text-sidebar-foreground shadow-[4px_0_24px_-18px_rgba(15,23,42,0.18)] transition-[width] duration-200 ease-in-out dark:border-sidebar-border/50 dark:shadow-[4px_0_36px_-18px_rgba(0,0,0,0.5)] md:flex',
-          sidebarCollapsed ? 'w-16' : 'w-64'
-        )}
-      >
-        <SidebarContent
-          navItems={navItems}
-          homePath={homePath}
-          profilePath={profilePath}
-          user={user}
-          currentUserDisplayName={currentUserDisplayName}
-          initials={initials}
-          onLogout={handleLogout}
-          onNavClick={() => {}}
-          onNavIntent={handleSidebarNavIntent}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-          pathname={location.pathname}
-          moduleCounts={notificationModuleCounts}
-          navRef={sidebarNavRef}
-        />
-      </aside>
+    <div className="flex min-h-screen flex-col bg-white dark:bg-background">
+      <DesktopSidebar
+        navItems={navItems}
+        homePath={homePath}
+        profilePath={profilePath}
+        user={user}
+        currentUserDisplayName={currentUserDisplayName}
+        initials={initials}
+        onLogout={handleLogout}
+        onNavIntent={handleSidebarNavIntent}
+        pathname={location.pathname}
+        moduleCounts={notificationModuleCounts}
+        treatAsHrPanel={treatAsHrPanel}
+      />
 
-      {/* @container: layout padding/title use container breakpoints so zoom + expanded sidebar
-          (narrow main column) still get “small canvas” styles; viewport-only md:/lg: would misfire. */}
+      {/* Main column tracks --hr-sidebar-width (synced in sidebarCollapseStore) for push layout without React re-renders. */}
       <div
         className={cn(
-          '@container flex min-h-0 flex-1 flex-col min-w-0 w-full bg-white dark:bg-background',
+          '@container flex min-h-0 min-w-0 w-full flex-1 flex-col bg-white dark:bg-background',
+          SIDEBAR_MAIN_OFFSET_CLASS,
           'dark:dashboard-content-canvas'
         )}
+        style={{ transitionDuration: `${SIDEBAR_TRANSITION_MS}ms` }}
       >
         {/* Mobile: sheet menu — inside content canvas so dark gradient matches the sticky bar */}
         <header
@@ -844,20 +958,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
           )}
         >
           <div className="flex min-h-10 min-w-0 items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="hidden shrink-0 md:flex size-9"
-              onClick={() => setSidebarCollapsed((c) => !c)}
-              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              {sidebarCollapsed ? (
-                <PanelLeft className="size-5 text-muted-foreground" />
-              ) : (
-                <PanelLeftClose className="size-5 text-muted-foreground" />
-              )}
-            </Button>
+            <SidebarToggleButton />
             <div className="min-w-0 w-full max-w-md flex-1 @md:max-w-lg">
             {isHrPanelSearch ? (
               <Popover open={searchOpen} onOpenChange={setSearchOpen}>
