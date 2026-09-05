@@ -3334,6 +3334,57 @@ export async function getPayrollRunCompanyPayrollDeductionsXlsxBlob(batchRunId, 
   return res.blob()
 }
 
+/** List finalized regular-payroll cutoffs available for bank export. */
+export async function getBankPayrollExportCutoffs() {
+  const res = await authenticatedFetch('/bank-payroll-export/cutoffs', { timeoutMs: 60000 })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load bank payroll cutoffs')
+  return data
+}
+
+/** Preview eligible employees for a cutoff-wide bank payroll export (all finalized companies). */
+export async function getBankPayrollExportPreviewByCutoff(fromDate, toDate, bankCode = 'AUB') {
+  const qs = new URLSearchParams({
+    from_date: String(fromDate),
+    to_date: String(toDate),
+  })
+  const res = await authenticatedFetch(
+    `/bank-payroll-export/${encodeURIComponent(String(bankCode))}/preview?${qs.toString()}`,
+    { timeoutMs: 60000 }
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to preview Bank Payroll Export')
+  return data
+}
+
+async function fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, format) {
+  const qs = new URLSearchParams({
+    from_date: String(fromDate),
+    to_date: String(toDate),
+  })
+  const res = await authenticatedFetch(
+    `/bank-payroll-export/${encodeURIComponent(String(bankCode))}/${encodeURIComponent(String(format))}?${qs.toString()}`,
+    { timeoutMs: 120000 }
+  )
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.message || `Failed to download Bank Payroll Export ${format.toUpperCase()}`)
+  }
+  return res.blob()
+}
+
+export async function getBankPayrollExportXlsxBlobByCutoff(fromDate, toDate, bankCode = 'AUB') {
+  return fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, 'xlsx')
+}
+
+export async function getBankPayrollExportCsvBlobByCutoff(fromDate, toDate, bankCode = 'AUB') {
+  return fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, 'csv')
+}
+
+export async function getBankPayrollExportPdfBlobByCutoff(fromDate, toDate, bankCode = 'AUB') {
+  return fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, 'pdf')
+}
+
 // ——— EXECOM payroll & employee management ———
 
 function execomQueryString(params = {}) {

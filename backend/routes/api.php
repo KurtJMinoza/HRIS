@@ -70,6 +70,7 @@ use App\Http\Controllers\EmployeeSkillController;
 use App\Http\Controllers\MyScheduleController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PasswordResetController;
+use App\Http\Controllers\BankPayrollExportController;
 use App\Http\Controllers\PayrollReportController;
 use App\Http\Controllers\PayslipDownloadController;
 use App\Http\Controllers\PresenceFilingController;
@@ -770,6 +771,27 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/payroll-runs/{id}/company/{companyId}/payroll-deductions-report/xlsx', [PayrollReportController::class, 'downloadDeductionsExcelForRunCompany'])
                 ->whereNumber('id')
                 ->whereNumber('companyId');
+            Route::get('/bank-payroll-export/cutoffs', [BankPayrollExportController::class, 'cutoffs']);
+            Route::get('/bank-payroll-export/{bank}/preview', [BankPayrollExportController::class, 'previewByCutoff'])
+                ->where('bank', '[A-Za-z0-9]+');
+            Route::get('/bank-payroll-export/{bank}/xlsx', [BankPayrollExportController::class, 'downloadXlsxByCutoff'])
+                ->where('bank', '[A-Za-z0-9]+');
+            Route::get('/bank-payroll-export/{bank}/csv', [BankPayrollExportController::class, 'downloadCsvByCutoff'])
+                ->where('bank', '[A-Za-z0-9]+');
+            Route::get('/bank-payroll-export/{bank}/pdf', [BankPayrollExportController::class, 'downloadPdfByCutoff'])
+                ->where('bank', '[A-Za-z0-9]+');
+            Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/preview', [BankPayrollExportController::class, 'preview'])
+                ->whereNumber('id')
+                ->where('bank', '[A-Za-z0-9]+');
+            Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/xlsx', [BankPayrollExportController::class, 'downloadXlsx'])
+                ->whereNumber('id')
+                ->where('bank', '[A-Za-z0-9]+');
+            Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/csv', [BankPayrollExportController::class, 'downloadCsv'])
+                ->whereNumber('id')
+                ->where('bank', '[A-Za-z0-9]+');
+            Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/pdf', [BankPayrollExportController::class, 'downloadPdf'])
+                ->whereNumber('id')
+                ->where('bank', '[A-Za-z0-9]+');
             Route::get('/reports/payroll-report', [PayrollReportController::class, 'downloadFromReports']);
             Route::get('/reports/payroll-report/xlsx', [PayrollReportController::class, 'downloadExcelFromReports']);
             Route::get('/reports/payroll-deductions-report', [PayrollReportController::class, 'downloadDeductionsFromReports']);

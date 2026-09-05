@@ -22,6 +22,10 @@ import {
   getPayrollRunCompanyPayrollReportXlsxBlob,
   getPayrollRunCompanyPayrollDeductionsPdfBlob,
   getPayrollRunCompanyPayrollDeductionsXlsxBlob,
+  getBankPayrollExportXlsxBlobByCutoff,
+  getBankPayrollExportCsvBlobByCutoff,
+  getBankPayrollExportPdfBlobByCutoff,
+  getBankPayrollExportCutoffs,
   getExecomPayrollReportPdfBlob,
   getExecomPayrollDeductionsPdfBlob,
   getConsultantPayrollReportPdfBlob,
@@ -69,6 +73,7 @@ import {
   FileSpreadsheet,
   FileText,
   Layers,
+  Landmark,
   Loader2,
   MapPin,
   RefreshCw,
@@ -95,6 +100,8 @@ const SELECT_TRIGGER =
   'h-11 rounded-xl border-border/80 bg-background/95 px-3.5 text-sm font-semibold text-foreground shadow-sm shadow-slate-900/5 transition-all duration-200 hover:border-brand/45 hover:bg-card focus-visible:border-brand/60 focus-visible:ring-brand/20 data-[placeholder]:text-muted-foreground dark:bg-input/45 dark:hover:bg-input/60 [&_[data-select-option-avatar]]:h-7 [&_[data-select-option-avatar]]:w-7 [&_[data-select-option-avatar]]:rounded-lg [&_[data-select-option-subtitle]]:hidden [&_[data-select-option-title]]:truncate'
 const SELECT_CONTENT =
   'max-h-80 rounded-2xl border-border/80 bg-popover/95 p-1.5 shadow-2xl shadow-slate-900/15 backdrop-blur-xl dark:shadow-black/40'
+const RECENT_HEADER_ACTION_BTN =
+  'shrink-0 rounded-lg border border-border/80 bg-background font-medium text-foreground shadow-sm hover:border-border hover:bg-muted/40 dark:border-input dark:bg-input/35 dark:hover:bg-input/50'
 const SELECT_ITEM =
   'min-h-11 rounded-xl px-3 py-2.5 pr-9 text-sm font-medium transition-colors focus:bg-brand/10 focus:text-brand data-[state=checked]:bg-brand/10 data-[state=checked]:text-brand'
 const DEMO_ORG_NAME_PATTERN = /^(company\s+[ab]|acme\s+(corp|group))$/i
@@ -120,6 +127,10 @@ function parsePayDate(value) {
   if (value == null || value === '') return null
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? null : d
+}
+
+function payCutoffKey(fromDate, toDate) {
+  return `${String(fromDate || '').slice(0, 10)}|${String(toDate || '').slice(0, 10)}`
 }
 
 function formatPayPeriodRange(start, end) {
@@ -423,6 +434,11 @@ export default function AdminGeneratePayslipsPage() {
   const [payrollDeductionsDownloadingBatchId, setPayrollDeductionsDownloadingBatchId] = useState(null)
   const [payrollReportExcelDownloadingBatchId, setPayrollReportExcelDownloadingBatchId] = useState(null)
   const [payrollDeductionsExcelDownloadingBatchId, setPayrollDeductionsExcelDownloadingBatchId] = useState(null)
+  const [bankPayrollExportDownloadingFormat, setBankPayrollExportDownloadingFormat] = useState(null)
+  const [bankExportDialogOpen, setBankExportDialogOpen] = useState(false)
+  const [bankExportCutoffOptions, setBankExportCutoffOptions] = useState([])
+  const [bankExportDialogCutoffKey, setBankExportDialogCutoffKey] = useState('')
+  const [bankExportCutoffsLoading, setBankExportCutoffsLoading] = useState(false)
   /** @type {import('react').MutableRefObject<AbortController|null>} */
   const bulkDownloadAbortRef = useRef(null)
   const [bulkDownloadProgress, setBulkDownloadProgress] = useState(null)
@@ -440,6 +456,42 @@ export default function AdminGeneratePayslipsPage() {
   const [batchEstimateLoading, setBatchEstimateLoading] = useState(false)
 
   const RECENT_LIST_PER_PAGE = 15
+
+  const bankExportCutoff = useMemo(() => {
+    if (!bankExportDialogCutoffKey) return null
+    return bankExportCutoffOptions.find((option) => option.key === bankExportDialogCutoffKey) || null
+  }, [bankExportDialogCutoffKey, bankExportCutoffOptions])
+
+  const loadBankExportCutoffs = useCallback(async () => {
+    if (isDedicatedPayrollModule || !canBulkDownloadPayslipZip) return
+    setBankExportCutoffsLoading(true)
+    try {
+      const data = await getBankPayrollExportCutoffs()
+      const options = Array.isArray(data?.cutoffs) ? data.cutoffs : []
+      setBankExportCutoffOptions(options)
+      setBankExportDialogCutoffKey((prev) => {
+        if (prev && options.some((option) => option.key === prev)) return prev
+        const formKey = payCutoffKey(fromDate, toDate)
+        if (formKey !== '|' && options.some((option) => option.key === formKey)) return formKey
+        return options[0]?.key || ''
+      })
+    } catch (e) {
+      setBankExportCutoffOptions([])
+      setBankExportDialogCutoffKey('')
+      toast({
+        title: 'Bank payroll cutoffs',
+        description: e.message || 'Failed to load finalized pay cutoffs.',
+        variant: 'destructive',
+      })
+    } finally {
+      setBankExportCutoffsLoading(false)
+    }
+  }, [canBulkDownloadPayslipZip, fromDate, isDedicatedPayrollModule, toDate, toast])
+
+  const handleOpenBankExportDialog = () => {
+    setBankExportDialogOpen(true)
+    void loadBankExportCutoffs()
+  }
 
   const loadMeta = useCallback(async () => {
     try {
@@ -697,9 +749,13 @@ export default function AdminGeneratePayslipsPage() {
   useEffect(() => {
     const onFinalized = () => {
       loadCompanySummary()
+      if (bankExportDialogOpen) void loadBankExportCutoffs()
     }
     const onStorage = (e) => {
-      if (e.key === 'hr:payroll-finalized-at') loadCompanySummary()
+      if (e.key === 'hr:payroll-finalized-at') {
+        loadCompanySummary()
+        if (bankExportDialogOpen) void loadBankExportCutoffs()
+      }
     }
     if (typeof window !== 'undefined') {
       window.addEventListener('hr:payroll-finalized', onFinalized)
@@ -715,7 +771,7 @@ export default function AdminGeneratePayslipsPage() {
         window.removeEventListener('focus', onFinalized)
       }
     }
-  }, [loadCompanySummary])
+  }, [loadCompanySummary, loadBankExportCutoffs, bankExportDialogOpen])
 
   const selectedCompany = useMemo(
     () => companies.find((c) => String(c.id) === String(companyId)),
@@ -1121,6 +1177,38 @@ export default function AdminGeneratePayslipsPage() {
       })
     } finally {
       setPayrollDeductionsExcelDownloadingBatchId(null)
+    }
+  }
+
+  const handleDownloadBankPayrollExport = async (format, bankCode = 'AUB') => {
+    if (!bankExportCutoff || bankPayrollExportDownloadingFormat != null) return
+    if (!canBulkDownloadPayslipZip || isDedicatedPayrollModule) return
+
+    setBankPayrollExportDownloadingFormat(format)
+    try {
+      const { from_date: cutoffFrom, to_date: cutoffTo } = bankExportCutoff
+      const blob = format === 'xlsx'
+        ? await getBankPayrollExportXlsxBlobByCutoff(cutoffFrom, cutoffTo, bankCode)
+        : format === 'csv'
+          ? await getBankPayrollExportCsvBlobByCutoff(cutoffFrom, cutoffTo, bankCode)
+          : await getBankPayrollExportPdfBlobByCutoff(cutoffFrom, cutoffTo, bankCode)
+      const start = cutoffFrom.replace(/-/g, '')
+      const end = cutoffTo.replace(/-/g, '')
+      const ext = format === 'xlsx' ? 'xlsx' : format === 'csv' ? 'csv' : 'pdf'
+      savePdfBlob(blob, `Bank_Payroll_Export_${bankCode}_All_Companies_${start}_${end}.${ext}`)
+      toast({
+        title: 'Bank Payroll Export downloaded',
+        description: `${bankCode} ${format.toUpperCase()} for ${formatPayPeriodRange(cutoffFrom, cutoffTo)} — all finalized companies, sorted alphabetically.`,
+      })
+      setBankExportDialogOpen(false)
+    } catch (e) {
+      toast({
+        title: 'Bank Payroll Export failed',
+        description: e.message || 'Could not download Bank Payroll Export.',
+        variant: 'destructive',
+      })
+    } finally {
+      setBankPayrollExportDownloadingFormat(null)
     }
   }
 
@@ -1980,13 +2068,30 @@ export default function AdminGeneratePayslipsPage() {
                   />
                 </SelectContent>
               </Select>
+              {!isDedicatedPayrollModule && canBulkDownloadPayslipZip ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleOpenBankExportDialog}
+                  disabled={listLoading || bankPayrollExportDownloadingFormat != null}
+                  className={RECENT_HEADER_ACTION_BTN}
+                >
+                  {bankPayrollExportDownloadingFormat ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Landmark className="mr-2 h-4 w-4" />
+                  )}
+                  Bank Payroll Export (AUB)
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={loadCompanySummary}
                 disabled={listLoading}
-                className="shrink-0 rounded-lg"
+                className={RECENT_HEADER_ACTION_BTN}
               >
                 <RefreshCw className={`mr-2 h-4 w-4 ${listLoading ? 'animate-spin' : ''}`} />
                 Refresh
@@ -2294,6 +2399,114 @@ export default function AdminGeneratePayslipsPage() {
             ) : null}
           </CardContent>
         </Card>
+
+        {/* ── Bank Payroll Export Dialog ── */}
+        <Dialog
+          open={bankExportDialogOpen}
+          onOpenChange={(open) => {
+            if (bankPayrollExportDownloadingFormat == null) setBankExportDialogOpen(open)
+          }}
+        >
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-foreground">
+                <Landmark className="h-5 w-5 text-emerald-600" />
+                Bank Payroll Export (AUB)
+              </DialogTitle>
+              <DialogDescription className="text-left text-muted-foreground">
+                Step 1: choose the finalized pay cycle. Step 2: pick a download format. All finalized companies for that cutoff are included, sorted alphabetically. Account numbers stay as 12-digit text in Excel.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-5 py-1">
+              <div className="space-y-2">
+                <Label htmlFor="bank-export-cutoff">Pay cycle / cutoff</Label>
+                {bankExportCutoffsLoading ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-border/60 px-3 py-2.5 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading finalized cutoffs...
+                  </div>
+                ) : bankExportCutoffOptions.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border/70 px-3 py-2.5 text-sm text-muted-foreground">
+                    No finalized regular payroll cutoffs are available yet.
+                  </p>
+                ) : (
+                  <Select value={bankExportDialogCutoffKey || undefined} onValueChange={setBankExportDialogCutoffKey}>
+                    <SelectTrigger id="bank-export-cutoff" className={SELECT_TRIGGER}>
+                      <SelectValue placeholder="Select pay cycle" />
+                    </SelectTrigger>
+                    <SelectContent className={SELECT_CONTENT}>
+                      {bankExportCutoffOptions.map((option) => (
+                        <SelectItem key={option.key} value={option.key} className={SELECT_ITEM}>
+                          {formatPayPeriodRange(option.from_date, option.to_date)}
+                          {Number(option.company_count || 0) > 0
+                            ? ` · ${option.company_count} ${Number(option.company_count) === 1 ? 'company' : 'companies'}`
+                            : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>Download format</Label>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-auto flex-col gap-1 border-2 border-emerald-500/40 py-3 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                    disabled={!bankExportCutoff || bankPayrollExportDownloadingFormat != null}
+                    onClick={() => void handleDownloadBankPayrollExport('xlsx')}
+                  >
+                    {bankPayrollExportDownloadingFormat === 'xlsx' ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="h-5 w-5" />
+                    )}
+                    <span className="text-xs font-semibold">Excel (.xlsx)</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-auto flex-col gap-1 border-2 border-emerald-500/40 py-3 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                    disabled={!bankExportCutoff || bankPayrollExportDownloadingFormat != null}
+                    onClick={() => void handleDownloadBankPayrollExport('csv')}
+                  >
+                    {bankPayrollExportDownloadingFormat === 'csv' ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <FileText className="h-5 w-5" />
+                    )}
+                    <span className="text-xs font-semibold">CSV (.csv)</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-auto flex-col gap-1 border-2 border-emerald-500/40 py-3 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
+                    disabled={!bankExportCutoff || bankPayrollExportDownloadingFormat != null}
+                    onClick={() => void handleDownloadBankPayrollExport('pdf')}
+                  >
+                    {bankPayrollExportDownloadingFormat === 'pdf' ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <FileText className="h-5 w-5" />
+                    )}
+                    <span className="text-xs font-semibold">PDF (.pdf)</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setBankExportDialogOpen(false)}
+                disabled={bankPayrollExportDownloadingFormat != null}
+              >
+                Cancel
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* ── Delete Batch Dialog ── */}
         <Dialog
