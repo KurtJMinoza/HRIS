@@ -84,7 +84,7 @@ class RefundPayrollApplicationService
             if ($diff > 0) {
                 $lines[] = [
                     'component_code' => $map['code'],
-                    'label' => $reasonLabel,
+                    'label' => $this->payslipLineLabel($map['label'], $reasonLabel),
                     'amount' => $diff,
                     'source' => $map['source'],
                     'line_type' => 'earning',
@@ -105,7 +105,9 @@ class RefundPayrollApplicationService
             $amount = round((float) $refund->refund_amount, 2);
             $lines[] = [
                 'component_code' => $map['code'],
-                'label' => $isOverpayment ? 'Payroll Recovery — '.$reasonLabel : $reasonLabel,
+                'label' => $isOverpayment
+                    ? 'Payroll Recovery — '.$reasonLabel
+                    : $this->payslipLineLabel($map['label'], $reasonLabel),
                 'amount' => $amount,
                 'source' => $map['source'],
                 'line_type' => $isOverpayment ? 'deduction' : 'earning',
@@ -120,6 +122,21 @@ class RefundPayrollApplicationService
         $label = trim((string) $refund->reasonLabel());
 
         return $label !== '' ? $label : 'Payroll Adjustment';
+    }
+
+    private function payslipLineLabel(string $componentLabel, string $reasonLabel): string
+    {
+        $componentLabel = trim($componentLabel);
+        $reasonLabel = trim($reasonLabel);
+
+        if ($componentLabel === '') {
+            return $reasonLabel !== '' ? $reasonLabel : 'Payroll Adjustment';
+        }
+        if ($reasonLabel === '' || strcasecmp($componentLabel, $reasonLabel) === 0) {
+            return $componentLabel;
+        }
+
+        return $componentLabel.' — '.$reasonLabel;
     }
 
     /**

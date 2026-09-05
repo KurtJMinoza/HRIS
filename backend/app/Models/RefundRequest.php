@@ -68,6 +68,16 @@ class RefundRequest extends Model
 
     public const REASON_OTHER = 'other';
 
+    /** Refund reasons that land in the payroll report Basic Pay column (Excel/PDF). */
+    public const BASIC_PAY_REPORT_REASONS = [
+        self::REASON_MISSING_TIME_IN,
+        self::REASON_MISSING_TIME_OUT,
+        self::REASON_MISSING_ATTENDANCE,
+        self::REASON_INCORRECT_LATE_DEDUCTION,
+        self::REASON_INCORRECT_UNDERTIME_DEDUCTION,
+        self::REASON_MISSING_REST_DAY_PAY,
+    ];
+
     public const STATUS_DRAFT = 'draft';
 
     public const STATUS_SUBMITTED = 'submitted';

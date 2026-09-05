@@ -1,44 +1,13 @@
 const path = require('path');
 const { execSync } = require('child_process');
+const { resolveBinary } = require('./scripts/resolve-binaries.cjs');
 
 const root = __dirname;
 const isWin = process.platform === 'win32';
 
 /** Override with env: PHP_BIN, FACE_SERVICE_PYTHON, FACE_SERVICE_PORTS, NODE_BIN, OCTANE_HOST, OCTANE_PORT */
-function resolveBinary(envKey, fallback, names) {
-  if (process.env[envKey]) {
-    return process.env[envKey];
-  }
-
-  if (!isWin) {
-    return fallback;
-  }
-
-  for (const name of names) {
-    try {
-      const lines = execSync(`where ${name}`, { encoding: 'utf8', windowsHide: true })
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      const preferred = lines.find(
-        (line) => !line.includes('WindowsApps'),
-      );
-      if (preferred) {
-        return preferred;
-      }
-      if (lines[0]) {
-        return lines[0];
-      }
-    } catch (_) {
-      // try next name
-    }
-  }
-
-  return fallback;
-}
-
 const php = resolveBinary('PHP_BIN', isWin ? 'C:\\xampp\\php\\php.exe' : 'php', ['php']);
-const python = resolveBinary('FACE_SERVICE_PYTHON', 'python', ['python', 'python3']);
+const python = resolveBinary('FACE_SERVICE_PYTHON', isWin ? 'python' : 'python3', ['python', 'python3']);
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const octaneHost = process.env.OCTANE_HOST || '127.0.0.1';
 const octanePort = process.env.OCTANE_PORT || '8200';
@@ -91,17 +60,35 @@ function octaneApp() {
 }
 
 function faceServiceApp(port) {
-  return {
+  const shared = {
     name: `face-service-${port}`,
-    cwd: faceServiceDir,
-    script: python,
-    args: ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(port)],
-    interpreter: 'none',
     windowsHide: true,
     vizion: false,
     autorestart: true,
     max_restarts: 10,
     min_uptime: '10s',
+  };
+
+  if (isWin) {
+    return {
+      ...shared,
+      cwd: root,
+      script: node,
+      args: [path.join(root, 'scripts', 'face-service-start-windows.cjs'), `--port=${port}`],
+      interpreter: 'none',
+      env: {
+        FACE_SERVICE_PYTHON: python,
+        FACE_SERVICE_HOST: '127.0.0.1',
+      },
+    };
+  }
+
+  return {
+    ...shared,
+    cwd: faceServiceDir,
+    script: python,
+    args: ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(port)],
+    interpreter: 'none',
   };
 }
 

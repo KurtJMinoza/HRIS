@@ -33,6 +33,43 @@ export function refundComponentRows(components) {
   return Object.entries(components).map(([key, row]) => ({ key, ...row }))
 }
 
+/** Refund reasons that land in the payroll report Basic Pay column — mirrors RefundRequest::BASIC_PAY_REPORT_REASONS. */
+export const BASIC_PAY_REPORT_REASONS = new Set([
+  'missing_time_in',
+  'missing_time_out',
+  'missing_attendance',
+  'incorrect_late_deduction',
+  'incorrect_undertime_deduction',
+  'missing_rest_day_pay',
+])
+
+/** Mirrors backend RefundPayrollApplicationService::LINE_MAP display/report routing. */
+export const REFUND_COMPONENT_META = {
+  regular_pay: { label: 'Basic Pay', payslipLine: 'Attendance Refund', reportColumn: 'Other' },
+  ot_pay: { label: 'Overtime', payslipLine: 'Missing OT Recovery', reportColumn: 'OT' },
+  nd_pay: { label: 'Night Differential', payslipLine: 'Night Differential Adjustment', reportColumn: 'Night Diff' },
+  holiday_premium_pay: { label: 'Holiday Pay', payslipLine: 'Holiday Pay Adjustment', reportColumn: 'Holiday' },
+  paid_leave: { label: 'Leave Pay', payslipLine: 'Leave Pay Adjustment', reportColumn: 'Leave' },
+  rest_day_worked_pay: { label: 'Rest Day Pay', payslipLine: 'Rest Day Pay Adjustment', reportColumn: 'Holiday' },
+}
+
+export function refundComponentPayslipLine(componentKey, reasonLabel = '') {
+  const meta = REFUND_COMPONENT_META[componentKey]
+  const base = meta?.payslipLine || 'Payroll Adjustment'
+  const reason = String(reasonLabel || '').trim()
+  if (!reason || reason.toLowerCase() === base.toLowerCase()) return base
+  return `${base} — ${reason}`
+}
+
+export function refundComponentReportColumn(componentKey, reason = '') {
+  const reasonSlug = String(reason || '').trim().toLowerCase()
+  if (BASIC_PAY_REPORT_REASONS.has(reasonSlug)) {
+    return 'Basic Pay'
+  }
+
+  return REFUND_COMPONENT_META[componentKey]?.reportColumn || 'Other'
+}
+
 export const REFUND_REASON_LABELS = Object.fromEntries(
   REFUND_REASONS.map((r) => [r.value, r.label]),
 )

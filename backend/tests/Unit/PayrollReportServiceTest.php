@@ -60,7 +60,7 @@ class PayrollReportServiceTest extends TestCase
         $this->assertEqualsWithDelta(7101.53, (float) $row['regular_basic_pay'], 0.02);
     }
 
-    public function test_report_other_column_includes_refund_other_lines(): void
+    public function test_report_basic_pay_includes_refund_basic_pay_lines(): void
     {
         $snapshot = [
             'daily_rate' => 961.54,
@@ -74,10 +74,15 @@ class PayrollReportServiceTest extends TestCase
                 ]],
                 'payslip_earning_lines' => [[
                     'key' => 'refund_basic_pay',
-                    'label' => 'Other',
+                    'label' => 'Attendance Refund — Missing Attendance',
                     'amount' => 6000,
                     'category' => 'basic_pay',
+                    'source' => 'basic_pay',
                     'component_code' => 'refund_basic_pay',
+                    'metadata' => [
+                        'refund_request_id' => 52,
+                        'reason' => 'missing_attendance',
+                    ],
                 ]],
             ],
             'daily_computation_days' => array_fill(0, 11, [
@@ -110,8 +115,9 @@ class PayrollReportServiceTest extends TestCase
         $method->setAccessible(true);
         $row = $method->invoke($service, $payslip);
 
-        $this->assertEqualsWithDelta(6000.0, (float) $row['other_earnings'], 0.02);
-        $this->assertLessThan(16276.46, (float) $row['regular_basic_pay']);
+        $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
+        $this->assertGreaterThanOrEqual(6000.0, (float) $row['regular_basic_pay']);
+        $this->assertGreaterThanOrEqual(16276.46, (float) $row['gross_earnings']);
     }
 
     public function test_report_other_column_does_not_duplicate_holiday_pay(): void
@@ -496,10 +502,11 @@ class PayrollReportServiceTest extends TestCase
                 ],
                 'payslip_earning_lines' => [[
                     'key' => 'refund_basic_pay',
-                    'label' => 'Other',
+                    'label' => 'Refund — Other',
                     'amount' => 6000,
                     'category' => 'basic_pay',
                     'component_code' => 'refund_basic_pay',
+                    'metadata' => ['reason' => 'other'],
                 ]],
             ],
             'daily_computation_days' => $dailyDays,
@@ -524,9 +531,124 @@ class PayrollReportServiceTest extends TestCase
 
         $this->assertGreaterThan(11000.0, $expectedBasicPay);
         $this->assertEqualsWithDelta($expectedBasicPay, (float) $row['regular_basic_pay'], 0.02);
-        $this->assertLessThan($expectedBasicPay + 1923.0, (float) $row['regular_basic_pay']);
         $this->assertEqualsWithDelta(6000.0, (float) $row['other_earnings'], 0.02);
         $this->assertSame('13 days', $row['total_attendance']);
+    }
+
+    public function test_report_other_reason_refund_basic_pay_routes_to_other_column(): void
+    {
+        $snapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 5000,
+                ]],
+                'payslip_earning_lines' => [[
+                    'key' => 'refund_basic_pay',
+                    'label' => 'Refund — Other',
+                    'amount' => 1500,
+                    'category' => 'basic_pay',
+                    'component_code' => 'refund_basic_pay',
+                    'metadata' => ['reason' => 'other'],
+                ]],
+            ],
+        ];
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => 6500,
+            'total_deductions' => 0,
+            'net_pay' => 6500,
+            'snapshot' => $snapshot,
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta(5000.0, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(1500.0, (float) $row['other_earnings'], 0.02);
+    }
+
+    public function test_report_missing_rest_day_refund_routes_to_basic_pay(): void
+    {
+        $snapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 5000,
+                ]],
+                'payslip_earning_lines' => [[
+                    'key' => 'refund_rest_day_pay',
+                    'label' => 'Refund — Missing Rest-Day Pay',
+                    'amount' => 800,
+                    'category' => 'rest_day_worked_pay',
+                    'component_code' => 'refund_rest_day_pay',
+                    'metadata' => ['reason' => 'missing_rest_day_pay'],
+                ]],
+            ],
+        ];
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => 5800,
+            'total_deductions' => 0,
+            'net_pay' => 5800,
+            'snapshot' => $snapshot,
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta(5800.0, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
+    }
+
+    public function test_report_missing_overtime_refund_routes_to_overtime_column(): void
+    {
+        $snapshot = [
+            'summary' => [
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 5000,
+                ]],
+                'payslip_earning_lines' => [[
+                    'key' => 'refund_overtime',
+                    'label' => 'Refund — Missing Overtime',
+                    'amount' => 750,
+                    'category' => 'overtime_pay',
+                    'component_code' => 'refund_overtime',
+                    'metadata' => ['reason' => 'missing_overtime'],
+                ]],
+            ],
+        ];
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => 5750,
+            'total_deductions' => 0,
+            'net_pay' => 5750,
+            'snapshot' => $snapshot,
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta(5000.0, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(750.0, (float) $row['overtime_pay'], 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
     }
 
     public function test_regular_pay_attendance_label_includes_unworked_holiday_days(): void

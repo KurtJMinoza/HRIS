@@ -56,6 +56,55 @@ function isUnworkedHolidayPayLine(line) {
   return !code.includes('WORKED')
 }
 
+function isPayrollAdjustmentRefundLine(line) {
+  const metadata = line?.metadata && typeof line.metadata === 'object' ? line.metadata : {}
+  if (Number(metadata?.refund_request_id || line?.refund_request_id || 0) > 0) return true
+  const key = String(line?.key || '').trim().toLowerCase()
+  const component = String(line?.component_code || line?.component || '').trim().toLowerCase()
+  return key.startsWith('refund_') || component.startsWith('refund_')
+}
+
+function isRefundBasicPayLine(line) {
+  if (!isPayrollAdjustmentRefundLine(line)) return false
+  const source = String(line?.source || line?.category || '').trim().toLowerCase()
+  const component = String(line?.component_code || line?.key || '').trim().toLowerCase()
+  return source === 'basic_pay' || component === 'refund_basic_pay'
+}
+
+const REFUND_COMPONENT_LABELS = new Set([
+  'attendance refund',
+  'missing ot recovery',
+  'night differential adjustment',
+  'holiday pay adjustment',
+  'leave pay adjustment',
+  'rest day pay adjustment',
+  'payroll adjustment',
+  'payroll recovery',
+])
+
+/** Payslip display only — normalize refund lines to "Refund" (+ reason when present). */
+function refundReasonFromPayslipLine(line) {
+  const label = String(line?.label || line?.name || '').trim()
+  if (!label) return ''
+
+  const separator = ' — '
+  const idx = label.indexOf(separator)
+  if (idx >= 0) {
+    return label.slice(idx + separator.length).trim()
+  }
+
+  if (REFUND_COMPONENT_LABELS.has(label.toLowerCase())) {
+    return ''
+  }
+
+  return label
+}
+
+function refundPayslipLabel(line) {
+  const reason = refundReasonFromPayslipLine(line)
+  return reason ? `Refund — ${reason}` : 'Refund'
+}
+
 function dateValue(value) {
   if (!value) return '—'
   const d = new Date(value)
@@ -171,13 +220,28 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
       })
     }
     if (isExecomPayroll) {
-      return uniqueLines(earnings)
+      return { coreEarnings: uniqueLines(earnings), basicPayRefunds: [], otherPayrollAdjustments: [] }
     }
     if (isConsultantPayroll) {
-      return uniqueLines(earnings)
+      return { coreEarnings: uniqueLines(earnings), basicPayRefunds: [], otherPayrollAdjustments: [] }
     }
     if (dailyComputationEarnings.length > 0 || earnings.length > 0) {
-      return uniqueLines([...dailyComputationEarnings, ...earnings].filter((line) => !isUnworkedHolidayPayLine(line)))
+      const merged = uniqueLines([...dailyComputationEarnings, ...earnings].filter((line) => !isUnworkedHolidayPayLine(line)))
+      const basicPayRefunds = []
+      const otherPayrollAdjustments = []
+      const coreEarnings = []
+      merged.forEach((line) => {
+        if (isRefundBasicPayLine(line)) {
+          basicPayRefunds.push(line)
+          return
+        }
+        if (isPayrollAdjustmentRefundLine(line)) {
+          otherPayrollAdjustments.push(line)
+          return
+        }
+        coreEarnings.push(line)
+      })
+      return { coreEarnings, basicPayRefunds, otherPayrollAdjustments }
     }
     const fallback = []
     const basic = Number(summary?.basic_pay || summary?.basic_pay_this_period || 0)
@@ -192,8 +256,17 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
     if (!isExecomPayroll && !isConsultantPayroll && premium > 0) {
       fallback.push({ key: 'fallback:attendance_premium', label: 'Attendance premiums (OT/ND/Holiday)', amount: premium })
     }
-    return fallback
+    return { coreEarnings: fallback, basicPayRefunds: [], otherPayrollAdjustments: [] }
   }, [dailyComputationEarnings, earnings, isConsultantPayroll, isExecomPayroll, summary])
+
+  const flatDisplayEarnings = useMemo(
+    () => [
+      ...displayEarnings.coreEarnings,
+      ...displayEarnings.basicPayRefunds,
+      ...displayEarnings.otherPayrollAdjustments,
+    ],
+    [displayEarnings],
+  )
 
   const allDeductions = useMemo(() => {
     const gov = Array.isArray(summary?.payslip_deduction_lines) ? summary.payslip_deduction_lines : []
@@ -211,7 +284,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
 
   const displayedGrossPay = useMemo(() => {
     if (isConsultantPayroll || isExecomPayroll) {
-      const visible = displayEarnings.reduce(
+      const visible = flatDisplayEarnings.reduce(
         (sum, line) => {
           const amount = line?.display_amount !== undefined && line?.display_amount !== null
             ? line.display_amount
@@ -229,7 +302,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
     }
 
     return Number(data?.amounts?.gross_pay ?? 0)
-  }, [data?.amounts?.gross_pay, displayEarnings, isConsultantPayroll, isExecomPayroll, summary])
+  }, [data?.amounts?.gross_pay, flatDisplayEarnings, isConsultantPayroll, isExecomPayroll, summary])
 
   const displayedNetPay = useMemo(() => {
     const deductionTotal = allDeductions.reduce(
@@ -422,7 +495,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                   </tr>
                 </thead>
                 <tbody>
-                  {displayEarnings.map((line, idx) => {
+                  {displayEarnings.coreEarnings.map((line, idx) => {
                     const isThirteenthMonth = String(line?.component_code || '').trim().toUpperCase() === '13TH_MONTH_PAY'
                     const basisType = String(line?.metadata?.basis_type || '').trim().toLowerCase()
                     const earningLabel = isThirteenthMonth
@@ -480,6 +553,17 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                                 </td>
                               </tr>
                             ) : null}
+                            {displayEarnings.basicPayRefunds.map((refundLine, refundIdx) => (
+                              <tr key={`basic-pay-refund-${refundIdx}`} className="border-b border-emerald-100 bg-emerald-50/35">
+                                <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/75">
+                                  {refundPayslipLabel(refundLine)}
+                                </td>
+                                <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
+                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
+                                  {displayAmount(refundLine?.amount || 0)}
+                                </td>
+                              </tr>
+                            ))}
                             {attendanceBreakdown?.note ? (
                               <tr className="border-b border-slate-100 bg-slate-50/35">
                                 <td colSpan={3} className="px-6 py-1.5 text-[11px] leading-relaxed text-[#0A0A0A]/55">{attendanceBreakdown.note}</td>
@@ -487,9 +571,42 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                             ) : null}
                           </>
                         ) : null}
+                        {isRegularPayLine && !isConsultantPayroll && !attendanceBreakdown?.available && displayEarnings.basicPayRefunds.length > 0
+                          ? displayEarnings.basicPayRefunds.map((refundLine, refundIdx) => (
+                            <tr key={`basic-pay-refund-fallback-${refundIdx}`} className="border-b border-emerald-100 bg-emerald-50/35">
+                              <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/75">
+                                {refundPayslipLabel(refundLine)}
+                              </td>
+                              <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
+                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
+                                {displayAmount(refundLine?.amount || 0)}
+                              </td>
+                            </tr>
+                          ))
+                          : null}
                       </Fragment>
                     )
                   })}
+                  {displayEarnings.otherPayrollAdjustments.length > 0 ? (
+                    <>
+                      <tr className="border-b border-slate-100 bg-slate-50/60">
+                        <td colSpan={3} className="py-2 pl-3 pr-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[#0A0A0A]/55">
+                          Refunds
+                        </td>
+                      </tr>
+                      {displayEarnings.otherPayrollAdjustments.map((line, idx) => (
+                        <tr key={`payroll-adjustment-${idx}`} className="border-b border-slate-100/90 bg-white">
+                          <td className="py-2.5 pl-6 pr-2 font-normal text-[#0A0A0A]/88">
+                            {refundPayslipLabel(line)}
+                          </td>
+                          <td className="px-2 py-2.5 text-center text-[13px] font-medium tabular-nums text-[#0A0A0A]/70">—</td>
+                          <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-semibold tabular-nums text-[#0A0A0A]">
+                            {displayAmount(line?.amount || 0)}
+                          </td>
+                        </tr>
+                      ))}
+                    </>
+                  ) : null}
                   <tr className="border-t border-emerald-100 bg-white text-[#0A0A0A]">
                     <td className="py-3 pl-3 pr-2 text-[15px] font-bold">Total Gross Earnings</td>
                     <td className="px-2 py-3 text-center text-[13px] font-bold text-[#0A0A0A]/70" />

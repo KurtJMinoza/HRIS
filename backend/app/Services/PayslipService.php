@@ -5942,7 +5942,7 @@ class PayslipService
     /**
      * @param  array<string, mixed>  $line
      */
-    private function isPayrollAdjustmentRefundLine(array $line): bool
+    public function isPayrollAdjustmentRefundLine(array $line): bool
     {
         $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
         if ((int) ($metadata['refund_request_id'] ?? 0) > 0) {

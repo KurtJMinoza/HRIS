@@ -28,7 +28,7 @@ class RefundPayrollApplicationServiceTest extends TestCase
         $this->assertCount(1, $lines);
         $this->assertSame('refund_overtime', $lines[0]['component_code']);
         $this->assertSame('earning', $lines[0]['line_type']);
-        $this->assertSame('Missing Overtime', $lines[0]['label']);
+        $this->assertSame('Missing OT Recovery — Missing Overtime', $lines[0]['label']);
         $this->assertSame(750.0, $lines[0]['amount']);
     }
 
@@ -53,7 +53,7 @@ class RefundPayrollApplicationServiceTest extends TestCase
         $this->assertSame('Payroll Recovery — Payroll Computation Error', $lines[0]['label']);
     }
 
-    public function test_manual_amount_line_uses_refund_reason_as_payslip_label(): void
+    public function test_manual_amount_line_uses_component_and_reason_as_payslip_label(): void
     {
         $refund = new RefundRequest([
             'direction' => RefundRequest::DIRECTION_UNDERPAYMENT,
@@ -70,7 +70,7 @@ class RefundPayrollApplicationServiceTest extends TestCase
 
         $this->assertCount(1, $lines);
         $this->assertSame('earning', $lines[0]['line_type']);
-        $this->assertSame('Missing Attendance', $lines[0]['label']);
+        $this->assertSame('Attendance Refund — Missing Attendance', $lines[0]['label']);
         $this->assertSame(5000.0, $lines[0]['amount']);
     }
 

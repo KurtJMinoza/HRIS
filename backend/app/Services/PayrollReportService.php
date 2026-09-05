@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Company;
 use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
+use App\Models\RefundRequest;
 use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Collection;
@@ -550,7 +551,6 @@ class PayrollReportService
             $this->lineList($summary['payslip_deduction_lines'] ?? []),
             $this->lineList($summary['payslip_custom_deduction_lines'] ?? [])
         ));
-        $categoryTotals = is_array($metrics['category_totals'] ?? null) ? $metrics['category_totals'] : [];
 
         $earnings = [
             'regular_basic_pay' => 0.0,
@@ -565,6 +565,14 @@ class PayrollReportService
         $workedHolidayPremium = 0.0;
         $workedHolidayBase = round((float) ($summary['worked_holiday_base_pay_total'] ?? 0), 2);
         $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
+        $refundBucketTotals = [
+            'regular_basic_pay' => 0.0,
+            'holiday_pay' => 0.0,
+            'overtime_pay' => 0.0,
+            'night_differential' => 0.0,
+            'paid_leave' => 0.0,
+            'other_earnings' => 0.0,
+        ];
         foreach ($rawEarningLines as $line) {
             $amount = $this->lineAmount($line);
             if ($amount <= 0.0) {
@@ -589,6 +597,12 @@ class PayrollReportService
             if ($amount <= 0.0) {
                 continue;
             }
+            if ($this->payslipService->isPayrollAdjustmentRefundLine($line)) {
+                $bucket = $this->refundEarningBucket($line);
+                $refundBucketTotals[$bucket] = round($refundBucketTotals[$bucket] + $amount, 2);
+
+                continue;
+            }
             if ($isConsultant && $this->isConsultantBasicPayReportLine($line)) {
                 continue;
             }
@@ -599,27 +613,46 @@ class PayrollReportService
             }
             $earnings[$this->earningBucket($line)] += $amount;
         }
+        $reportMetrics = $this->metricsExcludingRefundAdjustments($metrics, $earningLines);
+        $categoryTotals = is_array($reportMetrics['category_totals'] ?? null)
+            ? $reportMetrics['category_totals']
+            : [];
         if ($isConsultant) {
             $earnings['regular_basic_pay'] = $this->payslipService->consultantBasicPayAmountForDisplay($summary, $snapshot);
         } else {
-            $earnings['regular_basic_pay'] = $this->regularBasicPayForReport(
-                $summary,
-                round(
-                    $this->preferLineBucketAmount($earnings['regular_basic_pay'], $metrics, $categoryTotals, 'regular_pay')
-                        + $unworkedHolidayPay
-                        + $workedHolidayBase,
-                    2
-                ),
+            $earnings['regular_basic_pay'] = round(
+                $this->regularBasicPayForReport(
+                    $summary,
+                    round(
+                        $this->preferLineBucketAmount($earnings['regular_basic_pay'], $reportMetrics, $categoryTotals, 'regular_pay')
+                            + $unworkedHolidayPay
+                            + $workedHolidayBase,
+                        2
+                    ),
+                ) + $refundBucketTotals['regular_basic_pay'],
+                2
             );
         }
-        $earnings['holiday_pay'] = round(max(0.0, $workedHolidayPremium), 2);
-        $earnings['overtime_pay'] = $this->preferLineBucketAmount($earnings['overtime_pay'], $metrics, $categoryTotals, 'overtime_pay');
-        $earnings['night_differential'] = $this->preferLineBucketAmount($earnings['night_differential'], $metrics, $categoryTotals, 'night_differential');
-        $earnings['paid_leave'] = $this->preferLineBucketAmount($earnings['paid_leave'], $metrics, $categoryTotals, 'paid_leave');
-        $earnings['allowance'] = $this->preferLineBucketAmount($earnings['allowance'], $metrics, $categoryTotals, 'allowances', 'allowance');
-        // Other earnings come only from explicit report buckets (refunds, uncategorized lines).
-        // Raw frozen metrics often misclassify holiday pay as other_earning, which duplicates Holiday.
-        $earnings['other_earnings'] = round(max(0.0, $earnings['other_earnings']), 2);
+        $earnings['holiday_pay'] = round(max(0.0, $workedHolidayPremium + $refundBucketTotals['holiday_pay']), 2);
+        $earnings['overtime_pay'] = round(
+            $this->preferLineBucketAmount($earnings['overtime_pay'], $reportMetrics, $categoryTotals, 'overtime_pay')
+                + $refundBucketTotals['overtime_pay'],
+            2
+        );
+        $earnings['night_differential'] = round(
+            $this->preferLineBucketAmount($earnings['night_differential'], $reportMetrics, $categoryTotals, 'night_differential')
+                + $refundBucketTotals['night_differential'],
+            2
+        );
+        $earnings['paid_leave'] = round(
+            $this->preferLineBucketAmount($earnings['paid_leave'], $reportMetrics, $categoryTotals, 'paid_leave')
+                + $refundBucketTotals['paid_leave'],
+            2
+        );
+        $earnings['allowance'] = $this->preferLineBucketAmount($earnings['allowance'], $reportMetrics, $categoryTotals, 'allowances', 'allowance');
+        // Other earnings come only from explicit report buckets (uncategorized lines).
+        // Refund lines are routed to their source component columns (Basic Pay, OT, etc.).
+        $earnings['other_earnings'] = round(max(0.0, $earnings['other_earnings'] + $refundBucketTotals['other_earnings']), 2);
 
         $deductions = [
             'sss' => 0.0,
@@ -863,14 +896,192 @@ class PayrollReportService
     }
 
     /**
+     * Route payroll-adjustment refund earnings to report columns.
+     * Only attendance reasons in RefundRequest::BASIC_PAY_REPORT_REASONS use Basic Pay.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function refundEarningBucket(array $line): string
+    {
+        if ($this->refundRoutesToBasicPayReport($line)) {
+            return 'regular_basic_pay';
+        }
+
+        $source = strtolower(trim((string) ($line['source'] ?? $line['category'] ?? '')));
+        $componentCode = strtolower(trim((string) ($line['component_code'] ?? $line['key'] ?? '')));
+
+        $bySource = [
+            'overtime_pay' => 'overtime_pay',
+            'night_differential' => 'night_differential',
+            'holiday_premium' => 'holiday_pay',
+            'paid_leave' => 'paid_leave',
+            'rest_day_worked_pay' => 'holiday_pay',
+        ];
+        if (isset($bySource[$source])) {
+            return $bySource[$source];
+        }
+
+        if (str_contains($componentCode, 'refund_overtime')) {
+            return 'overtime_pay';
+        }
+        if (str_contains($componentCode, 'refund_night')) {
+            return 'night_differential';
+        }
+        if (str_contains($componentCode, 'refund_holiday') || str_contains($componentCode, 'refund_rest_day')) {
+            return 'holiday_pay';
+        }
+        if (str_contains($componentCode, 'refund_leave')) {
+            return 'paid_leave';
+        }
+
+        return 'other_earnings';
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function refundRoutesToBasicPayReport(array $line): bool
+    {
+        $reason = $this->refundReasonFromLine($line);
+
+        return $reason !== null
+            && in_array($reason, RefundRequest::BASIC_PAY_REPORT_REASONS, true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function refundReasonFromLine(array $line): ?string
+    {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        $reason = strtolower(trim((string) ($metadata['reason'] ?? $line['reason'] ?? '')));
+        if ($reason !== '' && $reason !== 'null') {
+            return $reason;
+        }
+
+        $label = trim((string) ($line['label'] ?? $line['name'] ?? ''));
+        $separator = ' — ';
+        $separatorPos = strpos($label, $separator);
+        if ($separatorPos !== false) {
+            $reasonLabel = trim(substr($label, $separatorPos + strlen($separator)));
+            foreach (RefundRequest::reasonOptions() as $option) {
+                if (strcasecmp($option['label'], $reasonLabel) === 0) {
+                    return $option['value'];
+                }
+            }
+        }
+
+        foreach (RefundRequest::reasonOptions() as $option) {
+            if (strcasecmp($option['label'], $label) === 0) {
+                return $option['value'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Refund lines are routed separately; strip them from frozen metrics used as report fallbacks.
+     *
+     * @param  array<string, mixed>  $metrics
+     * @param  list<array<string, mixed>>  $earningLines
+     * @return array<string, mixed>
+     */
+    private function metricsExcludingRefundAdjustments(array $metrics, array $earningLines): array
+    {
+        $categoryTotals = is_array($metrics['category_totals'] ?? null)
+            ? $metrics['category_totals']
+            : [];
+
+        foreach ($earningLines as $line) {
+            if (! $this->payslipService->isPayrollAdjustmentRefundLine($line)) {
+                continue;
+            }
+            $amount = $this->lineAmount($line);
+            if ($amount <= 0.0) {
+                continue;
+            }
+            $categoryKey = $this->refundMetricCategoryKey($line);
+            if ($categoryKey === null || ! array_key_exists($categoryKey, $categoryTotals)) {
+                continue;
+            }
+            $categoryTotals[$categoryKey] = round(max(0.0, (float) $categoryTotals[$categoryKey] - $amount), 2);
+        }
+
+        $adjusted = $metrics;
+        $adjusted['category_totals'] = $categoryTotals;
+        foreach (['regular_pay', 'holiday_pay', 'overtime_pay', 'night_differential', 'paid_leave', 'allowances'] as $metricKey) {
+            if (! array_key_exists($metricKey, $adjusted)) {
+                continue;
+            }
+            $categoryKey = $metricKey === 'allowances' ? 'allowance' : $metricKey;
+            if (array_key_exists($categoryKey, $categoryTotals)) {
+                $adjusted[$metricKey] = round(max(0.0, (float) $categoryTotals[$categoryKey]), 2);
+            }
+        }
+
+        return $adjusted;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function refundMetricCategoryKey(array $line): ?string
+    {
+        $category = strtolower(trim((string) ($line['category'] ?? '')));
+        if ($category === 'basic_pay') {
+            return 'regular_pay';
+        }
+        if ($category !== '') {
+            return $category;
+        }
+
+        $componentCode = strtolower(trim((string) ($line['component_code'] ?? $line['key'] ?? '')));
+        if (str_contains($componentCode, 'refund_overtime')) {
+            return 'overtime_pay';
+        }
+        if (str_contains($componentCode, 'refund_night')) {
+            return 'night_differential';
+        }
+        if (str_contains($componentCode, 'refund_holiday') || str_contains($componentCode, 'refund_rest_day')) {
+            return 'holiday_pay';
+        }
+        if (str_contains($componentCode, 'refund_leave')) {
+            return 'paid_leave';
+        }
+        if (str_contains($componentCode, 'refund_basic')) {
+            return 'regular_pay';
+        }
+
+        $label = strtolower(trim((string) ($line['label'] ?? $line['name'] ?? '')));
+        if (str_contains($label, 'overtime')) {
+            return 'overtime_pay';
+        }
+        if (str_contains($label, 'night')) {
+            return 'night_differential';
+        }
+        if (str_contains($label, 'holiday') || str_contains($label, 'rest day') || str_contains($label, 'rest-day')) {
+            return 'holiday_pay';
+        }
+        if (str_contains($label, 'leave')) {
+            return 'paid_leave';
+        }
+
+        return 'other_earning';
+    }
+
+    /**
      * @param  array<string, mixed>  $line
      */
     private function earningBucket(array $line): string
     {
         $key = strtolower(trim((string) ($line['key'] ?? '')));
         $componentCode = strtolower(trim((string) ($line['component_code'] ?? '')));
+        if ($this->payslipService->isPayrollAdjustmentRefundLine($line)) {
+            return $this->refundEarningBucket($line);
+        }
         if (str_starts_with($key, 'refund_') || str_contains($componentCode, 'refund_')) {
-            return 'other_earnings';
+            return $this->refundEarningBucket($line);
         }
 
         $text = $this->lineSearchText($line);

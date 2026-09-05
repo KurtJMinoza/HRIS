@@ -62,6 +62,8 @@ import {
   REFUND_STATUSES,
   formatPeso,
   refundComponentRows,
+  refundComponentPayslipLine,
+  refundComponentReportColumn,
 } from '@/lib/refundConstants'
 import {
   requestModuleActionsTdClass,
@@ -226,6 +228,8 @@ function CalculationPanel({ preview, compact = false }) {
                 <TableHead className="text-right">Original</TableHead>
                 <TableHead className="text-right">Correct</TableHead>
                 <TableHead className="text-right">Difference</TableHead>
+                <TableHead>Payslip line</TableHead>
+                <TableHead>Report column</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -236,6 +240,12 @@ function CalculationPanel({ preview, compact = false }) {
                   <TableCell className="text-right font-mono tabular-nums">{formatPeso(c.expected)}</TableCell>
                   <TableCell className={cn('text-right font-mono font-semibold tabular-nums', c.difference > 0 && 'text-emerald-600 dark:text-emerald-400', c.difference < 0 && 'text-red-600 dark:text-red-400')}>
                     {c.difference > 0 ? '+' : ''}{formatPeso(c.difference)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {refundComponentPayslipLine(c.key, preview.reason_label || preview.reasonLabel || '')}
+                  </TableCell>
+                  <TableCell className="text-sm font-medium text-foreground">
+                    {refundComponentReportColumn(c.key, preview.reason || '')}
                   </TableCell>
                 </TableRow>
               ))}
