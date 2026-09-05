@@ -73,6 +73,7 @@ import {
   clearMySignature,
   exportMyProfileCsv,
   replaceMyEmergencyContacts,
+  updateMyBankAccount,
   uploadProfilePhoto,
   removeProfilePhoto,
   updateProfile,
@@ -112,6 +113,13 @@ import {
   SalaryTabShell,
 } from '@/components/salary/EmployeeSalaryTab'
 import { resolveTinForSalaryDisplay } from '@/components/salary/salaryTabFormatters'
+import EmployeeBankAccountCard from '@/components/profile/EmployeeBankAccountCard'
+import {
+  bankAccountIsComplete,
+  createEmptyBankAccountState,
+  normalizeBankAccountForm,
+  validateBankAccountForm,
+} from '@/lib/bankAccountConstants'
 
 function toStr(v) {
   if (v === undefined || v === null) return ''
@@ -616,6 +624,10 @@ export default function EmployeeProfile() {
   })
   const [govIdErrors, setGovIdErrors] = useState({})
   const govFileRef = useRef(null)
+  const [bankAccount, setBankAccount] = useState(createEmptyBankAccountState())
+  const [bankAccountErrors, setBankAccountErrors] = useState({})
+  const [bankAccountSaving, setBankAccountSaving] = useState(false)
+  const [bankAccountLoading, setBankAccountLoading] = useState(false)
 
   const documentCategories = useMemo(
     () => ([
@@ -725,13 +737,14 @@ export default function EmployeeProfile() {
       { label: 'Skills', done: skills.length > 0 },
       { label: 'Emergency Contact', done: emergencyContacts.length > 0 },
       { label: 'Government ID', done: govIdDocs.length > 0 },
+      { label: 'Bank Account', done: bankAccountIsComplete(bankAccount) },
     ]
     const done = checks.filter((c) => c.done).length
     const total = checks.length
     const percent = Math.round((done / total) * 100)
     const missing = checks.filter((c) => !c.done).map((c) => c.label)
     return { percent, done, total, missing }
-  }, [personal, displayUser, skills, govIdDocs, emergencyContacts])
+  }, [personal, displayUser, skills, govIdDocs, emergencyContacts, bankAccount])
 
   const dobAge = useMemo(() => {
     const raw = String(personal.date_of_birth || '').trim()
@@ -866,6 +879,9 @@ export default function EmployeeProfile() {
     } else {
       setProfileGovNumbers(null)
     }
+    if (data?.bank_account != null && typeof data.bank_account === 'object' && !Array.isArray(data.bank_account)) {
+      setBankAccount(normalizeBankAccountForm(data.bank_account))
+    }
     setLeaveCreditsInfo((prev) =>
       data?.leave_credits && typeof data.leave_credits === 'object' ? data.leave_credits : prev
     )
@@ -915,6 +931,8 @@ export default function EmployeeProfile() {
         })
       }
       return getMyEmployeeProfile({
+        include_government_ids: true,
+        include_emergency_contacts: true,
         include_benefits: false,
         include_leave_credits: false,
         include_compensation_summary: false,
@@ -1139,6 +1157,36 @@ export default function EmployeeProfile() {
       setGovIdDocs(Array.isArray(governmentIdsQuery.data?.government_ids) ? governmentIdsQuery.data.government_ids : [])
     }
   }, [governmentIdsQuery.data, governmentIdsQuery.error, governmentIdsQuery.isLoading, governmentIdsQuery.isFetching])
+
+  useEffect(() => {
+    if (activeTab !== 'government' || !canLoadProfile || isInvalidRouteProfileId) return
+    let alive = true
+    setBankAccountLoading(true)
+    const loader = isReadOnly
+      ? getEmployeeProfileSnapshot(effectiveProfileId, {
+          lite: true,
+          include_government_ids: true,
+          include_emergency_contacts: false,
+          include_benefits: false,
+          include_leave_credits: false,
+          include_compensation_summary: false,
+        })
+      : getMyEmployeeProfile({ include_government_ids: true })
+    loader
+      .then((data) => {
+        if (!alive) return
+        if (data?.bank_account && typeof data.bank_account === 'object') {
+          setBankAccount(normalizeBankAccountForm(data.bank_account))
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setBankAccountLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [activeTab, canLoadProfile, effectiveProfileId, isInvalidRouteProfileId, isReadOnly])
 
   useEffect(() => {
     setDocsLoading(documentsQuery.isLoading || documentsQuery.isFetching)
@@ -1597,6 +1645,27 @@ export default function EmployeeProfile() {
       setSignatureBusy(false)
     }
   }
+
+  const saveBankAccount = useCallback(async () => {
+    if (!canEdit || bankAccountSaving) return
+    const { errors, normalized, isComplete } = validateBankAccountForm(bankAccount)
+    if (!isComplete) {
+      setBankAccountErrors(errors)
+      return
+    }
+    setBankAccountSaving(true)
+    setBankAccountErrors({})
+    try {
+      const data = await updateMyBankAccount(normalized)
+      setBankAccount(normalizeBankAccountForm(data?.bank_account || normalized))
+      void queryClient.invalidateQueries({ queryKey: ['employee-profile-snapshot'] })
+      toast.success('Bank account saved.')
+    } catch (e) {
+      toast.error(e?.message || 'Failed to save bank account.')
+    } finally {
+      setBankAccountSaving(false)
+    }
+  }, [bankAccount, bankAccountSaving, canEdit, queryClient])
 
   const govIdDefs = useMemo(
     () => {
@@ -2446,7 +2515,7 @@ export default function EmployeeProfile() {
       { id: 'employment', label: 'Employment', icon: Briefcase },
       { id: 'salary', label: 'Salary & Contributions', icon: CircleDollarSign },
       { id: 'documents', label: 'Documents', icon: FileText },
-      { id: 'government', label: 'Government IDs', icon: IdCard },
+      { id: 'government', label: 'Gov IDs & Bank', icon: IdCard },
       { id: 'emergency', label: 'Emergency Contacts', icon: Users },
       { id: 'skills', label: 'Skills', icon: Zap },
       { id: 'account', label: 'Account', icon: ShieldCheck },
@@ -3651,6 +3720,7 @@ export default function EmployeeProfile() {
       )}
 
       {activeTab === 'government' && (
+        <div className="space-y-5">
         <Card className="border border-border/40 bg-white shadow-sm dark:border-white/8 dark:bg-[#111827]">
           <CardHeader className="pb-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3749,6 +3819,27 @@ export default function EmployeeProfile() {
             )}
           </CardContent>
         </Card>
+        {bankAccountLoading ? (
+          <Card className="border border-border/40 bg-white shadow-sm dark:border-white/8 dark:bg-[#111827]">
+            <CardContent className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+              <Loader2 className="mr-2 size-4 animate-spin" />
+              Loading bank account...
+            </CardContent>
+          </Card>
+        ) : (
+          <EmployeeBankAccountCard
+            value={bankAccount}
+            errors={bankAccountErrors}
+            saving={bankAccountSaving}
+            disabled={!canEdit}
+            onChange={(next) => {
+              setBankAccount(next)
+              if (Object.keys(bankAccountErrors).length > 0) setBankAccountErrors({})
+            }}
+            onSave={saveBankAccount}
+          />
+        )}
+        </div>
       )}
 
       {activeTab === 'emergency' && (

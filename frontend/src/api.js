@@ -1810,6 +1810,7 @@ export async function removeMyFace() {
  */
 export async function getMyEmployeeProfile(options = {}) {
   const qs = new URLSearchParams()
+  if (options.include_government_ids != null) qs.set('include_government_ids', options.include_government_ids ? '1' : '0')
   if (options.include_benefits != null) qs.set('include_benefits', options.include_benefits ? '1' : '0')
   if (options.include_leave_credits != null) qs.set('include_leave_credits', options.include_leave_credits ? '1' : '0')
   if (options.include_leave_credits_history != null) qs.set('include_leave_credits_history', options.include_leave_credits_history ? '1' : '0')
@@ -1931,6 +1932,39 @@ export async function updateEmployeeGovernmentIds(employeeId, payload) {
     const msg = data.errors ? Object.values(data.errors).flat().filter(Boolean)[0] || data.message : data.message
     throw new Error(msg || 'Failed to update government IDs')
   }
+  return data
+}
+
+/**
+ * Update authenticated employee bank account (Gov IDs & Bank tab).
+ * @param {{ bank_name?: string|null, bank_code?: string|null, account_number?: string|null }} payload
+ */
+export async function updateMyBankAccount(payload) {
+  const res = await authenticatedFetch('/employee/profile/bank-account', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = data.errors ? Object.values(data.errors).flat().filter(Boolean)[0] || data.message : data.message
+    throw new Error(msg || 'Failed to update bank account')
+  }
+  clearEmployeeSelfServiceGetCaches()
+  return data
+}
+
+/** Admin: upsert employee bank account details for payroll disbursement. */
+export async function updateEmployeeBankAccount(employeeId, payload) {
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/bank-account`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = data.errors ? Object.values(data.errors).flat().filter(Boolean)[0] || data.message : data.message
+    throw new Error(msg || 'Failed to update bank account')
+  }
+  clearCachesAfterAdminEmployeeDataChange(employeeId)
   return data
 }
 

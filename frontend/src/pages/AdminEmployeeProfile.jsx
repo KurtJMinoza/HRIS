@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import ApprovalRoutePreviewSection from '@/components/organization/ApprovalRoutePreviewSection'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { addEmployeeSkill, adjustEmployeeLeaveCredits, checkEmployeeCodeAvailability, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeOrganizationAssignments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
+import { addEmployeeSkill, adjustEmployeeLeaveCredits, checkEmployeeCodeAvailability, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeOrganizationAssignments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeBankAccount, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
 import { composeEmployeeCode, employeeCodeDigits, EMPLOYEE_CODE_PREFIX, isValidEmployeeCode } from '@/lib/employeeCode'
 import { motion as Motion } from 'framer-motion'
 import { toast } from 'sonner'
@@ -58,6 +58,13 @@ import {
   SalaryTabShell,
 } from '@/components/salary/EmployeeSalaryTab'
 import { resolveTinForSalaryDisplay } from '@/components/salary/salaryTabFormatters'
+import EmployeeBankAccountCard from '@/components/profile/EmployeeBankAccountCard'
+import {
+  bankAccountIsComplete,
+  createEmptyBankAccountState,
+  normalizeBankAccountForm,
+  validateBankAccountForm,
+} from '@/lib/bankAccountConstants'
 
 
 function field(value) {
@@ -893,6 +900,9 @@ export default function AdminEmployeeProfile() {
   const [govDeleteDoc, setGovDeleteDoc] = useState(null)
   const [activeGovDoc, setActiveGovDoc] = useState(null)
   const [govForm, setGovForm] = useState({ id_type: '', id_number: '', issuing_agency: '', expiry_date: '', document_file: null })
+  const [bankAccount, setBankAccount] = useState(createEmptyBankAccountState())
+  const [bankAccountErrors, setBankAccountErrors] = useState({})
+  const [bankAccountSaving, setBankAccountSaving] = useState(false)
   const [govErrors, setGovErrors] = useState({})
   const [govVerifyStatus, setGovVerifyStatus] = useState('approved')
   const [govVerifyReason, setGovVerifyReason] = useState('')
@@ -1651,6 +1661,9 @@ export default function AdminEmployeeProfile() {
             pagibig: toText(ids.pagibig_number),
           })
         }
+        if (data?.bank_account && typeof data.bank_account === 'object' && !Array.isArray(data.bank_account)) {
+          setBankAccount(normalizeBankAccountForm(data.bank_account))
+        }
         deferredLoadedRef.current.governmentIds = true
       })
       .catch(() => {})
@@ -1862,7 +1875,7 @@ export default function AdminEmployeeProfile() {
     { id: 'employment', label: 'Employment' },
     { id: 'salary', label: 'Salary & Contributions' },
     { id: 'documents', label: 'Documents' },
-    { id: 'government-ids', label: 'Gov IDs' },
+    { id: 'government-ids', label: 'Gov IDs & Bank' },
     { id: 'emergency-contacts', label: 'Emergency' },
     { id: 'skills', label: 'Skills' },
     ...(isOwnProfile ? [{ id: 'account', label: 'Account' }] : []),
@@ -2245,12 +2258,13 @@ export default function AdminEmployeeProfile() {
         ],
       },
       {
-        label: 'Government IDs',
+        label: 'Government IDs & Bank',
         fields: [
           { label: 'TIN', done: hasText(govIds.tin) },
           { label: 'SSS', done: hasText(govIds.sss) },
           { label: 'PhilHealth', done: hasText(govIds.philhealth) },
           { label: 'Pag-IBIG', done: hasText(govIds.pagibig) },
+          { label: 'Bank Account', done: bankAccountIsComplete(bankAccount) },
         ],
       },
       {
@@ -2283,7 +2297,7 @@ export default function AdminEmployeeProfile() {
     const missing = sectionStats.flatMap((s) => s.missingFields)
 
     return { sections: sectionStats, percent, missing, doneFields, totalFields }
-  }, [form, employee, skills, certifications, govIds, emergencyContacts])
+  }, [form, employee, skills, certifications, govIds, bankAccount, emergencyContacts])
 
   const isDirty = useMemo(() => {
     if (!initialSnapshot) return false
@@ -3082,6 +3096,27 @@ export default function AdminEmployeeProfile() {
     setGovVerifyStatus('approved')
     setGovVerifyReason('')
     setGovVerifyOpen(true)
+  }
+
+  async function saveBankAccount() {
+    if (!employee?.id || bankAccountSaving) return
+    const { errors, normalized, isComplete } = validateBankAccountForm(bankAccount)
+    if (!isComplete) {
+      setBankAccountErrors(errors)
+      return
+    }
+    setBankAccountSaving(true)
+    setBankAccountErrors({})
+    try {
+      const data = await updateEmployeeBankAccount(employee.id, normalized)
+      setBankAccount(normalizeBankAccountForm(data?.bank_account || normalized))
+      deferredLoadedRef.current.governmentIds = false
+      toast.success('Bank account saved.')
+    } catch (e) {
+      toast.error(e?.message || 'Failed to save bank account.')
+    } finally {
+      setBankAccountSaving(false)
+    }
   }
 
   async function submitCreateGov() {
@@ -6170,7 +6205,7 @@ export default function AdminEmployeeProfile() {
               <div className="flex flex-col gap-3 border-b border-border/30 px-5 py-4 @sm:flex-row @sm:items-start @sm:justify-between">
                 <div className="space-y-1">
                   <h3 className="text-lg font-semibold text-[#0A0A0A] dark:text-white">Government IDs</h3>
-                  <p className="text-sm text-muted-foreground">Review uploaded IDs and approve or reject after verification.</p>
+                  <p className="text-sm text-muted-foreground">Review uploaded IDs, bank account details, and approve or reject after verification.</p>
                 </div>
                 <Button type="button" size="sm" className="gap-1.5" onClick={openAddGovModal}>
                   <Plus className="size-3.5" />
@@ -6264,6 +6299,17 @@ export default function AdminEmployeeProfile() {
                 </div>
               )}
             </div>
+            <EmployeeBankAccountCard
+              value={bankAccount}
+              errors={bankAccountErrors}
+              saving={bankAccountSaving}
+              disabled={false}
+              onChange={(next) => {
+                setBankAccount(next)
+                if (Object.keys(bankAccountErrors).length > 0) setBankAccountErrors({})
+              }}
+              onSave={saveBankAccount}
+            />
           </Motion.div>
         </TabsContent>
         )}

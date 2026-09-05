@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\EmployeeEmergencyContact;
+use App\Models\EmployeeBankAccount;
 use App\Models\EmployeeGovernmentId;
 use App\Models\User;
+use App\Services\BankAccountFormatter;
 use App\Services\DataScopeService;
 use App\Services\ESignatureService;
 use App\Services\HrRoleResolver;
@@ -226,6 +228,7 @@ class EmployeeProfileController extends Controller
                 'employeeDeductions.deductionType:id,name',
                 'employeeDeductions.payComponent:id,name,code',
                 'governmentIds:id,user_id,sss_number,philhealth_number,pagibig_number,tin_number',
+                'bankAccount:id,user_id,bank_name,bank_code,account_number',
                 'taxInfo:id,user_id,tax_regime,withholding_method,dependents',
             ])
             ->first();
@@ -272,7 +275,7 @@ class EmployeeProfileController extends Controller
         $includePayCyclePreview = (bool) ($flags['include_pay_cycle_preview'] ?? false);
 
         $cacheDescriptor = [
-            'version' => 4,
+            'version' => 6,
             'lite' => $lite,
             'include_government_ids' => $includeGov,
             'include_emergency_contacts' => $includeEmergency,
@@ -300,7 +303,10 @@ class EmployeeProfileController extends Controller
                     ]);
                 }
                 if ($includeGov) {
-                    $user->loadMissing('governmentIds:user_id,sss_number,philhealth_number,pagibig_number,tin_number');
+                    $user->loadMissing([
+                        'governmentIds:user_id,sss_number,philhealth_number,pagibig_number,tin_number',
+                        'bankAccount:user_id,bank_name,bank_code,account_number',
+                    ]);
                 }
                 if ($includeEmergency) {
                     $user->loadMissing('emergencyContacts:user_id,id,full_name,relationship,phone_number,address,is_primary');
@@ -344,6 +350,9 @@ class EmployeeProfileController extends Controller
                         'pagibig_number' => $includeGov ? $user->governmentIds?->pagibig_number : null,
                         'tin_number' => $includeGov ? $user->governmentIds?->tin_number : null,
                     ],
+                    'bank_account' => $includeGov
+                        ? BankAccountFormatter::serialize($user->bankAccount)
+                        : null,
                     'emergency_contacts' => $includeEmergency
                         ? $user->emergencyContacts
                             ->sortByDesc('is_primary')
@@ -793,6 +802,9 @@ class EmployeeProfileController extends Controller
             'PhilHealth Number',
             'Pag-IBIG Number',
             'TIN Number',
+            'Bank Name',
+            'Bank Code',
+            'Bank Account Number',
             'Tax Regime',
             'Withholding Method',
             'Dependents',
@@ -927,6 +939,9 @@ class EmployeeProfileController extends Controller
             (string) ($user->governmentIds?->philhealth_number ?? ''),
             (string) ($user->governmentIds?->pagibig_number ?? ''),
             (string) ($user->governmentIds?->tin_number ?? ''),
+            (string) ($user->bankAccount?->bank_name ?? ''),
+            (string) ($user->bankAccount?->bank_code ?? ''),
+            (string) ($user->bankAccount?->account_number ?? ''),
             (string) ($user->taxInfo?->tax_regime ?? ''),
             (string) ($user->taxInfo?->withholding_method ?? ''),
             $user->taxInfo?->dependents !== null ? (string) $user->taxInfo->dependents : '',
@@ -1141,6 +1156,27 @@ class EmployeeProfileController extends Controller
                 'pagibig_number' => $record->pagibig_number,
                 'tin_number' => $record->tin_number,
             ],
+        ]);
+    }
+
+    public function updateBankAccount(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || ! $user->canAccessSelfServiceEmployeeProfile()) {
+            return response()->json(['message' => 'Unauthorized. Employee access required.'], 403);
+        }
+        if (! $this->canEditOwnProfile($user)) {
+            return $this->denyProfileEditResponse();
+        }
+
+        $normalized = BankAccountFormatter::validateAndNormalize($request->all());
+        $record = EmployeeBankAccount::query()->firstOrNew(['user_id' => $user->id]);
+        $record->fill($normalized);
+        $record->save();
+
+        return response()->json([
+            'message' => 'Bank account updated.',
+            'bank_account' => BankAccountFormatter::serialize($record),
         ]);
     }
 

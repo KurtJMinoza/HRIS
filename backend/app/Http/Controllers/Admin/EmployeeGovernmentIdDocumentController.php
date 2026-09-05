@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Admin\Concerns\AssertsEmployeeOrgScope;
 use App\Http\Controllers\Controller;
+use App\Models\EmployeeBankAccount;
 use App\Models\EmployeeGovernmentId;
 use App\Models\EmployeeGovernmentIdDocument;
 use App\Models\User;
+use App\Services\BankAccountFormatter;
 use App\Services\GovernmentIdFormatter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -246,6 +248,22 @@ class EmployeeGovernmentIdDocumentController extends Controller
                 'pagibig_number' => $record->pagibig_number,
                 'tin_number' => $record->tin_number,
             ],
+        ]);
+    }
+
+    public function upsertBankAccount(Request $request, int $userId): JsonResponse
+    {
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
+        $this->assertEmployeeOrgScope($request, $employee);
+
+        $normalized = BankAccountFormatter::validateAndNormalize($request->all());
+        $record = EmployeeBankAccount::query()->firstOrNew(['user_id' => (int) $employee->id]);
+        $record->fill($normalized);
+        $record->save();
+
+        return response()->json([
+            'message' => 'Bank account updated.',
+            'bank_account' => BankAccountFormatter::serialize($record),
         ]);
     }
 

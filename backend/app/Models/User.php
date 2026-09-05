@@ -1162,6 +1162,11 @@ class User extends Authenticatable
         return $this->hasOne(EmployeeGovernmentId::class, 'user_id');
     }
 
+    public function bankAccount(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(EmployeeBankAccount::class, 'user_id');
+    }
+
     public function emergencyContacts(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(EmployeeEmergencyContact::class, 'user_id');

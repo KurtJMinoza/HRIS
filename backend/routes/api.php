@@ -139,6 +139,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/employee/profile/signature', [EmployeeProfileController::class, 'saveSignature']);
     Route::delete('/employee/profile/signature', [EmployeeProfileController::class, 'clearSignature']);
     Route::patch('/employee/profile/government-ids', [EmployeeProfileController::class, 'updateGovernmentIds']);
+    Route::patch('/employee/profile/bank-account', [EmployeeProfileController::class, 'updateBankAccount']);
     Route::put('/employee/profile/emergency-contacts', [EmployeeProfileController::class, 'replaceEmergencyContacts']);
     Route::get('/employee/profile/skills', [EmployeeSkillController::class, 'index']);
     Route::post('/employee/profile/skills', [EmployeeSkillController::class, 'store']);
@@ -504,6 +505,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::delete('/admin/employees/{userId}/government-id-documents/{id}', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'destroy']);
             Route::post('/admin/employees/{userId}/government-id-documents/{id}/verify', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'verify']);
             Route::patch('/admin/employees/{userId}/government-ids', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'upsertNumbers']);
+            Route::patch('/admin/employees/{userId}/bank-account', [\App\Http\Controllers\Admin\EmployeeGovernmentIdDocumentController::class, 'upsertBankAccount']);
             Route::post('/admin/employees/{userId}/documents', [\App\Http\Controllers\Admin\EmployeeDocumentController::class, 'store']);
             Route::post('/admin/employees/{userId}/documents/{id}', [\App\Http\Controllers\Admin\EmployeeDocumentController::class, 'update']);
             Route::delete('/admin/employees/{userId}/documents/{id}', [\App\Http\Controllers\Admin\EmployeeDocumentController::class, 'destroy']);
