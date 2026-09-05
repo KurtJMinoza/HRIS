@@ -61,6 +61,8 @@ import {
   Building2,
   CalendarClock,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Eye,
   FileDown,
@@ -431,9 +433,13 @@ export default function AdminGeneratePayslipsPage() {
   const [samplePreviewData, setSamplePreviewData] = useState(null)
   const [samplePdfDownloading, setSamplePdfDownloading] = useState(false)
   const [companyRows, setCompanyRows] = useState([])
+  const [recentListMeta, setRecentListMeta] = useState({ current_page: 1, last_page: 1, total: 0, per_page: 15 })
+  const [recentListPage, setRecentListPage] = useState(1)
   const [recentModuleFilter, setRecentModuleFilter] = useState('all')
   const [batchEstimateData, setBatchEstimateData] = useState(null)
   const [batchEstimateLoading, setBatchEstimateLoading] = useState(false)
+
+  const RECENT_LIST_PER_PAGE = 15
 
   const loadMeta = useCallback(async () => {
     try {
@@ -654,16 +660,35 @@ export default function AdminGeneratePayslipsPage() {
         branch_id: branchId || undefined,
         department_id: departmentId || undefined,
         payroll_module: recentModuleFilter,
-        per_page: 15,
+        per_page: RECENT_LIST_PER_PAGE,
+        page: recentListPage,
       })
       setCompanyRows(Array.isArray(res?.data) ? res.data : [])
+      const lastPage = Math.max(1, Number(res?.last_page || 1))
+      const currentPage = Math.max(1, Number(res?.current_page || recentListPage || 1))
+      setRecentListMeta({
+        current_page: currentPage,
+        last_page: lastPage,
+        total: Number(res?.total || 0),
+        per_page: Number(res?.per_page || RECENT_LIST_PER_PAGE),
+      })
+      if (currentPage !== recentListPage && currentPage <= lastPage) {
+        setRecentListPage(currentPage)
+      } else if (recentListPage > lastPage) {
+        setRecentListPage(lastPage)
+      }
     } catch (e) {
       toast({ title: 'Payslips', description: e.message || 'Failed to load summary', variant: 'destructive' })
       setCompanyRows([])
+      setRecentListMeta({ current_page: 1, last_page: 1, total: 0, per_page: RECENT_LIST_PER_PAGE })
     } finally {
       setListLoading(false)
     }
-  }, [companyId, branchId, departmentId, recentModuleFilter, toast])
+  }, [companyId, branchId, departmentId, recentModuleFilter, recentListPage, toast])
+
+  useEffect(() => {
+    setRecentListPage(1)
+  }, [companyId, branchId, departmentId, recentModuleFilter])
 
   useEffect(() => {
     if (canManagePayslips) loadCompanySummary()
@@ -2234,6 +2259,39 @@ export default function AdminGeneratePayslipsPage() {
                 </Table>
               </div>
             )}
+            {!listLoading && Number(recentListMeta.total || 0) > 0 ? (
+              <div className="mt-4 flex flex-col gap-3 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Page {recentListMeta.current_page} of {recentListMeta.last_page}
+                  {' · '}
+                  {recentListMeta.total} batch{Number(recentListMeta.total) === 1 ? '' : 'es'}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-lg"
+                    disabled={listLoading || recentListPage <= 1}
+                    onClick={() => setRecentListPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="mr-1 h-4 w-4" />
+                    Previous
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-lg"
+                    disabled={listLoading || recentListPage >= Number(recentListMeta.last_page || 1)}
+                    onClick={() => setRecentListPage((p) => Math.min(Number(recentListMeta.last_page || 1), p + 1))}
+                  >
+                    Next
+                    <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

@@ -109,7 +109,7 @@ class PayslipController extends Controller
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'from_date' => ['nullable', 'date'],
             'to_date' => ['nullable', 'date'],
-            'payroll_module' => ['nullable', 'string', 'in:all,regular,execom'],
+            'payroll_module' => ['nullable', 'string', 'in:all,regular,standard,execom,consultant'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
@@ -182,6 +182,10 @@ class PayslipController extends Controller
             $q->whereDate('pay_period_start', '<=', $v['to_date']);
         }
         $requestedModule = strtolower(trim((string) ($v['payroll_module'] ?? 'all')));
+        // UI uses "regular"; stored payroll_batch_runs.payroll_module uses "standard".
+        if ($requestedModule === 'regular') {
+            $requestedModule = PayrollBatchRun::MODULE_STANDARD;
+        }
         if (in_array($requestedModule, [PayrollBatchRun::MODULE_STANDARD, PayrollBatchRun::MODULE_EXECOM, PayrollBatchRun::MODULE_CONSULTANT], true)) {
             $q->where('payroll_module', $requestedModule);
         }
