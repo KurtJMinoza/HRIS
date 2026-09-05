@@ -372,7 +372,7 @@ class PayrollReportService
             'overtime_pay' => 'OT',
             'night_differential' => 'Night Diff',
             'paid_leave' => 'Leave',
-            'other_earnings' => 'Other Earn',
+            'other_earnings' => 'Other',
         ] as $key => $label) {
             if ($dynamicColumns[$key] ?? false) {
                 $columns[] = ['key' => $key, 'label' => $label, 'group' => 'Earnings', 'class' => 'num earnings'];
@@ -533,9 +533,18 @@ class PayrollReportService
         $summary = is_array($viewSnapshot['summary'] ?? null)
             ? $viewSnapshot['summary']
             : (is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : []);
-        $earningLines = array_values(array_merge(
-            $this->lineList($summary['daily_computation_earning_lines'] ?? []),
-            $this->lineList($summary['payslip_earning_lines'] ?? [])
+        $isConsultant = $this->isConsultantRow($employee, $summary)
+            || strtolower(trim((string) ($payslip->payroll_module ?? ''))) === PayrollBatchRun::MODULE_CONSULTANT;
+        $earningLines = $isConsultant
+            ? $this->lineList($summary['payslip_earning_lines'] ?? [])
+            : array_values(array_merge(
+                $this->lineList($summary['daily_computation_earning_lines'] ?? []),
+                $this->lineList($summary['payslip_earning_lines'] ?? [])
+            ));
+        $rawSummary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $rawEarningLines = array_values(array_merge(
+            $this->lineList($rawSummary['daily_computation_earning_lines'] ?? []),
+            $this->lineList($rawSummary['payslip_earning_lines'] ?? [])
         ));
         $deductionLines = array_values(array_merge(
             $this->lineList($summary['payslip_deduction_lines'] ?? []),
@@ -552,20 +561,65 @@ class PayrollReportService
             'other_earnings' => 0.0,
             'allowance' => 0.0,
         ];
+        $unworkedHolidayPay = 0.0;
+        $workedHolidayPremium = 0.0;
+        $workedHolidayBase = round((float) ($summary['worked_holiday_base_pay_total'] ?? 0), 2);
+        $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
+        foreach ($rawEarningLines as $line) {
+            $amount = $this->lineAmount($line);
+            if ($amount <= 0.0) {
+                continue;
+            }
+            if ($this->payslipService->isUnworkedHolidayPayLine($line)) {
+                $unworkedHolidayPay += $amount;
+
+                continue;
+            }
+            if ($this->payslipService->isWorkedHolidayPayLine($line)
+                || $this->payslipService->isRestDayWorkedPremiumLine($line)) {
+                $split = $this->payslipService->resolveWorkedHolidayDisplaySplit($line, $dailyRate);
+                $workedHolidayPremium += $split['premium'];
+                if ($workedHolidayBase <= 0.0001 && $split['rolls_base_into_regular']) {
+                    $workedHolidayBase += $split['base'];
+                }
+            }
+        }
         foreach ($earningLines as $line) {
             $amount = $this->lineAmount($line);
             if ($amount <= 0.0) {
                 continue;
             }
+            if ($isConsultant && $this->isConsultantBasicPayReportLine($line)) {
+                continue;
+            }
+            if ($this->payslipService->isUnworkedHolidayPayLine($line)
+                || $this->payslipService->isWorkedHolidayPayLine($line)
+                || $this->payslipService->isRestDayWorkedPremiumLine($line)) {
+                continue;
+            }
             $earnings[$this->earningBucket($line)] += $amount;
         }
-        $earnings['regular_basic_pay'] = $this->metricAmount($metrics, $categoryTotals, 'regular_pay', $earnings['regular_basic_pay']);
-        $earnings['holiday_pay'] = $this->metricAmount($metrics, $categoryTotals, 'holiday_pay', $earnings['holiday_pay']);
-        $earnings['overtime_pay'] = $this->metricAmount($metrics, $categoryTotals, 'overtime_pay', $earnings['overtime_pay']);
-        $earnings['night_differential'] = $this->metricAmount($metrics, $categoryTotals, 'night_differential', $earnings['night_differential']);
-        $earnings['paid_leave'] = $this->metricAmount($metrics, $categoryTotals, 'paid_leave', $earnings['paid_leave']);
-        $earnings['allowance'] = $this->metricAmount($metrics, $categoryTotals, 'allowances', $earnings['allowance'], 'allowance');
-        $earnings['other_earnings'] = $this->metricAmount($metrics, $categoryTotals, 'other_earning', $earnings['other_earnings']);
+        if ($isConsultant) {
+            $earnings['regular_basic_pay'] = $this->payslipService->consultantBasicPayAmountForDisplay($summary, $snapshot);
+        } else {
+            $earnings['regular_basic_pay'] = $this->regularBasicPayForReport(
+                $summary,
+                round(
+                    $this->preferLineBucketAmount($earnings['regular_basic_pay'], $metrics, $categoryTotals, 'regular_pay')
+                        + $unworkedHolidayPay
+                        + $workedHolidayBase,
+                    2
+                ),
+            );
+        }
+        $earnings['holiday_pay'] = round(max(0.0, $workedHolidayPremium), 2);
+        $earnings['overtime_pay'] = $this->preferLineBucketAmount($earnings['overtime_pay'], $metrics, $categoryTotals, 'overtime_pay');
+        $earnings['night_differential'] = $this->preferLineBucketAmount($earnings['night_differential'], $metrics, $categoryTotals, 'night_differential');
+        $earnings['paid_leave'] = $this->preferLineBucketAmount($earnings['paid_leave'], $metrics, $categoryTotals, 'paid_leave');
+        $earnings['allowance'] = $this->preferLineBucketAmount($earnings['allowance'], $metrics, $categoryTotals, 'allowances', 'allowance');
+        // Other earnings come only from explicit report buckets (refunds, uncategorized lines).
+        // Raw frozen metrics often misclassify holiday pay as other_earning, which duplicates Holiday.
+        $earnings['other_earnings'] = round(max(0.0, $earnings['other_earnings']), 2);
 
         $deductions = [
             'sss' => 0.0,
@@ -596,6 +650,10 @@ class PayrollReportService
             $attendanceSummary['daily_computation_days'] = $snapshot['daily_computation_days'];
         }
 
+        $grossEarnings = $this->reportGrossEarnings($earnings, $summary, $metrics);
+        $totalDeductions = round((float) $metrics['total_deductions'], 2);
+        $netPay = $this->reportNetPay($summary, $grossEarnings, $totalDeductions, $metrics);
+
         return array_merge($earnings, $deductions, $detailedDeductions['amounts'], [
             'employee_name' => $name !== '' ? $name : 'Employee '.$payslip->user_id,
             'employee_sort_key' => $employee instanceof User ? $employee->employeeListingSortKey() : mb_strtolower($name),
@@ -605,9 +663,9 @@ class PayrollReportService
                 : ($this->payslipService->regularPayAttendanceLabel($attendanceSummary) ?? '—'),
             'deduction_details' => $detailedDeductions['amounts'],
             'deduction_detail_labels' => $detailedDeductions['labels'],
-            'gross_earnings' => round((float) $metrics['gross_pay'], 2),
-            'total_deductions' => round((float) $metrics['total_deductions'], 2),
-            'net_pay' => round((float) $metrics['net_pay'], 2),
+            'gross_earnings' => $grossEarnings,
+            'total_deductions' => $totalDeductions,
+            'net_pay' => $netPay,
         ]);
     }
 
@@ -717,16 +775,110 @@ class PayrollReportService
     }
 
     /**
+     * Prefer normalized payslip-view line buckets over raw frozen metrics, which can misclassify
+     * holiday pay as other earnings or fold refund lines into regular pay.
+     *
+     * @param  array<string, mixed>  $metrics
+     * @param  array<string, mixed>  $categoryTotals
+     */
+    private function preferLineBucketAmount(
+        float $bucketTotal,
+        array $metrics,
+        array $categoryTotals,
+        string $metricKey,
+        ?string $categoryKey = null,
+    ): float {
+        if ($bucketTotal > 0.004) {
+            return round($bucketTotal, 2);
+        }
+
+        return $this->metricAmount($metrics, $categoryTotals, $metricKey, 0.0, $categoryKey);
+    }
+
+    /**
+     * @param  array<string, float>  $earnings
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $metrics
+     */
+    private function reportGrossEarnings(array $earnings, array $summary, array $metrics): float
+    {
+        if (isset($summary['display_gross_pay']) && is_numeric($summary['display_gross_pay'])) {
+            $displayGross = round(max(0.0, (float) $summary['display_gross_pay']), 2);
+            if ($displayGross > 0.0001) {
+                return $displayGross;
+            }
+        }
+
+        $fromBuckets = round(
+            (float) ($earnings['regular_basic_pay'] ?? 0)
+            + (float) ($earnings['holiday_pay'] ?? 0)
+            + (float) ($earnings['overtime_pay'] ?? 0)
+            + (float) ($earnings['night_differential'] ?? 0)
+            + (float) ($earnings['paid_leave'] ?? 0)
+            + (float) ($earnings['other_earnings'] ?? 0)
+            + (float) ($earnings['allowance'] ?? 0),
+            2
+        );
+        if ($fromBuckets > 0.0001) {
+            return $fromBuckets;
+        }
+
+        return round(max(0.0, (float) ($metrics['gross_pay'] ?? 0)), 2);
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $metrics
+     */
+    private function reportNetPay(array $summary, float $grossEarnings, float $totalDeductions, array $metrics): float
+    {
+        if (isset($summary['display_net_pay']) && is_numeric($summary['display_net_pay'])) {
+            return round((float) $summary['display_net_pay'], 2);
+        }
+
+        if ($grossEarnings > 0.0001) {
+            return round($grossEarnings - $totalDeductions, 2);
+        }
+
+        return round((float) ($metrics['net_pay'] ?? 0), 2);
+    }
+
+    /**
+     * Match payslip "Regular pay after reductions" in payroll reports. When present, this already
+     * includes unworked holiday pay rolled into Regular pay. The fallback adds unworked pay only
+     * when the attendance breakdown is unavailable.
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    private function regularBasicPayForReport(array $summary, float $fallback): float
+    {
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : null;
+        if (is_array($breakdown) && is_numeric($breakdown['regular_pay_after_reductions'] ?? null)) {
+            return round(max(0.0, (float) $breakdown['regular_pay_after_reductions']), 2);
+        }
+
+        return round($fallback, 2);
+    }
+
+    /**
      * @param  array<string, mixed>  $line
      */
     private function earningBucket(array $line): string
     {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $componentCode = strtolower(trim((string) ($line['component_code'] ?? '')));
+        if (str_starts_with($key, 'refund_') || str_contains($componentCode, 'refund_')) {
+            return 'other_earnings';
+        }
+
         $text = $this->lineSearchText($line);
+        if (str_contains($text, 'holiday') || str_contains($componentCode, 'holiday')) {
+            return 'holiday_pay';
+        }
         if (str_contains($text, 'allowance')) {
             return 'allowance';
-        }
-        if (str_contains($text, 'holiday')) {
-            return 'holiday_pay';
         }
         if (str_contains($text, 'overtime') || str_contains($text, 'ot_pay') || preg_match('/\bot\b/', $text)) {
             return 'overtime_pay';
@@ -810,6 +962,23 @@ class PayrollReportService
         }
 
         return $candidate;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isConsultantBasicPayReportLine(array $line): bool
+    {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $code = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? '')));
+
+        return str_starts_with($key, 'consultant_basic')
+            || str_starts_with($key, 'consultant:basic')
+            || $code === 'BASIC_SALARY'
+            || str_contains($code, 'BASIC_SALARY')
+            || $label === 'basic pay'
+            || $label === 'basic salary';
     }
 
     /**

@@ -33,7 +33,7 @@ $host = $options['host'] ?? env('OCTANE_HOST', config('octane.host', '127.0.0.1'
 $port = (string) ($options['port'] ?? env('OCTANE_PORT', defaultPortFromAppUrl(config('app.url'))));
 $workers = (string) ($options['workers'] ?? config('octane.workers', 'auto'));
 $maxRequests = (string) ($options['max-requests'] ?? config('octane.max_requests', 500));
-$logLevel = $options['log-level'] ?? (app()->environment('local') ? 'debug' : 'warn');
+$logLevel = $options['log-level'] ?? 'warn';
 $rrConfig = $options['rr-config'] ?? null;
 
 $roadRunnerBinary = findRoadRunnerBinary();
@@ -49,9 +49,16 @@ ensurePortIsAvailable($host, (int) $port);
 $configPath = resolveRoadRunnerConfigPath($rrConfig);
 $phpBinary = (new PhpExecutableFinder)->find() ?: PHP_BINARY;
 $workerScript = base_path(config('octane.roadrunner.command', 'vendor/bin/roadrunner-worker'));
-$workerCount = $workers === 'auto' ? 0 : (int) $workers;
+$workerCount = resolveWorkerCount($workers);
+$phpCommand = implode(',', [
+    $phpBinary,
+    '-d', 'zend_extension=opcache',
+    '-d', 'opcache.enable=1',
+    '-d', 'opcache.enable_cli=1',
+    $workerScript,
+]);
 $rpcPort = (int) ($options['rpc-port'] ?? ((int) $port - 1999));
-$rpcHost = $options['rpc-host'] ?? $host;
+$rpcHost = $options['rpc-host'] ?? '127.0.0.1';
 $metricsPort = (int) ($options['metrics-port'] ?? ((int) $port + 1000));
 $maxExecutionTime = config('octane.max_execution_time', 30).'s';
 
@@ -73,7 +80,7 @@ $process = new Process(array_filter([
     '-c', $configPath,
     '-o', 'version=3',
     '-o', 'http.address='.$host.':'.$port,
-    '-o', 'server.command='.$phpBinary.','.$workerScript,
+    '-o', 'server.command='.$phpCommand,
     '-o', 'http.pool.num_workers='.$workerCount,
     '-o', 'http.pool.max_jobs='.$maxRequests,
     '-o', 'rpc.listen=tcp://'.$rpcHost.':'.$rpcPort,
@@ -131,6 +138,19 @@ function parseOptions(array $args): array
     }
 
     return $options;
+}
+
+/**
+ * RoadRunner treats num_workers=0 as CPU-count auto. On a 32-core Windows
+ * machine that boots dozens of Laravel workers and makes Octane feel frozen.
+ */
+function resolveWorkerCount(string $workers): int
+{
+    if ($workers === 'auto' || $workers === '' || $workers === '0') {
+        return 4;
+    }
+
+    return max(1, min(8, (int) $workers));
 }
 
 function defaultPortFromAppUrl(?string $appUrl): string

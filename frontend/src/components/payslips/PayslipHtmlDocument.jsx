@@ -44,6 +44,18 @@ function formatUnits(_minutesWorked, unitsFallback) {
   return null
 }
 
+function isUnworkedHolidayPayLine(line) {
+  const key = String(line?.key || '').trim().toLowerCase()
+  const code = String(line?.component_code || '').trim().toUpperCase()
+  const label = String(line?.label || line?.name || '').trim().toLowerCase()
+  const isHoliday = key.startsWith('holiday:') || code.includes('HOLIDAY') || label.includes('holiday')
+  if (!isHoliday) return false
+  if (code.includes('UNWORKED')) return true
+  if (line?.metadata?.worked === false) return true
+  if (line?.metadata?.worked === true) return false
+  return !code.includes('WORKED')
+}
+
 function dateValue(value) {
   if (!value) return '—'
   const d = new Date(value)
@@ -165,7 +177,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
       return uniqueLines(earnings)
     }
     if (dailyComputationEarnings.length > 0 || earnings.length > 0) {
-      return uniqueLines([...dailyComputationEarnings, ...earnings])
+      return uniqueLines([...dailyComputationEarnings, ...earnings].filter((line) => !isUnworkedHolidayPayLine(line)))
     }
     const fallback = []
     const basic = Number(summary?.basic_pay || summary?.basic_pay_this_period || 0)

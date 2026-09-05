@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\RefundRequest;
 use App\Services\RefundPayrollApplicationService;
+use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class RefundPayrollApplicationServiceTest extends TestCase
@@ -116,20 +117,65 @@ class RefundPayrollApplicationServiceTest extends TestCase
 
     public function test_selected_payroll_cycle_applies_on_matching_cutoff_window(): void
     {
+        Carbon::setTestNow('2026-08-20');
+
+        try {
+            $service = app(RefundPayrollApplicationService::class);
+            $refund = new RefundRequest([
+                'affected_date' => '2026-08-11',
+                'affected_date_to' => '2026-08-25',
+                'cutoff_start_date' => '2026-08-11',
+                'cutoff_end_date' => '2026-08-25',
+                'calculation' => [
+                    'finalized' => false,
+                    'application_timing' => 'selected_payroll_cycle',
+                ],
+            ]);
+
+            $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-11', '2026-08-25'));
+            $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-26', '2026-09-10'));
+            $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-01', '2026-08-15'));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_selected_payroll_cycle_carries_to_next_window_after_cycle_closes_without_employee_draft(): void
+    {
+        Carbon::setTestNow('2026-08-31');
+
+        try {
+            $service = app(RefundPayrollApplicationService::class);
+            $refund = new RefundRequest([
+                'affected_date' => '2026-08-11',
+                'affected_date_to' => '2026-08-25',
+                'cutoff_start_date' => '2026-08-11',
+                'cutoff_end_date' => '2026-08-25',
+                'calculation' => [
+                    'finalized' => false,
+                    'application_timing' => 'selected_payroll_cycle',
+                ],
+            ]);
+
+            $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-11', '2026-08-25'));
+            $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-26', '2026-09-10'));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_next_payroll_timing_applies_after_cutoff_end(): void
+    {
         $service = app(RefundPayrollApplicationService::class);
         $refund = new RefundRequest([
             'affected_date' => '2026-08-11',
-            'affected_date_to' => '2026-08-25',
-            'cutoff_start_date' => '2026-08-11',
             'cutoff_end_date' => '2026-08-25',
             'calculation' => [
-                'finalized' => false,
-                'application_timing' => 'selected_payroll_cycle',
+                'application_timing' => 'next_payroll',
             ],
         ]);
 
-        $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-11', '2026-08-25'));
-        $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-26', '2026-09-10'));
-        $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-01', '2026-08-15'));
+        $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-11', '2026-08-25'));
+        $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-26', '2026-09-10'));
     }
 }

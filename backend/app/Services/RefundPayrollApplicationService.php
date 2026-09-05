@@ -6,6 +6,7 @@ use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\RefundRequest;
 use App\Models\User;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -189,6 +190,180 @@ class RefundPayrollApplicationService
     }
 
     /**
+     * Re-queue refunds that were marked processed on voided payroll batches.
+     *
+     * @return int number of refunds returned to approved
+     */
+    public function requeueRefundsOnVoidedBatches(?User $actor = null): int
+    {
+        $count = 0;
+        $voidedBatches = PayrollBatchRun::query()
+            ->where('status', PayrollBatchRun::STATUS_VOIDED)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($voidedBatches as $batch) {
+            $count += $this->revertProcessedForVoidedBatch($batch, $actor);
+        }
+
+        return $count;
+    }
+
+    /**
+     * Re-queue processed refunds that never landed on a payslip snapshot (e.g. voided batch finalize).
+     *
+     * @return int number of refunds returned to approved
+     */
+    public function requeueProcessedRefundsMissingFromPayslip(?User $actor = null): int
+    {
+        return DB::transaction(function () use ($actor) {
+            $refunds = RefundRequest::query()
+                ->where('status', RefundRequest::STATUS_PROCESSED)
+                ->lockForUpdate()
+                ->get();
+
+            $count = 0;
+            foreach ($refunds as $refund) {
+                $payslip = null;
+                if ($refund->processed_batch_run_id) {
+                    $payslip = Payslip::query()
+                        ->where('payroll_batch_run_id', (int) $refund->processed_batch_run_id)
+                        ->where('user_id', (int) $refund->employee_id)
+                        ->where('status', '!=', Payslip::STATUS_VOIDED)
+                        ->whereNull('voided_at')
+                        ->first();
+                }
+
+                if ($payslip instanceof Payslip && $this->payslipContainsRefund($payslip, $refund)) {
+                    continue;
+                }
+
+                $fromStatus = $refund->status;
+                $refund->status = RefundRequest::STATUS_APPROVED;
+                $refund->processed_at = null;
+                $refund->processed_by = null;
+                $refund->processed_batch_run_id = null;
+                $refund->save();
+
+                app(RefundWorkflowService::class)->writeAudit(
+                    $refund,
+                    $actor,
+                    'payroll-requeued',
+                    $fromStatus,
+                    RefundRequest::STATUS_APPROVED,
+                    'Re-queued because the processed payroll batch did not retain this adjustment on the payslip.'
+                );
+                $count++;
+            }
+
+            return $count;
+        });
+    }
+
+    /**
+     * Apply every approved refund onto the best matching payslip and settle on the batch run.
+     *
+     * @return array{requeued:int, applied:int, settled:int, skipped:int, details:list<string>}
+     */
+    public function repairApprovedRefundsOnPayslips(?User $actor = null): array
+    {
+        $payslipService = app(PayslipService::class);
+        $requeued = $this->requeueRefundsOnVoidedBatches($actor)
+            + $this->requeueProcessedRefundsMissingFromPayslip($actor);
+
+        $refunds = RefundRequest::query()
+            ->whereIn('status', RefundRequest::PAYROLL_PENDING_STATUSES)
+            ->orderBy('id')
+            ->get();
+
+        $applied = 0;
+        $skipped = 0;
+        $details = [];
+        $touchedBatchIds = [];
+
+        foreach ($refunds as $refund) {
+            $employee = User::query()->find((int) $refund->employee_id);
+            if (! $employee instanceof User) {
+                $skipped++;
+                $details[] = "Refund #{$refund->id}: employee missing.";
+                continue;
+            }
+
+            $payslip = $this->resolvePayslipForRefund($refund);
+            if (! $payslip instanceof Payslip) {
+                $skipped++;
+                $details[] = "Refund #{$refund->id} ({$employee->last_name}): no eligible payslip yet.";
+                continue;
+            }
+
+            if ($this->payslipContainsRefund($payslip, $refund)) {
+                $skipped++;
+                continue;
+            }
+
+            $force = in_array((string) $payslip->status, Payslip::lockingStatuses(), true);
+            $payslipService->applyPendingRefundsToPayslip($payslip, $employee, $force);
+            $payslip = $payslip->fresh() ?? $payslip;
+
+            if (! $this->payslipContainsRefund($payslip, $refund)) {
+                $skipped++;
+                $details[] = "Refund #{$refund->id} ({$employee->last_name}): apply failed on payslip #{$payslip->id}.";
+                continue;
+            }
+
+            if ($force) {
+                $payslipService->ensurePayslipPdfOnDisk($payslip, $employee, forceRegenerate: true);
+            }
+
+            $applied++;
+            $batchId = (int) ($payslip->payroll_batch_run_id ?? 0);
+            if ($batchId > 0) {
+                $touchedBatchIds[$batchId] = true;
+            }
+            $details[] = "Refund #{$refund->id} ({$employee->last_name}) → payslip #{$payslip->id} ({$payslip->pay_period_start?->toDateString()} → {$payslip->pay_period_end?->toDateString()}).";
+        }
+
+        $settled = 0;
+        foreach (array_keys($touchedBatchIds) as $batchId) {
+            $batch = PayrollBatchRun::query()->find((int) $batchId);
+            if ($batch instanceof PayrollBatchRun) {
+                $settled += $this->markProcessedForBatch($batch, $actor);
+            }
+        }
+
+        return compact('requeued', 'applied', 'settled', 'skipped', 'details');
+    }
+
+    private function resolvePayslipForRefund(RefundRequest $refund): ?Payslip
+    {
+        $cutoffStart = optional($refund->cutoff_start_date)->toDateString();
+        $cutoffEnd = optional($refund->cutoff_end_date)->toDateString();
+        if ($cutoffStart === null || $cutoffEnd === null) {
+            return null;
+        }
+
+        $candidates = Payslip::query()
+            ->where('user_id', (int) $refund->employee_id)
+            ->whereNull('voided_at')
+            ->where('status', '!=', Payslip::STATUS_VOIDED)
+            ->orderByDesc('pay_period_start')
+            ->get();
+
+        foreach ($candidates as $payslip) {
+            $from = $payslip->pay_period_start?->toDateString();
+            $to = $payslip->pay_period_end?->toDateString();
+            if ($from === null || $to === null) {
+                continue;
+            }
+            if ($this->isEligibleForPayWindow($refund, $from, $to)) {
+                return $payslip;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * When a payroll batch is voided, refunds marked processed on that batch must be re-queued.
      *
      * @return int number of refunds returned to approved
@@ -328,15 +503,27 @@ class RefundPayrollApplicationService
         $affectedTo = optional($refund->affected_date_to)->toDateString() ?? $affectedFrom;
         $cutoffStart = optional($refund->cutoff_start_date)->toDateString();
         $cutoffEnd = optional($refund->cutoff_end_date)->toDateString();
+        $applicationTiming = (string) data_get($refund->calculation, 'application_timing', '');
 
         if ($this->referencesFinalizedOriginalPayroll($refund) && $cutoffEnd !== null) {
             return $from > $cutoffEnd;
         }
 
-        $applicationTiming = (string) data_get($refund->calculation, 'application_timing', '');
+        if ($applicationTiming === 'next_payroll' && $cutoffEnd !== null) {
+            return $from > $cutoffEnd;
+        }
+
         if ($applicationTiming === 'selected_payroll_cycle' && $cutoffStart !== null && $cutoffEnd !== null) {
-            // Must match the admin-selected pay cycle window exactly — not merely overlap.
-            return $from === $cutoffStart && $to === $cutoffEnd;
+            if ($from === $cutoffStart && $to === $cutoffEnd) {
+                return true;
+            }
+
+            // Selected cycle closed (finalized or missed) — carry to the employee's next payroll.
+            if ($this->selectedPayrollCycleHasClosed($refund) && $from > $cutoffEnd) {
+                return true;
+            }
+
+            return false;
         }
 
         return $affectedFrom <= $to && $affectedTo >= $from;
@@ -348,6 +535,58 @@ class RefundPayrollApplicationService
             return true;
         }
 
+        if ((int) data_get($refund->calculation, 'original_batch_run_id', 0) > 0) {
+            return true;
+        }
+
         return (bool) data_get($refund->calculation, 'finalized', false);
+    }
+
+    /**
+     * True when the admin-selected pay cycle can no longer absorb this refund for the employee
+     * (finalized run exists, or the window ended with no open draft payslip for them).
+     */
+    private function selectedPayrollCycleHasClosed(RefundRequest $refund): bool
+    {
+        $cutoffStart = optional($refund->cutoff_start_date)->toDateString();
+        $cutoffEnd = optional($refund->cutoff_end_date)->toDateString();
+        if ($cutoffStart === null || $cutoffEnd === null) {
+            return false;
+        }
+
+        $employeeId = (int) $refund->employee_id;
+        if ($employeeId <= 0) {
+            return Carbon::now()->toDateString() > $cutoffEnd;
+        }
+
+        $employee = User::query()->find($employeeId);
+        $companyId = $employee?->getEffectiveCompanyId();
+
+        if ($companyId !== null && $companyId > 0) {
+            $batchClosed = PayrollBatchRun::query()
+                ->whereDate('pay_period_start', $cutoffStart)
+                ->whereDate('pay_period_end', $cutoffEnd)
+                ->where('company_id', $companyId)
+                ->where('status', PayrollBatchRun::STATUS_FINALIZED)
+                ->exists();
+
+            if ($batchClosed) {
+                return true;
+            }
+        }
+
+        $hasOpenDraft = Payslip::query()
+            ->where('user_id', (int) $refund->employee_id)
+            ->whereDate('pay_period_start', $cutoffStart)
+            ->whereDate('pay_period_end', $cutoffEnd)
+            ->whereNull('voided_at')
+            ->whereIn('status', [Payslip::STATUS_DRAFT, Payslip::STATUS_GENERATED])
+            ->exists();
+
+        if ($hasOpenDraft) {
+            return false;
+        }
+
+        return Carbon::now()->toDateString() > $cutoffEnd;
     }
 }

@@ -837,7 +837,10 @@ class PayslipService
         } elseif ($isConsultantPreview) {
             $dailyEarningLines = [];
         } elseif (count($dailyEarningLines) === 0) {
-            $regularPay = (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
+            $afterReductions = (float) ($summary['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0);
+            $regularPay = $afterReductions > 0
+                ? $afterReductions
+                : (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0));
             $attendancePremium = (float) ($summary['attendance_premium_pay_this_period'] ?? 0);
             if ($regularPay > 0) {
                 $dailyEarningLines[] = [
@@ -1116,7 +1119,8 @@ class PayslipService
         ]);
         $payslip->save();
 
-        return $this->ensureDraftPayrollLinesSynced($payslip->fresh() ?? $payslip);
+        // Live recomputes replace the snapshot and drop queued refund lines unless we re-apply them.
+        return $this->applyPendingRefundsToPayslip($payslip->fresh() ?? $payslip, $employee);
     }
 
     /**
@@ -2690,6 +2694,10 @@ class PayslipService
         $dailyComputationDays = $this->cleanDailyComputationDays($out['daily_computation_days'] ?? null);
         $dailyRate = (float) ($summary['daily_rate'] ?? ($out['daily_rate'] ?? 0));
         $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
+        if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
+            $summary = $this->repairMissingUnworkedHolidayEarningLines($summary, $dailyComputationDays);
+        }
+        $summary = $this->precomputeWorkedHolidayDisplayMetadata($summary, $dailyRate);
         $regularPayPresentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyComputationDays);
         if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
             $summary = $this->normalizeFrozenRegularPayLines(
@@ -2705,6 +2713,7 @@ class PayslipService
                     false
                 );
             }
+            $summary['unworked_holiday_present_day_units'] = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
             $summary = $this->applyRegularPayDisplayAmounts(
                 $summary,
                 $regularPayPresentDays,
@@ -2712,7 +2721,22 @@ class PayslipService
             );
         }
         $summary = $this->normalizeAttendancePayBreakdownDetails($summary);
-        $summary = $this->attachRegularPayAfterReductionsDisplay($summary);
+        if (! isset($summary['unworked_holiday_present_day_units'])) {
+            $summary['unworked_holiday_present_day_units'] = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
+        }
+        $summary = $this->applyWorkedHolidayDisplaySplit($summary, $dailyRate);
+        $summary = $this->attachRegularPayAfterReductionsDisplay($summary, $dailyComputationDays);
+        $summary['daily_computation_earning_lines'] = $this->reorderDailyComputationEarningLinesForDisplay(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : []
+        );
+        $summary['daily_computation_earning_lines'] = $this->hideUnworkedHolidayLinesFromPayslipDisplay(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : []
+        );
+        $summary = $this->ensureRegularPayDisplayLineWhenMissing($summary, $regularPayPresentDays, $dailyRate);
         $summary = $this->refreshRegularPayDisplayTotals($summary);
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
@@ -3240,7 +3264,16 @@ class PayslipService
             $this->normalizePayslipCustomDeductionLines($summary['payslip_custom_deduction_lines'] ?? [], $summary)
         ));
 
-        $gross = $this->sumPayslipLineAmounts($earningLines);
+        $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : null;
+        $gross = $this->sumPayslipLineDisplayAmounts($earningLines, $attendanceBreakdown);
+        if ($gross <= 0.0001) {
+            $gross = $this->sumPayslipLineAmounts($earningLines);
+        }
+        if ($gross <= 0.0001 && isset($summary['display_gross_pay']) && is_numeric($summary['display_gross_pay'])) {
+            $gross = round(max(0.0, (float) $summary['display_gross_pay']), 2);
+        }
         $deductions = $this->sumPayslipLineAmounts($deductionLines);
 
         return [
@@ -3290,6 +3323,9 @@ class PayslipService
             if (! empty($line['exempted'])) {
                 continue;
             }
+            if ($this->isUnworkedHolidayPayLine($line)) {
+                continue;
+            }
             $amount = $line['amount'] ?? $line['resolved_amount'] ?? null;
             if (! is_numeric($amount)) {
                 continue;
@@ -3318,6 +3354,14 @@ class PayslipService
             } else {
                 $total += $computed;
             }
+        }
+
+        if (
+            ! $regularHandled
+            && is_array($attendanceBreakdown)
+            && is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
+        ) {
+            $total += max(0.0, (float) $attendanceBreakdown['regular_pay_after_reductions']);
         }
 
         return round($total, 2);
@@ -3689,6 +3733,11 @@ class PayslipService
             $out['daily_computation_days'] = [];
         }
 
+        if (! $isExecomSnapshot && ! $isConsultantSnapshot) {
+            $summary = $this->repairMissingUnworkedHolidayEarningLines($summary, $dailyComputationDays);
+        }
+
+        $summary = $this->precomputeWorkedHolidayDisplayMetadata($summary, $dailyRate);
         $regularPayPresentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyComputationDays);
         $summary['payslip_earning_lines'] = $this->normalizePayslipLineList(
             $summary['payslip_earning_lines'] ?? [],
@@ -3705,6 +3754,9 @@ class PayslipService
             false,
             $regularHourlyRate,
             $regularPayPresentDays
+        );
+        $summary['daily_computation_earning_lines'] = $this->reorderDailyComputationEarningLinesForDisplay(
+            $summary['daily_computation_earning_lines']
         );
         if ($isExecomSnapshot) {
             $summary = $this->sanitizeExecomPayslipSummary($summary);
@@ -3742,6 +3794,7 @@ class PayslipService
                 'amount' => (float) ($item['amount'] ?? 0),
                 'date' => $item['date'] ?? null,
                 'worked' => (bool) ($item['worked'] ?? false),
+                'eligible' => (bool) ($item['eligible'] ?? false),
                 'is_rest_day' => (bool) ($item['is_rest_day'] ?? false),
                 'component_code' => $item['component_code'] ?? null,
                 'description' => $this->sanitizePayslipText((string) ($item['description'] ?? '')) ?: null,
@@ -3776,12 +3829,25 @@ class PayslipService
             $dailyComputationDays,
             $isExecomSnapshot || $isConsultantSnapshot
         );
+        $summary['unworked_holiday_present_day_units'] = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
         $summary = $this->applyRegularPayDisplayAmounts(
             $summary,
             $regularPayPresentDays,
             $dailyRate
         );
-        $summary = $this->attachRegularPayAfterReductionsDisplay($summary);
+        $summary = $this->applyWorkedHolidayDisplaySplit($summary, $dailyRate);
+        $summary = $this->attachRegularPayAfterReductionsDisplay($summary, $dailyComputationDays);
+        $summary['daily_computation_earning_lines'] = $this->reorderDailyComputationEarningLinesForDisplay(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : []
+        );
+        $summary['daily_computation_earning_lines'] = $this->hideUnworkedHolidayLinesFromPayslipDisplay(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : []
+        );
+        $summary = $this->ensureRegularPayDisplayLineWhenMissing($summary, $regularPayPresentDays, $dailyRate);
         $earningLines = ($isExecomSnapshot || $isConsultantSnapshot)
             ? (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [])
             : array_merge(
@@ -4211,8 +4277,11 @@ class PayslipService
                     ? $summary['attendance_pay_breakdown']
                     : [];
                 $scheduledDays = max(0.0, (float) ($attendanceBreakdown['scheduled_days_count'] ?? 0));
+                $hasUnworkedHolidayInHeadline = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary) > 0.0001
+                    || $this->resolveUnworkedHolidayPayTotalFromSummary($summary) > 0.0001;
                 if (
-                    max(0.0, (float) ($attendanceBreakdown['total_deduction'] ?? 0)) <= 0.0001
+                    ! $hasUnworkedHolidayInHeadline
+                    && max(0.0, (float) ($attendanceBreakdown['total_deduction'] ?? 0)) <= 0.0001
                     && $scheduledDays > 0.0001
                     && $presentDays + 0.0001 < $scheduledDays
                 ) {
@@ -4254,7 +4323,10 @@ class PayslipService
      * @param  array<string, mixed>  $summary
      * @return array<string, mixed>
      */
-    private function attachRegularPayAfterReductionsDisplay(array $summary): array
+    /**
+     * @param  list<array<string, mixed>>  $dailyDays
+     */
+    private function attachRegularPayAfterReductionsDisplay(array $summary, array $dailyDays = []): array
     {
         $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
             ? $summary['attendance_pay_breakdown']
@@ -4273,24 +4345,67 @@ class PayslipService
             }
         }
         if (! is_array($regularLine)) {
+            $existingAfterReductions = is_numeric($breakdown['regular_pay_after_reductions'] ?? null)
+                ? round((float) $breakdown['regular_pay_after_reductions'], 2)
+                : null;
+            $unworkedHolidayPay = $this->resolveUnworkedHolidayPayTotalFromSummary($summary, $dailyDays);
+            if ($unworkedHolidayPay > 0.0001) {
+                $breakdown['regular_pay_after_reductions'] = round($unworkedHolidayPay, 2);
+            } elseif ($existingAfterReductions !== null && $existingAfterReductions > 0.0001) {
+                $breakdown['regular_pay_after_reductions'] = $existingAfterReductions;
+            }
+            $summary['attendance_pay_breakdown'] = $breakdown;
+
             return $summary;
         }
 
         $hasGrossDisplay = is_numeric($regularLine['display_amount'] ?? null);
         $grossDisplay = round((float) ($hasGrossDisplay ? $regularLine['display_amount'] : ($regularLine['amount'] ?? 0)), 2);
         $computedAmount = round((float) ($regularLine['amount'] ?? 0), 2);
+        $existingAfterReductions = is_numeric($breakdown['regular_pay_after_reductions'] ?? null)
+            ? round((float) $breakdown['regular_pay_after_reductions'], 2)
+            : null;
+        $unworkedHolidayPay = $this->resolveUnworkedHolidayPayForRegularPayRollIn(
+            $summary,
+            $dailyDays,
+            $computedAmount,
+            $existingAfterReductions
+        );
+        $workedHolidayBase = round((float) ($summary['worked_holiday_base_pay_total'] ?? 0), 2);
+        $payableRegularTotal = round($computedAmount + $unworkedHolidayPay + $workedHolidayBase, 2);
+        if (
+            $unworkedHolidayPay <= 0.0001
+            && $existingAfterReductions !== null
+            && $existingAfterReductions > $payableRegularTotal + 0.005
+        ) {
+            $payableRegularTotal = $existingAfterReductions;
+        }
         // Keep the headline at present-day gross, but make the breakdown's payable total use
-        // the minute-based computed amount. This also avoids cent drift from separately-rounded
-        // daily attendance deductions.
-        $hasPayableReduction = $hasGrossDisplay && $computedAmount + 0.005 < $grossDisplay;
-        $breakdown['regular_pay_after_reductions'] = $hasPayableReduction || ! $hasGrossDisplay
-            ? $computedAmount
-            : $grossDisplay;
+        // the minute-based computed amount plus any unworked holiday pay rolled into Regular pay.
+        // This also avoids cent drift from separately-rounded daily attendance deductions.
+        $actualAttendanceDeduction = round((float) ($breakdown['total_deduction'] ?? 0), 2);
+        $hasPayableReduction = $hasGrossDisplay
+            && $actualAttendanceDeduction > 0.0001
+            && $payableRegularTotal + 0.005 < $grossDisplay;
+        if ($hasGrossDisplay && $actualAttendanceDeduction <= 0.0001) {
+            // Absences shown as informational rows, unworked holiday rolled into present-day
+            // units, and other non-deducting gaps must not reduce Regular pay after reductions
+            // below the headline when Total attendance reductions is zero.
+            $breakdown['regular_pay_after_reductions'] = $grossDisplay;
+        } else {
+            $breakdown['regular_pay_after_reductions'] = $hasPayableReduction || ! $hasGrossDisplay
+                ? $payableRegularTotal
+                : $grossDisplay;
+        }
         if ($hasGrossDisplay) {
+            $reconciledDisplay = $actualAttendanceDeduction > 0.0001
+                ? round($payableRegularTotal + $actualAttendanceDeduction, 2)
+                : $grossDisplay;
             $breakdown = $this->reconcileAttendancePayBreakdown(
                 $breakdown,
-                max(0.0, round($grossDisplay - $computedAmount, 2))
+                $actualAttendanceDeduction
             );
+            $summary = $this->updateRegularPayLineDisplayAmount($summary, $reconciledDisplay);
         }
         $summary['attendance_pay_breakdown'] = $breakdown;
 
@@ -4539,6 +4654,755 @@ class PayslipService
         );
 
         return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    public function isHolidayPayLine(array $line): bool
+    {
+        $lineKey = strtolower(trim((string) ($line['key'] ?? '')));
+        $componentCode = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? '')));
+
+        return str_starts_with($lineKey, 'holiday:')
+            || str_contains($componentCode, 'HOLIDAY')
+            || str_contains($label, 'holiday');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    public function isWorkedHolidayPayLine(array $line): bool
+    {
+        if (! $this->isHolidayPayLine($line)) {
+            return false;
+        }
+
+        $componentCode = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        if (str_contains($componentCode, 'UNWORKED')) {
+            return false;
+        }
+
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if (array_key_exists('worked', $metadata)) {
+            return (bool) $metadata['worked'];
+        }
+
+        return str_contains($componentCode, 'WORKED');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    public function isUnworkedHolidayPayLine(array $line): bool
+    {
+        if (! $this->isHolidayPayLine($line)) {
+            return false;
+        }
+
+        $componentCode = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        if (str_contains($componentCode, 'UNWORKED')) {
+            return true;
+        }
+
+        return ! $this->isWorkedHolidayPayLine($line);
+    }
+
+    /**
+     * Payslip display order: Regular pay, unworked holiday lines, other attendance earnings,
+     * then worked holiday lines at the bottom of daily computation earnings.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @return list<array<string, mixed>>
+     */
+    private function reorderDailyComputationEarningLinesForDisplay(array $lines): array
+    {
+        $regular = [];
+        $unworkedHolidays = [];
+        $middle = [];
+        $workedHolidays = [];
+
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            if ($this->isRegularPayLine($line)) {
+                $regular[] = $line;
+            } elseif ($this->isUnworkedHolidayPayLine($line)) {
+                $unworkedHolidays[] = $line;
+            } elseif ($this->isWorkedHolidayPayLine($line)) {
+                $workedHolidays[] = $line;
+            } else {
+                $middle[] = $line;
+            }
+        }
+
+        return array_values(array_merge($regular, $unworkedHolidays, $middle, $workedHolidays));
+    }
+
+    /**
+     * Unworked holiday pay is rolled into Regular pay on the payslip; hide duplicate lines.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @return list<array<string, mixed>>
+     */
+    private function hideUnworkedHolidayLinesFromPayslipDisplay(array $lines): array
+    {
+        return array_values(array_filter(
+            $lines,
+            fn ($line): bool => is_array($line) && ! $this->isUnworkedHolidayPayLine($line),
+        ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    /**
+     * @param  list<array<string, mixed>>  $dailyDays
+     */
+    private function resolveUnworkedHolidayPayTotalFromSummary(array $summary, array $dailyDays = []): float
+    {
+        $total = 0.0;
+        $seenDates = [];
+        foreach (is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? $summary['daily_computation_earning_lines']
+            : [] as $line) {
+            if (! is_array($line) || ! $this->isUnworkedHolidayPayLine($line)) {
+                continue;
+            }
+            $dateKey = $this->unworkedHolidayDateKeyFromLine($line);
+            if ($dateKey !== '' && isset($seenDates[$dateKey])) {
+                continue;
+            }
+            if ($dateKey !== '') {
+                $seenDates[$dateKey] = true;
+            }
+            $total += max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0));
+        }
+
+        if ($total > 0.0001) {
+            return round($total, 2);
+        }
+
+        return $this->resolveUnworkedHolidayPayTotalFromDailySources($summary, $dailyDays);
+    }
+
+    /**
+     * Add unworked holiday pay into Regular pay once. When earning lines were already hidden
+     * by a prior normalization pass, recover from daily/holiday sources without double counting.
+     *
+     * @param  list<array<string, mixed>>  $dailyDays
+     */
+    private function resolveUnworkedHolidayPayForRegularPayRollIn(
+        array $summary,
+        array $dailyDays,
+        float $computedRegularAmount,
+        ?float $existingAfterReductions = null,
+    ): float {
+        $fromLines = 0.0;
+        $seenDates = [];
+        foreach (is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? $summary['daily_computation_earning_lines']
+            : [] as $line) {
+            if (! is_array($line) || ! $this->isUnworkedHolidayPayLine($line)) {
+                continue;
+            }
+            $dateKey = $this->unworkedHolidayDateKeyFromLine($line);
+            if ($dateKey !== '' && isset($seenDates[$dateKey])) {
+                continue;
+            }
+            if ($dateKey !== '') {
+                $seenDates[$dateKey] = true;
+            }
+            $fromLines += max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0));
+        }
+        if ($fromLines > 0.0001) {
+            return round($fromLines, 2);
+        }
+
+        $fromSources = $this->resolveUnworkedHolidayPayTotalFromDailySources($summary, $dailyDays);
+        if ($fromSources <= 0.0001) {
+            return 0.0;
+        }
+
+        if (abs($computedRegularAmount - $fromSources) <= 0.02) {
+            return 0.0;
+        }
+
+        $rolledTotal = round($computedRegularAmount + $fromSources, 2);
+        if ($existingAfterReductions !== null && abs($existingAfterReductions - $rolledTotal) <= 0.02) {
+            return 0.0;
+        }
+
+        return round($fromSources, 2);
+    }
+
+    /**
+     * Recover unworked holiday pay when legacy snapshots kept premium on daily days but omitted lines.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  list<array<string, mixed>>  $dailyDays
+     */
+    private function resolveUnworkedHolidayPayTotalFromDailySources(array $summary, array $dailyDays = []): float
+    {
+        $total = 0.0;
+        if ($dailyDays === []) {
+            $dailyDays = $this->cleanDailyComputationDays($summary['daily_computation_days'] ?? null);
+        }
+        $seenDates = [];
+        foreach ($dailyDays as $day) {
+            if (! is_array($day) || ! $this->isUnworkedHolidayDay($day)) {
+                continue;
+            }
+            $dateKey = (string) ($day['date'] ?? '');
+            if ($dateKey !== '' && isset($seenDates[$dateKey])) {
+                continue;
+            }
+            if ($dateKey !== '') {
+                $seenDates[$dateKey] = true;
+            }
+            $total += max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+        }
+
+        if ($total <= 0.0001) {
+            foreach (is_array($summary['holiday_premium_breakdown'] ?? null)
+                ? $summary['holiday_premium_breakdown']
+                : [] as $item) {
+                if (! is_array($item) || ! $this->isUnworkedHolidayBreakdownItem($item)) {
+                    continue;
+                }
+                $dateKey = (string) ($item['date'] ?? '');
+                if ($dateKey !== '' && isset($seenDates[$dateKey])) {
+                    continue;
+                }
+                if ($dateKey !== '') {
+                    $seenDates[$dateKey] = true;
+                }
+                $total += max(0.0, (float) ($item['amount'] ?? 0));
+            }
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * @param  array<string, mixed>  $item
+     */
+    private function isUnworkedHolidayBreakdownItem(array $item): bool
+    {
+        if ((bool) ($item['worked'] ?? false)) {
+            return false;
+        }
+
+        $amount = max(0.0, (float) ($item['amount'] ?? 0));
+        if ($amount <= 0.0001) {
+            return false;
+        }
+
+        if (array_key_exists('eligible', $item) && ! ($item['eligible'] ?? false)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * When unworked holiday pay is rolled into Regular pay, keep a Regular pay headline
+     * after the dedicated holiday line is hidden from the earnings table.
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    private function ensureRegularPayDisplayLineWhenMissing(array $summary, ?float $presentDays, float $dailyRate): array
+    {
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? array_values($summary['daily_computation_earning_lines'])
+            : [];
+        foreach ($lines as $line) {
+            if (is_array($line) && $this->isRegularPayLine($line)) {
+                return $summary;
+            }
+        }
+
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : [];
+        $afterReductions = is_numeric($breakdown['regular_pay_after_reductions'] ?? null)
+            ? round((float) $breakdown['regular_pay_after_reductions'], 2)
+            : 0.0;
+        if ($afterReductions <= 0.0001) {
+            return $summary;
+        }
+
+        $displayAmount = $afterReductions;
+        if ($presentDays !== null && $presentDays > 0.0001 && $dailyRate > 0.0001) {
+            $grossDisplay = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
+            $totalDeduction = max(0.0, (float) ($breakdown['total_deduction'] ?? 0));
+            if ($totalDeduction > 0.0001 && $grossDisplay > $afterReductions + 0.005) {
+                $displayAmount = $grossDisplay;
+            }
+        }
+
+        array_unshift($lines, [
+            'key' => 'daily:regular_pay',
+            'label' => 'Regular pay',
+            'amount' => $afterReductions,
+            'display_amount' => $displayAmount,
+            'units' => $presentDays !== null && $presentDays > 0.0001
+                ? ($this->formatRegularPayPresentDaysUnits($presentDays) ?? '1 day')
+                : '1 day',
+        ]);
+        $summary['daily_computation_earning_lines'] = $lines;
+
+        return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function unworkedHolidayDateKeyFromLine(array $line): string
+    {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        $dateKey = trim((string) ($metadata['holiday_date'] ?? ''));
+        if ($dateKey !== '') {
+            return $dateKey;
+        }
+
+        $key = (string) ($line['key'] ?? '');
+        if (preg_match('/^holiday:([^:]+):/i', $key, $matches) === 1) {
+            return trim((string) ($matches[1] ?? ''));
+        }
+
+        return '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $day
+     */
+    private function isUnworkedHolidayDay(array $day): bool
+    {
+        $holidayPremium = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+        if ($holidayPremium <= 0.0001) {
+            return false;
+        }
+
+        $regularMinutes = max(
+            0,
+            (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)
+        );
+        $workedMinutes = max(0, (int) ($day['worked_minutes'] ?? 0));
+        $status = strtolower(trim((string) ($day['status'] ?? '')));
+
+        if ($regularMinutes > 0 || $workedMinutes > 0) {
+            return false;
+        }
+
+        return $status === 'holiday'
+            || ! empty($day['holiday'])
+            || str_contains(strtolower(trim((string) ($day['attendance_status'] ?? ''))), 'holiday');
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  list<array<string, mixed>>  $dailyDays
+     */
+    private function repairMissingUnworkedHolidayEarningLines(array $summary, array $dailyDays = []): array
+    {
+        if ($dailyDays === []) {
+            $dailyDays = $this->cleanDailyComputationDays($summary['daily_computation_days'] ?? null);
+        }
+
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? array_values($summary['daily_computation_earning_lines'])
+            : [];
+        $existingKeys = [];
+        $existingUnworkedDates = [];
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            if ($this->isUnworkedHolidayPayLine($line)) {
+                $existingKeys[(string) ($line['key'] ?? '')] = true;
+                $dateKey = $this->unworkedHolidayDateKeyFromLine($line);
+                if ($dateKey !== '') {
+                    $existingUnworkedDates[$dateKey] = true;
+                }
+            }
+        }
+
+        if ($existingUnworkedDates === []) {
+            $rolledUnworkedPay = $this->resolveUnworkedHolidayPayTotalFromDailySources($summary, $dailyDays);
+            if ($rolledUnworkedPay > 0.0001) {
+                $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+                    ? $summary['attendance_pay_breakdown']
+                    : [];
+                $afterReductions = is_numeric($breakdown['regular_pay_after_reductions'] ?? null)
+                    ? round((float) $breakdown['regular_pay_after_reductions'], 2)
+                    : null;
+                $regularAmount = 0.0;
+                foreach ($lines as $line) {
+                    if (is_array($line) && $this->isRegularPayLine($line)) {
+                        $regularAmount = max($regularAmount, round((float) ($line['amount'] ?? 0), 2));
+                    }
+                }
+
+                if (
+                    ($afterReductions !== null && abs($afterReductions - $rolledUnworkedPay) <= 0.02 && $regularAmount <= 0.0001)
+                    || ($afterReductions !== null && abs($afterReductions - ($regularAmount + $rolledUnworkedPay)) <= 0.02)
+                    || ($regularAmount > 0.0001 && abs($regularAmount - $rolledUnworkedPay) <= 0.02)
+                ) {
+                    return $summary;
+                }
+            }
+        }
+
+        $appendLine = function (array $line) use (&$lines, &$existingKeys, &$existingUnworkedDates): void {
+            $key = (string) ($line['key'] ?? '');
+            $dateKey = $this->unworkedHolidayDateKeyFromLine($line);
+            if ($dateKey !== '' && isset($existingUnworkedDates[$dateKey])) {
+                return;
+            }
+            if ($key === '' || isset($existingKeys[$key])) {
+                return;
+            }
+            $lines[] = $line;
+            $existingKeys[$key] = true;
+            if ($dateKey !== '') {
+                $existingUnworkedDates[$dateKey] = true;
+            }
+        };
+
+        foreach (is_array($summary['holiday_premium_breakdown'] ?? null)
+            ? $summary['holiday_premium_breakdown']
+            : [] as $item) {
+            if (! is_array($item) || ! $this->isUnworkedHolidayBreakdownItem($item)) {
+                continue;
+            }
+            $amount = round(max(0.0, (float) ($item['amount'] ?? 0)), 2);
+            $dateKey = (string) ($item['date'] ?? '');
+            $componentCode = trim((string) ($item['component_code'] ?? 'SPECIAL_HOLIDAY_UNWORKED_PAY'));
+            $holidayName = trim((string) ($item['holiday_name'] ?? 'Holiday'));
+            $appendLine([
+                'key' => 'holiday:'.$dateKey.':'.($item['holiday_id'] ?? '0').':'.$componentCode,
+                'component_code' => $componentCode,
+                'label' => trim((string) ($item['description'] ?? '')) !== ''
+                    ? (string) $item['description']
+                    : ('Special Holiday — Unworked Pay: '.$holidayName),
+                'amount' => $amount,
+                'units' => '1 day',
+                'metadata' => [
+                    'holiday_id' => $item['holiday_id'] ?? null,
+                    'holiday_name' => $holidayName,
+                    'holiday_type' => $item['holiday_type'] ?? null,
+                    'holiday_date' => $dateKey,
+                    'worked' => false,
+                    'unworked' => true,
+                    'multiplier' => $item['multiplier'] ?? null,
+                ],
+            ]);
+        }
+
+        foreach ($dailyDays as $day) {
+            if (! is_array($day) || ! $this->isUnworkedHolidayDay($day)) {
+                continue;
+            }
+            $amount = round(max(0.0, (float) ($day['holiday_premium_pay'] ?? 0)), 2);
+            if ($amount <= 0.0001) {
+                continue;
+            }
+            $dateKey = (string) ($day['date'] ?? '');
+            $holiday = is_array($day['holiday'] ?? null) ? $day['holiday'] : [];
+            $holidayName = trim((string) ($holiday['name'] ?? 'Holiday'));
+            $componentCode = 'SPECIAL_HOLIDAY_UNWORKED_PAY';
+            foreach (is_array($day['breakdown'] ?? null) ? $day['breakdown'] : [] as $entry) {
+                if (! is_array($entry)) {
+                    continue;
+                }
+                $code = strtoupper(trim((string) ($entry['component_code'] ?? '')));
+                if ($code !== '') {
+                    $componentCode = $code;
+                    break;
+                }
+            }
+            $appendLine([
+                'key' => 'holiday:'.$dateKey.':'.($holiday['id'] ?? '0').':'.$componentCode,
+                'component_code' => $componentCode,
+                'label' => 'Special Holiday — Unworked Pay: '.$holidayName,
+                'amount' => $amount,
+                'units' => '1 day',
+                'metadata' => [
+                    'holiday_id' => $holiday['id'] ?? null,
+                    'holiday_name' => $holidayName,
+                    'holiday_type' => $holiday['type'] ?? null,
+                    'holiday_date' => $dateKey,
+                    'worked' => false,
+                    'unworked' => true,
+                ],
+            ]);
+        }
+
+        $summary['daily_computation_earning_lines'] = array_values($lines);
+
+        return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function updateRegularPayLineDisplayAmount(array $summary, float $displayAmount): array
+    {
+        foreach (['daily_computation_earning_lines', 'payslip_earning_lines'] as $lineKey) {
+            $lines = is_array($summary[$lineKey] ?? null) ? array_values($summary[$lineKey]) : [];
+            foreach ($lines as $index => $line) {
+                if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                    continue;
+                }
+                $lines[$index]['display_amount'] = round(max(0.0, $displayAmount), 2);
+                $summary[$lineKey] = $lines;
+
+                return $summary;
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Rest-day worked premium lines (130%) whose 1× base is rolled into Regular pay on display.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    public function isRestDayWorkedPremiumLine(array $line): bool
+    {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        $componentCode = strtolower(trim((string) ($line['component_code'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? '')));
+
+        return str_contains($key, 'rest_day_worked_pay')
+            || str_contains($componentCode, 'rest_day_worked')
+            || $label === 'rest day worked pay';
+    }
+
+    /**
+     * Display-only split for statutory premium lines: roll 1× base into Regular pay and keep
+     * the increment (30% for SH, 50% for SHRD, etc.) on the premium line below.
+     *
+     * @param  array<string, mixed>  $line
+     * @return array{base: float, premium: float, rolls_base_into_regular: bool}
+     */
+    public function resolveWorkedHolidayDisplaySplit(array $line, ?float $dailyRate = null): array
+    {
+        $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+        if ($amount <= 0.0001) {
+            return ['base' => 0.0, 'premium' => 0.0, 'rolls_base_into_regular' => false];
+        }
+
+        if (! $this->workedHolidayLineRollsBaseIntoRegular($line)) {
+            return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => false];
+        }
+
+        $multiplier = $this->resolvePremiumLineMultiplier($line, $dailyRate);
+        if ($multiplier <= 1.00001) {
+            return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => false];
+        }
+
+        $base = round($amount / $multiplier, 2);
+        $premium = round($amount - $base, 2);
+
+        return [
+            'base' => $base,
+            'premium' => $premium,
+            'rolls_base_into_regular' => true,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function precomputeWorkedHolidayDisplayMetadata(array $summary, float $dailyRate): array
+    {
+        $baseTotal = 0.0;
+        $presentUnits = 0.0;
+
+        foreach ($this->premiumSplitEarningLinesFromSummary($summary) as $line) {
+            $split = $this->resolveWorkedHolidayDisplaySplit($line, $dailyRate);
+            if (! $split['rolls_base_into_regular']) {
+                continue;
+            }
+            $baseTotal += $split['base'];
+            $presentUnits += $this->resolvePremiumLinePresentDayUnits($line);
+        }
+
+        $summary['worked_holiday_base_pay_total'] = round($baseTotal, 2);
+        $summary['worked_holiday_present_day_units'] = round($presentUnits, 4);
+
+        return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function applyWorkedHolidayDisplaySplit(array $summary, float $dailyRate): array
+    {
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? array_values($summary['daily_computation_earning_lines'])
+            : [];
+        if ($lines === []) {
+            return $summary;
+        }
+
+        $newLines = [];
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+
+            if (! $this->isWorkedHolidayPayLine($line) && ! $this->isRestDayWorkedPremiumLine($line)) {
+                $newLines[] = $line;
+
+                continue;
+            }
+
+            $split = $this->resolveWorkedHolidayDisplaySplit($line, $dailyRate);
+            if ($split['premium'] <= 0.005) {
+                continue;
+            }
+
+            $premiumLine = $line;
+            $premiumLine['amount'] = $split['premium'];
+            $minutesWorked = is_numeric($premiumLine['minutes_worked'] ?? null)
+                ? (int) round((float) $premiumLine['minutes_worked'])
+                : null;
+            if ($minutesWorked !== null && $minutesWorked > 0) {
+                $premiumLine['hourly_rate'] = round(($split['premium'] / ($minutesWorked / 60.0)), 4);
+            } elseif (is_numeric($premiumLine['hourly_rate'] ?? null) && (float) $premiumLine['hourly_rate'] > 0) {
+                $multiplier = $this->resolvePremiumLineMultiplier($line, $dailyRate);
+                if ($multiplier > 1.00001) {
+                    $premiumLine['hourly_rate'] = round(((float) $premiumLine['hourly_rate']) * ($multiplier - 1.0) / $multiplier, 4);
+                }
+            }
+
+            $newLines[] = $premiumLine;
+        }
+
+        $summary['daily_computation_earning_lines'] = array_values($newLines);
+
+        return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @return list<array<string, mixed>>
+     */
+    private function premiumSplitEarningLinesFromSummary(array $summary): array
+    {
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? array_values($summary['daily_computation_earning_lines'])
+            : [];
+
+        return array_values(array_filter(
+            $lines,
+            fn ($line): bool => is_array($line)
+                && ($this->isWorkedHolidayPayLine($line) || $this->isRestDayWorkedPremiumLine($line)),
+        ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function workedHolidayLineRollsBaseIntoRegular(array $line): bool
+    {
+        if ($this->isRestDayWorkedPremiumLine($line)) {
+            return true;
+        }
+
+        if (! $this->isWorkedHolidayPayLine($line)) {
+            return false;
+        }
+
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        $componentCode = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        $isRestDay = str_contains($componentCode, 'RESTDAY') || (bool) ($metadata['is_rest_day'] ?? false);
+        if ($isRestDay) {
+            return true;
+        }
+
+        $holidayType = strtolower(trim((string) ($metadata['holiday_type'] ?? '')));
+        $isSpecial = str_contains($componentCode, 'SPECIAL')
+            || in_array($holidayType, ['special', 'special_non_working', 'special_working', 'special working'], true);
+
+        return $isSpecial;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function resolvePremiumLineMultiplier(array $line, ?float $dailyRate = null): float
+    {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if (is_numeric($metadata['multiplier'] ?? null)) {
+            return max(1.0, (float) $metadata['multiplier']);
+        }
+
+        if ($this->isRestDayWorkedPremiumLine($line)) {
+            return 1.30;
+        }
+
+        $componentCode = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        $map = [
+            'SPECIAL_HOLIDAY_WORKED_PAY' => 1.30,
+            'SPECIAL_HOLIDAY_PAY' => 1.30,
+            'SPECIAL_WORKING_DAY_PAY' => 1.30,
+            'RESTDAY_SPECIAL_HOLIDAY_PAY' => 1.50,
+            'RESTDAY_REGULAR_HOLIDAY_PAY' => 2.60,
+            'REGULAR_HOLIDAY_WORKED_PAY' => 2.00,
+            'REGULAR_HOLIDAY_PAY' => 2.00,
+        ];
+
+        return max(1.0, (float) ($map[$componentCode] ?? 1.30));
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function resolvePremiumLinePresentDayUnits(array $line): float
+    {
+        $unitsRaw = trim((string) ($line['units'] ?? ''));
+        if ($unitsRaw !== '' && preg_match('/^(\d+(?:\.\d+)?)\s*days?$/i', $unitsRaw, $matches) === 1) {
+            return round(max(0.0, (float) $matches[1]), 4);
+        }
+
+        $minutes = is_numeric($line['minutes_worked'] ?? null)
+            ? max(0, (int) round((float) $line['minutes_worked']))
+            : 0;
+        if ($minutes > 0) {
+            return round($minutes / 480.0, 4);
+        }
+
+        return 1.0;
+    }
+
+    /**
+     * Display-only day units from worked premium lines whose 1× base rolls into Regular pay.
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    private function resolveWorkedHolidayPresentDayUnitsFromSummary(array $summary): float
+    {
+        if (is_numeric($summary['worked_holiday_present_day_units'] ?? null)) {
+            return round(max(0.0, (float) $summary['worked_holiday_present_day_units']), 4);
+        }
+
+        $units = 0.0;
+        $dailyRate = (float) ($summary['daily_rate'] ?? 0);
+        foreach ($this->premiumSplitEarningLinesFromSummary($summary) as $line) {
+            $split = $this->resolveWorkedHolidayDisplaySplit($line, $dailyRate);
+            if ($split['rolls_base_into_regular']) {
+                $units += $this->resolvePremiumLinePresentDayUnits($line);
+            }
+        }
+
+        return round($units, 4);
     }
 
     /**
@@ -5142,7 +6006,7 @@ class PayslipService
         $attendanceEarningsEnabled = EmploymentPayrollPolicyApplicator::consultantAttendanceEarningsEnabled($policy);
 
         $lines = [];
-        $basicAmount = $this->resolveConsultantBasicPayDisplayAmount($summary);
+        $basicAmount = $this->resolveConsultantBasicPayDisplayAmount($summary, $snapshot);
         $attendancePremium = 0.0;
 
         if ($basicAmount > 0.0) {
@@ -5478,19 +6342,47 @@ class PayslipService
     }
 
     /**
+     * Consultant Basic Pay for payslip/report display — always the scheduled this-period amount
+     * (15th/30th split), never the full monthly salary.
+     *
      * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $snapshot
      */
-    private function resolveConsultantBasicPayDisplayAmount(array $summary): float
+    public function consultantBasicPayAmountForDisplay(array $summary, array $snapshot = []): float
     {
-        foreach (['basic_pay_this_period', 'basic_salary_period', 'basic_pay', 'total_pay'] as $key) {
+        return $this->resolveConsultantBasicPayDisplayAmount($summary, $snapshot);
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $snapshot
+     */
+    private function resolveConsultantBasicPayDisplayAmount(array $summary, array $snapshot = []): float
+    {
+        foreach (['basic_pay_this_period', 'basic_salary_period'] as $key) {
             $amount = round(max(0.0, (float) ($summary[$key] ?? 0)), 2);
             if ($amount > 0.0) {
                 return $amount;
             }
         }
 
+        foreach (is_array(data_get($summary, 'deduction_schedule.earning_lines')) ? data_get($summary, 'deduction_schedule.earning_lines') : [] as $line) {
+            if (! is_array($line) || empty($line['is_basic_salary_line'])) {
+                continue;
+            }
+
+            $amount = round(max(0.0, (float) (
+                $line['scheduled_this_period']
+                ?? data_get($line, 'pay_component_resolution.applied_amount')
+                ?? 0
+            )), 2);
+            if ($amount > 0.0) {
+                return $amount;
+            }
+        }
+
         foreach (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [] as $line) {
-            if (is_array($line) && $this->isExecomBasicPayLine($line)) {
+            if (is_array($line) && ($this->isConsultantBasicPayLine($line) || $this->isExecomBasicPayLine($line))) {
                 $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
                 if ($amount > 0.0) {
                     return $amount;
@@ -5499,7 +6391,7 @@ class PayslipService
         }
 
         foreach (is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [] as $line) {
-            if (is_array($line) && $this->isExecomBasicPayLine($line)) {
+            if (is_array($line) && $this->isConsultantBasicPayLine($line)) {
                 $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
                 if ($amount > 0.0) {
                     return $amount;
@@ -5507,7 +6399,38 @@ class PayslipService
             }
         }
 
-        return round(max(0.0, (float) ($summary['consultant_fixed_salary'] ?? 0)), 2);
+        $monthlyCandidates = [
+            (float) ($summary['consultant_fixed_salary'] ?? 0),
+            (float) ($summary['monthly_basic_salary'] ?? 0),
+            (float) ($summary['resolved_monthly'] ?? 0),
+            (float) ($summary['resolved_monthly_salary'] ?? 0),
+            (float) ($summary['employee_monthly_salary'] ?? 0),
+            (float) ($summary['basic_pay'] ?? 0),
+            (float) ($snapshot['monthly_basic_salary'] ?? 0),
+        ];
+        foreach ($monthlyCandidates as $monthly) {
+            $monthly = round(max(0.0, $monthly), 2);
+            if ($monthly > 0.0) {
+                return round($monthly / 2.0, 2);
+            }
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isConsultantBasicPayLine(array $line): bool
+    {
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+        if (str_starts_with($key, 'consultant_basic') || str_starts_with($key, 'consultant:basic')) {
+            return true;
+        }
+
+        return $this->isExecomBasicPayLine($line)
+            && ! empty($line['fixed_payroll'])
+            && ! empty($line['metadata']['consultant_fixed_payroll']);
     }
 
     /**
@@ -6094,8 +7017,9 @@ class PayslipService
     /**
      * Present-day count for regular-pay display decisions only — not used for payroll amounts.
      * Clocked half-day classifications count as 0.5 day. Every other clocked regular-pay day,
-     * including late and undertime days, counts as one present day. The payable amount remains
-     * minute-based in the detailed breakdown.
+     * including late and undertime days, counts as one present day. Qualified unworked regular
+     * and special holidays also count here so the Regular pay headline matches report attendance.
+     * The payable amount remains minute-based in the detailed breakdown.
      * Leave-only halfdays (no attendance regular_pay) are excluded.
      *
      * @param  array<string, mixed>  $summary
@@ -6143,6 +7067,9 @@ class PayslipService
             }
 
             if ($units > 0.0001) {
+                $units += $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
+                $units += $this->resolveWorkedHolidayPresentDayUnitsFromSummary($summary);
+
                 return round($units, 4);
             }
         }
@@ -6151,18 +7078,79 @@ class PayslipService
             ? $summary['attendance_display_summary']
             : null;
         if ($ads !== null) {
+            $unworkedHolidayDays = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
+            $workedHolidayDays = $this->resolveWorkedHolidayPresentDayUnitsFromSummary($summary);
+            $extraHolidayDays = $unworkedHolidayDays + $workedHolidayDays;
             $workingDays = (float) ($ads['working_days_count'] ?? 0);
             if ($workingDays > 0.0001) {
-                return round($workingDays, 4);
+                return round($workingDays + $extraHolidayDays, 4);
             }
 
             $presenceDays = (float) ($ads['presence_days_count'] ?? 0);
             if ($presenceDays > 0.0001) {
-                return round($presenceDays, 4);
+                return round($presenceDays + $extraHolidayDays, 4);
             }
         }
 
+        $unworkedHolidayDays = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
+        $workedHolidayDays = $this->resolveWorkedHolidayPresentDayUnitsFromSummary($summary);
+        $extraHolidayDays = $unworkedHolidayDays + $workedHolidayDays;
+        if ($extraHolidayDays > 0.0001) {
+            return round($extraHolidayDays, 4);
+        }
+
         return null;
+    }
+
+    /**
+     * Display-only day units from unworked holiday earning lines (regular or special).
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    private function resolveUnworkedHolidayPresentDayUnitsFromSummary(array $summary): float
+    {
+        if (is_numeric($summary['unworked_holiday_present_day_units'] ?? null)) {
+            return round(max(0.0, (float) $summary['unworked_holiday_present_day_units']), 4);
+        }
+
+        $units = 0.0;
+        foreach (is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? $summary['daily_computation_earning_lines']
+            : [] as $line) {
+            if (! is_array($line) || ! $this->isUnworkedHolidayPayLine($line)) {
+                continue;
+            }
+            $units += $this->holidayLinePresentDayUnits($line);
+        }
+
+        if ($units <= 0.0001) {
+            $dailyDays = $this->cleanDailyComputationDays($summary['daily_computation_days'] ?? null);
+            foreach ($dailyDays as $day) {
+                if (is_array($day) && $this->isUnworkedHolidayDay($day)) {
+                    $units += 1.0;
+                }
+            }
+        }
+
+        return round(max(0.0, $units), 4);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function holidayLinePresentDayUnits(array $line): float
+    {
+        $unitsStr = trim((string) ($line['units'] ?? ''));
+        if ($unitsStr !== '' && preg_match('/^(\d+(?:\.\d+)?)\s*days?$/i', $unitsStr, $matches) === 1) {
+            return max(0.0, (float) $matches[1]);
+        }
+
+        $minutes = is_numeric($line['minutes_worked'] ?? null) ? (int) round((float) $line['minutes_worked']) : null;
+        if ($minutes !== null && $minutes > 0) {
+            return max(0.0, round($minutes / (8 * 60), 4));
+        }
+
+        return 1.0;
     }
 
     /**
