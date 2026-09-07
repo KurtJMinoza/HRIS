@@ -16,6 +16,10 @@ class BankPayrollExportService
 {
     public const BANK_AUB = 'AUB';
 
+    public function __construct(
+        private readonly PayslipService $payslipService,
+    ) {}
+
     /** @var array<string, array{label:string, title_row:string}> */
     private const BANK_DEFINITIONS = [
         self::BANK_AUB => [
@@ -185,7 +189,7 @@ class BankPayrollExportService
                 continue;
             }
 
-            $netPay = round((float) ($payslip->net_pay ?? 0), 2);
+            $netPay = $this->exportNetPay($payslip);
             if ($netPay <= 0) {
                 $excluded['zero_net_pay']++;
 
@@ -518,6 +522,25 @@ class BankPayrollExportService
             $end,
             $extension
         );
+    }
+
+    /**
+     * Bank files must match the finalized payslip net pay shown in payroll UI/PDF,
+     * not the legacy payslip.net_pay column when it diverges from display totals.
+     */
+    private function exportNetPay(Payslip $payslip): float
+    {
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            $snapshot = [];
+        }
+
+        $totals = $this->payslipService->payslipDisplayTotalsFromSnapshot($snapshot);
+
+        return round((float) ($totals['net_pay'] ?? 0), 2);
     }
 
     private static function asciiUpper(string $value): string

@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\EmployeeBankAccount;
+use App\Models\Payslip;
 use App\Models\User;
 use App\Services\BankPayrollExportService;
 use Tests\TestCase;
@@ -35,7 +36,7 @@ class BankPayrollExportServiceTest extends TestCase
 
     public function test_is_eligible_bank_account_requires_aub_and_twelve_digits(): void
     {
-        $service = new BankPayrollExportService;
+        $service = app(BankPayrollExportService::class);
 
         $valid = new EmployeeBankAccount([
             'bank_code' => 'AUB',
@@ -58,7 +59,7 @@ class BankPayrollExportServiceTest extends TestCase
 
     public function test_sort_rows_alphabetically_by_name(): void
     {
-        $service = new BankPayrollExportService;
+        $service = app(BankPayrollExportService::class);
         $rows = [
             ['employee_no' => '2', 'name' => 'ZARA ANA', 'account_number' => '934105106070', 'bank_code' => 'AUB', 'salary' => 100.0],
             ['employee_no' => '1', 'name' => 'ABELARDE ARRON', 'account_number' => '934105106071', 'bank_code' => 'AUB', 'salary' => 200.0],
@@ -70,5 +71,31 @@ class BankPayrollExportServiceTest extends TestCase
         $this->assertSame('ABELARDE ARRON', $rows[0]['name']);
         $this->assertSame('MARTIN BEN', $rows[1]['name']);
         $this->assertSame('ZARA ANA', $rows[2]['name']);
+    }
+
+    public function test_export_net_pay_uses_display_totals_not_stored_column(): void
+    {
+        $payslip = new Payslip([
+            'net_pay' => 5538.48,
+            'snapshot' => [
+                'summary' => [
+                    'display_gross_pay' => 6230.77,
+                    'display_net_pay' => 6230.77,
+                    'basic_pay_this_period' => 5538.48,
+                    'daily_computation_earning_lines' => [
+                        ['key' => 'regular_pay', 'label' => 'Regular pay', 'amount' => 5538.48],
+                        ['key' => 'attendance_premium', 'label' => 'Attendance premiums', 'amount' => 692.29],
+                    ],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $method = new \ReflectionMethod(BankPayrollExportService::class, 'exportNetPay');
+        $method->setAccessible(true);
+        $netPay = $method->invoke(app(BankPayrollExportService::class), $payslip);
+
+        $this->assertSame(6230.77, $netPay);
     }
 }
