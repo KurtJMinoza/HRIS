@@ -5201,9 +5201,28 @@ class PayslipService
             return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => false];
         }
 
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if (($metadata['display_split_applied'] ?? false) === true) {
+            return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => true];
+        }
+
         $multiplier = $this->resolvePremiumLineMultiplier($line, $dailyRate);
         if ($multiplier <= 1.00001) {
             return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => false];
+        }
+
+        $expectedPremium = $this->expectedWorkedHolidayPremiumFromLine($line, $dailyRate, $multiplier);
+        if ($expectedPremium !== null) {
+            if (abs($amount - $expectedPremium) <= 0.02) {
+                return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => true];
+            }
+            if ($amount < ($expectedPremium - 0.02) && $amount < ($expectedPremium * 0.75)) {
+                return [
+                    'base' => 0.0,
+                    'premium' => round($expectedPremium, 2),
+                    'rolls_base_into_regular' => true,
+                ];
+            }
         }
 
         $base = round($amount / $multiplier, 2);
@@ -5282,6 +5301,14 @@ class PayslipService
                 }
             }
 
+            $metadata = is_array($premiumLine['metadata'] ?? null) ? $premiumLine['metadata'] : [];
+            if (! ($metadata['display_split_applied'] ?? false)) {
+                $metadata['gross_statutory_amount'] = round((float) ($line['amount'] ?? 0), 2);
+            }
+            $metadata['display_split_applied'] = true;
+            $premiumLine['metadata'] = $metadata;
+            $premiumLine = $this->applyWorkedHolidayPremiumLabel($premiumLine);
+
             $newLines[] = $premiumLine;
         }
 
@@ -5332,6 +5359,67 @@ class PayslipService
             || in_array($holidayType, ['special', 'special_non_working', 'special_working', 'special working'], true);
 
         return $isSpecial;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function expectedWorkedHolidayPremiumFromLine(array $line, ?float $dailyRate, float $multiplier): ?float
+    {
+        if ($dailyRate === null || $dailyRate <= 0.0001 || $multiplier <= 1.00001) {
+            return null;
+        }
+
+        $minutes = is_numeric($line['minutes_worked'] ?? null)
+            ? max(0, (int) round((float) $line['minutes_worked']))
+            : 0;
+        if ($minutes <= 0) {
+            return null;
+        }
+
+        $basePay = round(($minutes / 60.0) * ($dailyRate / 8.0), 2);
+        $increment = max(0.0, $multiplier - 1.0);
+
+        return round($basePay * $increment, 2);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     * @return array<string, mixed>
+     */
+    private function applyWorkedHolidayPremiumLabel(array $line): array
+    {
+        if (! $this->workedHolidayLineRollsBaseIntoRegular($line)) {
+            return $line;
+        }
+
+        $componentCode = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        $suffix = match (true) {
+            str_contains($componentCode, 'RESTDAY_SPECIAL') => '50% Additional',
+            str_contains($componentCode, 'SPECIAL') => '30% Additional',
+            $this->isRestDayWorkedPremiumLine($line) => '30% Additional',
+            default => null,
+        };
+        if ($suffix === null) {
+            return $line;
+        }
+
+        foreach (['label', 'description'] as $field) {
+            $text = trim((string) ($line[$field] ?? ''));
+            if ($text === '' || str_contains($text, $suffix) || str_contains($text, '(30%') || str_contains($text, '(50%')) {
+                continue;
+            }
+            if (preg_match('/^(.+?)\s*:\s*(.+)$/', $text, $matches) === 1) {
+                $line[$field] = trim($matches[1]).' ('.$suffix.'): '.trim($matches[2]);
+            } else {
+                $line[$field] = $text.' ('.$suffix.')';
+            }
+        }
+
+        return $line;
     }
 
     /**

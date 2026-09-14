@@ -333,15 +333,48 @@ class EmployeeCompensationController extends Controller
 
         $uid = (int) $employee->id;
         $isBasicSalary = $this->isBasicSalaryAssignment($assignment);
-        $assignment->delete();
+        if (! $assignment->is_active
+            && is_array($assignment->metadata)
+            && ($assignment->metadata['assignment_source'] ?? '') === EmployeeCompensationComponent::ASSIGNMENT_SOURCE_MANUAL_REMOVED) {
+            $this->refreshCompensationCaches($uid, 'assignment delete (idempotent)');
+
+            return response()->json([
+                'message' => 'Employee compensation removed successfully.',
+                'recalculation_queued' => true,
+            ]);
+        }
+
+        $this->softRemoveAssignment($assignment);
         if ($isBasicSalary) {
             $this->clearEmployeeSalaryProfile($employee);
+            $this->softRemoveActiveBasicSalaryAssignments($employee, $assignment->id);
         }
 
         $this->refreshCompensationCaches($uid, 'assignment delete');
 
         return response()->json([
             'message' => 'Employee compensation removed successfully.',
+            'recalculation_queued' => true,
+        ]);
+    }
+
+    public function clearLegacyBasicSalary(Request $request, $userId): JsonResponse
+    {
+        if ($response = $this->ensureCompensationTableExists()) {
+            return $response;
+        }
+
+        $employee = User::query()->activeRoster()->where('id', (int) $userId)->firstOrFail();
+        $this->assertEmployeeOrgScope($request, $employee);
+
+        $this->clearEmployeeSalaryProfile($employee);
+        $this->softRemoveActiveBasicSalaryAssignments($employee);
+        $this->recordBasicSalaryManualRemovalTombstone($employee);
+
+        $this->refreshCompensationCaches((int) $employee->id, 'legacy basic salary clear');
+
+        return response()->json([
+            'message' => 'Legacy basic salary cleared successfully.',
             'recalculation_queued' => true,
         ]);
     }
@@ -526,6 +559,70 @@ class EmployeeCompensationController extends Controller
             'hourly_rate' => null,
             'salary_effectivity_date' => null,
         ])->save();
+    }
+
+    private function softRemoveAssignment(EmployeeCompensationComponent $assignment): void
+    {
+        $assignment->markManuallyRemoved();
+    }
+
+    private function softRemoveActiveBasicSalaryAssignments(User $employee, ?int $exceptId = null): void
+    {
+        $query = EmployeeCompensationComponent::query()
+            ->where('user_id', $employee->id)
+            ->where('is_active', true)
+            ->whereRaw("upper(code) = 'BASIC_SALARY'");
+
+        if ($exceptId !== null) {
+            $query->whereKeyNot($exceptId);
+        }
+
+        foreach ($query->get() as $row) {
+            $row->markManuallyRemoved();
+        }
+    }
+
+    private function recordBasicSalaryManualRemovalTombstone(User $employee): void
+    {
+        if (EmployeeCompensationComponent::employeeManuallyRemovedBasicSalary((int) $employee->id)) {
+            return;
+        }
+
+        $master = PayComponent::query()
+            ->whereRaw("upper(code) = 'BASIC_SALARY'")
+            ->where('is_active', true)
+            ->orderByDesc('is_system_protected')
+            ->orderBy('id')
+            ->first();
+
+        EmployeeCompensationComponent::query()->create([
+            'user_id' => (int) $employee->id,
+            'pay_component_id' => $master?->id,
+            'structure_name' => null,
+            'name' => $master?->name ?: 'Basic Salary',
+            'code' => 'BASIC_SALARY',
+            'type' => PayComponent::TYPE_EARNING,
+            'category' => $master?->category ?: 'Basic Salary',
+            'calculation_type' => PayComponent::CALC_FIXED,
+            'value' => 0,
+            'hourly_rate' => null,
+            'hours' => null,
+            'formula' => null,
+            'is_taxable' => true,
+            'contributes_sss' => false,
+            'contributes_philhealth' => false,
+            'contributes_pagibig' => false,
+            'is_proratable' => true,
+            'is_custom' => $master === null,
+            'effective_from' => now()->toDateString(),
+            'effective_to' => now()->toDateString(),
+            'is_active' => false,
+            'metadata' => [
+                'assignment_source' => EmployeeCompensationComponent::ASSIGNMENT_SOURCE_MANUAL_REMOVED,
+                'removed_at' => now()->toIso8601String(),
+                'source' => 'legacy_salary_fields',
+            ],
+        ]);
     }
 
     private function isBasicSalaryAssignment(EmployeeCompensationComponent $assignment): bool

@@ -644,7 +644,7 @@ class EmployeeOvertimeController extends Controller
         $filters = $this->employeeOvertimeFilters($request);
         $filtersHash = md5(json_encode([$filters, $paginationInput], JSON_THROW_ON_ERROR));
         $version = OvertimeModuleCache::version();
-        $cacheKey = "employee:overtime:list:{$user->id}:labels-v4:v{$version}:{$paginationInput['page']}:{$filtersHash}";
+        $cacheKey = "employee:overtime:list:{$user->id}:labels-v5:v{$version}:{$paginationInput['page']}:{$filtersHash}";
         $cacheHit = Cache::has($cacheKey);
 
         $payload = Cache::remember($cacheKey, now()->addSeconds(60), function () use ($user, $paginationInput, $filters) {
@@ -676,6 +676,16 @@ class EmployeeOvertimeController extends Controller
                     'rejected_at',
                     'filed_at',
                     'filed_by',
+                    // Required for approval-chain re-resolve on list reads. Omitting these
+                    // falls back to the employee's primary company and can overwrite the
+                    // filed shared-assignment first approver (e.g. section head → company head).
+                    'assignment_id',
+                    'assignment_type',
+                    'company_id',
+                    'branch_id',
+                    'division_id',
+                    'department_id',
+                    'section_unit_id',
                     'created_at',
                     'updated_at',
                 ])

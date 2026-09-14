@@ -1138,7 +1138,8 @@ class EmployeeController extends Controller
         $phone = is_string($rawPhone) && trim($rawPhone) !== '' ? \App\Services\SmsService::normalizePhone($rawPhone) : null;
 
         $resolvedHomeAddress = $this->resolveHomeAddressForEmployeeCreate($validated);
-        $payrollEffectiveDate = $validated['payroll_effective_date'] ?? now()->toDateString();
+        $payrollEffectiveDate = $validated['payroll_effective_date']
+            ?? ($validated['hire_date'] ?? now()->toDateString());
         if (isset($validated['payroll_effective_date'])
             && \Carbon\Carbon::parse((string) $validated['payroll_effective_date'])->lt(now()->startOfDay())
             && ! $request->user()?->isAdmin()) {
@@ -1626,8 +1627,12 @@ class EmployeeController extends Controller
                 }
                 $employee->payroll_effective_date = is_string($payrollEffectiveRaw) && trim($payrollEffectiveRaw) !== ''
                     ? $payrollEffectiveRaw
-                    : ($employee->created_at?->toDateString() ?? now()->toDateString());
+                    : ($employee->hire_date?->toDateString()
+                        ?? $employee->created_at?->toDateString()
+                        ?? now()->toDateString());
             }
+            app(\App\Services\PayrollEmployeeEligibilityService::class)
+                ->alignLateEncodedPayrollEffectiveDate($employee);
             if ($this->requestHasInput($request, 'contract_start_date')) {
                 $raw = $request->input('contract_start_date');
                 $employee->contract_start_date = is_string($raw) && trim($raw) !== '' ? $raw : null;
@@ -1772,6 +1777,8 @@ class EmployeeController extends Controller
             ];
             $salaryAuditDirty = array_intersect_key($employee->getDirty(), array_flip($salaryAuditFieldKeys));
 
+            app(\App\Services\PayrollEmployeeEligibilityService::class)
+                ->alignLateEncodedPayrollEffectiveDate($employee);
             $employee->save();
             $employee = app(\App\Services\EmployeeStatusService::class)->syncAutomaticEmploymentStatus(
                 $employee->fresh() ?? $employee,

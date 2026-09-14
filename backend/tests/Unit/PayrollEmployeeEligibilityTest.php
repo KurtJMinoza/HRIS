@@ -149,6 +149,50 @@ class PayrollEmployeeEligibilityTest extends TestCase
         $this->assertContains((int) $employee->id, $ids);
     }
 
+    public function test_late_encoded_employee_with_default_payroll_effective_on_created_at_uses_hire_date(): void
+    {
+        $company = Company::query()->create(['name' => 'ACI']);
+        $employee = $this->employee($company, [
+            'hire_date' => '2026-09-04',
+            'payroll_effective_date' => '2026-09-11',
+            'created_at' => Carbon::parse('2026-09-11 06:20:51'),
+        ]);
+
+        $periodStart = Carbon::parse('2026-08-26');
+        $periodEnd = Carbon::parse('2026-09-10');
+
+        $ids = $this->eligibleIds($company, $periodStart, $periodEnd);
+        $this->assertContains((int) $employee->id, $ids);
+
+        $evaluation = $this->service->evaluateEmployeeEligibility(
+            $employee,
+            (int) $company->id,
+            $periodStart,
+            $periodEnd
+        );
+        $this->assertTrue($evaluation['included']);
+        $this->assertSame('2026-09-04', $evaluation['payroll_start_date']);
+    }
+
+    public function test_late_created_employee_with_hire_date_in_period_is_included_when_payroll_effective_matches_hire_date(): void
+    {
+        $company = Company::query()->create(['name' => 'ACI']);
+        $employee = $this->employee($company, [
+            'hire_date' => '2026-09-04',
+            'payroll_effective_date' => '2026-09-04',
+            'created_at' => Carbon::parse('2026-09-11 06:20:51'),
+        ]);
+
+        $periodStart = Carbon::parse('2026-08-26');
+        $periodEnd = Carbon::parse('2026-09-10');
+
+        $ids = $this->eligibleIds($company, $periodStart, $periodEnd);
+        $this->assertContains((int) $employee->id, $ids);
+
+        $clamped = $this->service->clampComputationStart($employee, $periodStart, $periodEnd);
+        $this->assertSame('2026-09-04', $clamped->toDateString());
+    }
+
     public function test_employee_hired_mid_period_is_included_and_computation_clamps_to_hire_date(): void
     {
         $company = Company::query()->create(['name' => 'ACI']);

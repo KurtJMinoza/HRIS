@@ -32,7 +32,7 @@ class PayComponentAssignmentService
 
                 $metadata = (array) ($assignment?->metadata ?? []);
                 $assignmentSource = $metadata['assignment_source'] ?? null;
-                if (in_array($assignmentSource, ['manual_override', 'manual'], true)) {
+                if (in_array($assignmentSource, EmployeeCompensationComponent::manualRemovalSources(), true)) {
                     continue;
                 }
 

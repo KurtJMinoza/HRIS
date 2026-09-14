@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class EmployeeCompensationComponent extends Model
 {
+    public const ASSIGNMENT_SOURCE_MANUAL_REMOVED = 'manual_removed';
+
     protected $fillable = [
         'user_id',
         'pay_component_id',
@@ -82,5 +84,40 @@ class EmployeeCompensationComponent extends Model
     public function payComponent(): BelongsTo
     {
         return $this->belongsTo(PayComponent::class, 'pay_component_id');
+    }
+
+    public function markManuallyRemoved(): void
+    {
+        $metadata = is_array($this->metadata ?? null) ? $this->metadata : [];
+        $metadata['assignment_source'] = self::ASSIGNMENT_SOURCE_MANUAL_REMOVED;
+        $metadata['removed_at'] = now()->toIso8601String();
+
+        $this->forceFill([
+            'is_active' => false,
+            'effective_to' => now()->toDateString(),
+            'metadata' => $metadata,
+        ])->save();
+    }
+
+    public static function employeeManuallyRemovedBasicSalary(int $userId): bool
+    {
+        return static::query()
+            ->where('user_id', $userId)
+            ->whereRaw("upper(code) = 'BASIC_SALARY'")
+            ->where('is_active', false)
+            ->where('metadata->assignment_source', self::ASSIGNMENT_SOURCE_MANUAL_REMOVED)
+            ->exists();
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function manualRemovalSources(): array
+    {
+        return [
+            self::ASSIGNMENT_SOURCE_MANUAL_REMOVED,
+            'manual_override',
+            'manual',
+        ];
     }
 }

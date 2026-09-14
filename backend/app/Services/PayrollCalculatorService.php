@@ -1563,7 +1563,7 @@ class PayrollCalculatorService
             }
         }
 
-        if ($basicSalary <= 0.0) {
+        if ($basicSalary <= 0.0 && ! EmployeeCompensationComponent::employeeManuallyRemovedBasicSalary((int) $user->id)) {
             $basicSalary = $this->resolveLegacyBasicSalaryForPayroll($user);
         }
 
@@ -1809,6 +1809,10 @@ class PayrollCalculatorService
         }
 
         if ($this->hasColumnCached('users', 'is_active') && ! (bool) ($user->is_active ?? false)) {
+            return;
+        }
+
+        if (EmployeeCompensationComponent::employeeManuallyRemovedBasicSalary((int) $user->id)) {
             return;
         }
 

@@ -5132,6 +5132,16 @@ export async function deleteEmployeeCompensation(employeeId, assignmentId) {
   return data
 }
 
+export async function clearLegacyEmployeeBasicSalary(employeeId) {
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/compensation/legacy-basic-salary`, {
+    method: 'DELETE',
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to clear legacy basic salary')
+  clearCachesAfterAdminEmployeeDataChange(employeeId)
+  return data
+}
+
 // —— Admin: Employee Benefits (assignments) ——
 
 export async function getEmployeeBenefits(employeeId) {

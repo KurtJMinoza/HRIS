@@ -46,6 +46,7 @@ import { cn } from '@/lib/utils'
 import {
   assignEmployeeCompensation,
   deleteEmployeeCompensation,
+  clearLegacyEmployeeBasicSalary,
   getBranches,
   getCompanies,
   getEmployeeCompensation,
@@ -404,11 +405,11 @@ export default function AdminEmployeeCompensationPage() {
   )
 
   const refreshCompensation = useCallback(
-    async (employeeId = activeEmployeeId) => {
+    async (employeeId = activeEmployeeId, options = {}) => {
       await loadCompensationDetail(employeeId, {
         forceRefresh: true,
         silentQueuedFollowUp: true,
-        retainStaleDetail: true,
+        retainStaleDetail: options.retainStaleDetail === true,
       })
     },
     [activeEmployeeId, loadCompensationDetail],
@@ -793,7 +794,21 @@ export default function AdminEmployeeCompensationPage() {
       toast({ title: 'Employee compensation', description: 'Assignment removed.' })
       setRemoveDialogOpen(false)
       setAssignmentToRemove(null)
-      await refreshCompensation()
+      setDetailEntry((prev) => {
+        if (Number(prev?.employee?.id) !== Number(employeeId)) return prev
+        const filterOut = (rows) => (Array.isArray(rows) ? rows.filter((row) => Number(row.id) !== Number(assignment.id)) : rows)
+        return {
+          ...prev,
+          summary: prev.summary
+            ? {
+                ...prev.summary,
+                earnings: filterOut(prev.summary.earnings),
+                deductions: filterOut(prev.summary.deductions),
+              }
+            : prev.summary,
+        }
+      })
+      await refreshCompensation(employeeId)
       window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
     } catch (error) {
       const msg = String(error?.message || '')
@@ -808,6 +823,33 @@ export default function AdminEmployeeCompensationPage() {
     } finally {
       setRemoving(false)
     }
+  }
+
+  async function confirmClearLegacyBasicSalary() {
+    if (!assignmentToRemove?.assignment?.isLegacyBasicSalary) return
+    const employeeId = assignmentToRemove.employeeId
+    setRemoving(true)
+    try {
+      await clearLegacyEmployeeBasicSalary(employeeId)
+      toast({ title: 'Employee compensation', description: 'Legacy basic salary cleared.' })
+      setRemoveDialogOpen(false)
+      setAssignmentToRemove(null)
+      await refreshCompensation(employeeId)
+      window.dispatchEvent(new CustomEvent('hr:employee-compensation-changed'))
+    } catch (error) {
+      toast({
+        title: 'Employee compensation',
+        description: error.message || 'Failed to clear legacy basic salary',
+        variant: 'destructive',
+      })
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  function requestClearLegacyBasicSalary(employeeId, assignment) {
+    setAssignmentToRemove({ employeeId, assignment: { ...assignment, isLegacyBasicSalary: true } })
+    setRemoveDialogOpen(true)
   }
 
   function startEditing(item) {
@@ -1274,6 +1316,7 @@ export default function AdminEmployeeCompensationPage() {
                         emptyLabel="No earning components assigned yet."
                         amountTone="earning"
                         onRemove={(assignment) => requestRemoveAssignment(activeEmployee.id, assignment)}
+                        onClearLegacyBasicSalary={(assignment) => requestClearLegacyBasicSalary(activeEmployee.id, assignment)}
                         editingId={editingId}
                         editValue={editValue}
                         onEditStart={startEditing}
@@ -1558,14 +1601,20 @@ export default function AdminEmployeeCompensationPage() {
       >
         <DialogContent className="max-w-md rounded-2xl border-border/70">
           <DialogHeader>
-            <DialogTitle className="text-lg font-semibold text-foreground">Remove compensation component</DialogTitle>
+            <DialogTitle className="text-lg font-semibold text-foreground">
+              {assignmentToRemove?.assignment?.isLegacyBasicSalary ? 'Clear legacy basic salary' : 'Remove compensation component'}
+            </DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
-              Remove "{assignmentToRemove?.assignment?.name || 'this component'}" from {activeEmployee?.name || 'this employee'}?
+              {assignmentToRemove?.assignment?.isLegacyBasicSalary
+                ? `Clear the profile-backed basic salary for ${activeEmployee?.name || 'this employee'}?`
+                : `Remove "${assignmentToRemove?.assignment?.name || 'this component'}" from ${activeEmployee?.name || 'this employee'}?`}
             </DialogDescription>
           </DialogHeader>
 
           <div className="rounded-xl border border-border/70 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
-            This action removes the assigned component from the employee compensation record.
+            {assignmentToRemove?.assignment?.isLegacyBasicSalary
+              ? 'This clears the employee salary profile and prevents the system from re-adding basic salary automatically.'
+              : 'This action removes the assigned component from the employee compensation record.'}
           </div>
 
           <DialogFooter>
@@ -1584,10 +1633,10 @@ export default function AdminEmployeeCompensationPage() {
             <Button
               type="button"
               className="rounded-xl bg-rose-600 text-white hover:bg-rose-700"
-              onClick={confirmRemoveAssignment}
+              onClick={assignmentToRemove?.assignment?.isLegacyBasicSalary ? confirmClearLegacyBasicSalary : confirmRemoveAssignment}
               disabled={removing}
             >
-              {removing ? 'Removing...' : 'Remove'}
+              {removing ? 'Removing...' : assignmentToRemove?.assignment?.isLegacyBasicSalary ? 'Clear salary' : 'Remove'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1629,6 +1678,7 @@ function CompTable({
   emptyLabel,
   amountTone,
   onRemove,
+  onClearLegacyBasicSalary,
   editingId,
   editValue,
   onEditStart,
@@ -1669,10 +1719,11 @@ function CompTable({
               </TableCell>
             </TableRow>
           ) : (
-            items.map((item) => {
+            items.map((item, index) => {
               const isEditing = editingId === item.id
+              const isLegacyBasicSalary = !item?.id && String(item?.code || '').toUpperCase() === 'BASIC_SALARY'
               return (
-                <TableRow key={item.id} className="border-b border-border/60 transition hover:bg-muted/35">
+                <TableRow key={item.id ?? `${item.code}-${index}`} className="border-b border-border/60 transition hover:bg-muted/35">
                   <TableCell className="px-3 py-3.5">
                     <div className="font-medium text-foreground">{item.name}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -1805,6 +1856,18 @@ function CompTable({
                         size="sm"
                         className="rounded-lg border-0 bg-rose-50 px-3 text-rose-600 hover:bg-rose-100 hover:text-rose-700"
                         onClick={() => onRemove(item)}
+                        disabled={updatingScheduleId === item.id || updatingStandardId === item.id || updatingValue}
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        Remove
+                      </Button>
+                    ) : isLegacyBasicSalary ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-lg border-0 bg-rose-50 px-3 text-rose-600 hover:bg-rose-100 hover:text-rose-700"
+                        onClick={() => onClearLegacyBasicSalary?.(item)}
                         disabled={updatingScheduleId === item.id || updatingStandardId === item.id || updatingValue}
                       >
                         <Trash2 className="mr-2 size-4" />

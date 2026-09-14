@@ -65,6 +65,7 @@ class OrgApprovalWorkflowService
         $requestor = $requestor ? $this->employeeForApprovalRouting($requestor) : null;
 
         $requestId = (int) $request->getKey();
+        $this->hydrateApprovalRoutingSnapshot($request);
         $resolvedRequestType = self::normalizeModuleType($moduleType);
         $steps = $this->chainResolver->resolveApprovalChain(
             $employee,
@@ -508,6 +509,50 @@ class OrgApprovalWorkflowService
         }
 
         return false;
+    }
+
+    /**
+     * List endpoints sometimes select a partial request row. Without the filing
+     * assignment/org snapshot, chain re-resolve falls back to the employee's
+     * primary company and can overwrite the correct first approver.
+     */
+    private function hydrateApprovalRoutingSnapshot(Model $request): void
+    {
+        $requestId = (int) $request->getKey();
+        if ($requestId <= 0) {
+            return;
+        }
+
+        $columns = ['assignment_id', 'assignment_type', 'company_id', 'branch_id', 'division_id', 'department_id', 'section_unit_id'];
+        $table = $request->getTable();
+        $missing = [];
+        $attributes = $request->getAttributes();
+        foreach ($columns as $column) {
+            if (! Schema::hasColumn($table, $column)) {
+                continue;
+            }
+            // Only reload columns that were omitted from a partial SELECT — not
+            // columns that are present and legitimately null.
+            if (! array_key_exists($column, $attributes)) {
+                $missing[] = $column;
+            }
+        }
+
+        if ($missing === []) {
+            return;
+        }
+
+        $fresh = $request->newQueryWithoutScopes()
+            ->whereKey($requestId)
+            ->first($missing);
+
+        if (! $fresh) {
+            return;
+        }
+
+        foreach ($missing as $column) {
+            $request->setAttribute($column, $fresh->getAttribute($column));
+        }
     }
 
     /**

@@ -862,6 +862,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:compensation.employee_compensation.assign')->group(function () {
             Route::post('/admin/employee-compensation/assign', [EmployeeCompensationController::class, 'assign']);
             Route::patch('/admin/employees/{userId}/compensation/{id}', [EmployeeCompensationController::class, 'update']);
+            Route::delete('/admin/employees/{userId}/compensation/legacy-basic-salary', [EmployeeCompensationController::class, 'clearLegacyBasicSalary']);
             Route::delete('/admin/employees/{userId}/compensation/{id}', [EmployeeCompensationController::class, 'destroy']);
         });
 

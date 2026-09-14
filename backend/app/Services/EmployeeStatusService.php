@@ -249,6 +249,8 @@ class EmployeeStatusService
             if ($effectiveDate !== null) {
                 $employee->employment_status_effective_date = $effectiveDate;
             }
+            app(\App\Services\PayrollEmployeeEligibilityService::class)
+                ->alignLateEncodedPayrollEffectiveDate($employee);
             // Manual admin/HR changes must not be overwritten by hire-date auto Probationary→Regular.
             if ($triggerType === 'manual_admin' && Schema::hasColumn($employee->getTable(), 'status_override')) {
                 $employee->status_override = true;

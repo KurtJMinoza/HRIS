@@ -233,14 +233,7 @@ class PayrollEmployeeEligibilityService
             $assignment = null;
         }
         if (! $payrollStart instanceof Carbon || $payrollStart->gt($end)) {
-            $createdAt = $employee->created_at ? Carbon::parse($employee->created_at)->startOfDay() : null;
-            $payrollEffective = $this->employeePayrollEffectiveDate($employee);
-            $reason = $createdAt instanceof Carbon && $createdAt->gt($end)
-                ? self::EXCLUSION_CREATED_AFTER_PERIOD
-                : self::EXCLUSION_PAYROLL_EFFECTIVE_AFTER_PERIOD;
-            if ($payrollEffective instanceof Carbon && $payrollEffective->gt($end)) {
-                $reason = self::EXCLUSION_PAYROLL_EFFECTIVE_AFTER_PERIOD;
-            }
+            $reason = self::EXCLUSION_PAYROLL_EFFECTIVE_AFTER_PERIOD;
         } elseif ($companyId !== null && $companyId > 0 && ! $assignment) {
             $reason = self::EXCLUSION_ASSIGNMENT_NOT_ACTIVE;
         }
@@ -735,22 +728,60 @@ class PayrollEmployeeEligibilityService
 
         $end = $periodEnd->toDateString();
         $payrollStartSql = $this->payrollStartDateSql();
-        $query
-            ->whereDate('users.created_at', '<=', $end)
-            ->whereRaw($payrollStartSql.' <= ?', [$end]);
+        $query->whereRaw($payrollStartSql.' <= ?', [$end]);
+    }
+
+    /**
+     * When HR encodes an employee after their hire date, payroll_effective_date often defaults to
+     * account creation day. Use hire_date as the payroll anchor in that pattern only.
+     */
+    public function resolvePayrollEffectiveAnchor(User $employee): ?Carbon
+    {
+        $payrollEffective = $this->storedPayrollEffectiveDate($employee);
+        if (! $payrollEffective instanceof Carbon) {
+            return null;
+        }
+
+        if ($this->isLateEncodedPayrollEffectiveDate($employee, $payrollEffective)) {
+            return Carbon::parse($employee->hire_date)->startOfDay();
+        }
+
+        return $payrollEffective;
+    }
+
+    public function alignLateEncodedPayrollEffectiveDate(User $employee): bool
+    {
+        if (! Schema::hasColumn('users', 'payroll_effective_date') || ! $employee->payroll_effective_date) {
+            return false;
+        }
+
+        $stored = $this->storedPayrollEffectiveDate($employee);
+        $resolved = $this->resolvePayrollEffectiveAnchor($employee);
+        if (! $stored instanceof Carbon || ! $resolved instanceof Carbon || $stored->equalTo($resolved)) {
+            return false;
+        }
+
+        $employee->payroll_effective_date = $resolved->toDateString();
+
+        return true;
     }
 
     private function payrollStartDateSql(): string
     {
-        $parts = [
-            "COALESCE(users.hire_date, '1000-01-01')",
-            'DATE(users.created_at)',
-        ];
-        if (Schema::hasColumn('users', 'payroll_effective_date')) {
-            $parts[] = "COALESCE(users.payroll_effective_date, DATE(users.created_at))";
+        return 'GREATEST(COALESCE(users.hire_date, \'1000-01-01\'), '.$this->payrollEffectiveAnchorSql().')';
+    }
+
+    private function payrollEffectiveAnchorSql(): string
+    {
+        if (! Schema::hasColumn('users', 'payroll_effective_date')) {
+            return 'DATE(users.created_at)';
         }
 
-        return 'GREATEST('.implode(', ', $parts).')';
+        return 'CASE WHEN users.hire_date IS NOT NULL '
+            .'AND DATE(users.created_at) > users.hire_date '
+            .'AND COALESCE(users.payroll_effective_date, DATE(users.created_at)) = DATE(users.created_at) '
+            .'THEN users.hire_date '
+            .'ELSE COALESCE(users.payroll_effective_date, DATE(users.created_at)) END';
     }
 
     private function payrollStartDate(User $employee): ?Carbon
@@ -759,10 +790,7 @@ class PayrollEmployeeEligibilityService
         if ($employee->hire_date) {
             $dates[] = Carbon::parse($employee->hire_date)->startOfDay();
         }
-        if ($employee->created_at) {
-            $dates[] = Carbon::parse($employee->created_at)->startOfDay();
-        }
-        $payrollEffective = $this->employeePayrollEffectiveDate($employee);
+        $payrollEffective = $this->resolvePayrollEffectiveAnchor($employee);
         if ($payrollEffective instanceof Carbon) {
             $dates[] = $payrollEffective;
         }
@@ -776,6 +804,11 @@ class PayrollEmployeeEligibilityService
 
     private function employeePayrollEffectiveDate(User $employee): ?Carbon
     {
+        return $this->resolvePayrollEffectiveAnchor($employee);
+    }
+
+    private function storedPayrollEffectiveDate(User $employee): ?Carbon
+    {
         if (Schema::hasColumn('users', 'payroll_effective_date') && $employee->payroll_effective_date) {
             return Carbon::parse($employee->payroll_effective_date)->startOfDay();
         }
@@ -784,6 +817,18 @@ class PayrollEmployeeEligibilityService
         }
 
         return null;
+    }
+
+    private function isLateEncodedPayrollEffectiveDate(User $employee, Carbon $payrollEffective): bool
+    {
+        if (! $employee->hire_date || ! $employee->created_at) {
+            return false;
+        }
+
+        $hire = Carbon::parse($employee->hire_date)->startOfDay();
+        $created = Carbon::parse($employee->created_at)->startOfDay();
+
+        return $hire->lt($created) && $payrollEffective->equalTo($created);
     }
 
     private function activePayrollAssignmentForEvaluation(User $employee, ?int $companyId, ?int $branchId, ?int $departmentId, CarbonInterface $periodStart, CarbonInterface $periodEnd): ?object
