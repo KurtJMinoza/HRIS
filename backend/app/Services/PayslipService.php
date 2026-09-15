@@ -3274,15 +3274,102 @@ class PayslipService
         if ($gross <= 0.0001 && isset($summary['display_gross_pay']) && is_numeric($summary['display_gross_pay'])) {
             $gross = round(max(0.0, (float) $summary['display_gross_pay']), 2);
         }
-        $deductions = $this->sumPayslipLineAmounts($deductionLines);
+        $lineDeductions = round($this->sumPayslipLineAmounts($deductionLines), 2);
+        $attendanceDeduction = $this->resolveAttendanceDeductionForDisplayNet($earningLines, $attendanceBreakdown);
+        $displayNetPay = is_numeric($summary['display_net_pay'] ?? null)
+            ? round((float) $summary['display_net_pay'], 2)
+            : round($gross - $lineDeductions - $attendanceDeduction, 2);
 
         return [
             'gross_pay' => $gross,
-            'total_deductions' => $deductions,
-            'net_pay' => round($gross - $deductions, 2),
+            'total_deductions' => $lineDeductions,
+            'net_pay' => $displayNetPay,
             'earning_lines' => $earningLines,
             'deduction_lines' => $deductionLines,
         ];
+    }
+
+    /**
+     * View totals: when Regular pay headline uses pre-reduction display_amount, late/undertime
+     * shown in attendance rows must also reduce net pay (they are not baked into display gross).
+     *
+     * @param  list<array<string, mixed>>  $earningLines
+     * @param  array<string, mixed>|null  $attendanceBreakdown
+     */
+    private function resolveAttendanceDeductionForDisplayNet(array $earningLines, ?array $attendanceBreakdown): float
+    {
+        if (! is_array($attendanceBreakdown) || empty($attendanceBreakdown['available'])) {
+            return 0.0;
+        }
+
+        $attendanceDeduction = round(max(0.0, (float) ($attendanceBreakdown['total_deduction'] ?? 0)), 2);
+        if ($attendanceDeduction <= 0.0001) {
+            return 0.0;
+        }
+
+        foreach ($earningLines as $line) {
+            if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                continue;
+            }
+
+            $display = is_numeric($line['display_amount'] ?? null)
+                ? round((float) $line['display_amount'], 2)
+                : null;
+            $amount = round(max(0.0, (float) ($line['amount'] ?? 0)), 2);
+            if ($display === null) {
+                return 0.0;
+            }
+
+            if ($display <= $amount + 0.005) {
+                return 0.0;
+            }
+
+            if ($this->hasFixedSemiMonthlyPaidLeaveSplit($earningLines)) {
+                return $attendanceDeduction;
+            }
+
+            $afterReductions = is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
+                ? round((float) $attendanceBreakdown['regular_pay_after_reductions'], 2)
+                : null;
+            if ($afterReductions !== null && $display > $afterReductions + 0.005) {
+                return 0.0;
+            }
+
+            return $attendanceDeduction;
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $lines
+     */
+    private function hasFixedSemiMonthlyPaidLeaveSplit(array $lines): bool
+    {
+        foreach ($lines as $line) {
+            if (is_array($line) && $this->isFixedSemiMonthlyIncludedPaidLeaveLine($line)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $deductionLines
+     * @param  list<array<string, mixed>>  $earningLines
+     * @param  array<string, mixed>|null  $attendanceBreakdown
+     */
+    private function resolveDisplayNetPay(
+        float $displayGross,
+        array $deductionLines,
+        array $earningLines,
+        ?array $attendanceBreakdown
+    ): float {
+        $lineDeductions = $this->sumPayslipLineAmounts($deductionLines);
+        $attendanceDeduction = $this->resolveAttendanceDeductionForDisplayNet($earningLines, $attendanceBreakdown);
+
+        return round($displayGross - $lineDeductions - $attendanceDeduction, 2);
     }
 
     private function sumPayslipLineAmounts(array $lines): float
@@ -3345,14 +3432,23 @@ class PayslipService
 
             if (! $regularHandled && $this->isRegularPayLine($line)) {
                 $regularHandled = true;
+                $afterReductions = is_array($attendanceBreakdown)
+                    && is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
+                    ? round((float) $attendanceBreakdown['regular_pay_after_reductions'], 2)
+                    : null;
+                if (
+                    $afterReductions !== null
+                    && $display !== null
+                    && $display > $afterReductions + 0.005
+                    && ! $this->hasFixedSemiMonthlyPaidLeaveSplit($lines)
+                ) {
+                    $total += max(0.0, $afterReductions);
+                    continue;
+                }
                 if ($display !== null) {
                     $total += max(0.0, $display);
                     continue;
                 }
-                $afterReductions = is_array($attendanceBreakdown)
-                    && is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
-                    ? (float) $attendanceBreakdown['regular_pay_after_reductions']
-                    : null;
                 if ($afterReductions !== null) {
                     $total += max(0.0, $afterReductions);
                     continue;
@@ -3878,13 +3974,16 @@ class PayslipService
         $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
             ? $summary['attendance_pay_breakdown']
             : null;
+        $earningLines = $this->deduplicatePayslipLines(array_values(array_filter($earningLines, 'is_array')));
         $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts(
-            $this->deduplicatePayslipLines(array_values(array_filter($earningLines, 'is_array'))),
+            $earningLines,
             $attendanceBreakdown
         );
-        $summary['display_net_pay'] = round(
-            (float) $summary['display_gross_pay'] - $this->sumPayslipLineAmounts($deductionLines),
-            2
+        $summary['display_net_pay'] = $this->resolveDisplayNetPay(
+            (float) $summary['display_gross_pay'],
+            $deductionLines,
+            $earningLines,
+            $attendanceBreakdown
         );
 
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
@@ -5005,9 +5104,11 @@ class PayslipService
             ? $summary['attendance_pay_breakdown']
             : null;
         $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts($earningLines, $breakdown);
-        $summary['display_net_pay'] = round(
-            (float) $summary['display_gross_pay'] - $this->sumPayslipLineAmounts($deductionLines),
-            2
+        $summary['display_net_pay'] = $this->resolveDisplayNetPay(
+            (float) $summary['display_gross_pay'],
+            $deductionLines,
+            $earningLines,
+            $breakdown
         );
 
         return $summary;

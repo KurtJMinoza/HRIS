@@ -117,6 +117,134 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertSame(8269.22, $regularAfterReductions);
     }
 
+    public function test_fixed_semi_monthly_display_net_pay_subtracts_late_when_headline_shows_pre_reduction_gross(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $lateDeduction = 192.32;
+        $customDeductions = 1648.0;
+        $allowance = 2500.0;
+        $snapshot = [
+            'daily_rate' => 769.23,
+            'summary' => [
+                'regular_fixed_semi_monthly_payroll' => true,
+                'fixed_semi_monthly_basic_gross' => 10000.0,
+                'semi_monthly_basic_salary' => 10000.0,
+                'basic_pay_this_period' => 9807.68,
+                'regular_fixed_paid_leave_amount' => 1538.46,
+                'regular_fixed_paid_leave_day_units' => 2.0,
+                'regular_pay_present_day_units' => 14.0,
+                'daily_rate' => 769.23,
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'total_deduction' => $lateDeduction,
+                    'scheduled_days_count' => 14,
+                    'rows' => [[
+                        'key' => 'late',
+                        'label' => 'Late',
+                        'amount' => $lateDeduction,
+                    ]],
+                ],
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 8269.22,
+                        'display_amount' => 8461.54,
+                        'units' => '12 days',
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'amount' => 1538.46,
+                        'display_amount' => 1538.46,
+                        'units' => '2 days',
+                        'metadata' => [
+                            'included_in_fixed_semi_monthly_basic' => true,
+                            'leave_day_units' => 2.0,
+                        ],
+                    ],
+                ],
+                'payslip_earning_lines' => [[
+                    'key' => 'pay_component:22',
+                    'label' => 'Allowance',
+                    'amount' => $allowance,
+                ]],
+                'payslip_custom_deduction_lines' => [[
+                    'key' => 'deduction:1',
+                    'label' => 'Custom deduction',
+                    'amount' => $customDeductions,
+                ]],
+            ],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $summary = $normalized['summary'];
+
+        $this->assertSame(12500.0, round((float) ($summary['display_gross_pay'] ?? 0), 2));
+        $this->assertSame(
+            10659.68,
+            round((float) ($summary['display_net_pay'] ?? 0), 2)
+        );
+
+        $lineTotals = $payslipService->payslipLineTotalsFromSnapshot($snapshot);
+        $this->assertSame(10659.68, round((float) ($lineTotals['net_pay'] ?? 0), 2));
+        $this->assertSame($customDeductions, round((float) ($lineTotals['total_deductions'] ?? 0), 2));
+    }
+
+    public function test_fixed_semi_monthly_display_gross_uses_after_reductions_when_no_paid_leave_split(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $lateDeduction = 420.70;
+        $fixedGross = 12500.0;
+        $netBasic = round($fixedGross - $lateDeduction, 2);
+        $customDeductions = 440.0;
+        $snapshot = [
+            'daily_rate' => 961.54,
+            'summary' => [
+                'regular_fixed_semi_monthly_payroll' => true,
+                'fixed_semi_monthly_basic_gross' => $fixedGross,
+                'semi_monthly_basic_salary' => $fixedGross,
+                'basic_pay_this_period' => $netBasic,
+                'regular_pay_present_day_units' => 14.0,
+                'daily_rate' => 961.54,
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'total_deduction' => $lateDeduction,
+                    'scheduled_days_count' => 14,
+                    'regular_pay_after_reductions' => $netBasic,
+                    'fixed_basic_pay_after_reductions' => $netBasic,
+                    'rows' => [[
+                        'key' => 'late',
+                        'label' => 'Late',
+                        'amount' => $lateDeduction,
+                    ]],
+                ],
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => $netBasic,
+                    'display_amount' => $fixedGross,
+                    'units' => '14 days',
+                ]],
+                'payslip_custom_deduction_lines' => [[
+                    'key' => 'deduction:1',
+                    'label' => 'Custom deduction',
+                    'amount' => $customDeductions,
+                ]],
+            ],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $summary = $normalized['summary'];
+
+        $this->assertSame($fixedGross, round((float) ($summary['daily_computation_earning_lines'][0]['display_amount'] ?? 0), 2));
+        $this->assertSame($netBasic, round((float) ($summary['display_gross_pay'] ?? 0), 2));
+        $this->assertSame(
+            round($netBasic - $customDeductions, 2),
+            round((float) ($summary['display_net_pay'] ?? 0), 2)
+        );
+    }
+
     public function test_fixed_semi_monthly_present_day_base_excludes_absence_from_payable_deductions(): void
     {
         $semiMonthlyGross = 10000.0;
