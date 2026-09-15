@@ -2,7 +2,7 @@
   "scripts": {
     "pm2:start": "node ./node_modules/pm2/bin/pm2 start ecosystem.config.cjs --update-env",
     "pm2:stop": "node ./node_modules/pm2/bin/pm2 stop ecosystem.config.cjs",
-    "pm2:restart": "node ./node_modules/pm2/bin/pm2 restart ecosystem.config.cjs --update-env",
+    "pm2:restart": "node ./scripts/pm2-restart.cjs",
     "pm2:delete": "node ./node_modules/pm2/bin/pm2 delete ecosystem.config.cjs",
     "pm2:status": "node ./node_modules/pm2/bin/pm2 status"
   },

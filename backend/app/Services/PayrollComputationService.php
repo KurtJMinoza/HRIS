@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\EmploymentStatus;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\DeductionScheduleSetting;
@@ -1834,6 +1835,13 @@ class PayrollComputationService implements PayrollBulkComputation
 
         $tz = $this->getTimezone();
         $isConsultant = $this->isConsultantEmployee($user);
+        $regularFixedSemiMonthlyPayroll = false;
+        $regularFixedSemiMonthlyGross = 0.0;
+        $regularFixedAttendanceDeduction = 0.0;
+        $regularFixedAttendanceBreakdown = null;
+        $regularPayPresentDayUnits = 0.0;
+        $regularFixedPresentDayCapApplied = false;
+        $baseRegularPay = 0.0;
         $employmentPolicy = $this->resolveEmploymentPayrollPolicyForComputation($user);
         $consultantPolicy = is_array($employmentPolicy) ? $employmentPolicy : EmploymentPayrollSetting::defaults('consultant');
         $consultantAttendanceEarnings = $isConsultant
@@ -2459,6 +2467,153 @@ class PayrollComputationService implements PayrollBulkComputation
             } else {
                 $dailyComputationEarningLines = [$fixedBasicLine];
             }
+        } elseif (
+            $this->isFixedSemiMonthlySalaryEmployee($user, $isConsultant)
+            && $runFullDailyComputation
+            && $basicSalary > 0
+        ) {
+            $regularFixedSemiMonthlyPayroll = true;
+            $regularFixedSemiMonthlyGross = round($basicSalary * $basicFactor, 2);
+            $regularFixedAttendanceBreakdown = $this->computeFixedRegularAttendanceDeductions($days, $dailyRate);
+            $regularFixedFullAttendanceDeduction = round(
+                (float) ($regularFixedAttendanceBreakdown['total_deduction'] ?? 0),
+                2
+            );
+            $regularFixedNonAbsenceAttendanceDeduction = $this->sumFixedRegularNonAbsenceAttendanceDeduction(
+                $regularFixedAttendanceBreakdown
+            );
+            $regularPayWorkedDayUnits = $this->countFixedRegularWorkedDayUnits($days);
+            $regularPayPresentDayUnits = $this->countFixedRegularPresentDayUnits($days);
+            $scheduledRegularDays = max(0, (int) ($regularFixedAttendanceBreakdown['scheduled_days_count'] ?? 0));
+            $nearFullFixedRegularCutoff = $scheduledRegularDays > 0
+                && ($regularPayPresentDayUnits / $scheduledRegularDays) >= 0.90;
+            $presentDayBaseRegularPay = null;
+            if ($regularPayPresentDayUnits > 0.0001 && $dailyRate > 0.0001) {
+                $presentDayBaseRegularPay = round($regularPayPresentDayUnits * $dailyRate, 2);
+            }
+            $regularWorkedBasePay = null;
+            if ($regularPayWorkedDayUnits > 0.0001 && $dailyRate > 0.0001) {
+                $regularWorkedBasePay = round($regularPayWorkedDayUnits * $dailyRate, 2);
+            }
+            $paidLeavePremiumAmount = round(
+                (float) ($dailyBreakdownTotals['paid_leave'] ?? 0)
+                + (float) ($dailyBreakdownTotals['paid_leave_daily_flat'] ?? 0),
+                2
+            );
+            $paidLeaveDayUnits = 0.0;
+            foreach ($days as $day) {
+                if (! is_array($day)) {
+                    continue;
+                }
+                $paidLeaveDayUnits += $this->fixedRegularPaidLeaveDayUnitsFromDay($day);
+            }
+            $paidLeaveDayUnits = round(max(0.0, $paidLeaveDayUnits), 4);
+
+            $regularFixedPresentDayBasePay = $presentDayBaseRegularPay !== null
+                ? round(min($regularFixedSemiMonthlyGross, $presentDayBaseRegularPay), 2)
+                : null;
+
+            if ($nearFullFixedRegularCutoff) {
+                $baseRegularPay = $regularFixedSemiMonthlyGross;
+                $basicPayThisPeriod = round(
+                    max(0.0, $baseRegularPay - $regularFixedFullAttendanceDeduction),
+                    2
+                );
+                $regularFixedAttendanceDeduction = $regularFixedFullAttendanceDeduction;
+                if (
+                    $regularFixedPresentDayBasePay !== null
+                    && $regularFixedPresentDayBasePay + 0.005 < $regularFixedSemiMonthlyGross
+                ) {
+                    $regularFixedPresentDayCapApplied = true;
+                    $regularPayDisplayAmount = $regularFixedPresentDayBasePay;
+                } else {
+                    $regularFixedPresentDayCapApplied = false;
+                    $regularPayDisplayAmount = $regularFixedFullAttendanceDeduction > 0.0001
+                        ? $basicPayThisPeriod
+                        : $regularFixedSemiMonthlyGross;
+                }
+            } else {
+                $baseRegularPay = $presentDayBaseRegularPay !== null
+                    ? round(min($regularFixedSemiMonthlyGross, $presentDayBaseRegularPay), 2)
+                    : $regularFixedSemiMonthlyGross;
+                $basicPayThisPeriod = round(
+                    max(0.0, $baseRegularPay - $regularFixedNonAbsenceAttendanceDeduction),
+                    2
+                );
+                $regularFixedPresentDayCapApplied = $presentDayBaseRegularPay !== null
+                    && $presentDayBaseRegularPay + 0.005 < $regularFixedSemiMonthlyGross;
+                $regularFixedAttendanceDeduction = round($regularFixedNonAbsenceAttendanceDeduction, 2);
+                if ($regularFixedPresentDayCapApplied) {
+                    $regularPayDisplayAmount = $baseRegularPay;
+                } elseif ($regularFixedNonAbsenceAttendanceDeduction > 0.0001) {
+                    $regularPayDisplayAmount = $baseRegularPay;
+                } elseif ($presentDayBaseRegularPay !== null && $presentDayBaseRegularPay + 0.005 < $regularFixedSemiMonthlyGross) {
+                    $regularPayDisplayAmount = $baseRegularPay;
+                } else {
+                    $regularPayDisplayAmount = $regularFixedSemiMonthlyGross;
+                }
+            }
+
+            if ($paidLeavePremiumAmount > 0.0001) {
+                $attendancePremiumPayThisPeriod = round(
+                    max(0.0, $attendancePremiumPayThisPeriod - $paidLeavePremiumAmount),
+                    2
+                );
+                $regularPayGrossDisplay = round(
+                    max(0.0, $regularFixedSemiMonthlyGross - $paidLeavePremiumAmount),
+                    2
+                );
+                $regularPayDisplayAmount = $regularPayGrossDisplay;
+            }
+
+            $leavePayableAmount = round(min($paidLeavePremiumAmount, $basicPayThisPeriod), 2);
+            $regularPayableAmount = round(max(0.0, $basicPayThisPeriod - $leavePayableAmount), 2);
+
+            $premiumLines = array_values(array_filter(
+                $dailyComputationEarningLines,
+                fn (array $line): bool => ($line['key'] ?? '') !== 'daily:regular_pay'
+            ));
+            if ($paidLeavePremiumAmount > 0.0001) {
+                $premiumLines = array_values(array_map(function (array $line) use ($leavePayableAmount, $paidLeavePremiumAmount, $paidLeaveDayUnits): array {
+                    $key = (string) ($line['key'] ?? '');
+                    if (! in_array($key, ['daily:paid_leave', 'daily:paid_leave_daily_flat'], true)) {
+                        return $line;
+                    }
+
+                    $line['display_amount'] = round(max(0.0, $paidLeavePremiumAmount), 2);
+                    $line['amount'] = $leavePayableAmount;
+                    $line['units'] = $this->formatLeaveAdjustmentDayUnits($paidLeaveDayUnits);
+                    $line['metadata'] = array_merge(
+                        is_array($line['metadata'] ?? null) ? $line['metadata'] : [],
+                        [
+                            'included_in_fixed_semi_monthly_basic' => true,
+                            'leave_day_units' => $paidLeaveDayUnits,
+                        ]
+                    );
+
+                    return $line;
+                }, $premiumLines));
+            }
+
+            $regularPayUnits = $regularPayWorkedDayUnits > 0.0001
+                ? $this->formatLeaveAdjustmentDayUnits($regularPayWorkedDayUnits)
+                : null;
+
+            $dailyComputationEarningLines = array_values(array_merge([
+                [
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => $paidLeavePremiumAmount > 0.0001 ? $regularPayableAmount : $basicPayThisPeriod,
+                    'display_amount' => $regularPayDisplayAmount,
+                    'units' => $regularPayUnits,
+                    'minutes_worked' => null,
+                    'hourly_rate' => $dailyRate > 0 ? round($dailyRate / 8.0, 4) : null,
+                    'metadata' => [
+                        'regular_fixed_semi_monthly_payroll' => true,
+                        'regular_fixed_present_day_cap_applied' => $regularFixedPresentDayCapApplied,
+                    ],
+                ],
+            ], $premiumLines));
         }
 
         $employeeStatutoryThisPeriod = (float) ($deductionSchedule['employee_statutory_this_period'] ?? $employeeStatutoryFullMonthly);
@@ -2562,13 +2717,43 @@ class PayrollComputationService implements PayrollBulkComputation
                 'employment_type' => (string) ($user->employment_type ?? ''),
                 'employment_status' => $isConsultant ? 'consultant' : (string) ($user->employment_status ?? ''),
                 'consultant_fixed_payroll' => $isConsultant,
+                'regular_fixed_semi_monthly_payroll' => $regularFixedSemiMonthlyPayroll,
+                'fixed_semi_monthly_basic_gross' => $regularFixedSemiMonthlyPayroll
+                    ? round($regularFixedSemiMonthlyGross, 2)
+                    : null,
+                'semi_monthly_basic_salary' => $regularFixedSemiMonthlyPayroll
+                    ? round($regularFixedSemiMonthlyGross, 2)
+                    : null,
+                'regular_pay_present_day_units' => $regularFixedSemiMonthlyPayroll
+                    ? round($regularPayPresentDayUnits ?? 0.0, 4)
+                    : null,
+                'regular_pay_worked_day_units' => $regularFixedSemiMonthlyPayroll
+                    ? round($regularPayWorkedDayUnits ?? 0.0, 4)
+                    : null,
+                'regular_fixed_paid_leave_amount' => $regularFixedSemiMonthlyPayroll
+                    ? round($paidLeavePremiumAmount ?? 0.0, 2)
+                    : null,
+                'regular_fixed_paid_leave_day_units' => $regularFixedSemiMonthlyPayroll
+                    ? round($paidLeaveDayUnits ?? 0.0, 4)
+                    : null,
+                'regular_fixed_present_day_cap_applied' => $regularFixedSemiMonthlyPayroll
+                    ? $regularFixedPresentDayCapApplied
+                    : null,
+                'regular_fixed_present_day_base_pay' => $regularFixedSemiMonthlyPayroll
+                    ? round($regularFixedPresentDayBasePay ?? $baseRegularPay ?? 0.0, 2)
+                    : null,
+                'attendance_deduction' => $regularFixedSemiMonthlyPayroll
+                    ? round($regularFixedAttendanceDeduction, 2)
+                    : ($isConsultant ? 0.0 : null),
+                'attendance_pay_breakdown' => $regularFixedSemiMonthlyPayroll
+                    ? $regularFixedAttendanceBreakdown
+                    : null,
                 'consultant_salary_basis' => $isConsultant ? (string) ($consultantSalarySources['salary_source_used'] ?? '') : null,
                 'consultant_fixed_salary' => $isConsultant ? round((float) ($consultantSalarySources['resolved_monthly'] ?? 0), 2) : null,
                 'attendance_status' => $isConsultant ? 'Auto Present' : null,
                 'absent_days' => $isConsultant ? 0 : null,
                 'late_minutes' => $isConsultant ? 0 : null,
                 'undertime_minutes' => $isConsultant ? 0 : null,
-                'attendance_deduction' => $isConsultant ? 0.0 : null,
                 'leave_deduction' => $isConsultant ? 0.0 : null,
                 'basic_salary_schedule_type' => $basicScheduleType,
                 'basic_salary_schedule_factor' => round($basicFactor, 4),
@@ -3073,6 +3258,459 @@ class PayrollComputationService implements PayrollBulkComputation
             ->toString();
 
         return $status === 'consultant' || $type === 'consultant';
+    }
+
+    /**
+     * Employees with Employment Status = Regular receive fixed semi-monthly basic pay
+     * (monthly salary × schedule factor), with attendance adjustments deducted afterward.
+     * Employment type is not used for this rule; consultants and other statuses are excluded.
+     */
+    private function isFixedSemiMonthlySalaryEmployee(User $user, bool $isConsultant): bool
+    {
+        if ($isConsultant || (bool) ($user->is_execom ?? false)) {
+            return false;
+        }
+
+        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::Regular;
+    }
+
+    /**
+     * Attendance reductions applied against fixed semi-monthly basic pay for regular employees.
+     *
+     * @param  list<array<string, mixed>>  $days
+     * @return array<string, mixed>
+     */
+    private function computeFixedRegularAttendanceDeductions(array $days, float $dailyRate): array
+    {
+        $hourlyRate = $dailyRate > 0 ? $dailyRate / 8.0 : 0.0;
+        $scheduledDays = 0;
+        $lateMinutes = 0;
+        $lateCount = 0;
+        $halfDayCount = 0;
+        $halfDayDeductionMinutes = 0;
+        $halfDayReferenceMinutes = 0;
+        $absenceDays = 0.0;
+        $absenceMinutes = 0;
+        $undertimeCount = 0;
+        $undertimeMinutes = 0;
+        $unpaidLeaveDays = 0.0;
+        $unpaidLeaveMinutes = 0;
+        $lateAmountRunning = 0.0;
+        $undertimeAmountRunning = 0.0;
+
+        foreach ($days as $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+
+            $requiredMinutes = max(0, (int) ($day['required_minutes'] ?? 0));
+            if ($requiredMinutes <= 0 || (bool) ($day['is_rest_day'] ?? false)) {
+                continue;
+            }
+
+            $scheduledDays++;
+            $status = strtolower(trim((string) ($day['status'] ?? '')));
+            $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+            $hasRegularPayMinutes = collect((array) ($day['breakdown'] ?? []))
+                ->contains(fn ($entry) => is_array($entry)
+                    && strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay'
+                    && max(0, (int) ($entry['minutes'] ?? 0)) > 0);
+
+            if ($holidayPremiumPay > 0.0001 && ! $hasRegularPayMinutes) {
+                continue;
+            }
+
+            $hasUnpaidLeave = false;
+            foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+                if (! is_array($entry)) {
+                    continue;
+                }
+                if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'unpaid_leave') {
+                    continue;
+                }
+                $hasUnpaidLeave = true;
+                $leaveType = strtolower(trim((string) ($entry['leave_type'] ?? '')));
+                $fraction = $leaveType === 'half_day' ? 0.5 : 1.0;
+                $unpaidLeaveDays += $fraction;
+                $unpaidLeaveMinutes += (int) round($requiredMinutes * $fraction);
+            }
+
+            if ($status === 'absent' && ! $hasUnpaidLeave) {
+                $absenceDays += 1.0;
+                $absenceMinutes += $requiredMinutes;
+            }
+
+            if ($status === 'halfday') {
+                $leaveHalfMinutes = 0;
+                foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+                    if (! is_array($entry)) {
+                        continue;
+                    }
+                    $component = strtolower(trim((string) ($entry['component'] ?? '')));
+                    if (in_array($component, ['paid_leave', 'paid_leave_daily_flat'], true)) {
+                        $leaveHalfMinutes += max(0, (int) ($entry['minutes'] ?? 0));
+                    }
+                }
+                if ($leaveHalfMinutes <= 0) {
+                    $leaveHalfMinutes = (int) round($requiredMinutes / 2);
+                }
+                $halfDayCount++;
+                $halfDayReferenceMinutes += $leaveHalfMinutes;
+            }
+
+            $dayLateMinutes = max(0, (int) ($day['late_deduction_minutes'] ?? 0));
+            $dayUndertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
+            $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
+
+            if ($status !== 'halfday' && $tardinessStatus === 'half_day') {
+                $paidRegularMinutes = max(0, (int) ($day['paid_regular_minutes'] ?? 0));
+                if ($paidRegularMinutes <= 0) {
+                    $paidRegularMinutes = max(
+                        0,
+                        (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)
+                    );
+                }
+                $halfDayBaselineMinutes = (int) round($requiredMinutes / 2.0);
+                $halfDayShortfallMinutes = max(0, $halfDayBaselineMinutes - $paidRegularMinutes);
+                $halfDayCount++;
+                $halfDayDeductionMinutes += $halfDayShortfallMinutes;
+                if ($halfDayShortfallMinutes <= 0) {
+                    $halfDayReferenceMinutes += $halfDayBaselineMinutes;
+                }
+            } elseif ($status !== 'absent' && ! $hasUnpaidLeave) {
+                $dayRegularPayShortfall = $this->resolveFixedRegularDayRegularPayShortfall($day, $dailyRate);
+                if ($dayRegularPayShortfall > 0.0001) {
+                    $shortfallMinutes = $hourlyRate > 0
+                        ? (int) round(($dayRegularPayShortfall / $hourlyRate) * 60.0)
+                        : 0;
+                    if ($tardinessStatus === 'late' || $dayLateMinutes > 0) {
+                        $lateCount++;
+                        $lateMinutes += max($shortfallMinutes, $dayLateMinutes);
+                        $lateAmountRunning += $dayRegularPayShortfall;
+                    } elseif ($dayUndertimeMinutes > 0) {
+                        $undertimeCount++;
+                        $undertimeMinutes += max($shortfallMinutes, $dayUndertimeMinutes);
+                        $undertimeAmountRunning += $dayRegularPayShortfall;
+                    } else {
+                        $lateCount++;
+                        $lateMinutes += $shortfallMinutes;
+                        $lateAmountRunning += $dayRegularPayShortfall;
+                    }
+                } elseif ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
+                    $lateCount++;
+                    $lateMinutes += $dayLateMinutes;
+                } elseif ($status !== 'halfday' && $dayUndertimeMinutes > 0) {
+                    $undertimeCount++;
+                    $undertimeMinutes += $dayUndertimeMinutes;
+                }
+            }
+        }
+
+        $lateAmount = round($lateAmountRunning > 0.0001 ? $lateAmountRunning : (($lateMinutes / 60.0) * $hourlyRate), 2);
+        $halfDayDeductionAmount = round(($halfDayDeductionMinutes / 60.0) * $hourlyRate, 2);
+        $absenceAmount = round(($absenceMinutes / 60.0) * $hourlyRate, 2);
+        $undertimeAmount = round($undertimeAmountRunning > 0.0001 ? $undertimeAmountRunning : (($undertimeMinutes / 60.0) * $hourlyRate), 2);
+        $unpaidLeaveAmount = round($dailyRate * $unpaidLeaveDays, 2);
+        $halfDayDisplayMinutes = $halfDayDeductionMinutes > 0
+            ? $halfDayDeductionMinutes
+            : $halfDayReferenceMinutes;
+        $halfDayDisplayAmount = round(($halfDayDisplayMinutes / 60.0) * $hourlyRate, 2);
+
+        return [
+            'available' => $days !== [],
+            'is_fixed_pay' => false,
+            'regular_fixed_semi_monthly_payroll' => true,
+            'scheduled_days_count' => $scheduledDays,
+            'rows' => [
+                [
+                    'key' => 'scheduled_regular_days',
+                    'label' => 'Scheduled regular days',
+                    'details' => $scheduledDays.' '.($scheduledDays === 1 ? 'day' : 'days'),
+                    'count' => $scheduledDays,
+                    'minutes' => null,
+                    'amount' => null,
+                ],
+                [
+                    'key' => 'late',
+                    'label' => 'Late',
+                    'details' => $this->formatFixedRegularAttendanceDuration($lateMinutes),
+                    'count' => $lateCount,
+                    'minutes' => $lateMinutes,
+                    'amount' => $lateAmount,
+                    'deduction_amount' => $lateAmount,
+                ],
+                [
+                    'key' => 'half_day',
+                    'label' => 'Half day',
+                    'details' => $this->formatFixedRegularAttendanceDuration($halfDayDisplayMinutes),
+                    'count' => $halfDayCount,
+                    'minutes' => $halfDayDisplayMinutes,
+                    'amount' => $halfDayDisplayAmount,
+                    'deduction_minutes' => $halfDayDeductionMinutes,
+                    'deduction_amount' => $halfDayDeductionAmount,
+                ],
+                [
+                    'key' => 'absence',
+                    'label' => 'Absences',
+                    'details' => $absenceDays.' '.($absenceDays === 1.0 ? 'day' : 'days'),
+                    'count' => $absenceDays,
+                    'minutes' => $absenceMinutes,
+                    'amount' => $absenceAmount,
+                    'deduction_amount' => $absenceAmount,
+                ],
+                [
+                    'key' => 'undertime',
+                    'label' => 'Undertime',
+                    'details' => $this->formatFixedRegularAttendanceDuration($undertimeMinutes),
+                    'count' => $undertimeCount,
+                    'minutes' => $undertimeMinutes,
+                    'amount' => $undertimeAmount,
+                    'deduction_amount' => $undertimeAmount,
+                ],
+                [
+                    'key' => 'unpaid_leave',
+                    'label' => 'Unpaid leave',
+                    'details' => $unpaidLeaveDays.' '.($unpaidLeaveDays === 1.0 ? 'day' : 'days'),
+                    'count' => $unpaidLeaveDays,
+                    'minutes' => $unpaidLeaveMinutes,
+                    'amount' => $unpaidLeaveAmount,
+                    'deduction_amount' => $unpaidLeaveAmount,
+                ],
+            ],
+            'total_deduction' => round(
+                $lateAmount + $halfDayDeductionAmount + $absenceAmount + $undertimeAmount + $unpaidLeaveAmount,
+                2
+            ),
+            'total_deduction_units_label' => '—',
+            'note' => 'Fixed semi-monthly basic pay minus applicable late, undertime, absence, and unpaid leave adjustments.',
+        ];
+    }
+
+    /**
+     * Payable attendance reductions for fixed semi-monthly Regular pay.
+     * Absences are already reflected in present-day units and are not deducted again here.
+     *
+     * @param  array<string, mixed>  $breakdown
+     */
+    private function sumFixedRegularNonAbsenceAttendanceDeduction(array $breakdown): float
+    {
+        $total = 0.0;
+        $keys = ['late', 'undertime', 'half_day', 'unpaid_leave'];
+
+        foreach (is_array($breakdown['rows'] ?? null) ? $breakdown['rows'] : [] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($row['key'] ?? '')));
+            if (! in_array($key, $keys, true)) {
+                continue;
+            }
+            $total += max(0.0, (float) ($row['deduction_amount'] ?? 0));
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * Regular-pay shortfall vs the scheduled daily rate for fixed semi-monthly payroll.
+     * Matches day-based payroll, where tardiness is reflected in reduced regular_pay even
+     * when late_deduction_minutes is zero after grace or full-shift coverage.
+     *
+     * @param  array<string, mixed>  $day
+     */
+    private function resolveFixedRegularDayRegularPayShortfall(array $day, float $dailyRate): float
+    {
+        $requiredMinutes = max(0, (int) ($day['required_minutes'] ?? 0));
+        if ($requiredMinutes <= 0 || $dailyRate <= 0.0001 || (bool) ($day['is_rest_day'] ?? false)) {
+            return 0.0;
+        }
+
+        $status = strtolower(trim((string) ($day['status'] ?? '')));
+        if ($status === 'absent') {
+            return 0.0;
+        }
+
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) === 'unpaid_leave') {
+                return 0.0;
+            }
+        }
+
+        $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+        $hasRegularPayMinutes = collect((array) ($day['breakdown'] ?? []))
+            ->contains(fn ($entry) => is_array($entry)
+                && strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay'
+                && max(0, (int) ($entry['minutes'] ?? 0)) > 0);
+        if ($holidayPremiumPay > 0.0001 && ! $hasRegularPayMinutes) {
+            return 0.0;
+        }
+
+        $actualRegularPay = max(0.0, (float) ($day['regular_pay'] ?? 0));
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay') {
+                $actualRegularPay = max($actualRegularPay, max(0.0, (float) ($entry['amount'] ?? 0)));
+            }
+        }
+
+        $expectedRegularPay = $dailyRate;
+        if ($status === 'halfday') {
+            $hasPaidLeave = collect((array) ($day['breakdown'] ?? []))
+                ->contains(fn ($entry) => is_array($entry)
+                    && in_array(strtolower(trim((string) ($entry['component'] ?? ''))), ['paid_leave', 'paid_leave_daily_flat'], true));
+            if ($hasPaidLeave) {
+                $expectedRegularPay = round($dailyRate / 2.0, 2);
+            }
+        }
+
+        return round(max(0.0, $expectedRegularPay - $actualRegularPay), 2);
+    }
+
+    /**
+     * Worked present-day units for fixed semi-monthly Regular pay headline (excludes paid leave).
+     *
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function countFixedRegularWorkedDayUnits(array $days): float
+    {
+        return $this->countFixedRegularAttendanceDayUnits($days, false);
+    }
+
+    /**
+     * Present-day units for fixed semi-monthly cap logic (includes approved paid leave).
+     *
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function countFixedRegularPresentDayUnits(array $days): float
+    {
+        return $this->countFixedRegularAttendanceDayUnits($days, true);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function countFixedRegularAttendanceDayUnits(array $days, bool $includePaidLeave): float
+    {
+        $units = 0.0;
+
+        foreach ($days as $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+
+            if ((bool) ($day['is_rest_day'] ?? false)) {
+                continue;
+            }
+
+            $attendanceRegularMinutes = 0;
+            foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+                if (! is_array($entry)) {
+                    continue;
+                }
+                if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                    continue;
+                }
+                if ((float) ($entry['amount'] ?? 0) <= 0.0001) {
+                    continue;
+                }
+                $attendanceRegularMinutes += max(0, (int) ($entry['minutes'] ?? 0));
+            }
+
+            $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+            if ($attendanceRegularMinutes <= 0 && $holidayPremiumPay > 0.0001) {
+                $units += 1.0;
+
+                continue;
+            }
+
+            if ($includePaidLeave) {
+                $paidLeaveDayUnits = $this->fixedRegularPaidLeaveDayUnitsFromDay($day);
+                if ($paidLeaveDayUnits > 0.0001 && $attendanceRegularMinutes <= 0) {
+                    $units += $paidLeaveDayUnits;
+
+                    continue;
+                }
+            }
+
+            $status = strtolower(trim((string) ($day['status'] ?? '')));
+            if ($attendanceRegularMinutes <= 0 && $status === 'worked') {
+                $attendanceRegularMinutes = max(
+                    0,
+                    (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)
+                );
+            }
+            if ($attendanceRegularMinutes <= 0) {
+                continue;
+            }
+
+            $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
+            if ($status === 'halfday' || $tardinessStatus === 'half_day') {
+                $units += 0.5;
+
+                continue;
+            }
+
+            $units += 1.0;
+        }
+
+        return round(max(0.0, $units), 4);
+    }
+
+    /**
+     * @param  array<string, mixed>  $day
+     */
+    private function fixedRegularPaidLeaveDayUnitsFromDay(array $day): float
+    {
+        $units = 0.0;
+
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+
+            $component = strtolower(trim((string) ($entry['component'] ?? '')));
+            if (! in_array($component, ['paid_leave', 'paid_leave_daily_flat'], true)) {
+                continue;
+            }
+            if ((float) ($entry['amount'] ?? 0) <= 0.0001) {
+                continue;
+            }
+
+            $leaveType = strtolower(trim((string) ($entry['leave_type'] ?? '')));
+            $fraction = array_key_exists('day_fraction', $entry)
+                ? (float) $entry['day_fraction']
+                : ($leaveType === 'half_day' ? 0.5 : 1.0);
+            if ($fraction <= 0) {
+                $fraction = $leaveType === 'half_day' ? 0.5 : 1.0;
+            }
+
+            $units += $fraction;
+        }
+
+        return round(max(0.0, $units), 4);
+    }
+
+    private function formatFixedRegularAttendanceDuration(int $minutes): string
+    {
+        if ($minutes <= 0) {
+            return '0 mins';
+        }
+
+        $hours = intdiv($minutes, 60);
+        $remaining = $minutes % 60;
+        if ($hours > 0 && $remaining > 0) {
+            return $hours.' hr'.($hours === 1 ? '' : 's').' '.$remaining.' min'.($remaining === 1 ? '' : 's');
+        }
+        if ($hours > 0) {
+            return $hours.' hr'.($hours === 1 ? '' : 's');
+        }
+
+        return $remaining.' min'.($remaining === 1 ? '' : 's');
     }
 
     /**

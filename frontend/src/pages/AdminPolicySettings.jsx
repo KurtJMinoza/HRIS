@@ -71,6 +71,63 @@ import { HolidayPayPolicyCard } from '@/components/payroll/HolidayPayPolicyCard'
 import { EmploymentPayrollPolicyTab } from '@/components/payroll/EmploymentPayrollPolicyTab'
 import { normalizeHolidayPayPolicy, serializeHolidayPayPolicyForSave } from '@/lib/holidayPayPolicy'
 
+const HOLIDAY_ATTENDANCE_MIRROR_FLAGS = [
+  'require_previous_workday_presence',
+  'require_following_workday_presence',
+  'paid_leave_qualifies_previous_workday',
+  'paid_leave_qualifies_following_workday',
+]
+
+function isHolidayPolicyBatchUpdate(value) {
+  return (
+    Array.isArray(value)
+    && value.length > 0
+    && value.every(
+      (entry) =>
+        Array.isArray(entry)
+        && entry.length === 2
+        && Array.isArray(entry[0])
+        && entry[0].length > 0
+        && entry[0].every((segment) => typeof segment === 'string'),
+    )
+  )
+}
+
+function applyHolidayPolicyPathUpdates(policy, updates) {
+  if (!Array.isArray(updates)) {
+    return normalizeHolidayPayPolicy(policy)
+  }
+
+  const base = normalizeHolidayPayPolicy(policy)
+  const next = JSON.parse(JSON.stringify(base))
+
+  for (const [updatePath, updateValue] of updates) {
+    if (!Array.isArray(updatePath)) {
+      continue
+    }
+
+    let cursor = next
+    updatePath.forEach((key, index) => {
+      if (index === updatePath.length - 1) {
+        cursor[key] = updateValue
+      } else {
+        cursor[key] = { ...(cursor[key] || {}) }
+        cursor = cursor[key]
+      }
+    })
+  }
+
+  if (next.attendance?.regular_unworked && typeof next.attendance.regular_unworked === 'object') {
+    for (const flag of HOLIDAY_ATTENDANCE_MIRROR_FLAGS) {
+      if (Object.prototype.hasOwnProperty.call(next.attendance.regular_unworked, flag)) {
+        next.attendance[flag] = next.attendance.regular_unworked[flag]
+      }
+    }
+  }
+
+  return normalizeHolidayPayPolicy(next)
+}
+
 const CONDITION_LABELS = {
   ORD: 'Ordinary Day',
   RD: 'Rest Day',
@@ -836,21 +893,17 @@ export default function AdminPolicySettings() {
     setDirty(true)
   }
 
-  const updateHolidayPolicy = (path, value) => {
+  const updateHolidayPolicy = (pathOrBatch, maybeValue) => {
+    const updates = isHolidayPolicyBatchUpdate(pathOrBatch)
+      ? pathOrBatch
+      : [[pathOrBatch, maybeValue]]
+
     setPolicyDetail((prev) => {
       if (!prev) return prev
-      const base = normalizeHolidayPayPolicy(prev.holiday_policy)
-      const next = structuredClone(base)
-      let cursor = next
-      path.forEach((key, index) => {
-        if (index === path.length - 1) {
-          cursor[key] = value
-        } else {
-          cursor[key] = { ...(cursor[key] || {}) }
-          cursor = cursor[key]
-        }
-      })
-      return { ...prev, holiday_policy: normalizeHolidayPayPolicy(next) }
+      return {
+        ...prev,
+        holiday_policy: applyHolidayPolicyPathUpdates(prev.holiday_policy, updates),
+      }
     })
     setDirty(true)
   }

@@ -2706,7 +2706,7 @@ class PayslipService
                 $regularHourlyRate,
                 $regularPayPresentDays
             );
-            if ($dailyComputationDays !== []) {
+            if ($dailyComputationDays !== [] && ! is_array($summary['attendance_pay_breakdown'] ?? null)) {
                 $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
                     $summary,
                     $dailyComputationDays,
@@ -3326,6 +3326,16 @@ class PayslipService
             if ($this->isUnworkedHolidayPayLine($line)) {
                 continue;
             }
+            if ($this->isFixedSemiMonthlyIncludedPaidLeaveLine($line)) {
+                $display = is_numeric($line['display_amount'] ?? null)
+                    ? (float) $line['display_amount']
+                    : (is_numeric($line['amount'] ?? null) ? (float) $line['amount'] : null);
+                if ($display !== null) {
+                    $total += max(0.0, $display);
+                }
+
+                continue;
+            }
             $amount = $line['amount'] ?? $line['resolved_amount'] ?? null;
             if (! is_numeric($amount)) {
                 continue;
@@ -3335,16 +3345,16 @@ class PayslipService
 
             if (! $regularHandled && $this->isRegularPayLine($line)) {
                 $regularHandled = true;
+                if ($display !== null) {
+                    $total += max(0.0, $display);
+                    continue;
+                }
                 $afterReductions = is_array($attendanceBreakdown)
                     && is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
                     ? (float) $attendanceBreakdown['regular_pay_after_reductions']
                     : null;
                 if ($afterReductions !== null) {
                     $total += max(0.0, $afterReductions);
-                    continue;
-                }
-                if ($display !== null) {
-                    $total += max(0.0, $display);
                     continue;
                 }
             }
@@ -3726,7 +3736,12 @@ class PayslipService
         $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
         $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
         $dailyComputationDays = $this->cleanDailyComputationDays($snapshot['daily_computation_days'] ?? null);
-        if ($dailyComputationDays !== [] && ! $isExecomSnapshot && ! $isConsultantSnapshot) {
+        if (
+            $dailyComputationDays !== []
+            && ! $isExecomSnapshot
+            && ! $isConsultantSnapshot
+            && empty($summary['regular_fixed_semi_monthly_payroll'])
+        ) {
             $out['daily_computation_days'] = $dailyComputationDays;
             $summary = $this->repairRegularPayLineFromDailyComputationDays($summary, $dailyComputationDays, $regularHourlyRate);
         } elseif ($isExecomSnapshot || $isConsultantSnapshot) {
@@ -3824,11 +3839,13 @@ class PayslipService
         $ads['total_regular_hours'] = (float) ($ads['total_regular_hours'] ?? 0);
         $ads['total_presence_regular_hours'] = (float) ($ads['total_presence_regular_hours'] ?? $ads['total_regular_hours'] ?? 0);
         $summary['attendance_display_summary'] = $ads;
-        $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
-            $summary,
-            $dailyComputationDays,
-            $isExecomSnapshot || $isConsultantSnapshot
-        );
+        if (! is_array($summary['attendance_pay_breakdown'] ?? null)) {
+            $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
+                $summary,
+                $dailyComputationDays,
+                $isExecomSnapshot || $isConsultantSnapshot
+            );
+        }
         $summary['unworked_holiday_present_day_units'] = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
         $summary = $this->applyRegularPayDisplayAmounts(
             $summary,
@@ -4272,6 +4289,82 @@ class PayslipService
                     continue;
                 }
 
+                if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+                    $fixedGross = round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2);
+                    $paidLeaveDisplay = round((float) ($summary['regular_fixed_paid_leave_amount'] ?? 0), 2);
+                    if ($paidLeaveDisplay > 0.0001) {
+                        $splitRegularDisplay = is_numeric($line['display_amount'] ?? null)
+                            ? round((float) $line['display_amount'], 2)
+                            : round(max(0.0, $fixedGross - $paidLeaveDisplay), 2);
+                        $lines[$idx]['display_amount'] = $splitRegularDisplay;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                    $presentDayCapApplied = ! empty($summary['regular_fixed_present_day_cap_applied'])
+                        || ! empty($line['metadata']['regular_fixed_present_day_cap_applied'] ?? null);
+                    $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+                        ? $summary['attendance_pay_breakdown']
+                        : [];
+                    $nonAbsenceDeduction = $this->sumFixedRegularNonAbsenceAttendanceDeduction($attendanceBreakdown);
+                    $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
+                    $nearFullCutoff = $this->isNearFullFixedRegularCutoff($summary);
+                    if (
+                        $nearFullCutoff
+                        && $presentDayBasePay !== null
+                        && $presentDayBasePay + 0.005 < $fixedGross
+                    ) {
+                        $lines[$idx]['display_amount'] = $presentDayBasePay;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                    if ($nearFullCutoff && ($nonAbsenceDeduction > 0.0001 || round((float) ($summary['attendance_deduction'] ?? 0), 2) > 0.0001)) {
+                        $lines[$idx]['display_amount'] = $netAmount;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                    if ($presentDayCapApplied) {
+                        $lines[$idx]['display_amount'] = $presentDayBasePay ?? $netAmount;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                    if ($nonAbsenceDeduction > 0.0001 && $presentDayBasePay !== null) {
+                        $lines[$idx]['display_amount'] = $presentDayBasePay;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                    if ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross) {
+                        $lines[$idx]['display_amount'] = $presentDayBasePay;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                    if ($fixedGross > 0.0001) {
+                        $lines[$idx]['display_amount'] = $fixedGross;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                }
+
                 $displayAmount = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
                 $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
                     ? $summary['attendance_pay_breakdown']
@@ -4280,7 +4373,8 @@ class PayslipService
                 $hasUnworkedHolidayInHeadline = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary) > 0.0001
                     || $this->resolveUnworkedHolidayPayTotalFromSummary($summary) > 0.0001;
                 if (
-                    ! $hasUnworkedHolidayInHeadline
+                    empty($summary['regular_fixed_semi_monthly_payroll'])
+                    && ! $hasUnworkedHolidayInHeadline
                     && max(0.0, (float) ($attendanceBreakdown['total_deduction'] ?? 0)) <= 0.0001
                     && $scheduledDays > 0.0001
                     && $presentDays + 0.0001 < $scheduledDays
@@ -4359,6 +4453,10 @@ class PayslipService
             return $summary;
         }
 
+        if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            return $this->attachFixedSemiMonthlyRegularPayAfterReductionsDisplay($summary, $breakdown, $regularLine);
+        }
+
         $hasGrossDisplay = is_numeric($regularLine['display_amount'] ?? null);
         $grossDisplay = round((float) ($hasGrossDisplay ? $regularLine['display_amount'] : ($regularLine['amount'] ?? 0)), 2);
         $computedAmount = round((float) ($regularLine['amount'] ?? 0), 2);
@@ -4410,6 +4508,229 @@ class PayslipService
         $summary['attendance_pay_breakdown'] = $breakdown;
 
         return $summary;
+    }
+
+    /**
+     * Fixed semi-monthly Regular pay: headline uses schedule gross when there are no attendance
+     * adjustments; otherwise it shows the payable net. Attendance rows come from payroll computation.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $breakdown
+     * @param  array<string, mixed>  $regularLine
+     * @return array<string, mixed>
+     */
+    private function attachFixedSemiMonthlyRegularPayAfterReductionsDisplay(
+        array $summary,
+        array $breakdown,
+        array $regularLine
+    ): array {
+        $fixedGross = round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2);
+        $regularLineNet = round((float) ($regularLine['amount'] ?? 0), 2);
+        $totalNetBasic = round((float) ($summary['basic_pay_this_period'] ?? $regularLineNet), 2);
+        $paidLeaveDisplay = round((float) ($summary['regular_fixed_paid_leave_amount'] ?? 0), 2);
+        $netAmount = $totalNetBasic;
+        $lineMetadata = is_array($regularLine['metadata'] ?? null) ? $regularLine['metadata'] : [];
+        $presentDayCapApplied = ! empty($summary['regular_fixed_present_day_cap_applied'])
+            || ! empty($lineMetadata['regular_fixed_present_day_cap_applied']);
+        $rows = is_array($breakdown['rows'] ?? null) ? array_values($breakdown['rows']) : [];
+        $rows = array_values(array_filter(
+            $rows,
+            static fn ($row): bool => ! is_array($row)
+                || strtolower(trim((string) ($row['key'] ?? ''))) !== 'attendance_adjustment'
+        ));
+
+        $nonAbsenceDeduction = $this->sumFixedRegularNonAbsenceAttendanceDeduction($breakdown);
+        $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
+        $nearFullCutoff = $this->isNearFullFixedRegularCutoff($summary);
+
+        if (
+            ! $nearFullCutoff
+            && $presentDayBasePay !== null
+            && ($presentDayCapApplied || $presentDayBasePay + 0.005 < $fixedGross)
+        ) {
+            $netAmount = round(max(0.0, $presentDayBasePay - $nonAbsenceDeduction), 2);
+        }
+
+        if ($nearFullCutoff) {
+            if ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross) {
+                $totalDeduction = round((float) ($breakdown['total_deduction'] ?? max(0.0, $fixedGross - $netAmount)), 2);
+                $headlineDisplayAmount = $presentDayBasePay;
+            } else {
+                $totalDeduction = round(max(0.0, $fixedGross - $netAmount), 2);
+                if ($totalDeduction <= 0.0001) {
+                    $storedDeduction = round((float) ($breakdown['total_deduction'] ?? 0), 2);
+                    if ($storedDeduction > 0.0001) {
+                        $totalDeduction = $storedDeduction;
+                    }
+                }
+                $headlineDisplayAmount = $paidLeaveDisplay > 0.0001
+                    ? round(max(0.0, $fixedGross - $paidLeaveDisplay), 2)
+                    : ($fixedGross > 0.0001 ? $fixedGross : $netAmount);
+            }
+        } elseif ($presentDayCapApplied) {
+            $totalDeduction = $nonAbsenceDeduction;
+            $headlineDisplayAmount = $presentDayBasePay ?? $netAmount;
+        } elseif ($nonAbsenceDeduction > 0.0001 && $presentDayBasePay !== null) {
+            $totalDeduction = $nonAbsenceDeduction;
+            $headlineDisplayAmount = $presentDayBasePay;
+        } elseif ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross) {
+            $totalDeduction = 0.0;
+            $headlineDisplayAmount = $presentDayBasePay;
+        } elseif ($nonAbsenceDeduction > 0.0001) {
+            $totalDeduction = $nonAbsenceDeduction;
+            $headlineDisplayAmount = $netAmount;
+        } else {
+            $totalDeduction = 0.0;
+            $headlineDisplayAmount = $fixedGross > 0.0001 ? $fixedGross : $netAmount;
+        }
+
+        $breakdown['rows'] = $rows;
+        $breakdown['total_deduction'] = round($totalDeduction, 2);
+        $breakdown['total_deduction_units_label'] = '—';
+        $regularPayAfterReductions = $paidLeaveDisplay > 0.0001
+            ? round(max(0.0, $regularLineNet), 2)
+            : round(max(0.0, $netAmount), 2);
+        $breakdown['regular_pay_after_reductions'] = $regularPayAfterReductions;
+        $breakdown['fixed_basic_pay_after_reductions'] = round(max(0.0, $totalNetBasic), 2);
+        $breakdown['note'] = $presentDayCapApplied || ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross)
+            ? 'Present-day Regular pay uses the attendance day count shown above. Absences are reflected in the day count; late, undertime, and unpaid leave rows show applicable attendance adjustments only.'
+            : 'Fixed semi-monthly basic pay minus applicable late, undertime, absence, and unpaid leave adjustments. Approved paid leave is shown on Leave adjustments and is included in the fixed semi-monthly basic cap.';
+        $summary['attendance_pay_breakdown'] = $breakdown;
+        $summary = $this->updateRegularPayLineDisplayAmount($summary, $headlineDisplayAmount);
+
+        foreach (['daily_computation_earning_lines', 'payslip_earning_lines'] as $lineKey) {
+            $lines = is_array($summary[$lineKey] ?? null) ? array_values($summary[$lineKey]) : [];
+            foreach ($lines as $index => $line) {
+                if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                    continue;
+                }
+                $lines[$index]['computed_amount'] = $regularLineNet;
+                $summary[$lineKey] = $lines;
+                break 2;
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isFixedSemiMonthlyIncludedPaidLeaveLine(array $line): bool
+    {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        if (! empty($metadata['included_in_fixed_semi_monthly_basic'])) {
+            return true;
+        }
+
+        $key = strtolower(trim((string) ($line['key'] ?? '')));
+
+        return in_array($key, ['daily:paid_leave', 'daily:paid_leave_daily_flat'], true)
+            && (
+                ! empty($metadata['included_in_fixed_semi_monthly_basic'])
+                || ! empty($metadata['leave_day_units'])
+            );
+    }
+
+    /**
+     * @param  array<string, mixed>  $breakdown
+     */
+    private function isNearFullFixedRegularCutoff(array $summary): bool
+    {
+        $presentUnits = $this->resolveFixedRegularPresentDayUnits($summary);
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : [];
+        $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
+        if ($scheduledDays <= 0 || $presentUnits <= 0.0001) {
+            return false;
+        }
+
+        return ($presentUnits / $scheduledDays) >= 0.90;
+    }
+
+    private function resolveFixedRegularPresentDayUnits(array $summary): float
+    {
+        $presentUnits = (float) ($summary['regular_pay_present_day_units'] ?? 0);
+        if ($presentUnits > 0.0001) {
+            return $presentUnits;
+        }
+
+        foreach (['daily_computation_earning_lines', 'payslip_earning_lines'] as $lineKey) {
+            $lines = is_array($summary[$lineKey] ?? null) ? $summary[$lineKey] : [];
+            foreach ($lines as $line) {
+                if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                    continue;
+                }
+
+                $units = trim((string) ($line['units'] ?? ''));
+                if (preg_match('/^([\d.]+)\s*days?\b/i', $units, $matches) === 1) {
+                    return (float) $matches[1];
+                }
+            }
+        }
+
+        return 0.0;
+    }
+
+    private function resolveFixedRegularPresentDayBasePay(array $summary): ?float
+    {
+        $presentUnits = $this->resolveFixedRegularPresentDayUnits($summary);
+        $dailyRate = (float) ($summary['daily_rate'] ?? 0);
+        $fixedGross = round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2);
+        if ($presentUnits > 0.0001 && $dailyRate > 0.0001) {
+            return round(
+                min($fixedGross > 0.0001 ? $fixedGross : ($presentUnits * $dailyRate), $presentUnits * $dailyRate),
+                2
+            );
+        }
+
+        $stored = round((float) ($summary['regular_fixed_present_day_base_pay'] ?? 0), 2);
+        if ($stored > 0.0001) {
+            return $stored;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $breakdown
+     */
+    private function sumFixedRegularNonAbsenceAttendanceDeduction(array $breakdown): float
+    {
+        $total = 0.0;
+        $keys = ['late', 'undertime', 'half_day', 'unpaid_leave'];
+
+        foreach (is_array($breakdown['rows'] ?? null) ? $breakdown['rows'] : [] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($row['key'] ?? '')));
+            if (! in_array($key, $keys, true)) {
+                continue;
+            }
+            $total += max(0.0, (float) ($row['deduction_amount'] ?? 0));
+        }
+
+        return round($total, 2);
+    }
+
+    private function sumFixedRegularExplicitAttendanceDeduction(array $breakdown): float
+    {
+        $total = 0.0;
+        $keys = ['late', 'undertime', 'half_day', 'absence', 'unpaid_leave'];
+        foreach (is_array($breakdown['rows'] ?? null) ? $breakdown['rows'] : [] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($row['key'] ?? '')));
+            if (! in_array($key, $keys, true)) {
+                continue;
+            }
+            $total += max(0.0, (float) ($row['deduction_amount'] ?? 0));
+        }
+
+        return round($total, 2);
     }
 
     /**
@@ -4524,6 +4845,42 @@ class PayslipService
      */
     private function regularPayGrossDisplayAmount(array $summary, float $presentDays, float $dailyRate): float
     {
+        if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            if (! empty($summary['regular_fixed_present_day_cap_applied'])) {
+                $presentUnits = (float) ($summary['regular_pay_present_day_units'] ?? 0);
+                if ($presentUnits > 0.0001 && $dailyRate > 0.0001) {
+                    return round($presentUnits * $dailyRate, 2);
+                }
+            }
+
+            $attendanceDeduction = round((float) ($summary['attendance_deduction'] ?? 0), 2);
+            if ($attendanceDeduction > 0.0001 && empty($summary['regular_fixed_present_day_cap_applied'])) {
+                $netBasic = round((float) ($summary['basic_pay_this_period'] ?? 0), 2);
+                if ($netBasic > 0.0001) {
+                    return $netBasic;
+                }
+            }
+
+            $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
+            if (
+                ! empty($summary['regular_fixed_present_day_cap_applied'])
+                && $presentDayBasePay !== null
+                && $presentDayBasePay > 0.0001
+            ) {
+                return $presentDayBasePay;
+            }
+
+            $fixedGross = (float) ($summary['fixed_semi_monthly_basic_gross'] ?? 0);
+            if ($fixedGross > 0.0001) {
+                return round($fixedGross, 2);
+            }
+
+            $semi = (float) ($summary['semi_monthly_basic_salary'] ?? 0);
+            if ($semi > 0.0001) {
+                return round($semi, 2);
+            }
+        }
+
         $monthly = (float) ($summary['monthly_basic_salary'] ?? 0);
         $semi = (float) ($summary['semi_monthly_basic_salary'] ?? 0);
         $divisor = (float) ($summary['daily_rate_divisor_days'] ?? 0);
@@ -4938,7 +5295,11 @@ class PayslipService
         if ($presentDays !== null && $presentDays > 0.0001 && $dailyRate > 0.0001) {
             $grossDisplay = $this->regularPayGrossDisplayAmount($summary, $presentDays, $dailyRate);
             $totalDeduction = max(0.0, (float) ($breakdown['total_deduction'] ?? 0));
-            if ($totalDeduction > 0.0001 && $grossDisplay > $afterReductions + 0.005) {
+            if (
+                empty($summary['regular_fixed_semi_monthly_payroll'])
+                && $totalDeduction > 0.0001
+                && $grossDisplay > $afterReductions + 0.005
+            ) {
                 $displayAmount = $grossDisplay;
             }
         }
@@ -5501,7 +5862,24 @@ class PayslipService
         $key = strtolower(trim((string) ($line['key'] ?? '')));
         $label = strtolower(trim((string) ($line['label'] ?? '')));
 
-        return str_contains($key, 'regular_pay') || $label === 'regular pay';
+        return str_contains($key, 'regular_pay')
+            || str_contains($key, 'regular:basic_pay')
+            || $label === 'regular pay'
+            || $label === 'basic pay';
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function isFixedSemiMonthlyRegularPayLine(array $line): bool
+    {
+        if (! $this->isRegularPayLine($line)) {
+            return false;
+        }
+
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+
+        return ! empty($metadata['regular_fixed_semi_monthly_payroll']);
     }
 
     /**
@@ -6654,6 +7032,10 @@ class PayslipService
      */
     private function repairRegularPayLineFromDailyComputationDays(array $summary, array $days, ?float $regularHourlyRate): array
     {
+        if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            return $summary;
+        }
+
         $actualRegularMinutes = 0;
         $fallbackAmountFromDays = 0.0;
         $fallbackHourlyRate = null;
@@ -6738,6 +7120,10 @@ class PayslipService
         $replaced = false;
         foreach ($lines as $idx => $line) {
             if (! is_array($line)) {
+                continue;
+            }
+
+            if ($this->isFixedSemiMonthlyRegularPayLine($line)) {
                 continue;
             }
 
@@ -6841,13 +7227,57 @@ class PayslipService
                 && (bool) (is_array($row['metadata'] ?? null) ? ($row['metadata']['worked'] ?? false) : false);
             $unitsRaw = $row['units'] ?? null;
             $unitsStr = $unitsRaw === null || $unitsRaw === '' ? null : trim((string) $unitsRaw);
+            $isRegularPayLine = $this->isRegularPayLine($row);
+            $isFixedSemiMonthlyRegularPayLine = $this->isFixedSemiMonthlyRegularPayLine($row);
+
+            if ($this->isFixedSemiMonthlyIncludedPaidLeaveLine($row)) {
+                $displayAmount = is_numeric($row['display_amount'] ?? null)
+                    ? round((float) $row['display_amount'], 2)
+                    : round($amt, 2);
+                $unitsOut = ($unitsStr !== null && $unitsStr !== '')
+                    ? $this->sanitizePayslipText($unitsStr)
+                    : null;
+                $out[] = array_merge($row, [
+                    'key' => isset($row['key']) ? (string) $row['key'] : '',
+                    'label' => $label !== '' ? $this->sanitizePayslipText($label) : $defaultLabel,
+                    'amount' => $amt,
+                    'display_amount' => $displayAmount,
+                    'units' => $unitsOut,
+                    'minutes_worked' => $minutesWorked,
+                    'hourly_rate' => $hourlyRate,
+                ]);
+
+                continue;
+            }
+
+            if ($isFixedSemiMonthlyRegularPayLine) {
+                $displayAmount = is_numeric($row['display_amount'] ?? null)
+                    ? round((float) $row['display_amount'], 2)
+                    : null;
+                $unitsOut = ($unitsStr !== null && $unitsStr !== '')
+                    ? $this->sanitizePayslipText($unitsStr)
+                    : (($regularPayPresentDays !== null && $regularPayPresentDays > 0.0001)
+                        ? ($this->formatRegularPayPresentDaysUnits($regularPayPresentDays) ?? null)
+                        : null);
+                $out[] = array_merge($row, [
+                    'key' => isset($row['key']) ? (string) $row['key'] : '',
+                    'label' => $label !== '' ? $this->sanitizePayslipText($label) : $defaultLabel,
+                    'amount' => $amt,
+                    'display_amount' => $displayAmount,
+                    'units' => $unitsOut,
+                    'minutes_worked' => null,
+                    'hourly_rate' => null,
+                ]);
+
+                continue;
+            }
 
             // Legacy snapshots may miss hourly_rate for regular pay lines.
             // Backfill from daily_rate/8 so amount and minutes can be reconciled exactly.
             if (
                 ($hourlyRate === null || ! is_finite($hourlyRate) || $hourlyRate <= 0)
                 && $defaultRegularHourlyRate !== null
-                && (str_contains($lineKey, 'regular_pay') || strtolower($label) === 'regular pay')
+                && $isRegularPayLine
             ) {
                 $hourlyRate = $defaultRegularHourlyRate;
             }
@@ -6864,7 +7294,6 @@ class PayslipService
 
             // The headline uses present-day units; the computed amount remains minute-based and
             // is exposed through the attendance breakdown as Regular pay after reductions.
-            $isRegularPayLine = str_contains($lineKey, 'regular_pay') || strtolower($label) === 'regular pay';
             $usesPresentDayUnits = $isRegularPayLine
                 && $regularPayPresentDays !== null
                 && $regularPayPresentDays > 0.0001;
@@ -7115,6 +7544,16 @@ class PayslipService
      */
     private function resolveRegularPayPresentDaysCount(array $summary, array $dailyDays = []): ?float
     {
+        if (
+            ! empty($summary['regular_fixed_semi_monthly_payroll'])
+            && is_numeric($summary['regular_pay_worked_day_units'] ?? null)
+        ) {
+            $workedUnits = (float) $summary['regular_pay_worked_day_units'];
+            if ($workedUnits > 0.0001) {
+                return round($workedUnits, 4);
+            }
+        }
+
         if ($dailyDays !== []) {
             $units = 0.0;
             foreach ($dailyDays as $day) {

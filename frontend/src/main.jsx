@@ -6,6 +6,10 @@ import './index.css'
 import App from './App.jsx'
 import { initializeAuthSession } from './api'
 import { queryClient } from '@/lib/queryClient'
+import { registerChunkReloadHandler } from '@/lib/chunkReload'
+
+const appVersion = typeof __HRIS_APP_VERSION__ !== 'undefined' ? __HRIS_APP_VERSION__ : 'dev'
+registerChunkReloadHandler(appVersion)
 
 const rootEl = document.getElementById('root')
 if (!rootEl) {

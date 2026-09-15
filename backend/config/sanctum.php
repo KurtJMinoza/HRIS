@@ -15,7 +15,7 @@ return [
     |
     */
 
-    'stateful' => array_filter(array_map('trim', explode(',', env('SANCTUM_STATEFUL_DOMAINS', 'localhost,localhost:3000,localhost:5173,localhost:8000,127.0.0.1,127.0.0.1:8000,127.0.0.1:5173,::1')))),
+    'stateful' => array_filter(array_map('trim', explode(',', env('SANCTUM_STATEFUL_DOMAINS', 'localhost,localhost:3000,localhost:5100,localhost:5173,localhost:8000,localhost:8200,127.0.0.1,127.0.0.1:5100,127.0.0.1:5173,127.0.0.1:8000,127.0.0.1:8200,::1')))),
 
     /*
     |--------------------------------------------------------------------------

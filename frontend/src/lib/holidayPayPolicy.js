@@ -121,16 +121,29 @@ export function normalizeHolidayPayPolicy(value) {
     ...DEFAULT_HOLIDAY_POLICY.attendance.special_unworked,
     ...(attendance.special_unworked || {}),
   }
-  if (policy.attendance?.require_previous_workday_presence !== undefined) {
+  // Legacy top-level attendance keys apply only when nested regular_unworked did not set them.
+  if (
+    policy.attendance?.require_previous_workday_presence !== undefined
+    && policy.attendance?.regular_unworked?.require_previous_workday_presence === undefined
+  ) {
     regularUnworkedAttendance.require_previous_workday_presence = policy.attendance.require_previous_workday_presence !== false
   }
-  if (policy.attendance?.require_following_workday_presence !== undefined) {
+  if (
+    policy.attendance?.require_following_workday_presence !== undefined
+    && policy.attendance?.regular_unworked?.require_following_workday_presence === undefined
+  ) {
     regularUnworkedAttendance.require_following_workday_presence = policy.attendance.require_following_workday_presence === true
   }
-  if (policy.attendance?.paid_leave_qualifies_previous_workday !== undefined) {
+  if (
+    policy.attendance?.paid_leave_qualifies_previous_workday !== undefined
+    && policy.attendance?.regular_unworked?.paid_leave_qualifies_previous_workday === undefined
+  ) {
     regularUnworkedAttendance.paid_leave_qualifies_previous_workday = policy.attendance.paid_leave_qualifies_previous_workday !== false
   }
-  if (policy.attendance?.paid_leave_qualifies_following_workday !== undefined) {
+  if (
+    policy.attendance?.paid_leave_qualifies_following_workday !== undefined
+    && policy.attendance?.regular_unworked?.paid_leave_qualifies_following_workday === undefined
+  ) {
     regularUnworkedAttendance.paid_leave_qualifies_following_workday = policy.attendance.paid_leave_qualifies_following_workday !== false
   }
   const eligibility = { ...DEFAULT_HOLIDAY_POLICY.eligibility, ...(policy.eligibility || {}) }
