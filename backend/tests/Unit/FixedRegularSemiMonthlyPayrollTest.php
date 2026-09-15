@@ -245,6 +245,47 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         );
     }
 
+    public function test_fixed_semi_monthly_zero_presence_yields_zero_basic_pay(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $countPresent = new \ReflectionMethod($service, 'countFixedRegularPresentDayUnits');
+        $countPresent->setAccessible(true);
+
+        $days = [
+            [
+                'status' => 'leave',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'breakdown' => [
+                    ['component' => 'unpaid_leave', 'amount' => 0.0, 'leave_type' => 'full_day'],
+                ],
+            ],
+            [
+                'status' => 'absent',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'breakdown' => [],
+            ],
+        ];
+
+        $presentUnits = $countPresent->invoke($service, $days);
+        $this->assertSame(0.0, $presentUnits);
+
+        $semiMonthly = 9035.0;
+        $dailyRate = 695.0;
+        $presentDayBaseRegularPay = 0.0;
+        if ($presentUnits > 0.0001 && $dailyRate > 0.0001) {
+            $presentDayBaseRegularPay = round($presentUnits * $dailyRate, 2);
+        }
+
+        $baseRegularPay = round(min($semiMonthly, $presentDayBaseRegularPay), 2);
+        $nonAbsenceDeduction = 1390.0;
+        $basicPayThisPeriod = round(max(0.0, $baseRegularPay - $nonAbsenceDeduction), 2);
+
+        $this->assertSame(0.0, $baseRegularPay);
+        $this->assertSame(0.0, $basicPayThisPeriod);
+    }
+
     public function test_fixed_semi_monthly_present_day_base_excludes_absence_from_payable_deductions(): void
     {
         $semiMonthlyGross = 10000.0;

@@ -2487,7 +2487,7 @@ class PayrollComputationService implements PayrollBulkComputation
             $scheduledRegularDays = max(0, (int) ($regularFixedAttendanceBreakdown['scheduled_days_count'] ?? 0));
             $nearFullFixedRegularCutoff = $scheduledRegularDays > 0
                 && ($regularPayPresentDayUnits / $scheduledRegularDays) >= 0.90;
-            $presentDayBaseRegularPay = null;
+            $presentDayBaseRegularPay = 0.0;
             if ($regularPayPresentDayUnits > 0.0001 && $dailyRate > 0.0001) {
                 $presentDayBaseRegularPay = round($regularPayPresentDayUnits * $dailyRate, 2);
             }
@@ -2509,9 +2509,10 @@ class PayrollComputationService implements PayrollBulkComputation
             }
             $paidLeaveDayUnits = round(max(0.0, $paidLeaveDayUnits), 4);
 
-            $regularFixedPresentDayBasePay = $presentDayBaseRegularPay !== null
-                ? round(min($regularFixedSemiMonthlyGross, $presentDayBaseRegularPay), 2)
-                : null;
+            $regularFixedPresentDayBasePay = round(
+                min($regularFixedSemiMonthlyGross, $presentDayBaseRegularPay),
+                2
+            );
 
             if ($nearFullFixedRegularCutoff) {
                 $baseRegularPay = $regularFixedSemiMonthlyGross;
@@ -2520,10 +2521,7 @@ class PayrollComputationService implements PayrollBulkComputation
                     2
                 );
                 $regularFixedAttendanceDeduction = $regularFixedFullAttendanceDeduction;
-                if (
-                    $regularFixedPresentDayBasePay !== null
-                    && $regularFixedPresentDayBasePay + 0.005 < $regularFixedSemiMonthlyGross
-                ) {
+                if ($regularFixedPresentDayBasePay + 0.005 < $regularFixedSemiMonthlyGross) {
                     $regularFixedPresentDayCapApplied = true;
                     $regularPayDisplayAmount = $regularFixedPresentDayBasePay;
                 } else {
@@ -2533,21 +2531,21 @@ class PayrollComputationService implements PayrollBulkComputation
                         : $regularFixedSemiMonthlyGross;
                 }
             } else {
-                $baseRegularPay = $presentDayBaseRegularPay !== null
-                    ? round(min($regularFixedSemiMonthlyGross, $presentDayBaseRegularPay), 2)
-                    : $regularFixedSemiMonthlyGross;
+                $baseRegularPay = round(
+                    min($regularFixedSemiMonthlyGross, $presentDayBaseRegularPay),
+                    2
+                );
                 $basicPayThisPeriod = round(
                     max(0.0, $baseRegularPay - $regularFixedNonAbsenceAttendanceDeduction),
                     2
                 );
-                $regularFixedPresentDayCapApplied = $presentDayBaseRegularPay !== null
-                    && $presentDayBaseRegularPay + 0.005 < $regularFixedSemiMonthlyGross;
+                $regularFixedPresentDayCapApplied = $presentDayBaseRegularPay + 0.005 < $regularFixedSemiMonthlyGross;
                 $regularFixedAttendanceDeduction = round($regularFixedNonAbsenceAttendanceDeduction, 2);
                 if ($regularFixedPresentDayCapApplied) {
                     $regularPayDisplayAmount = $baseRegularPay;
                 } elseif ($regularFixedNonAbsenceAttendanceDeduction > 0.0001) {
                     $regularPayDisplayAmount = $baseRegularPay;
-                } elseif ($presentDayBaseRegularPay !== null && $presentDayBaseRegularPay + 0.005 < $regularFixedSemiMonthlyGross) {
+                } elseif ($presentDayBaseRegularPay + 0.005 < $regularFixedSemiMonthlyGross) {
                     $regularPayDisplayAmount = $baseRegularPay;
                 } else {
                     $regularPayDisplayAmount = $regularFixedSemiMonthlyGross;

@@ -40,27 +40,23 @@
   <table>
     <thead>
       <tr>
-        <th>Employee No.</th>
         <th>Name</th>
         <th>Account No.</th>
-        <th>Bank Code</th>
         <th class="num">Salary (Net Pay)</th>
       </tr>
     </thead>
     <tbody>
       @foreach ($rows ?? [] as $row)
         <tr>
-          <td>{{ $row['employee_no'] ?: '—' }}</td>
           <td>{{ $row['name'] }}</td>
           <td>{{ $row['account_number'] }}</td>
-          <td>{{ $row['bank_code'] }}</td>
           <td class="num">{{ $money($row['salary']) }}</td>
         </tr>
       @endforeach
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="4">Total Net Pay</td>
+        <td colspan="2">Total Net Pay</td>
         <td class="num">{{ $money($total_salary ?? 0) }}</td>
       </tr>
     </tfoot>

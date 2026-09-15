@@ -34,6 +34,20 @@ class BankPayrollExportServiceTest extends TestCase
         $this->assertSame('BAYAL RENANTE JR', BankPayrollExportService::formatAubEmployeeName($user));
     }
 
+    public function test_format_export_account_number_preserves_twelve_digits_without_scientific_notation(): void
+    {
+        $this->assertSame('934105106070', BankPayrollExportService::formatExportAccountNumber('934105106070'));
+        $this->assertSame('934105106070', BankPayrollExportService::formatExportAccountNumber(934105106070));
+        $this->assertSame('912312345678', BankPayrollExportService::formatExportAccountNumber('9.12312345678E+11'));
+        $this->assertSame('912312345678', BankPayrollExportService::formatExportAccountNumber(912312345678));
+    }
+
+    public function test_account_number_for_csv_field_prefixes_tab_for_excel_text_import(): void
+    {
+        $this->assertSame("\t934105099758", BankPayrollExportService::accountNumberForCsvField('934105099758'));
+        $this->assertSame('', BankPayrollExportService::accountNumberForCsvField(''));
+    }
+
     public function test_is_eligible_bank_account_requires_aub_and_twelve_digits(): void
     {
         $service = app(BankPayrollExportService::class);

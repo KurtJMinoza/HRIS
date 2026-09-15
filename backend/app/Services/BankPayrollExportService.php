@@ -8,6 +8,7 @@ use App\Models\Payslip;
 use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Collection;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -212,7 +213,7 @@ class BankPayrollExportService
             $rows[] = [
                 'employee_no' => trim((string) ($employee->employee_code ?? '')),
                 'name' => self::formatAubEmployeeName($employee),
-                'account_number' => (string) $bankAccount->account_number,
+                'account_number' => self::formatExportAccountNumber($bankAccount->account_number),
                 'bank_code' => $bankCode,
                 'salary' => $netPay,
             ];
@@ -362,9 +363,25 @@ class BankPayrollExportService
             return false;
         }
 
-        $accountNumber = preg_replace('/\D+/', '', (string) ($bankAccount->account_number ?? '')) ?? '';
+        $accountNumber = self::formatExportAccountNumber($bankAccount->account_number ?? '');
 
         return strlen($accountNumber) === 12;
+    }
+
+    public static function formatExportAccountNumber(mixed $accountNumber): string
+    {
+        $raw = trim((string) $accountNumber);
+        if ($raw === '') {
+            return '';
+        }
+
+        if (is_int($accountNumber) || is_float($accountNumber)) {
+            $raw = sprintf('%.0f', (float) $accountNumber);
+        } elseif (preg_match('/^[+-]?\d+(?:\.\d+)?[eE][+-]?\d+$/', $raw)) {
+            $raw = sprintf('%.0f', (float) $raw);
+        }
+
+        return preg_replace('/\D+/', '', $raw) ?? '';
     }
 
     /**
@@ -387,6 +404,17 @@ class BankPayrollExportService
      */
     private function writeSpreadsheet(array $payload): void
     {
+        $spreadsheet = $this->buildExportSpreadsheet($payload);
+
+        (new Xlsx($spreadsheet))->save('php://output');
+        $spreadsheet->disconnectWorksheets();
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function buildExportSpreadsheet(array $payload): Spreadsheet
+    {
         $spreadsheet = new Spreadsheet;
         $spreadsheet->getProperties()
             ->setCreator((string) config('app.name', 'HR'))
@@ -396,37 +424,31 @@ class BankPayrollExportService
         $sheet->setTitle('Bank Payroll');
         $sheet->setCellValue('A1', $payload['title_row']);
         $sheet->fromArray(
-            ['Employee No.', 'Name', 'Account No.', 'Bank Code', 'Salary'],
+            ['Name', 'Account No.', 'Salary'],
             null,
             'A3'
         );
+        $sheet->getStyle('B:B')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
 
         $rowIndex = 4;
         foreach ($payload['rows'] as $row) {
-            $employeeNo = (string) ($row['employee_no'] ?? '');
-            $accountNumber = (string) ($row['account_number'] ?? '');
-            $sheet->setCellValueExplicit('A'.$rowIndex, $employeeNo, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-            $sheet->setCellValue('B'.$rowIndex, $row['name']);
-            $sheet->setCellValueExplicit('C'.$rowIndex, $accountNumber, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-            $sheet->setCellValueExplicit('D'.$rowIndex, (string) ($row['bank_code'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-            $sheet->setCellValue('E'.$rowIndex, $row['salary']);
-            $sheet->getStyle('E'.$rowIndex)
+            $accountNumber = self::formatExportAccountNumber($row['account_number'] ?? '');
+            $accountCell = 'B'.$rowIndex;
+            $sheet->setCellValue('A'.$rowIndex, $row['name']);
+            $sheet->getStyle($accountCell)->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->setCellValueExplicit($accountCell, $accountNumber, DataType::TYPE_STRING);
+            $sheet->setCellValue('C'.$rowIndex, $row['salary']);
+            $sheet->getStyle('C'.$rowIndex)
                 ->getNumberFormat()
                 ->setFormatCode(NumberFormat::FORMAT_NUMBER_00);
             $rowIndex++;
         }
 
-        $lastRow = max(4, $rowIndex - 1);
-        $sheet->getStyle('A4:A'.$lastRow)->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-        $sheet->getStyle('C4:C'.$lastRow)->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-        $sheet->getStyle('D4:D'.$lastRow)->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-
-        foreach (['A', 'B', 'C', 'D', 'E'] as $column) {
+        foreach (['A', 'B', 'C'] as $column) {
             $sheet->getColumnDimension($column)->setAutoSize(true);
         }
 
-        (new Xlsx($spreadsheet))->save('php://output');
-        $spreadsheet->disconnectWorksheets();
+        return $spreadsheet;
     }
 
     /**
@@ -434,26 +456,50 @@ class BankPayrollExportService
      */
     private function writeCsv(array $payload): void
     {
+        $spreadsheet = $this->buildExportSpreadsheet($payload);
+        $sheet = $spreadsheet->getActiveSheet();
+
         $out = fopen('php://output', 'w');
         if ($out === false) {
+            $spreadsheet->disconnectWorksheets();
+
             return;
         }
 
         fwrite($out, "\xEF\xBB\xBF");
         fputcsv($out, [$payload['title_row']]);
         fputcsv($out, []);
-        fputcsv($out, ['Employee No.', 'Name', 'Account No.', 'Bank Code', 'Salary']);
+        fputcsv($out, ['Name', 'Account No.', 'Salary']);
+
+        $rowIndex = 4;
         foreach ($payload['rows'] as $row) {
-            fputcsv($out, [
-                $row['employee_no'],
-                $row['name'],
-                $row['account_number'],
-                $row['bank_code'],
-                number_format($row['salary'], 2, '.', ''),
+            $accountNumber = self::formatExportAccountNumber($row['account_number'] ?? '');
+            $line = implode(',', [
+                self::csvEscape((string) $sheet->getCell('A'.$rowIndex)->getValue()),
+                self::csvEscape(self::accountNumberForCsvField($accountNumber)),
+                number_format((float) $sheet->getCell('C'.$rowIndex)->getValue(), 2, '.', ''),
             ]);
+            fwrite($out, $line.PHP_EOL);
+            $rowIndex++;
         }
 
         fclose($out);
+        $spreadsheet->disconnectWorksheets();
+    }
+
+    /**
+     * Excel auto-converts long numeric CSV fields to scientific notation unless the
+     * value is imported as text. A leading tab is invisible in the cell but keeps
+     * the full 12-digit account number visible as plain digits.
+     */
+    public static function accountNumberForCsvField(string $accountNumber): string
+    {
+        return $accountNumber === '' ? '' : "\t".$accountNumber;
+    }
+
+    private static function csvEscape(string $value): string
+    {
+        return '"'.str_replace('"', '""', $value).'"';
     }
 
     private function assertFinalizedRun(PayrollBatchRun $run): void
