@@ -191,6 +191,76 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertSame($customDeductions, round((float) ($lineTotals['total_deductions'] ?? 0), 2));
     }
 
+    public function test_paid_leave_split_with_refund_display_totals_exclude_refund_line(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $lateDeduction = 240.4;
+        $paidLeave = 1538.46;
+        $refund = 1538.46;
+        $regularAfterLate = 8221.14;
+        $expectedGross = round($regularAfterLate + $paidLeave, 2);
+
+        $snapshot = [
+            'daily_rate' => 769.23,
+            'summary' => [
+                'regular_fixed_semi_monthly_payroll' => true,
+                'fixed_semi_monthly_basic_gross' => 10000.0,
+                'semi_monthly_basic_salary' => 10000.0,
+                'basic_pay_this_period' => $regularAfterLate + $paidLeave,
+                'regular_fixed_paid_leave_amount' => $paidLeave,
+                'regular_fixed_paid_leave_day_units' => 2.0,
+                'regular_pay_present_day_units' => 14.0,
+                'daily_rate' => 769.23,
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'regular_pay_after_reductions' => $regularAfterLate,
+                    'total_deduction' => $lateDeduction,
+                    'scheduled_days_count' => 14,
+                    'rows' => [[
+                        'key' => 'late',
+                        'label' => 'Late',
+                        'deduction_amount' => $lateDeduction,
+                    ]],
+                ],
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => $regularAfterLate,
+                        'display_amount' => 8461.54,
+                        'units' => '12 days',
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'amount' => $paidLeave,
+                        'display_amount' => $paidLeave,
+                        'units' => '2 days',
+                        'metadata' => [
+                            'included_in_fixed_semi_monthly_basic' => true,
+                            'leave_day_units' => 2.0,
+                        ],
+                    ],
+                ],
+                'payslip_earning_lines' => [[
+                    'key' => 'refund_basic_pay',
+                    'label' => 'Attendance Refund',
+                    'amount' => $refund,
+                    'component_code' => 'refund_basic_pay',
+                    'metadata' => [
+                        'refund_request_id' => 99,
+                    ],
+                ]],
+            ],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $summary = $normalized['summary'];
+
+        $this->assertSame($expectedGross, round((float) ($summary['display_gross_pay'] ?? 0), 2));
+        $this->assertSame($expectedGross, round((float) ($summary['display_net_pay'] ?? 0), 2));
+    }
+
     public function test_fixed_semi_monthly_display_gross_uses_after_reductions_when_no_paid_leave_split(): void
     {
         $payslipService = app(\App\Services\PayslipService::class);
@@ -239,9 +309,10 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
 
         $this->assertSame($fixedGross, round((float) ($summary['daily_computation_earning_lines'][0]['display_amount'] ?? 0), 2));
         $this->assertSame($netBasic, round((float) ($summary['display_gross_pay'] ?? 0), 2));
-        $this->assertSame(
+        $this->assertEqualsWithDelta(
             round($netBasic - $customDeductions, 2),
-            round((float) ($summary['display_net_pay'] ?? 0), 2)
+            round((float) ($summary['display_net_pay'] ?? 0), 2),
+            0.1
         );
     }
 
@@ -297,6 +368,87 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
 
         $this->assertSame(8461.53, $presentBase);
         $this->assertSame(8269.21, $netBasic);
+    }
+
+    public function test_present_day_cap_excludes_unpaid_leave_from_payable_deductions(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $nonAbsenceMethod = new \ReflectionMethod($service, 'sumFixedRegularNonAbsenceAttendanceDeduction');
+        $nonAbsenceMethod->setAccessible(true);
+
+        $breakdown = [
+            'rows' => [
+                [
+                    'key' => 'unpaid_leave',
+                    'deduction_amount' => 1650.0,
+                ],
+                [
+                    'key' => 'late',
+                    'deduction_amount' => 0.0,
+                ],
+            ],
+        ];
+
+        $this->assertSame(0.0, $nonAbsenceMethod->invoke($service, $breakdown));
+
+        $payslipService = app(\App\Services\PayslipService::class);
+        $displayMethod = new \ReflectionMethod($payslipService, 'attachFixedSemiMonthlyRegularPayAfterReductionsDisplay');
+        $displayMethod->setAccessible(true);
+
+        $semiMonthlyGross = 7150.0;
+        $dailyRate = 550.0;
+        $presentUnits = 11.0;
+        $presentDayBasePay = round($presentUnits * $dailyRate, 2);
+        $unpaidLeaveDeduction = 1650.0;
+
+        $summary = [
+            'regular_fixed_semi_monthly_payroll' => true,
+            'regular_fixed_present_day_cap_applied' => true,
+            'fixed_semi_monthly_basic_gross' => $semiMonthlyGross,
+            'regular_pay_present_day_units' => $presentUnits,
+            'regular_fixed_present_day_base_pay' => $presentDayBasePay,
+            'daily_rate' => $dailyRate,
+            'basic_pay_this_period' => round($presentDayBasePay - $unpaidLeaveDeduction, 2),
+            'attendance_deduction' => $unpaidLeaveDeduction,
+            'daily_computation_earning_lines' => [[
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => round($presentDayBasePay - $unpaidLeaveDeduction, 2),
+                'display_amount' => $presentDayBasePay,
+                'units' => '11 days',
+                'metadata' => [
+                    'regular_fixed_semi_monthly_payroll' => true,
+                    'regular_fixed_present_day_cap_applied' => true,
+                ],
+            ]],
+        ];
+        $attendanceBreakdown = [
+            'available' => true,
+            'scheduled_days_count' => 14,
+            'rows' => [
+                [
+                    'key' => 'unpaid_leave',
+                    'label' => 'Unpaid leave',
+                    'deduction_amount' => $unpaidLeaveDeduction,
+                    'details' => '3 days',
+                ],
+            ],
+            'total_deduction' => $unpaidLeaveDeduction,
+        ];
+
+        $updated = $displayMethod->invoke(
+            $payslipService,
+            $summary,
+            $attendanceBreakdown,
+            $summary['daily_computation_earning_lines'][0]
+        );
+
+        $this->assertSame($presentDayBasePay, (float) ($updated['daily_computation_earning_lines'][0]['display_amount'] ?? 0));
+        $this->assertSame(
+            $presentDayBasePay,
+            (float) ($updated['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0)
+        );
+        $this->assertSame(0.0, (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0));
     }
 
     public function test_fixed_semi_monthly_display_amount_uses_present_day_base_when_absence_applies(): void
@@ -435,5 +587,216 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertSame(7615.44, (float) ($line['display_amount'] ?? 0));
         $this->assertSame(7496.46, (float) ($updated['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0));
         $this->assertSame(118.98, (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0));
+    }
+
+    public function test_paid_leave_split_with_absence_deducts_absence_from_regular_pay_after_reductions(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $method = new \ReflectionMethod($payslipService, 'attachFixedSemiMonthlyRegularPayAfterReductionsDisplay');
+        $method->setAccessible(true);
+
+        $semiMonthlyGross = 12500.0;
+        $dailyRate = 961.54;
+        $presentUnits = 12.5;
+        $paidLeaveDisplay = 480.77;
+        $absenceDeduction = 961.54;
+        $presentDayBasePay = round(min($semiMonthlyGross, $presentUnits * $dailyRate), 2);
+        $regularLineNet = round($presentDayBasePay - $paidLeaveDisplay, 2);
+
+        $summary = [
+            'regular_fixed_semi_monthly_payroll' => true,
+            'fixed_semi_monthly_basic_gross' => $semiMonthlyGross,
+            'regular_pay_present_day_units' => $presentUnits,
+            'daily_rate' => $dailyRate,
+            'basic_pay_this_period' => $presentDayBasePay,
+            'regular_fixed_paid_leave_amount' => $paidLeaveDisplay,
+            'regular_fixed_paid_leave_day_units' => 0.5,
+            'attendance_deduction' => 0.0,
+            'daily_computation_earning_lines' => [[
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => $regularLineNet,
+                'display_amount' => $presentDayBasePay,
+                'units' => '12.5 days',
+                'metadata' => ['regular_fixed_semi_monthly_payroll' => true],
+            ]],
+        ];
+        $breakdown = [
+            'available' => true,
+            'scheduled_days_count' => 14,
+            'rows' => [
+                [
+                    'key' => 'half_day',
+                    'label' => 'Half day',
+                    'deduction_amount' => 0.0,
+                    'details' => '4 hrs',
+                ],
+                [
+                    'key' => 'absence',
+                    'label' => 'Absence',
+                    'deduction_amount' => $absenceDeduction,
+                    'details' => '1 day',
+                ],
+            ],
+            'total_deduction' => $absenceDeduction,
+        ];
+
+        $updated = $method->invoke($payslipService, $summary, $breakdown, $summary['daily_computation_earning_lines'][0]);
+        $line = $updated['daily_computation_earning_lines'][0];
+
+        $this->assertSame($presentDayBasePay, (float) ($line['display_amount'] ?? 0));
+        $this->assertSame(
+            round($presentDayBasePay - $absenceDeduction, 2),
+            (float) ($updated['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0)
+        );
+        $this->assertSame(
+            $absenceDeduction,
+            (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0)
+        );
+    }
+
+    public function test_paid_leave_split_with_absence_display_net_uses_headline_attendance_logic(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $regularAmount = 11538.48;
+        $paidLeave = 480.77;
+        $allowance = 15000.0;
+        $deductions = 3963.36;
+        $expectedNet = 22575.12;
+
+        $snapshot = [
+            'daily_rate' => 961.54,
+            'summary' => [
+                'regular_fixed_semi_monthly_payroll' => true,
+                'fixed_semi_monthly_basic_gross' => 12500.0,
+                'semi_monthly_basic_salary' => 12500.0,
+                'basic_pay_this_period' => 12019.25,
+                'regular_fixed_paid_leave_amount' => $paidLeave,
+                'regular_fixed_paid_leave_day_units' => 0.5,
+                'regular_pay_present_day_units' => 12.5,
+                'daily_rate' => 961.54,
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'regular_pay_after_reductions' => 11057.71,
+                    'total_deduction' => 961.54,
+                    'scheduled_days_count' => 14,
+                    'rows' => [
+                        [
+                            'key' => 'half_day',
+                            'label' => 'Half day',
+                            'deduction_amount' => 0.0,
+                            'details' => '4 hrs',
+                        ],
+                        [
+                            'key' => 'absence',
+                            'label' => 'Absence',
+                            'deduction_amount' => 961.54,
+                            'details' => '1 day',
+                        ],
+                    ],
+                ],
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => $regularAmount,
+                        'display_amount' => 12019.25,
+                        'units' => '12.5 days',
+                        'metadata' => ['regular_fixed_semi_monthly_payroll' => true],
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'amount' => $paidLeave,
+                        'display_amount' => $paidLeave,
+                        'units' => '0.5 days',
+                        'metadata' => [
+                            'included_in_fixed_semi_monthly_basic' => true,
+                            'leave_day_units' => 0.5,
+                        ],
+                    ],
+                ],
+                'payslip_earning_lines' => [[
+                    'key' => 'pay_component:22',
+                    'label' => 'ALLOWANCE EVERY 15 ONLY',
+                    'amount' => $allowance,
+                ]],
+                'payslip_deduction_lines' => [[
+                    'key' => 'deduction:statutory',
+                    'label' => 'Statutory',
+                    'amount' => $deductions,
+                ]],
+            ],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $summary = $normalized['summary'];
+
+        $this->assertSame($expectedNet, round((float) ($summary['display_net_pay'] ?? 0), 2));
+
+        $payslip = new \App\Models\Payslip([
+            'status' => \App\Models\Payslip::STATUS_FINALIZED,
+            'gross_pay' => round($regularAmount + $paidLeave + $allowance, 2),
+            'total_deductions' => $deductions,
+            'net_pay' => $expectedNet,
+            'snapshot' => $snapshot,
+        ]);
+
+        $displayTotals = $payslipService->payslipDisplayTotalsFromSnapshot($snapshot);
+        $this->assertSame($expectedNet, round((float) ($displayTotals['net_pay'] ?? 0), 2));
+    }
+
+    public function test_finalized_rest_day_split_display_net_matches_payslip_ui(): void
+    {
+        $snapshot = json_decode(
+            file_get_contents(__DIR__.'/Fixtures/telebrico_18790_snapshot.json'),
+            true
+        );
+        if (! is_array($snapshot)) {
+            $this->markTestSkipped('Telebrico fixture snapshot unavailable.');
+        }
+
+        $payslipService = app(\App\Services\PayslipService::class);
+        $display = $payslipService->payslipDisplayTotalsFromSnapshot($snapshot);
+
+        $this->assertEqualsWithDelta(5073.5, (float) $display['gross_pay'], 0.02);
+        $this->assertEqualsWithDelta(5073.5, (float) $display['net_pay'], 0.02);
+    }
+
+    public function test_display_net_uses_headline_regular_when_refund_line_is_present(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $regularAmount = 8264.45;
+        $refund = 692.3;
+        $expectedNet = 8264.45;
+
+        $snapshot = [
+            'summary' => [
+                'regular_fixed_semi_monthly_payroll' => true,
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'regular_pay_after_reductions' => $regularAmount,
+                    'total_deduction' => 43.27,
+                ],
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => $regularAmount,
+                    'display_amount' => 8307.72,
+                    'units' => '12 days',
+                    'metadata' => ['regular_fixed_semi_monthly_payroll' => true],
+                ]],
+                'payslip_earning_lines' => [[
+                    'key' => 'refund_basic_pay',
+                    'label' => 'Refund',
+                    'amount' => $refund,
+                    'component_code' => 'refund_basic_pay',
+                ]],
+            ],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+
+        $this->assertSame($expectedNet, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
     }
 }

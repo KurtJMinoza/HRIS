@@ -53,9 +53,9 @@ class BankPayrollExportController extends Controller
         ]);
     }
 
-    public function downloadXlsxByCutoff(Request $request, string $bank)
+    public function downloadXlsByCutoff(Request $request, string $bank)
     {
-        return $this->downloadByCutoff($request, $bank, 'xlsx');
+        return $this->downloadByCutoff($request, $bank, 'xls');
     }
 
     public function downloadCsvByCutoff(Request $request, string $bank)
@@ -96,9 +96,9 @@ class BankPayrollExportController extends Controller
         ]);
     }
 
-    public function downloadXlsx(Request $request, int $id, string $bank)
+    public function downloadXls(Request $request, int $id, string $bank)
     {
-        return $this->download($request, $id, $bank, 'xlsx');
+        return $this->download($request, $id, $bank, 'xls');
     }
 
     public function downloadCsv(Request $request, int $id, string $bank)
@@ -120,7 +120,7 @@ class BankPayrollExportController extends Controller
         try {
             $payload = $this->bankPayrollExportService->buildExportPayloadForCutoffDates($start, $end, $bankCode);
             $result = match ($format) {
-                'xlsx' => $this->bankPayrollExportService->xlsxForCutoffDates($start, $end, $bankCode),
+                'xls' => $this->bankPayrollExportService->xlsForCutoffDates($start, $end, $bankCode),
                 'csv' => $this->bankPayrollExportService->csvForCutoffDates($start, $end, $bankCode),
                 'pdf' => $this->bankPayrollExportService->pdfForCutoffDates($start, $end, $bankCode),
                 default => throw new \RuntimeException('Unsupported export format.'),
@@ -135,9 +135,11 @@ class BankPayrollExportController extends Controller
             return $result['pdf']->download($result['filename']);
         }
 
-        $contentType = $format === 'csv'
-            ? 'text/csv; charset=UTF-8'
-            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        $contentType = match ($format) {
+            'csv' => 'text/csv; charset=UTF-8',
+            'xls' => 'application/vnd.ms-excel',
+            default => 'application/octet-stream',
+        };
 
         return response()->streamDownload($result['write'], $result['filename'], [
             'Content-Type' => $contentType,
@@ -154,7 +156,7 @@ class BankPayrollExportController extends Controller
         try {
             $payload = $this->bankPayrollExportService->buildExportPayloadForCutoff($run, $bankCode);
             $result = match ($format) {
-                'xlsx' => $this->bankPayrollExportService->xlsxForCutoff($run, $bankCode),
+                'xls' => $this->bankPayrollExportService->xlsForCutoff($run, $bankCode),
                 'csv' => $this->bankPayrollExportService->csvForCutoff($run, $bankCode),
                 'pdf' => $this->bankPayrollExportService->pdfForCutoff($run, $bankCode),
                 default => throw new \RuntimeException('Unsupported export format.'),
@@ -169,9 +171,11 @@ class BankPayrollExportController extends Controller
             return $result['pdf']->download($result['filename']);
         }
 
-        $contentType = $format === 'csv'
-            ? 'text/csv; charset=UTF-8'
-            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        $contentType = match ($format) {
+            'csv' => 'text/csv; charset=UTF-8',
+            'xls' => 'application/vnd.ms-excel',
+            default => 'application/octet-stream',
+        };
 
         return response()->streamDownload($result['write'], $result['filename'], [
             'Content-Type' => $contentType,

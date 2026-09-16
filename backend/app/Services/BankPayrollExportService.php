@@ -11,7 +11,7 @@ use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Writer\Xls;
 
 class BankPayrollExportService
 {
@@ -20,6 +20,19 @@ class BankPayrollExportService
     public function __construct(
         private readonly PayslipService $payslipService,
     ) {}
+
+    /**
+     * Payroll modules included in cutoff-wide bank exports.
+     *
+     * @return list<string>
+     */
+    public function exportPayrollModules(): array
+    {
+        return [
+            PayrollBatchRun::MODULE_STANDARD,
+            PayrollBatchRun::MODULE_CONSULTANT,
+        ];
+    }
 
     /** @var array<string, array{label:string, title_row:string}> */
     private const BANK_DEFINITIONS = [
@@ -48,7 +61,7 @@ class BankPayrollExportService
     }
 
     /**
-     * Distinct finalized regular-payroll cutoffs available for bank export.
+     * Distinct finalized payroll cutoffs available for bank export (standard + consultant).
      *
      * @return list<array{key:string,from_date:string,to_date:string,company_count:int}>
      */
@@ -56,7 +69,7 @@ class BankPayrollExportService
     {
         $runs = PayrollBatchRun::query()
             ->where('status', PayrollBatchRun::STATUS_FINALIZED)
-            ->where('payroll_module', PayrollBatchRun::MODULE_STANDARD)
+            ->whereIn('payroll_module', $this->exportPayrollModules())
             ->whereNotNull('pay_period_start')
             ->whereNotNull('pay_period_end')
             ->orderByDesc('pay_period_end')
@@ -98,7 +111,7 @@ class BankPayrollExportService
     }
 
     /**
-     * Build a bank export for every finalized regular-payroll company sharing the anchor run's cutoff.
+     * Build a bank export for every finalized payroll company sharing the anchor run's cutoff.
      *
      * @return array{
      *   bank:string,
@@ -160,7 +173,7 @@ class BankPayrollExportService
             throw new \RuntimeException('Pay period cutoff dates are required for Bank Payroll Export.');
         }
 
-        $runs = $this->finalizedStandardRunsForCutoff($start, $end);
+        $runs = $this->finalizedRunsForBankExportCutoff($start, $end);
         if ($runs->isEmpty()) {
             throw new \RuntimeException('No finalized payroll runs were found for this pay period cutoff.');
         }
@@ -251,12 +264,12 @@ class BankPayrollExportService
     /**
      * @return array{filename:string, employee_count:int, write:callable(): void}
      */
-    public function xlsxForCutoffDates(string $start, string $end, string $bankCode): array
+    public function xlsForCutoffDates(string $start, string $end, string $bankCode): array
     {
         $payload = $this->buildExportPayloadForCutoffDates($start, $end, $bankCode);
 
         return [
-            'filename' => $this->cutoffFilename($payload, 'xlsx'),
+            'filename' => $this->cutoffFilename($payload, 'xls'),
             'employee_count' => $payload['eligible_count'],
             'write' => fn () => $this->writeSpreadsheet($payload),
         ];
@@ -295,12 +308,12 @@ class BankPayrollExportService
     /**
      * @return array{filename:string, employee_count:int, write:callable(): void}
      */
-    public function xlsxForCutoff(PayrollBatchRun $anchorRun, string $bankCode): array
+    public function xlsForCutoff(PayrollBatchRun $anchorRun, string $bankCode): array
     {
         $payload = $this->buildExportPayloadForCutoff($anchorRun, $bankCode);
 
         return [
-            'filename' => $this->cutoffFilename($payload, 'xlsx'),
+            'filename' => $this->cutoffFilename($payload, 'xls'),
             'employee_count' => $payload['eligible_count'],
             'write' => fn () => $this->writeSpreadsheet($payload),
         ];
@@ -406,7 +419,7 @@ class BankPayrollExportService
     {
         $spreadsheet = $this->buildExportSpreadsheet($payload);
 
-        (new Xlsx($spreadsheet))->save('php://output');
+        (new Xls($spreadsheet))->save('php://output');
         $spreadsheet->disconnectWorksheets();
     }
 
@@ -512,17 +525,18 @@ class BankPayrollExportService
     /**
      * @return Collection<int, PayrollBatchRun>
      */
-    private function finalizedStandardRunsForCutoff(string $start, string $end): Collection
+    private function finalizedRunsForBankExportCutoff(string $start, string $end): Collection
     {
         return PayrollBatchRun::query()
             ->where('status', PayrollBatchRun::STATUS_FINALIZED)
-            ->where('payroll_module', PayrollBatchRun::MODULE_STANDARD)
+            ->whereIn('payroll_module', $this->exportPayrollModules())
             ->whereDate('pay_period_start', $start)
             ->whereDate('pay_period_end', $end)
             ->orderBy('company_id')
             ->orderByDesc('id')
             ->get()
-            ->unique(fn (PayrollBatchRun $run): string => (string) ((int) ($run->company_id ?? 0)).':'.$start.':'.$end)
+            ->unique(fn (PayrollBatchRun $run): string => strtolower(trim((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)))
+                .':'.((int) ($run->company_id ?? 0)).':'.$start.':'.$end)
             ->values();
     }
 
@@ -544,7 +558,7 @@ class BankPayrollExportService
             ->whereIn('payroll_batch_run_id', $runIds)
             ->whereNull('voided_at')
             ->where('period_slot', 0)
-            ->where('payroll_module', PayrollBatchRun::MODULE_STANDARD)
+            ->whereIn('payroll_module', $this->exportPayrollModules())
             ->whereIn('status', Payslip::lockingStatuses())
             ->whereNotNull('snapshot')
             ->orderByDesc('id')
@@ -571,8 +585,7 @@ class BankPayrollExportService
     }
 
     /**
-     * Bank files must match the finalized payslip net pay shown in payroll UI/PDF,
-     * not the legacy payslip.net_pay column when it diverges from display totals.
+     * Bank files must match the finalized payslip net pay shown in payroll UI/PDF.
      */
     private function exportNetPay(Payslip $payslip): float
     {

@@ -3485,15 +3485,15 @@ class PayrollComputationService implements PayrollBulkComputation
     }
 
     /**
-     * Payable attendance reductions for fixed semi-monthly Regular pay.
-     * Absences are already reflected in present-day units and are not deducted again here.
+     * Payable attendance reductions for fixed semi-monthly Regular pay when present-day cap applies.
+     * Absences and unpaid leave are already reflected in present-day units and are not deducted again here.
      *
      * @param  array<string, mixed>  $breakdown
      */
     private function sumFixedRegularNonAbsenceAttendanceDeduction(array $breakdown): float
     {
         $total = 0.0;
-        $keys = ['late', 'undertime', 'half_day', 'unpaid_leave'];
+        $keys = ['late', 'undertime', 'half_day'];
 
         foreach (is_array($breakdown['rows'] ?? null) ? $breakdown['rows'] : [] as $row) {
             if (! is_array($row)) {

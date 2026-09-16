@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Models\EmployeeBankAccount;
+use App\Models\PayrollBatchRun;
 use App\Models\Payslip;
 use App\Models\User;
 use App\Services\BankPayrollExportService;
@@ -10,6 +11,16 @@ use Tests\TestCase;
 
 class BankPayrollExportServiceTest extends TestCase
 {
+    public function test_export_payroll_modules_include_standard_and_consultant(): void
+    {
+        $service = app(BankPayrollExportService::class);
+
+        $this->assertSame(
+            [PayrollBatchRun::MODULE_STANDARD, PayrollBatchRun::MODULE_CONSULTANT],
+            $service->exportPayrollModules()
+        );
+    }
+
     public function test_format_aub_employee_name_uses_last_first_order(): void
     {
         $user = new User([
@@ -87,15 +98,39 @@ class BankPayrollExportServiceTest extends TestCase
         $this->assertSame('ZARA ANA', $rows[2]['name']);
     }
 
-    public function test_export_net_pay_uses_display_totals_not_stored_column(): void
+    public function test_export_net_pay_uses_display_totals_when_display_diverges_from_stored_column(): void
     {
         $payslip = new Payslip([
-            'net_pay' => 5538.48,
+            'net_pay' => 9478.25,
+            'snapshot' => [
+                'summary' => [
+                    'display_gross_pay' => 10018.25,
+                    'display_net_pay' => 10018.25,
+                    'daily_computation_earning_lines' => [
+                        ['key' => 'daily:regular_pay', 'label' => 'Regular pay', 'amount' => 9478.25, 'display_amount' => 10018.25],
+                    ],
+                    'payslip_earning_lines' => [],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $method = new \ReflectionMethod(BankPayrollExportService::class, 'exportNetPay');
+        $method->setAccessible(true);
+        $netPay = $method->invoke(app(BankPayrollExportService::class), $payslip);
+
+        $this->assertSame(10018.25, $netPay);
+    }
+
+    public function test_export_net_pay_matches_line_totals_when_display_is_aligned(): void
+    {
+        $payslip = new Payslip([
+            'net_pay' => 6230.77,
             'snapshot' => [
                 'summary' => [
                     'display_gross_pay' => 6230.77,
                     'display_net_pay' => 6230.77,
-                    'basic_pay_this_period' => 5538.48,
                     'daily_computation_earning_lines' => [
                         ['key' => 'regular_pay', 'label' => 'Regular pay', 'amount' => 5538.48],
                         ['key' => 'attendance_premium', 'label' => 'Attendance premiums', 'amount' => 692.29],

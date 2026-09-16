@@ -3374,8 +3374,10 @@ async function fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, fo
 }
 
 export async function getBankPayrollExportXlsxBlobByCutoff(fromDate, toDate, bankCode = 'AUB') {
-  return fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, 'xlsx')
+  return fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, 'xls')
 }
+
+export const getBankPayrollExportXlsBlobByCutoff = getBankPayrollExportXlsxBlobByCutoff
 
 export async function getBankPayrollExportCsvBlobByCutoff(fromDate, toDate, bankCode = 'AUB') {
   return fetchBankPayrollExportBlobByCutoff(fromDate, toDate, bankCode, 'csv')

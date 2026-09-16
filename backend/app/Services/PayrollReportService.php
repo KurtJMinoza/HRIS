@@ -683,9 +683,16 @@ class PayrollReportService
             $attendanceSummary['daily_computation_days'] = $snapshot['daily_computation_days'];
         }
 
-        $grossEarnings = $this->reportGrossEarnings($earnings, $summary, $metrics);
-        $totalDeductions = round((float) $metrics['total_deductions'], 2);
-        $netPay = $this->reportNetPay($summary, $grossEarnings, $totalDeductions, $metrics);
+        $displayTotals = is_array($snapshot) && $snapshot !== []
+            ? $this->payslipService->payslipDisplayTotalsFromSnapshot($snapshot)
+            : [
+                'gross_pay' => $this->reportGrossEarnings($earnings, $summary, $metrics),
+                'total_deductions' => round((float) $metrics['total_deductions'], 2),
+                'net_pay' => $this->reportNetPay($summary, $this->reportGrossEarnings($earnings, $summary, $metrics), round((float) $metrics['total_deductions'], 2), $metrics),
+            ];
+        $grossEarnings = round((float) $displayTotals['gross_pay'], 2);
+        $totalDeductions = round((float) $displayTotals['total_deductions'], 2);
+        $netPay = round((float) $displayTotals['net_pay'], 2);
 
         return array_merge($earnings, $deductions, $detailedDeductions['amounts'], [
             'employee_name' => $name !== '' ? $name : 'Employee '.$payslip->user_id,
@@ -835,13 +842,6 @@ class PayrollReportService
      */
     private function reportGrossEarnings(array $earnings, array $summary, array $metrics): float
     {
-        if (isset($summary['display_gross_pay']) && is_numeric($summary['display_gross_pay'])) {
-            $displayGross = round(max(0.0, (float) $summary['display_gross_pay']), 2);
-            if ($displayGross > 0.0001) {
-                return $displayGross;
-            }
-        }
-
         $fromBuckets = round(
             (float) ($earnings['regular_basic_pay'] ?? 0)
             + (float) ($earnings['holiday_pay'] ?? 0)
@@ -852,11 +852,29 @@ class PayrollReportService
             + (float) ($earnings['allowance'] ?? 0),
             2
         );
+        $metricsGross = round(max(0.0, (float) ($metrics['gross_pay'] ?? 0)), 2);
+
+        if (isset($summary['display_gross_pay']) && is_numeric($summary['display_gross_pay'])) {
+            $displayGross = round(max(0.0, (float) $summary['display_gross_pay']), 2);
+            if ($displayGross > 0.0001) {
+                if (
+                    $fromBuckets > 0.0001
+                    && $metricsGross > 0.0001
+                    && $displayGross > $fromBuckets + 0.015
+                    && abs($fromBuckets - $metricsGross) <= 0.015
+                ) {
+                    return $fromBuckets;
+                }
+
+                return $displayGross;
+            }
+        }
+
         if ($fromBuckets > 0.0001) {
             return $fromBuckets;
         }
 
-        return round(max(0.0, (float) ($metrics['gross_pay'] ?? 0)), 2);
+        return $metricsGross;
     }
 
     /**

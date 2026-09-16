@@ -1187,14 +1187,14 @@ export default function AdminGeneratePayslipsPage() {
     setBankPayrollExportDownloadingFormat(format)
     try {
       const { from_date: cutoffFrom, to_date: cutoffTo } = bankExportCutoff
-      const blob = format === 'xlsx'
+      const blob = format === 'xls'
         ? await getBankPayrollExportXlsxBlobByCutoff(cutoffFrom, cutoffTo, bankCode)
         : format === 'csv'
           ? await getBankPayrollExportCsvBlobByCutoff(cutoffFrom, cutoffTo, bankCode)
           : await getBankPayrollExportPdfBlobByCutoff(cutoffFrom, cutoffTo, bankCode)
       const start = cutoffFrom.replace(/-/g, '')
       const end = cutoffTo.replace(/-/g, '')
-      const ext = format === 'xlsx' ? 'xlsx' : format === 'csv' ? 'csv' : 'pdf'
+      const ext = format === 'xls' ? 'xls' : format === 'csv' ? 'csv' : 'pdf'
       savePdfBlob(blob, `Bank_Payroll_Export_${bankCode}_All_Companies_${start}_${end}.${ext}`)
       toast({
         title: 'Bank Payroll Export downloaded',
@@ -2455,14 +2455,14 @@ export default function AdminGeneratePayslipsPage() {
                     variant="outline"
                     className="h-auto flex-col gap-1 border-2 border-emerald-500/40 py-3 hover:bg-emerald-50 dark:hover:bg-emerald-950/20"
                     disabled={!bankExportCutoff || bankPayrollExportDownloadingFormat != null}
-                    onClick={() => void handleDownloadBankPayrollExport('xlsx')}
+                    onClick={() => void handleDownloadBankPayrollExport('xls')}
                   >
-                    {bankPayrollExportDownloadingFormat === 'xlsx' ? (
+                    {bankPayrollExportDownloadingFormat === 'xls' ? (
                       <Loader2 className="h-5 w-5 animate-spin" />
                     ) : (
                       <FileSpreadsheet className="h-5 w-5" />
                     )}
-                    <span className="text-xs font-semibold">Excel (.xlsx)</span>
+                    <span className="text-xs font-semibold">Excel (.xls)</span>
                   </Button>
                   <Button
                     type="button"

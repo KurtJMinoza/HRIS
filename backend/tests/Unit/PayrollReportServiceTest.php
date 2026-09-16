@@ -116,8 +116,9 @@ class PayrollReportServiceTest extends TestCase
         $row = $method->invoke($service, $payslip);
 
         $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
-        $this->assertGreaterThanOrEqual(6000.0, (float) $row['regular_basic_pay']);
-        $this->assertGreaterThanOrEqual(16276.46, (float) $row['gross_earnings']);
+        $this->assertGreaterThanOrEqual(16276.46, (float) $row['regular_basic_pay']);
+        $this->assertEqualsWithDelta(10576.94, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta(10576.94, (float) $row['net_pay'], 0.02);
     }
 
     public function test_report_other_column_does_not_duplicate_holiday_pay(): void
@@ -533,6 +534,57 @@ class PayrollReportServiceTest extends TestCase
         $this->assertEqualsWithDelta($expectedBasicPay, (float) $row['regular_basic_pay'], 0.02);
         $this->assertEqualsWithDelta(6000.0, (float) $row['other_earnings'], 0.02);
         $this->assertSame('13 days', $row['total_attendance']);
+    }
+
+    public function test_consultant_report_gross_matches_payslip_without_double_counting_daily_basic(): void
+    {
+        $snapshot = [
+            'summary' => [
+                'employment_status' => 'consultant',
+                'consultant_fixed_payroll' => true,
+                'basic_pay_this_period' => 20000.0,
+                'display_gross_pay' => 22500.0,
+                'display_net_pay' => 22500.0,
+                'payslip_earning_lines' => [
+                    [
+                        'key' => 'consultant_basic_pay',
+                        'label' => 'Basic Pay',
+                        'amount' => 20000.0,
+                    ],
+                    [
+                        'key' => 'pay_component:21',
+                        'label' => 'Allowance',
+                        'amount' => 2500.0,
+                    ],
+                ],
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:consultant:basic_pay',
+                    'label' => 'Basic Pay',
+                    'amount' => 19999.98,
+                    'display_amount' => 29090.91,
+                ]],
+            ],
+        ];
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'payroll_module' => PayrollBatchRun::MODULE_CONSULTANT,
+            'gross_pay' => 22500.0,
+            'total_deductions' => 0,
+            'net_pay' => 22500.0,
+            'snapshot' => $snapshot,
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta(20000.0, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(2500.0, (float) $row['allowance'], 0.02);
+        $this->assertEqualsWithDelta(22500.0, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta(22500.0, (float) $row['net_pay'], 0.02);
     }
 
     public function test_report_other_reason_refund_basic_pay_routes_to_other_column(): void

@@ -774,7 +774,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/bank-payroll-export/cutoffs', [BankPayrollExportController::class, 'cutoffs']);
             Route::get('/bank-payroll-export/{bank}/preview', [BankPayrollExportController::class, 'previewByCutoff'])
                 ->where('bank', '[A-Za-z0-9]+');
-            Route::get('/bank-payroll-export/{bank}/xlsx', [BankPayrollExportController::class, 'downloadXlsxByCutoff'])
+            Route::get('/bank-payroll-export/{bank}/xls', [BankPayrollExportController::class, 'downloadXlsByCutoff'])
                 ->where('bank', '[A-Za-z0-9]+');
             Route::get('/bank-payroll-export/{bank}/csv', [BankPayrollExportController::class, 'downloadCsvByCutoff'])
                 ->where('bank', '[A-Za-z0-9]+');
@@ -783,7 +783,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/preview', [BankPayrollExportController::class, 'preview'])
                 ->whereNumber('id')
                 ->where('bank', '[A-Za-z0-9]+');
-            Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/xlsx', [BankPayrollExportController::class, 'downloadXlsx'])
+            Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/xls', [BankPayrollExportController::class, 'downloadXls'])
                 ->whereNumber('id')
                 ->where('bank', '[A-Za-z0-9]+');
             Route::get('/payroll-runs/{id}/bank-payroll-export/{bank}/csv', [BankPayrollExportController::class, 'downloadCsv'])
