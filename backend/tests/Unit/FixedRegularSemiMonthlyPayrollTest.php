@@ -100,6 +100,63 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         );
     }
 
+    public function test_worked_special_holiday_day_is_not_counted_as_late(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = new \ReflectionMethod($service, 'computeFixedRegularAttendanceDeductions');
+        $method->setAccessible(true);
+
+        $dailyRate = 559.23;
+        $hourlyRate = $dailyRate / 8.0;
+        $lateRegularPay = round($hourlyRate * (450 / 60.0), 2);
+        $days = [
+            [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'regular_pay' => $lateRegularPay,
+                'late_deduction_minutes' => 30,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '30 Minutes late',
+                'breakdown' => [
+                    ['component' => 'regular_pay', 'minutes' => 450, 'amount' => $lateRegularPay],
+                ],
+            ],
+            [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'regular_pay' => 0,
+                'holiday_premium_pay' => 727.0,
+                'late_deduction_minutes' => 0,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'on_time',
+                'tardiness_label' => 'Present',
+                'breakdown' => [
+                    ['component' => 'regular_pay', 'minutes' => 480, 'amount' => 0],
+                    ['component' => 'holiday_premium', 'minutes' => 480, 'amount' => 727.0],
+                ],
+            ],
+        ];
+
+        $breakdown = $method->invoke($service, $days, $dailyRate);
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(30, (int) ($rowsByKey['late']['minutes'] ?? 0));
+        $this->assertSame(1, (int) ($rowsByKey['late']['count'] ?? 0));
+        $this->assertEqualsWithDelta(
+            round($dailyRate - $lateRegularPay, 2),
+            (float) ($rowsByKey['late']['deduction_amount'] ?? 0),
+            0.02
+        );
+        $this->assertEqualsWithDelta(
+            round($dailyRate - $lateRegularPay, 2),
+            (float) ($breakdown['total_deduction'] ?? 0),
+            0.02
+        );
+    }
+
     public function test_evalaroza_style_regular_and_leave_display_sum_to_semi_monthly(): void
     {
         $semiMonthlyGross = 10000.0;

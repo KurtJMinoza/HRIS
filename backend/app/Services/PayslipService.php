@@ -1711,6 +1711,7 @@ class PayslipService
                 && $storedSummaryDisplayNet > 0
                 && abs($stored['net_pay'] - $storedSummaryDisplayNet) <= 0.015
                 && $display['net_pay'] > $stored['net_pay'] + 0.015
+                && $display['gross_pay'] <= $stored['gross_pay'] + 0.015
             ) {
                 return $stored;
             }
@@ -2927,12 +2928,17 @@ class PayslipService
                 $regularHourlyRate,
                 $regularPayPresentDays
             );
-            if ($dailyComputationDays !== [] && ! is_array($summary['attendance_pay_breakdown'] ?? null)) {
-                $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
-                    $summary,
-                    $dailyComputationDays,
-                    false
-                );
+            if ($dailyComputationDays !== []) {
+                if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+                    $summary['attendance_pay_breakdown'] = app(PayrollComputationService::class)
+                        ->buildFixedRegularAttendancePayBreakdown($dailyComputationDays, $dailyRate);
+                } elseif (! is_array($summary['attendance_pay_breakdown'] ?? null)) {
+                    $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
+                        $summary,
+                        $dailyComputationDays,
+                        false
+                    );
+                }
             }
             $summary['unworked_holiday_present_day_units'] = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
             $summary = $this->applyRegularPayDisplayAmounts(
@@ -4989,6 +4995,8 @@ class PayslipService
         ));
 
         $nonAbsenceDeduction = $this->sumFixedRegularNonAbsenceAttendanceDeduction($breakdown);
+        $absenceDeduction = $this->sumFixedRegularAbsenceAttendanceDeduction($breakdown);
+        $rowBasedDeduction = round($nonAbsenceDeduction + $absenceDeduction, 2);
         $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
         $nearFullCutoff = $this->isNearFullFixedRegularCutoff($summary);
 
@@ -5002,10 +5010,14 @@ class PayslipService
 
         if ($nearFullCutoff) {
             if ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross) {
-                $totalDeduction = round((float) ($breakdown['total_deduction'] ?? max(0.0, $fixedGross - $netAmount)), 2);
+                $totalDeduction = $rowBasedDeduction > 0.0001
+                    ? $rowBasedDeduction
+                    : round((float) ($breakdown['total_deduction'] ?? max(0.0, $fixedGross - $netAmount)), 2);
                 $headlineDisplayAmount = $presentDayBasePay;
             } else {
-                $totalDeduction = round(max(0.0, $fixedGross - $netAmount), 2);
+                $totalDeduction = $rowBasedDeduction > 0.0001
+                    ? $rowBasedDeduction
+                    : round(max(0.0, $fixedGross - $netAmount), 2);
                 if ($totalDeduction <= 0.0001) {
                     $storedDeduction = round((float) ($breakdown['total_deduction'] ?? 0), 2);
                     if ($storedDeduction > 0.0001) {
@@ -5033,7 +5045,6 @@ class PayslipService
             $headlineDisplayAmount = $fixedGross > 0.0001 ? $fixedGross : $netAmount;
         }
 
-        $absenceDeduction = $this->sumFixedRegularAbsenceAttendanceDeduction($breakdown);
         if ($paidLeaveDisplay > 0.0001 && ($absenceDeduction > 0.0001 || $nonAbsenceDeduction > 0.0001)) {
             $totalDeduction = round($nonAbsenceDeduction + $absenceDeduction, 2);
         }
@@ -5041,9 +5052,21 @@ class PayslipService
         $breakdown['rows'] = $rows;
         $breakdown['total_deduction'] = round($totalDeduction, 2);
         $breakdown['total_deduction_units_label'] = '—';
-        $regularPayAfterReductions = $paidLeaveDisplay > 0.0001
-            ? round(max(0.0, $headlineDisplayAmount - $nonAbsenceDeduction - $absenceDeduction), 2)
-            : round(max(0.0, $netAmount), 2);
+        $storedNetGapDeduction = round(max(0.0, $fixedGross - $netAmount), 2);
+        if ($paidLeaveDisplay > 0.0001) {
+            $regularPayAfterReductions = round(
+                max(0.0, $headlineDisplayAmount - $nonAbsenceDeduction - $absenceDeduction),
+                2
+            );
+        } elseif (
+            $rowBasedDeduction > 0.0001
+            && $absenceDeduction <= 0.0001
+            && abs($rowBasedDeduction - $storedNetGapDeduction) > 0.015
+        ) {
+            $regularPayAfterReductions = round(max(0.0, $headlineDisplayAmount - $rowBasedDeduction), 2);
+        } else {
+            $regularPayAfterReductions = round(max(0.0, $netAmount), 2);
+        }
         $breakdown['regular_pay_after_reductions'] = $regularPayAfterReductions;
         $breakdown['fixed_basic_pay_after_reductions'] = round(max(0.0, $totalNetBasic), 2);
         $breakdown['note'] = $presentDayCapApplied || ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross)

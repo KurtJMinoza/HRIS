@@ -3383,16 +3383,19 @@ class PayrollComputationService implements PayrollBulkComputation
                         : 0;
                     if ($tardinessStatus === 'late' || $dayLateMinutes > 0) {
                         $lateCount++;
-                        $lateMinutes += $dayLateMinutes > 0 ? $dayLateMinutes : $shortfallMinutes;
+                        $policyLateMinutes = $this->tardinessLabelMinutes((string) ($day['tardiness_label'] ?? ''));
+                        if ($dayLateMinutes > 0) {
+                            $lateMinutes += $policyLateMinutes !== null
+                                ? max($dayLateMinutes, $policyLateMinutes)
+                                : $dayLateMinutes;
+                        } else {
+                            $lateMinutes += $shortfallMinutes;
+                        }
                         $lateAmountRunning += $dayRegularPayShortfall;
                     } elseif ($dayUndertimeMinutes > 0) {
                         $undertimeCount++;
                         $undertimeMinutes += max($shortfallMinutes, $dayUndertimeMinutes);
                         $undertimeAmountRunning += $dayRegularPayShortfall;
-                    } else {
-                        $lateCount++;
-                        $lateMinutes += $shortfallMinutes;
-                        $lateAmountRunning += $dayRegularPayShortfall;
                     }
                 } elseif ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
                     $lateCount++;
@@ -3556,6 +3559,12 @@ class PayrollComputationService implements PayrollBulkComputation
             }
         }
 
+        $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+        if ($holidayPremiumPay > 0.0001 && $actualRegularPay <= 0.0001) {
+            // Worked holiday pay replaces the separate regular-pay line; do not treat it as tardiness.
+            return 0.0;
+        }
+
         $expectedRegularPay = $dailyRate;
         if ($status === 'halfday') {
             $hasPaidLeave = collect((array) ($day['breakdown'] ?? []))
@@ -3691,6 +3700,35 @@ class PayrollComputationService implements PayrollBulkComputation
         }
 
         return round(max(0.0, $units), 4);
+    }
+
+    /**
+     * Build fixed semi-monthly attendance breakdown rows for payslip display refresh.
+     *
+     * @param  list<array<string, mixed>>  $days
+     * @return array<string, mixed>
+     */
+    public function buildFixedRegularAttendancePayBreakdown(array $days, float $dailyRate): array
+    {
+        return $this->computeFixedRegularAttendanceDeductions($days, $dailyRate);
+    }
+
+    private function tardinessLabelMinutes(string $label): ?int
+    {
+        $label = trim($label);
+        if ($label === '') {
+            return null;
+        }
+
+        if (preg_match('/(\d+)\s*hour(?:s)?(?:\s+(\d+)\s*minute(?:s)?)?/i', $label, $hoursMatch) === 1) {
+            return ((int) $hoursMatch[1] * 60) + (int) ($hoursMatch[2] ?? 0);
+        }
+
+        if (preg_match('/(\d+)\s*minute(?:s)?/i', $label, $minutesMatch) === 1) {
+            return (int) $minutesMatch[1];
+        }
+
+        return null;
     }
 
     private function formatFixedRegularAttendanceDuration(int $minutes): string
