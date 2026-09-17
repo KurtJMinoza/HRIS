@@ -191,14 +191,14 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertSame($customDeductions, round((float) ($lineTotals['total_deductions'] ?? 0), 2));
     }
 
-    public function test_paid_leave_split_with_refund_display_totals_exclude_refund_line(): void
+    public function test_paid_leave_split_with_refund_display_totals_include_refund_line(): void
     {
         $payslipService = app(\App\Services\PayslipService::class);
         $lateDeduction = 240.4;
         $paidLeave = 1538.46;
         $refund = 1538.46;
         $regularAfterLate = 8221.14;
-        $expectedGross = round($regularAfterLate + $paidLeave, 2);
+        $expectedGross = round($regularAfterLate + $paidLeave + $refund, 2);
 
         $snapshot = [
             'daily_rate' => 769.23,
@@ -768,7 +768,7 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $payslipService = app(\App\Services\PayslipService::class);
         $regularAmount = 8264.45;
         $refund = 692.3;
-        $expectedNet = 8264.45;
+        $expectedNet = 8956.75;
 
         $snapshot = [
             'summary' => [

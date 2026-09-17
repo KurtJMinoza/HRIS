@@ -287,9 +287,13 @@ class PayslipController extends Controller
                 'progress_percent' => $totalEmployees > 0
                     ? min(100, (int) round(($processedEmployees / $totalEmployees) * 100))
                     : ($batchStatus === PayrollBatchRun::STATUS_DRAFT || $batchStatus === PayrollBatchRun::STATUS_FINALIZED ? 100 : 0),
-                'total_net_pay' => $agg['payslip_count'] > 0
-                    ? round((float) $agg['total_net_pay'], 2)
-                    : round((float) ($run->total_net ?? 0), 2),
+                // Finalized runs keep frozen batch totals (dump/finalize net).
+                // Draft still uses live payslip display aggregates.
+                'total_net_pay' => $runFinalized
+                    ? round((float) ($run->total_net ?? 0), 2)
+                    : ($agg['payslip_count'] > 0
+                        ? round((float) $agg['total_net_pay'], 2)
+                        : round((float) ($run->total_net ?? 0), 2)),
                 'generated_at' => $agg['generated_at']
                     ? \Carbon\Carbon::parse($agg['generated_at'])->toIso8601String()
                     : ($run->created_at?->toIso8601String()),

@@ -147,4 +147,103 @@ class BankPayrollExportServiceTest extends TestCase
 
         $this->assertSame(6230.77, $netPay);
     }
+
+    public function test_export_net_pay_includes_missing_attendance_refund(): void
+    {
+        $lateDeduction = 240.4;
+        $paidLeave = 1538.46;
+        $refund = 1538.46;
+        $regularAfterLate = 8221.14;
+        $staleGrossWithoutRefund = round($regularAfterLate + $paidLeave, 2);
+        $expectedNet = round($regularAfterLate + $paidLeave + $refund, 2);
+
+        $payslip = new Payslip([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => $expectedNet,
+            'total_deductions' => 0,
+            'net_pay' => $expectedNet,
+            'snapshot' => [
+                'daily_rate' => 769.23,
+                'summary' => [
+                    'regular_fixed_semi_monthly_payroll' => true,
+                    'display_gross_pay' => $staleGrossWithoutRefund,
+                    'display_net_pay' => $staleGrossWithoutRefund,
+                    'attendance_pay_breakdown' => [
+                        'available' => true,
+                        'regular_pay_after_reductions' => $regularAfterLate,
+                        'total_deduction' => $lateDeduction,
+                    ],
+                    'daily_computation_earning_lines' => [
+                        [
+                            'key' => 'daily:regular_pay',
+                            'label' => 'Regular pay',
+                            'amount' => $regularAfterLate,
+                            'display_amount' => 8461.54,
+                        ],
+                        [
+                            'key' => 'daily:paid_leave',
+                            'label' => 'Leave adjustments',
+                            'amount' => $paidLeave,
+                            'display_amount' => $paidLeave,
+                            'metadata' => [
+                                'included_in_fixed_semi_monthly_basic' => true,
+                                'leave_day_units' => 2.0,
+                            ],
+                        ],
+                    ],
+                    'payslip_earning_lines' => [[
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Attendance Refund — Missing Attendance',
+                        'amount' => $refund,
+                        'component_code' => 'refund_basic_pay',
+                        'metadata' => [
+                            'refund_request_id' => 99,
+                            'reason' => 'missing_attendance',
+                        ],
+                    ]],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $method = new \ReflectionMethod(BankPayrollExportService::class, 'exportNetPay');
+        $method->setAccessible(true);
+        $netPay = $method->invoke(app(BankPayrollExportService::class), $payslip);
+
+        $this->assertEqualsWithDelta($expectedNet, $netPay, 0.02);
+    }
+
+    public function test_export_net_pay_uses_frozen_column_when_finalized(): void
+    {
+        $payslip = new Payslip([
+            'status' => Payslip::STATUS_FINALIZED,
+            'net_pay' => 10000.0,
+            'gross_pay' => 10000.0,
+            'total_deductions' => 0,
+            'snapshot' => [
+                'summary' => [
+                    'display_gross_pay' => 11298.06,
+                    'display_net_pay' => 11298.06,
+                    'daily_computation_earning_lines' => [[
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 8221.14,
+                    ]],
+                    'payslip_earning_lines' => [[
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Attendance Refund — Missing Attendance',
+                        'amount' => 1538.46,
+                        'component_code' => 'refund_basic_pay',
+                    ]],
+                ],
+            ],
+        ]);
+
+        $method = new \ReflectionMethod(BankPayrollExportService::class, 'exportNetPay');
+        $method->setAccessible(true);
+        $netPay = $method->invoke(app(BankPayrollExportService::class), $payslip);
+
+        $this->assertSame(10000.0, $netPay);
+    }
 }

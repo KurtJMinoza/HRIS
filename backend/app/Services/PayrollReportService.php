@@ -684,7 +684,7 @@ class PayrollReportService
         }
 
         $displayTotals = is_array($snapshot) && $snapshot !== []
-            ? $this->payslipService->payslipDisplayTotalsFromSnapshot($snapshot)
+            ? $this->payslipService->payslipTotalsForDisplay($payslip)
             : [
                 'gross_pay' => $this->reportGrossEarnings($earnings, $summary, $metrics),
                 'total_deductions' => round((float) $metrics['total_deductions'], 2),

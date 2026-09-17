@@ -585,19 +585,11 @@ class BankPayrollExportService
     }
 
     /**
-     * Bank files must match the finalized payslip net pay shown in payroll UI/PDF.
+     * AUB salary is the frozen finalized net (same number as payroll report / finalize).
      */
     private function exportNetPay(Payslip $payslip): float
     {
-        $snapshotRaw = $payslip->snapshot;
-        $snapshot = is_array($snapshotRaw)
-            ? $snapshotRaw
-            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
-        if (! is_array($snapshot)) {
-            $snapshot = [];
-        }
-
-        $totals = $this->payslipService->payslipDisplayTotalsFromSnapshot($snapshot);
+        $totals = $this->payslipService->payslipTotalsForDisplay($payslip);
 
         return round((float) ($totals['net_pay'] ?? 0), 2);
     }

@@ -117,8 +117,213 @@ class PayrollReportServiceTest extends TestCase
 
         $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
         $this->assertGreaterThanOrEqual(16276.46, (float) $row['regular_basic_pay']);
-        $this->assertEqualsWithDelta(10576.94, (float) $row['gross_earnings'], 0.02);
-        $this->assertEqualsWithDelta(10576.94, (float) $row['net_pay'], 0.02);
+        $this->assertEqualsWithDelta(16276.46, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta(16276.46, (float) $row['net_pay'], 0.02);
+    }
+
+    public function test_report_gross_and_net_include_missing_attendance_refund(): void
+    {
+        $lateDeduction = 240.4;
+        $paidLeave = 1538.46;
+        $refund = 1538.46;
+        $regularAfterLate = 8221.14;
+        $staleGrossWithoutRefund = round($regularAfterLate + $paidLeave, 2);
+        $expectedGross = round($regularAfterLate + $paidLeave + $refund, 2);
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => $expectedGross,
+            'total_deductions' => 0,
+            'net_pay' => $expectedGross,
+            'snapshot' => [
+                'daily_rate' => 769.23,
+                'summary' => [
+                    'regular_fixed_semi_monthly_payroll' => true,
+                    'display_gross_pay' => $staleGrossWithoutRefund,
+                    'display_net_pay' => $staleGrossWithoutRefund,
+                    'daily_rate' => 769.23,
+                    'attendance_pay_breakdown' => [
+                        'available' => true,
+                        'regular_pay_after_reductions' => $regularAfterLate,
+                        'total_deduction' => $lateDeduction,
+                    ],
+                    'daily_computation_earning_lines' => [
+                        [
+                            'key' => 'daily:regular_pay',
+                            'label' => 'Regular pay',
+                            'amount' => $regularAfterLate,
+                            'display_amount' => 8461.54,
+                        ],
+                        [
+                            'key' => 'daily:paid_leave',
+                            'label' => 'Leave adjustments',
+                            'amount' => $paidLeave,
+                            'display_amount' => $paidLeave,
+                            'metadata' => [
+                                'included_in_fixed_semi_monthly_basic' => true,
+                                'leave_day_units' => 2.0,
+                            ],
+                        ],
+                    ],
+                    'payslip_earning_lines' => [[
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Attendance Refund — Missing Attendance',
+                        'amount' => $refund,
+                        'component_code' => 'refund_basic_pay',
+                        'metadata' => [
+                            'refund_request_id' => 99,
+                            'reason' => 'missing_attendance',
+                        ],
+                    ]],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta($expectedGross, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta($expectedGross, (float) $row['net_pay'], 0.02);
+        $this->assertEqualsWithDelta(round($regularAfterLate + $refund, 2), (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta($paidLeave, (float) $row['paid_leave'], 0.02);
+    }
+
+    public function test_report_gross_and_net_use_frozen_columns_when_finalized(): void
+    {
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => 10000.0,
+            'total_deductions' => 0,
+            'net_pay' => 10000.0,
+            'snapshot' => [
+                'summary' => [
+                    'display_gross_pay' => 11298.06,
+                    'display_net_pay' => 11298.06,
+                    'daily_computation_earning_lines' => [[
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 8221.14,
+                    ]],
+                    'payslip_earning_lines' => [[
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Attendance Refund — Missing Attendance',
+                        'amount' => 1538.46,
+                        'component_code' => 'refund_basic_pay',
+                    ]],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta(10000.0, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta(10000.0, (float) $row['net_pay'], 0.02);
+    }
+
+    public function test_report_gross_and_net_match_frozen_payslip_net_after_display_repair(): void
+    {
+        $expectedNet = 10018.25;
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => $expectedNet,
+            'total_deductions' => 0,
+            'net_pay' => $expectedNet,
+            'snapshot' => [
+                'summary' => [
+                    'display_gross_pay' => 9478.25,
+                    'display_net_pay' => 9478.25,
+                    'daily_computation_earning_lines' => [
+                        [
+                            'key' => 'daily:regular_pay',
+                            'label' => 'Regular pay',
+                            'amount' => 7560.0,
+                            'display_amount' => 8100.0,
+                        ],
+                        [
+                            'key' => 'daily:rest_day_worked',
+                            'label' => 'Rest Day Worked Pay (30% Additional)',
+                            'amount' => 162.0,
+                        ],
+                        [
+                            'key' => 'holiday:2026-08-31:REGULAR_HOLIDAY_WORKED_PAY',
+                            'label' => 'Regular Holiday — Worked Pay: NATIONAL HEROES DAY',
+                            'amount' => 540.0,
+                            'component_code' => 'REGULAR_HOLIDAY_WORKED_PAY',
+                        ],
+                    ],
+                    'payslip_earning_lines' => [[
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Refund — Other',
+                        'amount' => 1216.25,
+                        'component_code' => 'refund_basic_pay',
+                    ]],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $exportMethod = new \ReflectionMethod(\App\Services\BankPayrollExportService::class, 'exportNetPay');
+        $exportMethod->setAccessible(true);
+        $exportNet = $exportMethod->invoke(app(\App\Services\BankPayrollExportService::class), $payslip);
+
+        $this->assertEqualsWithDelta($expectedNet, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta($expectedNet, (float) $row['net_pay'], 0.02);
+        $this->assertEqualsWithDelta($expectedNet, $exportNet, 0.02);
+    }
+
+    public function test_repair_finalized_payslip_display_totals_updates_stale_frozen_net(): void
+    {
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => 9478.25,
+            'total_deductions' => 0,
+            'net_pay' => 9478.25,
+            'snapshot' => [
+                'summary' => [
+                    'display_gross_pay' => 9478.25,
+                    'display_net_pay' => 9478.25,
+                    'daily_computation_earning_lines' => [[
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 7560.0,
+                        'display_amount' => 8100.0,
+                    ]],
+                    'payslip_earning_lines' => [[
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Refund — Other',
+                        'amount' => 1216.25,
+                        'component_code' => 'refund_basic_pay',
+                    ]],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $result = app(\App\Services\PayslipService::class)->repairFinalizedPayslipDisplayTotals($payslip, save: false);
+
+        $this->assertTrue($result['changed']);
+        $this->assertEqualsWithDelta(9316.25, $result['net_pay'], 0.02);
+        $this->assertEqualsWithDelta(9316.25, $result['gross_pay'], 0.02);
     }
 
     public function test_report_other_column_does_not_duplicate_holiday_pay(): void

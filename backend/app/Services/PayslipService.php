@@ -1478,9 +1478,9 @@ class PayslipService
         $summary = is_array($normalized['summary'] ?? null) ? $normalized['summary'] : [];
 
         return [
-            'gross_pay' => round((float) ($summary['display_gross_pay'] ?? $computed['gross_pay']), 2),
-            'total_deductions' => $computed['total_deductions'],
-            'net_pay' => round((float) ($summary['display_net_pay'] ?? $computed['net_pay']), 2),
+            'gross_pay' => round((float) $computed['gross_pay'], 2),
+            'total_deductions' => round((float) $computed['total_deductions'], 2),
+            'net_pay' => round((float) $computed['net_pay'], 2),
         ];
     }
 
@@ -1522,9 +1522,9 @@ class PayslipService
         $displayTotals = $this->payslipLineTotalsFromNormalizedSnapshot($normalized);
         $normalizedSummary = is_array($normalized['summary'] ?? null) ? $normalized['summary'] : [];
 
-        $newGross = round((float) ($normalizedSummary['display_gross_pay'] ?? $displayTotals['gross_pay']), 2);
+        $newGross = round((float) $displayTotals['gross_pay'], 2);
         $newDeductions = round((float) $displayTotals['total_deductions'], 2);
-        $newNet = round((float) ($normalizedSummary['display_net_pay'] ?? $displayTotals['net_pay']), 2);
+        $newNet = round((float) $displayTotals['net_pay'], 2);
 
         $normalizedSummary['display_gross_pay'] = $newGross;
         $normalizedSummary['display_net_pay'] = $newNet;
@@ -1630,12 +1630,21 @@ class PayslipService
     }
 
     /**
-     * Read-only totals from the stored payslip snapshot lines (no normalize/repair/cap).
+     * Drafts recompute display totals (refunds included). Finalized rows use the frozen columns
+     * so payroll report Gross/Net and AUB salary stay on the same net as finalize.
      *
      * @return array{gross_pay: float, total_deductions: float, net_pay: float}
      */
     public function payslipTotalsForDisplay(Payslip $payslip): array
     {
+        if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return [
+                'gross_pay' => round((float) ($payslip->gross_pay ?? 0), 2),
+                'total_deductions' => round((float) ($payslip->total_deductions ?? 0), 2),
+                'net_pay' => round((float) ($payslip->net_pay ?? 0), 2),
+            ];
+        }
+
         $snapshotRaw = $payslip->snapshot;
         $snapshot = is_array($snapshotRaw)
             ? $snapshotRaw
@@ -1758,7 +1767,6 @@ class PayslipService
             }
         }
 
-        $metrics = $this->frozenPayslipLineMetrics($payslip);
         $snapshotRaw = $payslip->snapshot;
         $snapshot = is_array($snapshotRaw)
             ? $snapshotRaw
@@ -1771,18 +1779,22 @@ class PayslipService
         $snapshot = is_string($encoded)
             ? (json_decode($encoded, true) ?: [])
             : $snapshot;
+        // Headline Gross/Net must match draft payslip UI (display_amount + refund lines), not raw line amounts.
+        $displayTotals = $this->payslipDisplayTotalsFromSnapshot($snapshot);
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
-        $summary['gross_pay_this_period'] = $metrics['gross_pay'];
-        $summary['total_deductions_this_period'] = $metrics['total_deductions'];
-        $summary['net_pay_after_withholding_estimate'] = $metrics['net_pay'];
+        $summary['gross_pay_this_period'] = $displayTotals['gross_pay'];
+        $summary['total_deductions_this_period'] = $displayTotals['total_deductions'];
+        $summary['net_pay_after_withholding_estimate'] = $displayTotals['net_pay'];
+        $summary['display_gross_pay'] = $displayTotals['gross_pay'];
+        $summary['display_net_pay'] = $displayTotals['net_pay'];
         $snapshot['summary'] = $summary;
         $snapshot['finalization_frozen_at'] = now()->toIso8601String();
         $snapshot['finalization_source'] = 'draft_snapshot_copy';
 
         $payslip->forceFill([
-            'gross_pay' => $metrics['gross_pay'],
-            'total_deductions' => $metrics['total_deductions'],
-            'net_pay' => $metrics['net_pay'],
+            'gross_pay' => $displayTotals['gross_pay'],
+            'total_deductions' => $displayTotals['total_deductions'],
+            'net_pay' => $displayTotals['net_pay'],
             'snapshot' => $snapshot,
         ]);
         $payslip->save();
@@ -2882,7 +2894,10 @@ class PayslipService
                 (string) ($periodInput['payroll_module'] ?? PayrollBatchRun::MODULE_STANDARD)
             );
             if ($isLocked || $isExecom) {
-                return $this->frozenSnapshotForPayslipView($snapshotRaw);
+                return $this->withFrozenPayslipDisplayTotals(
+                    $this->frozenSnapshotForPayslipView($snapshotRaw),
+                    $payslip
+                );
             }
 
             return $this->normalizeSnapshotForPayslipView($snapshotRaw);
@@ -2925,6 +2940,23 @@ class PayslipService
         $summary['payroll_module'] = $module;
         $snapshot['summary'] = $summary;
         $snapshot['payroll_module'] = $module;
+
+        return $snapshot;
+    }
+
+    /**
+     * Locked payslip UI/PDF headline Gross/Net must stay on frozen columns, not line recompute.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @return array<string, mixed>
+     */
+    private function withFrozenPayslipDisplayTotals(array $snapshot, Payslip $payslip): array
+    {
+        $totals = $this->payslipTotalsForDisplay($payslip);
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+        $summary['display_gross_pay'] = $totals['gross_pay'];
+        $summary['display_net_pay'] = $totals['net_pay'];
+        $snapshot['summary'] = $summary;
 
         return $snapshot;
     }
@@ -3358,9 +3390,8 @@ class PayslipService
         }
         $lineDeductions = round($this->sumPayslipLineAmounts($deductionLines), 2);
         $attendanceDeduction = $this->resolveAttendanceDeductionForDisplayNet($earningLines, $attendanceBreakdown);
-        $displayNetPay = is_numeric($summary['display_net_pay'] ?? null)
-            ? round((float) $summary['display_net_pay'], 2)
-            : round($gross - $lineDeductions - $attendanceDeduction, 2);
+        // Headline net follows display gross from earning lines (refunds + display_amount), not stale summary display_net.
+        $displayNetPay = round($gross - $lineDeductions - $attendanceDeduction, 2);
 
         return [
             'gross_pay' => $gross,
@@ -3514,6 +3545,11 @@ class PayslipService
                 continue;
             }
             if ($this->isPayrollAdjustmentRefundLine($line)) {
+                $refundAmount = $line['display_amount'] ?? $line['amount'] ?? $line['resolved_amount'] ?? null;
+                if (is_numeric($refundAmount)) {
+                    $total += max(0.0, (float) $refundAmount);
+                }
+
                 continue;
             }
             if ($this->isFixedSemiMonthlyIncludedPaidLeaveLine($line)) {
@@ -8650,12 +8686,19 @@ class PayslipService
         $rows = Payslip::query()
             ->whereIn('id', $payslipIds)
             ->with(['employee:id,employee_code'])
-            ->get(['id', 'user_id', 'gross_pay', 'total_deductions', 'net_pay', 'snapshot']);
+            ->get(['id', 'user_id', 'gross_pay', 'total_deductions', 'net_pay', 'snapshot', 'status']);
 
         $gross = 0.0;
         $deductions = 0.0;
         $net = 0.0;
+        $locking = Payslip::lockingStatuses();
         foreach ($rows as $row) {
+            if (in_array((string) $row->status, $locking, true)) {
+                $gross += round((float) $row->gross_pay, 2);
+                $deductions += round((float) $row->total_deductions, 2);
+                $net += round((float) $row->net_pay, 2);
+                continue;
+            }
             $snapshotRaw = $row->snapshot;
             $snapshot = is_array($snapshotRaw)
                 ? $snapshotRaw

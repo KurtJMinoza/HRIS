@@ -393,6 +393,35 @@ class PayrollEmployeeEligibilityTest extends TestCase
         $this->assertSame(3000.0, $aggregate['total_net_pay']);
     }
 
+    public function test_finalized_batch_aggregate_uses_stored_net_not_snapshot_display(): void
+    {
+        $company = Company::query()->create(['name' => 'ACI']);
+        $employee = $this->employee($company, ['hire_date' => '2026-01-01', 'employee_code' => 'OLD-005']);
+
+        $run = PayrollBatchRun::query()->create([
+            'batch_key' => 'frozen-net-'.uniqid('', true),
+            'payroll_module' => PayrollBatchRun::MODULE_STANDARD,
+            'company_id' => (int) $company->id,
+            'pay_period_start' => '2026-08-11',
+            'pay_period_end' => '2026-08-25',
+            'status' => PayrollBatchRun::STATUS_FINALIZED,
+            'total_net' => 321994.36,
+        ]);
+
+        $payslip = $this->createDraftPayslip($run, $employee, 321994.36);
+        $payslip->update([
+            'status' => Payslip::STATUS_FINALIZED,
+            'snapshot' => ['summary' => [
+                'display_gross_pay' => 100.0,
+                'display_net_pay' => 100.0,
+            ]],
+        ]);
+
+        $aggregate = app(PayslipService::class)->aggregateForBatchRun($run);
+
+        $this->assertSame(321994.36, $aggregate['total_net_pay']);
+    }
+
     public function test_find_ineligible_draft_employee_ids_flags_post_period_hires(): void
     {
         $company = Company::query()->create(['name' => 'ACI']);
