@@ -1471,9 +1471,11 @@ class PayslipService
      *
      * @return array{gross_pay: float, total_deductions: float, net_pay: float}
      */
-    public function payslipDisplayTotalsFromSnapshot(array $snapshot): array
+    public function payslipDisplayTotalsFromSnapshot(array $snapshot, bool $alreadyNormalized = false): array
     {
-        $normalized = $this->normalizeSnapshotForPayslipPdf($snapshot);
+        $normalized = $alreadyNormalized
+            ? $snapshot
+            : $this->normalizeSnapshotForPayslipPdf($snapshot);
         $computed = $this->payslipLineTotalsFromNormalizedSnapshot($normalized);
         $summary = is_array($normalized['summary'] ?? null) ? $normalized['summary'] : [];
 
@@ -1637,18 +1639,85 @@ class PayslipService
      */
     public function payslipTotalsForDisplay(Payslip $payslip): array
     {
-        if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
-            return [
-                'gross_pay' => round((float) ($payslip->gross_pay ?? 0), 2),
-                'total_deductions' => round((float) ($payslip->total_deductions ?? 0), 2),
-                'net_pay' => round((float) ($payslip->net_pay ?? 0), 2),
-            ];
-        }
-
         $snapshotRaw = $payslip->snapshot;
         $snapshot = is_array($snapshotRaw)
             ? $snapshotRaw
             : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+
+        if (in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            $stored = [
+                'gross_pay' => round((float) ($payslip->gross_pay ?? 0), 2),
+                'total_deductions' => round((float) ($payslip->total_deductions ?? 0), 2),
+                'net_pay' => round((float) ($payslip->net_pay ?? 0), 2),
+            ];
+
+            if (! is_array($snapshot) || $snapshot === []) {
+                return $stored;
+            }
+
+            $display = $this->payslipDisplayTotalsFromSnapshot(
+                $this->frozenSnapshotForPayslipView($snapshot),
+                true
+            );
+            $rawSummary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+            $storedSummaryDisplayNet = round((float) ($rawSummary['display_net_pay'] ?? 0), 2);
+            $attendanceBreakdown = is_array($rawSummary['attendance_pay_breakdown'] ?? null)
+                ? $rawSummary['attendance_pay_breakdown']
+                : [];
+            $attendanceDeduction = round(max(0.0, (float) ($attendanceBreakdown['total_deduction'] ?? 0)), 2);
+            $grossGap = round($stored['gross_pay'] - $display['gross_pay'], 2);
+            $staleHeadlineRegularGross = $stored['gross_pay'] > $display['gross_pay'] + 0.015
+                && $attendanceDeduction > 0.015
+                && abs($grossGap - $attendanceDeduction) <= 0.02;
+
+            if ($staleHeadlineRegularGross) {
+                return [
+                    'gross_pay' => $display['gross_pay'],
+                    'total_deductions' => $display['total_deductions'] > 0.0001
+                        ? $display['total_deductions']
+                        : $stored['total_deductions'],
+                    'net_pay' => round($display['gross_pay'] - (
+                        $display['total_deductions'] > 0.0001
+                            ? $display['total_deductions']
+                            : $stored['total_deductions']
+                    ), 2),
+                ];
+            }
+
+            // Intentional low freeze (dump-net / manual alignment).
+            if (
+                $stored['net_pay'] > 0
+                && $storedSummaryDisplayNet > 0
+                && abs($stored['net_pay'] - $storedSummaryDisplayNet) <= 0.015
+                && $display['net_pay'] > $stored['net_pay'] + 0.015
+            ) {
+                return $stored;
+            }
+
+            if ($stored['gross_pay'] > $display['gross_pay'] + 0.015) {
+                return [
+                    'gross_pay' => $display['gross_pay'],
+                    'total_deductions' => $display['total_deductions'] > 0.0001
+                        ? $display['total_deductions']
+                        : $stored['total_deductions'],
+                    'net_pay' => round($display['gross_pay'] - (
+                        $display['total_deductions'] > 0.0001
+                            ? $display['total_deductions']
+                            : $stored['total_deductions']
+                    ), 2),
+                ];
+            }
+
+            if (
+                abs($stored['gross_pay'] - $display['gross_pay']) <= 0.015
+                && abs($stored['net_pay'] - $display['net_pay']) <= 0.015
+            ) {
+                return $stored;
+            }
+
+            return $display;
+        }
+
         if (! is_array($snapshot) || $snapshot === []) {
             $metrics = $this->frozenPayslipLineMetrics($payslip);
 
@@ -3437,19 +3506,19 @@ class PayslipService
                 return 0.0;
             }
 
+            $afterReductions = is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
+                ? round((float) $attendanceBreakdown['regular_pay_after_reductions'], 2)
+                : null;
+            if ($afterReductions !== null && $display > $afterReductions + 0.005) {
+                return 0.0;
+            }
+
             if ($this->hasFixedSemiMonthlyPaidLeaveSplit($earningLines)) {
                 if ($this->earningLinesIncludePayrollAdjustmentRefund($earningLines)) {
                     return 0.0;
                 }
 
                 return $attendanceDeduction;
-            }
-
-            $afterReductions = is_numeric($attendanceBreakdown['regular_pay_after_reductions'] ?? null)
-                ? round((float) $attendanceBreakdown['regular_pay_after_reductions'], 2)
-                : null;
-            if ($afterReductions !== null && $display > $afterReductions + 0.005) {
-                return 0.0;
             }
 
             return $attendanceDeduction;
@@ -3579,10 +3648,6 @@ class PayslipService
                     $afterReductions !== null
                     && $display !== null
                     && $display > $afterReductions + 0.005
-                    && (
-                        ! $this->hasFixedSemiMonthlyPaidLeaveSplit($lines)
-                        || $this->earningLinesIncludePayrollAdjustmentRefund($lines)
-                    )
                 ) {
                     $total += max(0.0, $afterReductions);
                     continue;
@@ -4372,6 +4437,7 @@ class PayslipService
                 && $dayUndertimeMinutes === 0
                 && $policyLateMinutes !== null
                 && $hasAttendanceRegularPay
+                && $dayLateMinutes <= 0
             ) {
                 // The daily ledger can have no incremental cap adjustment after raw
                 // worked time catches up, while the attendance portal still records a

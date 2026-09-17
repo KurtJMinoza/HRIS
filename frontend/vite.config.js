@@ -27,7 +27,7 @@ function resolveAppVersion(mode) {
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
-  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8200'
+  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8000'
   const appVersion = resolveAppVersion(mode)
 
   // Set VITE_BASE=/HR/ in .env when the built app lives under a subpath (e.g. http://localhost/HR/).
@@ -58,7 +58,7 @@ export default defineConfig(({ mode }) => {
       include: ['@mediapipe/tasks-vision'],
     },
     server: {
-      port: 5100,
+      port: 5173,
       host: true,
       strictPort: true,
       headers: {

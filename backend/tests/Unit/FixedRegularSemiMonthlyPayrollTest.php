@@ -316,6 +316,99 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         );
     }
 
+    public function test_fixed_semi_monthly_paid_leave_split_gross_uses_regular_pay_after_reductions(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $regularDisplay = 5400.0;
+        $regularAfterReductions = 5097.38;
+        $paidLeave = 1620.0;
+        $holidayPremium = 506.25;
+        $restDayPremium = 162.0;
+        $expectedGross = round($regularAfterReductions + $paidLeave + $holidayPremium + $restDayPremium, 2);
+
+        $earningLines = [
+            [
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => $regularAfterReductions,
+                'display_amount' => $regularDisplay,
+            ],
+            [
+                'key' => 'daily:paid_leave',
+                'label' => 'Leave adjustments',
+                'amount' => $paidLeave,
+                'display_amount' => $paidLeave,
+                'metadata' => ['included_in_fixed_semi_monthly_basic' => true],
+            ],
+            [
+                'key' => 'holiday:2026-08-31:REGULAR_HOLIDAY_WORKED_PAY',
+                'label' => 'Regular Holiday — Worked Pay: NATIONAL HEROES DAY',
+                'amount' => $holidayPremium,
+                'component_code' => 'REGULAR_HOLIDAY_WORKED_PAY',
+                'metadata' => ['worked' => true, 'display_split_applied' => true],
+            ],
+            [
+                'key' => 'daily:rest_day_worked',
+                'label' => 'Rest Day Worked Pay (30% Additional)',
+                'amount' => $restDayPremium,
+                'component_code' => 'REST_DAY_WORKED_PAY',
+                'metadata' => ['display_split_applied' => true],
+            ],
+        ];
+        $breakdown = [
+            'available' => true,
+            'regular_pay_after_reductions' => $regularAfterReductions,
+            'total_deduction' => 302.62,
+        ];
+
+        $method = new \ReflectionMethod($payslipService, 'sumPayslipLineDisplayAmounts');
+        $method->setAccessible(true);
+        $gross = $method->invoke($payslipService, $earningLines, $breakdown);
+
+        $this->assertEqualsWithDelta($expectedGross, $gross, 0.02);
+    }
+
+    public function test_late_breakdown_prefers_ledger_minutes_over_inflated_policy_label(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $snapshot = [
+            'daily_rate' => 450.0,
+            'summary' => [
+                'daily_rate' => 450.0,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 5097.38,
+                    'display_amount' => 5400.0,
+                ]],
+            ],
+            'daily_computation_days' => [[
+                'date' => '2026-08-26',
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'required_minutes' => 480,
+                'regular_day_minutes' => 390,
+                'regular_night_minutes' => 0,
+                'late_deduction_minutes' => 90,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '9 hours 30 minutes late',
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 390,
+                    'rate' => 56.25,
+                    'amount' => 365.63,
+                ]],
+            ]],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $rows = collect($normalized['summary']['attendance_pay_breakdown']['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(90, (int) ($rows['late']['minutes'] ?? 0));
+        $this->assertSame('1 hr 30 mins', $rows['late']['details'] ?? null);
+    }
+
     public function test_fixed_semi_monthly_zero_presence_yields_zero_basic_pay(): void
     {
         $service = app(PayrollComputationService::class);

@@ -3383,7 +3383,7 @@ class PayrollComputationService implements PayrollBulkComputation
                         : 0;
                     if ($tardinessStatus === 'late' || $dayLateMinutes > 0) {
                         $lateCount++;
-                        $lateMinutes += max($shortfallMinutes, $dayLateMinutes);
+                        $lateMinutes += $dayLateMinutes > 0 ? $dayLateMinutes : $shortfallMinutes;
                         $lateAmountRunning += $dayRegularPayShortfall;
                     } elseif ($dayUndertimeMinutes > 0) {
                         $undertimeCount++;

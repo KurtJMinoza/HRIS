@@ -563,6 +563,7 @@ class PayrollReportService
         ];
         $unworkedHolidayPay = 0.0;
         $workedHolidayPremium = 0.0;
+        $otherPremiumPay = 0.0;
         $workedHolidayBase = round((float) ($summary['worked_holiday_base_pay_total'] ?? 0), 2);
         $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
         $refundBucketTotals = [
@@ -580,13 +581,21 @@ class PayrollReportService
             }
             if ($this->payslipService->isUnworkedHolidayPayLine($line)) {
                 $unworkedHolidayPay += $amount;
-
+            }
+        }
+        foreach ($earningLines as $line) {
+            $amount = $this->lineAmount($line);
+            if ($amount <= 0.0) {
                 continue;
             }
             if ($this->payslipService->isWorkedHolidayPayLine($line)
                 || $this->payslipService->isRestDayWorkedPremiumLine($line)) {
                 $split = $this->payslipService->resolveWorkedHolidayDisplaySplit($line, $dailyRate);
-                $workedHolidayPremium += $split['premium'];
+                if ($this->reportThirtyPercentPremiumLine($line)) {
+                    $otherPremiumPay += $split['premium'] > 0.0001 ? $split['premium'] : $amount;
+                } else {
+                    $workedHolidayPremium += $split['premium'] > 0.0001 ? $split['premium'] : $amount;
+                }
                 if ($workedHolidayBase <= 0.0001 && $split['rolls_base_into_regular']) {
                     $workedHolidayBase += $split['base'];
                 }
@@ -652,7 +661,7 @@ class PayrollReportService
         $earnings['allowance'] = $this->preferLineBucketAmount($earnings['allowance'], $reportMetrics, $categoryTotals, 'allowances', 'allowance');
         // Other earnings come only from explicit report buckets (uncategorized lines).
         // Refund lines are routed to their source component columns (Basic Pay, OT, etc.).
-        $earnings['other_earnings'] = round(max(0.0, $earnings['other_earnings'] + $refundBucketTotals['other_earnings']), 2);
+        $earnings['other_earnings'] = round(max(0.0, $earnings['other_earnings'] + $refundBucketTotals['other_earnings'] + $otherPremiumPay), 2);
 
         $deductions = [
             'sss' => 0.0,
@@ -1086,6 +1095,37 @@ class PayrollReportService
         }
 
         return 'other_earning';
+    }
+
+    /**
+     * Special non-working and rest-day statutory increments (30%) belong in Other, not Holiday.
+     *
+     * @param  array<string, mixed>  $line
+     */
+    private function reportThirtyPercentPremiumLine(array $line): bool
+    {
+        if ($this->payslipService->isRestDayWorkedPremiumLine($line)) {
+            return true;
+        }
+
+        $componentCode = strtoupper(trim((string) ($line['component_code'] ?? '')));
+        $label = strtolower(trim((string) ($line['label'] ?? '')));
+        if (
+            str_contains($componentCode, 'SPECIAL')
+            && str_contains($componentCode, 'WORKED')
+            && ! str_contains($componentCode, 'RESTDAY')
+        ) {
+            return true;
+        }
+
+        if (str_contains($label, '30% additional')) {
+            return true;
+        }
+
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        $multiplier = (float) ($metadata['multiplier'] ?? 0);
+
+        return $multiplier >= 1.29 && $multiplier <= 1.31;
     }
 
     /**

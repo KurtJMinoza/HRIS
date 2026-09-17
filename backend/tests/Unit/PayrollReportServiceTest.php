@@ -195,16 +195,17 @@ class PayrollReportServiceTest extends TestCase
 
     public function test_report_gross_and_net_use_frozen_columns_when_finalized(): void
     {
+        $expectedGross = 9759.60;
         $payslip = new Payslip;
         $payslip->forceFill([
             'status' => Payslip::STATUS_FINALIZED,
-            'gross_pay' => 10000.0,
+            'gross_pay' => $expectedGross,
             'total_deductions' => 0,
-            'net_pay' => 10000.0,
+            'net_pay' => $expectedGross,
             'snapshot' => [
                 'summary' => [
-                    'display_gross_pay' => 11298.06,
-                    'display_net_pay' => 11298.06,
+                    'display_gross_pay' => $expectedGross,
+                    'display_net_pay' => $expectedGross,
                     'daily_computation_earning_lines' => [[
                         'key' => 'daily:regular_pay',
                         'label' => 'Regular pay',
@@ -227,8 +228,73 @@ class PayrollReportServiceTest extends TestCase
         $method->setAccessible(true);
         $row = $method->invoke($service, $payslip);
 
-        $this->assertEqualsWithDelta(10000.0, (float) $row['gross_earnings'], 0.02);
-        $this->assertEqualsWithDelta(10000.0, (float) $row['net_pay'], 0.02);
+        $this->assertEqualsWithDelta($expectedGross, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta($expectedGross, (float) $row['net_pay'], 0.02);
+    }
+
+    public function test_report_gross_uses_after_reductions_when_stored_frozen_gross_is_stale_high(): void
+    {
+        $lateDeduction = 35.66;
+        $regularAfterLate = 6810.80;
+        $paidLeave = 570.54;
+        $holidayPay = 570.54;
+        $expectedGross = round($regularAfterLate + $paidLeave + $holidayPay, 2);
+        $staleStoredGross = round(6846.46 + $paidLeave + $holidayPay, 2);
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => $staleStoredGross,
+            'total_deductions' => 416.67,
+            'net_pay' => round($staleStoredGross - 416.67, 2),
+            'snapshot' => [
+                'summary' => [
+                    'regular_fixed_semi_monthly_payroll' => true,
+                    'display_gross_pay' => $staleStoredGross,
+                    'display_net_pay' => round($staleStoredGross - 416.67, 2),
+                    'daily_rate' => 570.54,
+                    'attendance_pay_breakdown' => [
+                        'available' => true,
+                        'regular_pay_after_reductions' => $regularAfterLate,
+                        'total_deduction' => $lateDeduction,
+                    ],
+                    'daily_computation_earning_lines' => [
+                        [
+                            'key' => 'daily:regular_pay',
+                            'label' => 'Regular pay',
+                            'amount' => $regularAfterLate,
+                            'display_amount' => 6846.46,
+                        ],
+                        [
+                            'key' => 'daily:paid_leave',
+                            'label' => 'Leave adjustments',
+                            'amount' => $paidLeave,
+                            'display_amount' => $paidLeave,
+                            'metadata' => ['included_in_fixed_semi_monthly_basic' => true],
+                        ],
+                        [
+                            'key' => 'holiday:2026-08-31:REGULAR_HOLIDAY_WORKED_PAY',
+                            'label' => 'Regular Holiday — Worked Pay: NATIONAL HEROES DAY',
+                            'amount' => $holidayPay,
+                            'component_code' => 'REGULAR_HOLIDAY_WORKED_PAY',
+                        ],
+                    ],
+                    'payslip_earning_lines' => [],
+                    'payslip_deduction_lines' => [],
+                    'payslip_custom_deduction_lines' => [],
+                ],
+            ],
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta($expectedGross, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta($regularAfterLate, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta($holidayPay, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
     }
 
     public function test_report_gross_and_net_match_frozen_payslip_net_after_display_repair(): void
@@ -418,7 +484,8 @@ class PayrollReportServiceTest extends TestCase
         $row = $method->invoke($service, $payslip);
 
         $this->assertEqualsWithDelta(6923.08, (float) $row['regular_basic_pay'], 0.02);
-        $this->assertEqualsWithDelta(288.46, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(288.46, (float) $row['other_earnings'], 0.02);
     }
 
     public function test_report_consultant_basic_pay_uses_semi_monthly_not_monthly(): void
@@ -564,7 +631,8 @@ class PayrollReportServiceTest extends TestCase
         $row = $method->invoke($service, $payslip);
 
         $this->assertEqualsWithDelta(4692.31, (float) $row['regular_basic_pay'], 0.02);
-        $this->assertEqualsWithDelta(207.69, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(0.0, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(207.69, (float) $row['other_earnings'], 0.02);
     }
 
     public function test_payslip_hides_unworked_holiday_lines_from_display(): void

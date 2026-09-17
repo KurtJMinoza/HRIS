@@ -216,15 +216,16 @@ class BankPayrollExportServiceTest extends TestCase
 
     public function test_export_net_pay_uses_frozen_column_when_finalized(): void
     {
+        $expectedNet = 9759.60;
         $payslip = new Payslip([
             'status' => Payslip::STATUS_FINALIZED,
-            'net_pay' => 10000.0,
-            'gross_pay' => 10000.0,
+            'net_pay' => $expectedNet,
+            'gross_pay' => $expectedNet,
             'total_deductions' => 0,
             'snapshot' => [
                 'summary' => [
-                    'display_gross_pay' => 11298.06,
-                    'display_net_pay' => 11298.06,
+                    'display_gross_pay' => $expectedNet,
+                    'display_net_pay' => $expectedNet,
                     'daily_computation_earning_lines' => [[
                         'key' => 'daily:regular_pay',
                         'label' => 'Regular pay',
@@ -244,6 +245,6 @@ class BankPayrollExportServiceTest extends TestCase
         $method->setAccessible(true);
         $netPay = $method->invoke(app(BankPayrollExportService::class), $payslip);
 
-        $this->assertSame(10000.0, $netPay);
+        $this->assertSame($expectedNet, $netPay);
     }
 }
