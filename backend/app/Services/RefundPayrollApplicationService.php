@@ -531,16 +531,7 @@ class RefundPayrollApplicationService
         }
 
         if ($applicationTiming === 'selected_payroll_cycle' && $cutoffStart !== null && $cutoffEnd !== null) {
-            if ($from === $cutoffStart && $to === $cutoffEnd) {
-                return true;
-            }
-
-            // Selected cycle closed (finalized or missed) — carry to the employee's next payroll.
-            if ($this->selectedPayrollCycleHasClosed($refund) && $from > $cutoffEnd) {
-                return true;
-            }
-
-            return false;
+            return $from === $cutoffStart && $to === $cutoffEnd;
         }
 
         return $affectedFrom <= $to && $affectedTo >= $from;

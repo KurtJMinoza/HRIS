@@ -529,7 +529,7 @@ class PayrollReportService
             ? $payslip->snapshot
             : (is_string($payslip->snapshot) ? json_decode($payslip->snapshot, true) : []);
         $viewSnapshot = is_array($snapshot) && $snapshot !== []
-            ? $this->payslipService->frozenSnapshotForPayslipView($snapshot)
+            ? $this->payslipService->frozenSnapshotForPayslipView($snapshot, $payslip)
             : [];
         $summary = is_array($viewSnapshot['summary'] ?? null)
             ? $viewSnapshot['summary']
@@ -579,6 +579,9 @@ class PayrollReportService
             if ($amount <= 0.0) {
                 continue;
             }
+            if ($this->payslipService->isPayrollAdjustmentRefundLine($line)) {
+                continue;
+            }
             if ($this->payslipService->isUnworkedHolidayPayLine($line)) {
                 $unworkedHolidayPay += $amount;
             }
@@ -607,6 +610,12 @@ class PayrollReportService
                 continue;
             }
             if ($this->payslipService->isPayrollAdjustmentRefundLine($line)) {
+                if (! $this->payslipService->refundLineCountsTowardDisplayGross($line, $summary)) {
+                    continue;
+                }
+                if (! $this->refundLineIncludedInFrozenPayslipGross($payslip, $earningLines, $summary, $line)) {
+                    continue;
+                }
                 $bucket = $this->refundEarningBucket($line);
                 $refundBucketTotals[$bucket] = round($refundBucketTotals[$bucket] + $amount, 2);
 
@@ -923,6 +932,52 @@ class PayrollReportService
     }
 
     /**
+     * Finalized payslips may retain orphan refund lines that are not part of frozen gross_pay.
+     *
+     * @param  list<array<string, mixed>>  $earningLines
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $line
+     */
+    private function refundLineIncludedInFrozenPayslipGross(
+        Payslip $payslip,
+        array $earningLines,
+        array $summary,
+        array $line,
+    ): bool {
+        if (! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return true;
+        }
+
+        $storedGross = round((float) ($payslip->gross_pay ?? 0), 2);
+        if ($storedGross <= 0.0001) {
+            return true;
+        }
+
+        $refundId = (int) data_get($line, 'metadata.refund_request_id', 0);
+        if ($refundId <= 0) {
+            return true;
+        }
+
+        $filtered = array_values(array_filter(
+            $earningLines,
+            fn ($candidate) => is_array($candidate)
+                && (int) data_get($candidate, 'metadata.refund_request_id', 0) !== $refundId
+        ));
+        $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : null;
+        $sumMethod = new \ReflectionMethod($this->payslipService, 'sumPayslipLineDisplayAmounts');
+        $sumMethod->setAccessible(true);
+        $grossWithout = round((float) $sumMethod->invoke(
+            $this->payslipService,
+            $filtered,
+            $attendanceBreakdown
+        ), 2);
+
+        return abs($grossWithout - $storedGross) > 0.02;
+    }
+
+    /**
      * Route payroll-adjustment refund earnings to report columns.
      * Only attendance reasons in RefundRequest::BASIC_PAY_REPORT_REASONS use Basic Pay.
      *
@@ -932,6 +987,11 @@ class PayrollReportService
     {
         if ($this->refundRoutesToBasicPayReport($line)) {
             return 'regular_basic_pay';
+        }
+
+        $reason = $this->refundReasonFromLine($line);
+        if ($reason !== null && in_array($reason, RefundRequest::HOLIDAY_PAY_REPORT_REASONS, true)) {
+            return 'holiday_pay';
         }
 
         $source = strtolower(trim((string) ($line['source'] ?? $line['category'] ?? '')));
@@ -1055,6 +1115,11 @@ class PayrollReportService
      */
     private function refundMetricCategoryKey(array $line): ?string
     {
+        $reason = $this->refundReasonFromLine($line);
+        if ($reason !== null && in_array($reason, RefundRequest::HOLIDAY_PAY_REPORT_REASONS, true)) {
+            return 'holiday_pay';
+        }
+
         $category = strtolower(trim((string) ($line['category'] ?? '')));
         if ($category === 'basic_pay') {
             return 'regular_pay';

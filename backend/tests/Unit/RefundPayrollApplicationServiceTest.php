@@ -140,7 +140,7 @@ class RefundPayrollApplicationServiceTest extends TestCase
         }
     }
 
-    public function test_selected_payroll_cycle_carries_to_next_window_after_cycle_closes_without_employee_draft(): void
+    public function test_selected_payroll_cycle_does_not_carry_to_next_window_after_cycle_closes(): void
     {
         Carbon::setTestNow('2026-08-31');
 
@@ -158,7 +158,7 @@ class RefundPayrollApplicationServiceTest extends TestCase
             ]);
 
             $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-11', '2026-08-25'));
-            $this->assertTrue($service->isEligibleForPayWindow($refund, '2026-08-26', '2026-09-10'));
+            $this->assertFalse($service->isEligibleForPayWindow($refund, '2026-08-26', '2026-09-10'));
         } finally {
             Carbon::setTestNow();
         }

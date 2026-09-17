@@ -66,6 +66,8 @@ class PayrollReportServiceTest extends TestCase
             'daily_rate' => 961.54,
             'summary' => [
                 'daily_rate' => 961.54,
+                'display_gross_pay' => 16276.46,
+                'display_net_pay' => 16276.46,
                 'daily_computation_earning_lines' => [[
                     'key' => 'daily:regular_pay',
                     'label' => 'Regular pay',
@@ -858,6 +860,105 @@ class PayrollReportServiceTest extends TestCase
         $this->assertEqualsWithDelta(2500.0, (float) $row['allowance'], 0.02);
         $this->assertEqualsWithDelta(22500.0, (float) $row['gross_earnings'], 0.02);
         $this->assertEqualsWithDelta(22500.0, (float) $row['net_pay'], 0.02);
+    }
+
+    public function test_report_missing_holiday_pay_refund_routes_to_holiday_column(): void
+    {
+        $snapshot = [
+            'summary' => [
+                'display_gross_pay' => 8101.25,
+                'display_net_pay' => 8101.25,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => 7020,
+                    ],
+                    [
+                        'key' => 'holiday:2026-08-31:REGULAR_HOLIDAY_WORKED_PAY',
+                        'label' => 'Regular Holiday — Worked Pay: NATIONAL HEROES DAY',
+                        'amount' => 540,
+                        'component_code' => 'REGULAR_HOLIDAY_WORKED_PAY',
+                    ],
+                ],
+                'payslip_earning_lines' => [
+                    [
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Attendance Refund — Missing Holiday Pay',
+                        'amount' => 157.5,
+                        'category' => 'basic_pay',
+                        'component_code' => 'refund_basic_pay',
+                        'metadata' => ['reason' => 'missing_holiday_pay', 'refund_request_id' => 4],
+                    ],
+                    [
+                        'key' => 'refund_basic_pay',
+                        'label' => 'Refund — Other',
+                        'amount' => 541.25,
+                        'category' => 'basic_pay',
+                        'component_code' => 'refund_basic_pay',
+                        'metadata' => ['reason' => 'other', 'refund_request_id' => 68],
+                    ],
+                ],
+            ],
+        ];
+
+        $payslip = new Payslip;
+        $payslip->forceFill([
+            'status' => Payslip::STATUS_FINALIZED,
+            'gross_pay' => 8101.25,
+            'total_deductions' => 0,
+            'net_pay' => 8101.25,
+            'snapshot' => $snapshot,
+        ]);
+
+        $service = app(PayrollReportService::class);
+        $method = (new ReflectionClass($service))->getMethod('rowForPayslip');
+        $method->setAccessible(true);
+        $row = $method->invoke($service, $payslip);
+
+        $this->assertEqualsWithDelta(7020.0, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(540.0, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(541.25, (float) $row['other_earnings'], 0.02);
+        $this->assertEqualsWithDelta(8101.25, (float) $row['gross_earnings'], 0.02);
+    }
+
+    public function test_fixed_semi_monthly_missing_holiday_refund_does_not_inflate_gross(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $summary = [
+            'regular_fixed_semi_monthly_payroll' => true,
+            'attendance_pay_breakdown' => [
+                'available' => true,
+                'regular_pay_after_reductions' => 8264.45,
+                'total_deduction' => 43.27,
+            ],
+            'daily_computation_earning_lines' => [[
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => 8307.72,
+                'display_amount' => 8307.72,
+            ]],
+            'payslip_earning_lines' => [[
+                'key' => 'refund_basic_pay',
+                'label' => 'Attendance Refund — Missing Holiday Pay',
+                'amount' => 692.3,
+                'category' => 'basic_pay',
+                'component_code' => 'refund_basic_pay',
+                'metadata' => ['reason' => 'missing_holiday_pay', 'refund_request_id' => 58],
+            ]],
+        ];
+
+        $refundLine = $summary['payslip_earning_lines'][0];
+        $this->assertFalse($payslipService->refundLineCountsTowardDisplayGross($refundLine, $summary));
+
+        $stripped = $payslipService->stripRefundsExcludedFromDisplayGross($summary);
+        $this->assertSame([], $stripped['payslip_earning_lines']);
+
+        $refresh = (new ReflectionClass($payslipService))->getMethod('refreshRegularPayDisplayTotals');
+        $refresh->setAccessible(true);
+        $displaySummary = $refresh->invoke($payslipService, $stripped);
+
+        $this->assertEqualsWithDelta(8264.45, (float) ($displaySummary['display_gross_pay'] ?? 0), 0.02);
     }
 
     public function test_report_other_reason_refund_basic_pay_routes_to_other_column(): void

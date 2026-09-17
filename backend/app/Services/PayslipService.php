@@ -1656,10 +1656,11 @@ class PayslipService
             }
 
             $display = $this->payslipDisplayTotalsFromSnapshot(
-                $this->frozenSnapshotForPayslipView($snapshot),
+                $this->frozenSnapshotForPayslipView($snapshot, $payslip),
                 true
             );
             $rawSummary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+            $storedSummaryDisplayGross = round((float) ($rawSummary['display_gross_pay'] ?? 0), 2);
             $storedSummaryDisplayNet = round((float) ($rawSummary['display_net_pay'] ?? 0), 2);
             $attendanceBreakdown = is_array($rawSummary['attendance_pay_breakdown'] ?? null)
                 ? $rawSummary['attendance_pay_breakdown']
@@ -1677,6 +1678,26 @@ class PayslipService
                         ? $display['total_deductions']
                         : $stored['total_deductions'],
                     'net_pay' => round($display['gross_pay'] - (
+                        $display['total_deductions'] > 0.0001
+                            ? $display['total_deductions']
+                            : $stored['total_deductions']
+                    ), 2),
+                ];
+            }
+
+            // Frozen gross with orphan snapshot lines added after finalize.
+            if (
+                $stored['gross_pay'] > 0
+                && $storedSummaryDisplayGross > 0
+                && abs($stored['gross_pay'] - $storedSummaryDisplayGross) <= 0.015
+                && $display['gross_pay'] > $stored['gross_pay'] + 0.015
+            ) {
+                return [
+                    'gross_pay' => $stored['gross_pay'],
+                    'total_deductions' => $display['total_deductions'] > 0.0001
+                        ? $display['total_deductions']
+                        : $stored['total_deductions'],
+                    'net_pay' => round($stored['gross_pay'] - (
                         $display['total_deductions'] > 0.0001
                             ? $display['total_deductions']
                             : $stored['total_deductions']
@@ -1728,7 +1749,41 @@ class PayslipService
             ];
         }
 
-        return $this->payslipDisplayTotalsFromSnapshot($snapshot);
+        if (round((float) ($payslip->gross_pay ?? 0), 2) > 0.0001) {
+            $display = $this->payslipDisplayTotalsFromSnapshot(
+                $this->frozenSnapshotForPayslipView($snapshot, $payslip),
+                true
+            );
+            $stored = [
+                'gross_pay' => round((float) ($payslip->gross_pay ?? 0), 2),
+                'total_deductions' => round((float) ($payslip->total_deductions ?? 0), 2),
+                'net_pay' => round((float) ($payslip->net_pay ?? 0), 2),
+            ];
+
+            if (abs($stored['gross_pay'] - $display['gross_pay']) <= 0.015) {
+                return $stored;
+            }
+
+            if ($display['gross_pay'] > $stored['gross_pay'] + 0.015) {
+                return [
+                    'gross_pay' => $display['gross_pay'],
+                    'total_deductions' => $display['total_deductions'] > 0.0001
+                        ? $display['total_deductions']
+                        : $stored['total_deductions'],
+                    'net_pay' => round($display['gross_pay'] - (
+                        $display['total_deductions'] > 0.0001
+                            ? $display['total_deductions']
+                            : $stored['total_deductions']
+                    ), 2),
+                ];
+            }
+
+            return $display;
+        }
+
+        return $this->payslipDisplayTotalsFromSnapshot(
+            $this->frozenSnapshotForPayslipView($snapshot, $payslip)
+        );
     }
 
     /**
@@ -2836,11 +2891,20 @@ class PayslipService
      * @param  array<string, mixed>  $snapshot
      * @return array<string, mixed>
      */
-    public function frozenSnapshotForPayslipView(array $snapshot): array
+    public function frozenSnapshotForPayslipView(array $snapshot, ?Payslip $payslip = null): array
     {
         $out = $snapshot;
         $summary = is_array($out['summary'] ?? null) ? $out['summary'] : [];
         $summary = $this->coerceSummaryTableArraysToZeroIndexedLists($summary);
+        if ($payslip instanceof Payslip && $payslip->pay_period_start !== null && $payslip->pay_period_end !== null) {
+            $summary = $this->stripIneligibleRefundLinesFromSummary(
+                $summary,
+                $payslip->pay_period_start->toDateString(),
+                $payslip->pay_period_end->toDateString(),
+                (int) $payslip->user_id
+            );
+        }
+        $summary = $this->stripRefundsExcludedFromDisplayGross($summary);
         if ($this->isExecomSnapshot($out, $summary)) {
             $summary = $this->sanitizeExecomPayslipSummary($summary);
         } elseif ($this->isConsultantSnapshot($out, $summary)) {
@@ -2964,12 +3028,21 @@ class PayslipService
             );
             if ($isLocked || $isExecom) {
                 return $this->withFrozenPayslipDisplayTotals(
-                    $this->frozenSnapshotForPayslipView($snapshotRaw),
+                    $this->frozenSnapshotForPayslipView($snapshotRaw, $payslip),
                     $payslip
                 );
             }
 
-            return $this->normalizeSnapshotForPayslipView($snapshotRaw);
+            if (round((float) ($payslip->gross_pay ?? 0), 2) > 0.0001) {
+                return $this->withFrozenPayslipDisplayTotals(
+                    $this->frozenSnapshotForPayslipView($snapshotRaw, $payslip),
+                    $payslip
+                );
+            }
+
+            return $this->normalizeSnapshotForPayslipView(
+                $this->frozenSnapshotForPayslipView($snapshotRaw, $payslip)
+            );
         }
 
         // No stored snapshot: only non-EXECOM attempts a live build here.
@@ -3450,7 +3523,7 @@ class PayslipService
         $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
             ? $summary['attendance_pay_breakdown']
             : null;
-        $gross = $this->sumPayslipLineDisplayAmounts($earningLines, $attendanceBreakdown);
+        $gross = $this->sumPayslipLineDisplayAmounts($earningLines, $attendanceBreakdown, $summary);
         if ($gross <= 0.0001) {
             $gross = $this->sumPayslipLineAmounts($earningLines);
         }
@@ -3598,8 +3671,9 @@ class PayslipService
      *
      * @param  list<array<string, mixed>>  $lines
      * @param  array<string, mixed>|null  $attendanceBreakdown
+     * @param  array<string, mixed>|null  $summary
      */
-    private function sumPayslipLineDisplayAmounts(array $lines, ?array $attendanceBreakdown = null): float
+    private function sumPayslipLineDisplayAmounts(array $lines, ?array $attendanceBreakdown = null, ?array $summary = null): float
     {
         $total = 0.0;
         $regularHandled = false;
@@ -3610,15 +3684,18 @@ class PayslipService
             if (! empty($line['exempted'])) {
                 continue;
             }
-            if ($this->isUnworkedHolidayPayLine($line)) {
-                continue;
-            }
             if ($this->isPayrollAdjustmentRefundLine($line)) {
+                if (is_array($summary) && ! $this->refundLineCountsTowardDisplayGross($line, $summary)) {
+                    continue;
+                }
                 $refundAmount = $line['display_amount'] ?? $line['amount'] ?? $line['resolved_amount'] ?? null;
                 if (is_numeric($refundAmount)) {
                     $total += max(0.0, (float) $refundAmount);
                 }
 
+                continue;
+            }
+            if ($this->isUnworkedHolidayPayLine($line)) {
                 continue;
             }
             if ($this->isFixedSemiMonthlyIncludedPaidLeaveLine($line)) {
@@ -3945,6 +4022,63 @@ class PayslipService
      * @param  array<string, mixed>  $snapshot
      * @return array<string, mixed>
      */
+    /**
+     * Remove refund lines that do not belong on this pay window (e.g. selected-cycle carry-over).
+     *
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    public function stripIneligibleRefundLinesFromSummary(
+        array $summary,
+        string $from,
+        string $to,
+        int $employeeId,
+    ): array {
+        $refundService = app(RefundPayrollApplicationService::class);
+        $keepRefundLine = function ($line) use ($refundService, $from, $to, $employeeId): bool {
+            if (! is_array($line) || ! $this->isPayrollAdjustmentRefundLine($line)) {
+                return true;
+            }
+
+            $refundId = (int) data_get($line, 'metadata.refund_request_id', 0);
+            if ($refundId <= 0) {
+                return true;
+            }
+
+            $refund = RefundRequest::query()->find($refundId);
+            if (! $refund instanceof RefundRequest) {
+                return true;
+            }
+            if ((int) $refund->employee_id !== $employeeId) {
+                return false;
+            }
+
+            return $refundService->isEligibleForPayWindow($refund, $from, $to);
+        };
+
+        $summary['payslip_earning_lines'] = array_values(array_filter(
+            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
+            $keepRefundLine
+        ));
+        $summary['payslip_deduction_lines'] = array_values(array_filter(
+            is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
+            $keepRefundLine
+        ));
+        $summary['payroll_adjustment_lines'] = array_values(array_filter(
+            is_array($summary['payroll_adjustment_lines'] ?? null) ? $summary['payroll_adjustment_lines'] : [],
+            fn ($row) => is_array($row)
+                && (
+                    (int) ($row['refund_request_id'] ?? 0) <= 0
+                    || $keepRefundLine([
+                        'metadata' => ['refund_request_id' => (int) ($row['refund_request_id'] ?? 0)],
+                        'component_code' => 'refund_adjustment',
+                    ])
+                )
+        ));
+
+        return $summary;
+    }
+
     private function stripRefundAdjustmentLinesFromSnapshot(array $snapshot): array
     {
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
@@ -4168,6 +4302,7 @@ class PayslipService
                 : []
         );
         $summary = $this->ensureRegularPayDisplayLineWhenMissing($summary, $regularPayPresentDays, $dailyRate);
+        $summary = $this->stripRefundsExcludedFromDisplayGross($summary);
         $earningLines = ($isExecomSnapshot || $isConsultantSnapshot)
             ? (is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [])
             : array_merge(
@@ -4184,7 +4319,8 @@ class PayslipService
         $earningLines = $this->deduplicatePayslipLines(array_values(array_filter($earningLines, 'is_array')));
         $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts(
             $earningLines,
-            $attendanceBreakdown
+            $attendanceBreakdown,
+            $summary
         );
         $summary['display_net_pay'] = $this->resolveDisplayNetPay(
             (float) $summary['display_gross_pay'],
@@ -5330,7 +5466,7 @@ class PayslipService
                 ? $summary['payslip_custom_deduction_lines']
                 : []
         );
-        $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts($earningLines, null);
+        $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts($earningLines, null, $summary);
         if ((float) ($summary['display_gross_pay'] ?? 0) <= 0.0001) {
             $summary['display_gross_pay'] = $this->sumPayslipLineAmounts($earningLines);
         }
@@ -5376,7 +5512,7 @@ class PayslipService
         $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
             ? $summary['attendance_pay_breakdown']
             : null;
-        $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts($earningLines, $breakdown);
+        $summary['display_gross_pay'] = $this->sumPayslipLineDisplayAmounts($earningLines, $breakdown, $summary);
         $summary['display_net_pay'] = $this->resolveDisplayNetPay(
             (float) $summary['display_gross_pay'],
             $deductionLines,
@@ -5428,6 +5564,10 @@ class PayslipService
      */
     public function isUnworkedHolidayPayLine(array $line): bool
     {
+        if ($this->isPayrollAdjustmentRefundLine($line)) {
+            return false;
+        }
+
         if (! $this->isHolidayPayLine($line)) {
             return false;
         }
@@ -6796,6 +6936,95 @@ class PayslipService
             || str_starts_with($key, 'payroll_recovery_')
             || str_starts_with($component, 'refund_')
             || str_starts_with($component, 'payroll_recovery_');
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    public function refundReasonFromLine(array $line): ?string
+    {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+        $reason = strtolower(trim((string) ($metadata['reason'] ?? $line['reason'] ?? '')));
+        if ($reason !== '' && $reason !== 'null') {
+            return $reason;
+        }
+
+        $label = trim((string) ($line['label'] ?? $line['name'] ?? ''));
+        $separator = ' — ';
+        $separatorPos = strpos($label, $separator);
+        if ($separatorPos !== false) {
+            $reasonLabel = trim(substr($label, $separatorPos + strlen($separator)));
+            foreach (RefundRequest::reasonOptions() as $option) {
+                if (strcasecmp($option['label'], $reasonLabel) === 0) {
+                    return $option['value'];
+                }
+            }
+        }
+
+        foreach (RefundRequest::reasonOptions() as $option) {
+            if (strcasecmp($option['label'], $label) === 0) {
+                return $option['value'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Fixed semi-monthly regular pay after reductions already embeds unworked holiday pay.
+     *
+     * @param  array<string, mixed>  $line
+     * @param  array<string, mixed>  $summary
+     */
+    public function refundLineCountsTowardDisplayGross(array $line, array $summary): bool
+    {
+        if (! $this->isPayrollAdjustmentRefundLine($line)) {
+            return true;
+        }
+        if (empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            return true;
+        }
+
+        $reason = $this->refundReasonFromLine($line);
+
+        return ! ($reason !== null && in_array($reason, RefundRequest::HOLIDAY_PAY_REPORT_REASONS, true));
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @return array<string, mixed>
+     */
+    public function stripRefundsExcludedFromDisplayGross(array $summary): array
+    {
+        $keepLine = function ($line) use ($summary): bool {
+            if (! is_array($line) || ! $this->isPayrollAdjustmentRefundLine($line)) {
+                return true;
+            }
+
+            return $this->refundLineCountsTowardDisplayGross($line, $summary);
+        };
+
+        $summary['payslip_earning_lines'] = array_values(array_filter(
+            is_array($summary['payslip_earning_lines'] ?? null) ? $summary['payslip_earning_lines'] : [],
+            $keepLine
+        ));
+        $summary['payslip_deduction_lines'] = array_values(array_filter(
+            is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
+            $keepLine
+        ));
+        $summary['payroll_adjustment_lines'] = array_values(array_filter(
+            is_array($summary['payroll_adjustment_lines'] ?? null) ? $summary['payroll_adjustment_lines'] : [],
+            fn ($row) => is_array($row)
+                && (
+                    (int) ($row['refund_request_id'] ?? 0) <= 0
+                    || $keepLine([
+                        'metadata' => ['refund_request_id' => (int) ($row['refund_request_id'] ?? 0)],
+                        'component_code' => 'refund_adjustment',
+                    ])
+                )
+        ));
+
+        return $summary;
     }
 
     /**

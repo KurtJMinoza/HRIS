@@ -264,7 +264,8 @@ class FinalizePayrollService
                             'total_presence_regular_hours' => 0.0,
                         ];
                     $viewSnapshot = $this->payslipService->frozenSnapshotForPayslipView(
-                        is_array($stored->snapshot) ? $stored->snapshot : []
+                        is_array($stored->snapshot) ? $stored->snapshot : [],
+                        $stored
                     );
                     $viewSummary = is_array($viewSnapshot['summary'] ?? null) ? $viewSnapshot['summary'] : [];
 
@@ -722,7 +723,8 @@ class FinalizePayrollService
                 ? (array) $stored->snapshot['summary']
                 : $summary;
             $viewSnapshot = $this->payslipService->frozenSnapshotForPayslipView(
-                is_array($stored->snapshot) ? $stored->snapshot : []
+                is_array($stored->snapshot) ? $stored->snapshot : [],
+                $stored
             );
             $viewSummary = is_array($viewSnapshot['summary'] ?? null) ? $viewSnapshot['summary'] : [];
             $tableGross = $lineTotals['gross_pay'];

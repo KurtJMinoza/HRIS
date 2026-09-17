@@ -78,6 +78,13 @@ class RefundRequest extends Model
         self::REASON_MISSING_REST_DAY_PAY,
     ];
 
+    /** Refund reasons that land in the payroll report Holiday column (Excel/PDF). */
+    public const HOLIDAY_PAY_REPORT_REASONS = [
+        self::REASON_MISSING_HOLIDAY_PAY,
+        self::REASON_INCORRECT_HOLIDAY_PAY,
+        self::REASON_INCORRECT_REST_DAY_PREMIUM,
+    ];
+
     public const STATUS_DRAFT = 'draft';
 
     public const STATUS_SUBMITTED = 'submitted';
