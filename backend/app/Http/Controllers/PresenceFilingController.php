@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Enums\HrRole;
 use App\Http\Controllers\Concerns\ProcessesBulkApproval;
 use App\Jobs\BulkRejectionFollowUpJob;
-use App\Jobs\ProcessDailyPayrollJob;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceCorrectionApproval;
 use App\Models\AttendanceCorrectionAudit;
@@ -25,8 +24,10 @@ use App\Services\HrRoleResolver;
 use App\Services\NotificationService;
 use App\Services\OrgApprovalWorkflowService;
 use App\Services\OvertimeService;
+use App\Services\PayrollDailyRecordSyncService;
 use App\Services\PayrollFreezeService;
 use App\Services\PayrollPeriodMutationGuard;
+use App\Services\PayslipService;
 use App\Services\PresenceFilingAttendanceLogSyncService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\PresenceFilingService;
@@ -1740,6 +1741,15 @@ class PresenceFilingController extends Controller
     }
 
     /**
+     * ponytail: single approve/reject returns before payroll/notify/email.
+     * Ceiling: payslip/dashboard can lag until afterResponse finishes; upgrade = queue job like bulk follow-up.
+     */
+    private function afterSingleAttendanceCorrectionMutation(callable $callback): void
+    {
+        dispatch($callback)->afterResponse();
+    }
+
+    /**
      * @return array{can_approve: bool, can_reject: bool, deny_reason: ?string}
      */
     private function attendanceCorrectionActionAuthorization(User $actor, AttendanceCorrection $c, ?OrgApprovalRecord $pending): array
@@ -2410,12 +2420,51 @@ class PresenceFilingController extends Controller
 
             if ($nextPending === null) {
                 if (! $this->isBulkApprovalRequest($request)) {
-                    AttendanceCorrectionModuleCache::flushAfterMutation(
-                        $actor,
-                        (int) ($employee->company_id ?? 0) ?: null,
-                        (int) $correction->id,
-                    );
-                    $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
+                    $actorId = (int) $actor->id;
+                    $correctionId = (int) $correction->id;
+                    $companyId = (int) ($employee->company_id ?? 0) ?: null;
+                    $employeeId = (int) $employee->id;
+                    $overtimeService = $this->overtimeService;
+                    $notificationService = $this->notificationService;
+                    $emailTrigger = $this->emailTrigger;
+                    $this->afterSingleAttendanceCorrectionMutation(static function () use (
+                        $actorId,
+                        $correctionId,
+                        $companyId,
+                        $employeeId,
+                        $dateKey,
+                        $overtimeService,
+                        $notificationService,
+                        $emailTrigger,
+                    ): void {
+                        $actor = User::query()->find($actorId);
+                        $employee = User::query()->with('workingSchedule')->find($employeeId);
+                        $correction = AttendanceCorrection::query()->find($correctionId);
+                        if (! $actor || ! $employee || ! $correction) {
+                            return;
+                        }
+                        $overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $correction->time_out, $actor);
+                        app(PayrollDailyRecordSyncService::class)->syncDayForUser($employee, $dateKey);
+                        app(PayslipService::class)->refreshDraftPayslipsCoveringDates($employee, [$dateKey]);
+                        \App\Services\AdminAttendanceCacheService::invalidateAffected(
+                            (int) $employee->id,
+                            $dateKey,
+                            (int) ($employee->company_id ?? 0) ?: null,
+                            (int) ($employee->branch_id ?? 0) ?: null,
+                        );
+                        AttendanceCorrectionModuleCache::flushAfterMutation($actor, $companyId, $correctionId);
+                        $notificationService->markRelatedRead($actorId, 'attendance_correction', $correctionId, 'attendance_correction.needs_approval');
+                        $notificationService->notifyRequester(
+                            $employee,
+                            $correction,
+                            'attendance_correction',
+                            'attendance_correction.approved',
+                            'Attendance correction approved',
+                            'Your attendance correction was approved and applied.',
+                            '/employee/correction-requests?request_id='.$correctionId,
+                        );
+                        $emailTrigger->correctionFinalApproved($correction);
+                    });
                 }
 
                 if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
@@ -2439,16 +2488,42 @@ class PresenceFilingController extends Controller
                 : 'next approver';
 
             if (! $this->isBulkApprovalRequest($request)) {
-                AttendanceCorrectionModuleCache::flushAfterMutation(
-                    $actor,
-                    (int) ($employee->company_id ?? 0) ?: null,
-                    (int) $correction->id,
-                );
-            }
-            if (! $this->isBulkApprovalRequest($request)) {
-                $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
-            }
-            if ($nextPending instanceof OrgApprovalRecord) {
+                $actorId = (int) $actor->id;
+                $correctionId = (int) $correction->id;
+                $companyId = (int) ($employee->company_id ?? 0) ?: null;
+                $employeeName = $employee->display_name ?? $employee->name ?? 'An employee';
+                $nextPendingId = (int) $nextPending->id;
+                $notificationService = $this->notificationService;
+                $emailTrigger = $this->emailTrigger;
+                $this->afterSingleAttendanceCorrectionMutation(static function () use (
+                    $actorId,
+                    $correctionId,
+                    $companyId,
+                    $employeeName,
+                    $nextPendingId,
+                    $notificationService,
+                    $emailTrigger,
+                ): void {
+                    $actor = User::query()->find($actorId);
+                    $correction = AttendanceCorrection::query()->find($correctionId);
+                    $nextPending = OrgApprovalRecord::query()->find($nextPendingId);
+                    if (! $actor || ! $correction || ! $nextPending) {
+                        return;
+                    }
+                    AttendanceCorrectionModuleCache::flushAfterMutation($actor, $companyId, $correctionId);
+                    $notificationService->markRelatedRead($actorId, 'attendance_correction', $correctionId, 'attendance_correction.needs_approval');
+                    $notificationService->notifyApprovalRecord(
+                        $nextPending,
+                        $correction,
+                        'attendance_correction',
+                        'attendance_correction.needs_approval',
+                        'Attendance correction needs approval',
+                        $employeeName.' needs the next attendance correction approval step.',
+                        '/admin/attendance/corrections?review_id='.$correctionId,
+                    );
+                    $emailTrigger->correctionNeedsNextApproval($correction, $nextPending);
+                });
+            } elseif ($nextPending instanceof OrgApprovalRecord) {
                 $this->notificationService->notifyApprovalRecord(
                     $nextPending,
                     $correction,
@@ -2573,37 +2648,76 @@ class PresenceFilingController extends Controller
             $correction->save();
         });
 
-        $this->overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $correction->time_out, $actor);
-
-        if (! $this->isBulkApprovalRequest($request)) {
-            ProcessDailyPayrollJob::dispatchSync($dateKey);
-            app(\App\Services\PayslipService::class)->refreshDraftPayslipsCoveringDates($employee, [$dateKey]);
-        }
-        if (! $this->isBulkApprovalRequest($request)) {
-            AttendanceCorrectionModuleCache::flushAfterMutation(
-                $actor,
-                (int) ($employee->company_id ?? 0) ?: null,
-                (int) $correction->id,
-            );
-            $this->correctionStatusService->logAfterApproval(
+        if ($this->isBulkApprovalRequest($request)) {
+            $this->overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $correction->time_out, $actor);
+            $this->notificationService->notifyRequester(
+                $employee,
                 $correction,
-                $oldStatus,
-                AttendanceCorrectionStatusService::STATUS_APPROVED,
+                'attendance_correction',
+                'attendance_correction.approved',
+                'Attendance correction approved',
+                'Your attendance correction was approved and applied.',
+                '/employee/correction-requests?request_id='.$correction->id,
             );
+            $this->emailTrigger->correctionFinalApproved($correction);
+        } else {
+            $actorId = (int) $actor->id;
+            $correctionId = (int) $correction->id;
+            $companyId = (int) ($employee->company_id ?? 0) ?: null;
+            $employeeId = (int) $employee->id;
+            $oldStatusCaptured = $oldStatus;
+            $overtimeService = $this->overtimeService;
+            $notificationService = $this->notificationService;
+            $emailTrigger = $this->emailTrigger;
+            $correctionStatusService = $this->correctionStatusService;
+            $this->afterSingleAttendanceCorrectionMutation(static function () use (
+                $actorId,
+                $correctionId,
+                $companyId,
+                $employeeId,
+                $dateKey,
+                $oldStatusCaptured,
+                $overtimeService,
+                $notificationService,
+                $emailTrigger,
+                $correctionStatusService,
+            ): void {
+                $actor = User::query()->find($actorId);
+                $employee = User::query()->with('workingSchedule')->find($employeeId);
+                $correction = AttendanceCorrection::query()->find($correctionId);
+                if (! $actor || ! $employee || ! $correction) {
+                    return;
+                }
+
+                $overtimeService->syncActualClockOutToFiledOvertime($employee, $dateKey, $correction->time_out, $actor);
+                // ponytail: sync only this employee — a full-day payroll rebuild for every employee is too slow for single approve.
+                app(PayrollDailyRecordSyncService::class)->syncDayForUser($employee, $dateKey);
+                app(PayslipService::class)->refreshDraftPayslipsCoveringDates($employee, [$dateKey]);
+                \App\Services\AdminAttendanceCacheService::invalidateAffected(
+                    (int) $employee->id,
+                    $dateKey,
+                    (int) ($employee->company_id ?? 0) ?: null,
+                    (int) ($employee->branch_id ?? 0) ?: null,
+                );
+                AttendanceCorrectionModuleCache::flushAfterMutation($actor, $companyId, $correctionId);
+                $correctionStatusService->logAfterApproval(
+                    $correction,
+                    $oldStatusCaptured,
+                    AttendanceCorrectionStatusService::STATUS_APPROVED,
+                );
+                $notificationService->markRelatedRead($actorId, 'attendance_correction', $correctionId, 'attendance_correction.needs_approval');
+                $notificationService->notifyRequester(
+                    $employee,
+                    $correction,
+                    'attendance_correction',
+                    'attendance_correction.approved',
+                    'Attendance correction approved',
+                    'Your attendance correction was approved and applied.',
+                    '/employee/correction-requests?request_id='.$correctionId,
+                );
+                $emailTrigger->correctionFinalApproved($correction);
+            });
         }
-        if (! $this->isBulkApprovalRequest($request)) {
-            $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
-        }
-        $this->notificationService->notifyRequester(
-            $employee,
-            $correction,
-            'attendance_correction',
-            'attendance_correction.approved',
-            'Attendance correction approved',
-            'Your attendance correction was approved and applied.',
-            '/employee/correction-requests?request_id='.$correction->id,
-        );
-        $this->emailTrigger->correctionFinalApproved($correction);
 
         if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
             return response()->json([
@@ -2688,28 +2802,50 @@ class PresenceFilingController extends Controller
         });
 
         $tz = $this->presenceFilingService->attendanceTimezone();
-        AttendanceCorrectionModuleCache::flushAfterMutation(
-            $actor,
-            (int) ($employee->company_id ?? 0) ?: null,
-            (int) $correction->id,
-        );
-        $this->correctionStatusService->logAfterApproval(
-            $correction,
-            $oldStatus,
-            AttendanceCorrectionStatusService::STATUS_REJECTED,
-        );
-        $this->notificationService->markRelatedRead((int) $actor->id, 'attendance_correction', (int) $correction->id, 'attendance_correction.needs_approval');
-        $this->notificationService->notifyRequester(
-            $employee,
-            $correction,
-            'attendance_correction',
-            'attendance_correction.rejected',
-            'Attendance correction rejected',
-            'Your attendance correction was rejected.',
-            '/employee/correction-requests?request_id='.$correction->id,
-            'high',
-        );
-        $this->emailTrigger->correctionRejected($correction);
+        $actorId = (int) $actor->id;
+        $correctionId = (int) $correction->id;
+        $companyId = (int) ($employee->company_id ?? 0) ?: null;
+        $employeeId = (int) $employee->id;
+        $oldStatusCaptured = $oldStatus;
+        $notificationService = $this->notificationService;
+        $emailTrigger = $this->emailTrigger;
+        $correctionStatusService = $this->correctionStatusService;
+        $this->afterSingleAttendanceCorrectionMutation(static function () use (
+            $actorId,
+            $correctionId,
+            $companyId,
+            $employeeId,
+            $oldStatusCaptured,
+            $notificationService,
+            $emailTrigger,
+            $correctionStatusService,
+        ): void {
+            $actor = User::query()->find($actorId);
+            $employee = User::query()->find($employeeId);
+            $correction = AttendanceCorrection::query()->find($correctionId);
+            if (! $actor || ! $employee || ! $correction) {
+                return;
+            }
+
+            AttendanceCorrectionModuleCache::flushAfterMutation($actor, $companyId, $correctionId);
+            $correctionStatusService->logAfterApproval(
+                $correction,
+                $oldStatusCaptured,
+                AttendanceCorrectionStatusService::STATUS_REJECTED,
+            );
+            $notificationService->markRelatedRead($actorId, 'attendance_correction', $correctionId, 'attendance_correction.needs_approval');
+            $notificationService->notifyRequester(
+                $employee,
+                $correction,
+                'attendance_correction',
+                'attendance_correction.rejected',
+                'Attendance correction rejected',
+                'Your attendance correction was rejected.',
+                '/employee/correction-requests?request_id='.$correctionId,
+                'high',
+            );
+            $emailTrigger->correctionRejected($correction);
+        });
 
         if ($this->wantsLiteAttendanceCorrectionMutationResponse($request)) {
             return response()->json([
