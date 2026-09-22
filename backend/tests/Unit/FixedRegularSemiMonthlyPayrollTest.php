@@ -100,6 +100,145 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         );
     }
 
+    public function test_fixed_attendance_routes_late_status_shortfall_to_undertime_when_only_undertime_minutes_apply(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = new \ReflectionMethod($service, 'computeFixedRegularAttendanceDeductions');
+        $method->setAccessible(true);
+
+        $dailyRate = 769.23;
+        $hourlyRate = $dailyRate / 8.0;
+        $undertimeMinutes = 80;
+        $workedMinutes = 480 - $undertimeMinutes;
+        $regularPay = round($hourlyRate * ($workedMinutes / 60.0), 2);
+        $shortfall = round($dailyRate - $regularPay, 2);
+
+        $days = [[
+            'status' => 'worked',
+            'required_minutes' => 480,
+            'is_rest_day' => false,
+            'regular_pay' => $regularPay,
+            'late_deduction_minutes' => 0,
+            'undertime_deduction_minutes' => $undertimeMinutes,
+            'tardiness_status' => 'late',
+            'tardiness_label' => '30 Minutes late',
+            'breakdown' => [
+                ['component' => 'regular_pay', 'minutes' => $workedMinutes, 'amount' => $regularPay],
+            ],
+        ]];
+
+        $breakdown = $method->invoke($service, $days, $dailyRate);
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $policyLateAmount = round((30 / 60.0) * $hourlyRate, 2);
+        $this->assertSame(30, (int) ($rowsByKey['late']['minutes'] ?? 0));
+        $this->assertSame($undertimeMinutes, (int) ($rowsByKey['undertime']['minutes'] ?? 0));
+        $this->assertEqualsWithDelta($policyLateAmount, (float) ($rowsByKey['late']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(round($shortfall - $policyLateAmount, 2), (float) ($rowsByKey['undertime']['deduction_amount'] ?? 0), 0.02);
+    }
+
+    public function test_fixed_attendance_sums_late_buckets_on_undertime_and_late_only_days(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = new \ReflectionMethod($service, 'computeFixedRegularAttendanceDeductions');
+        $method->setAccessible(true);
+
+        $dailyRate = 769.23;
+        $hourlyRate = $dailyRate / 8.0;
+        $sep19Worked = 480 - 80;
+        $sep19Pay = round($hourlyRate * ($sep19Worked / 60.0), 2);
+        $sep19Shortfall = round($dailyRate - $sep19Pay, 2);
+        $sep21Late = 30;
+        $sep21Worked = 480 - $sep21Late;
+        $sep21Pay = round($hourlyRate * ($sep21Worked / 60.0), 2);
+        $sep21Shortfall = round($dailyRate - $sep21Pay, 2);
+
+        $days = [
+            [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'regular_pay' => $sep19Pay,
+                'late_deduction_minutes' => 0,
+                'undertime_deduction_minutes' => 80,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '30 Minutes late',
+                'breakdown' => [['component' => 'regular_pay', 'minutes' => $sep19Worked, 'amount' => $sep19Pay]],
+            ],
+            [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'regular_pay' => $sep21Pay,
+                'late_deduction_minutes' => $sep21Late,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '30 Minutes late',
+                'breakdown' => [['component' => 'regular_pay', 'minutes' => $sep21Worked, 'amount' => $sep21Pay]],
+            ],
+        ];
+
+        $breakdown = $method->invoke($service, $days, $dailyRate);
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $sep19PolicyLateAmount = round((30 / 60.0) * $hourlyRate, 2);
+        $this->assertSame(60, (int) ($rowsByKey['late']['minutes'] ?? 0));
+        $this->assertEqualsWithDelta(
+            $sep21Shortfall + $sep19PolicyLateAmount,
+            (float) ($rowsByKey['late']['deduction_amount'] ?? 0),
+            0.02
+        );
+        $this->assertSame(80, (int) ($rowsByKey['undertime']['minutes'] ?? 0));
+        $this->assertEqualsWithDelta(
+            round($sep19Shortfall - $sep19PolicyLateAmount, 2),
+            (float) ($rowsByKey['undertime']['deduction_amount'] ?? 0),
+            0.02
+        );
+        $this->assertEqualsWithDelta(
+            round((60 / 60.0) * $hourlyRate, 2),
+            (float) ($rowsByKey['late']['deduction_amount'] ?? 0),
+            0.02
+        );
+    }
+
+    public function test_fixed_attendance_splits_late_and_undertime_on_same_day(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = new \ReflectionMethod($service, 'computeFixedRegularAttendanceDeductions');
+        $method->setAccessible(true);
+
+        $dailyRate = 769.23;
+        $hourlyRate = $dailyRate / 8.0;
+        $workedMinutes = 480 - 30 - 81;
+        $regularPay = round($hourlyRate * ($workedMinutes / 60.0), 2);
+        $shortfall = round($dailyRate - $regularPay, 2);
+        $lateAmount = round((30 / 60.0) * $hourlyRate, 2);
+        $undertimeAmount = round($shortfall - $lateAmount, 2);
+
+        $days = [[
+            'status' => 'worked',
+            'required_minutes' => 480,
+            'is_rest_day' => false,
+            'regular_pay' => $regularPay,
+            'late_deduction_minutes' => 30,
+            'undertime_deduction_minutes' => 81,
+            'tardiness_status' => 'undertime',
+            'tardiness_label' => '30 Minutes late',
+            'breakdown' => [
+                ['component' => 'regular_pay', 'minutes' => $workedMinutes, 'amount' => $regularPay],
+            ],
+        ]];
+
+        $breakdown = $method->invoke($service, $days, $dailyRate);
+        $rowsByKey = collect($breakdown['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(30, (int) ($rowsByKey['late']['minutes'] ?? 0));
+        $this->assertSame(81, (int) ($rowsByKey['undertime']['minutes'] ?? 0));
+        $this->assertEqualsWithDelta($lateAmount, (float) ($rowsByKey['late']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta($undertimeAmount, (float) ($rowsByKey['undertime']['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta($shortfall, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+    }
+
     public function test_worked_special_holiday_day_is_not_counted_as_late(): void
     {
         $service = app(PayrollComputationService::class);
@@ -423,6 +562,127 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $gross = $method->invoke($payslipService, $earningLines, $breakdown);
 
         $this->assertEqualsWithDelta($expectedGross, $gross, 0.02);
+    }
+
+    public function test_probationary_normalize_shows_attendance_late_bucket_not_segmentation_drift(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $dailyRate = 557.69;
+        $hourlyRate = $dailyRate / 8.0;
+        $regularPay = round($hourlyRate * (450 / 60.0), 2);
+        $snapshot = [
+            'daily_rate' => $dailyRate,
+            'summary' => [
+                'daily_rate' => $dailyRate,
+                'employment_status' => 'probationary',
+                'basic_pay_this_period' => 4209.4,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 4209.4,
+                    'display_amount' => 4461.52,
+                    'units' => '8 days',
+                ]],
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'rows' => [[
+                        'key' => 'late',
+                        'minutes' => 16,
+                        'deduction_amount' => 18.59,
+                    ]],
+                ],
+            ],
+            'daily_computation_days' => [[
+                'date' => '2026-09-17',
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'required_minutes' => 480,
+                'regular_day_minutes' => 450,
+                'regular_night_minutes' => 0,
+                'regular_pay' => $regularPay,
+                'late_deduction_minutes' => 16,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '30 Minutes late',
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 450,
+                    'amount' => $regularPay,
+                ]],
+            ]],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $rows = collect($normalized['summary']['attendance_pay_breakdown']['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(30, (int) ($rows['late']['minutes'] ?? 0));
+        $this->assertEqualsWithDelta(
+            round((30 / 60.0) * $hourlyRate, 2),
+            (float) ($rows['late']['deduction_amount'] ?? 0),
+            0.02
+        );
+    }
+
+    public function test_fixed_semi_monthly_normalize_shows_attendance_late_bucket_not_segmentation_drift(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $dailyRate = 557.69;
+        $hourlyRate = $dailyRate / 8.0;
+        $regularPay = round($hourlyRate * (450 / 60.0), 2);
+        $snapshot = [
+            'daily_rate' => $dailyRate,
+            'summary' => [
+                'daily_rate' => $dailyRate,
+                'regular_fixed_semi_monthly_payroll' => true,
+                'fixed_semi_monthly_basic_gross' => 7250.0,
+                'semi_monthly_basic_salary' => 7250.0,
+                'basic_pay_this_period' => 4209.4,
+                'regular_pay_present_day_units' => 8.0,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 4209.4,
+                    'display_amount' => 4461.52,
+                    'units' => '8 days',
+                ]],
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'rows' => [[
+                        'key' => 'late',
+                        'minutes' => 16,
+                        'deduction_amount' => 18.59,
+                    ]],
+                ],
+            ],
+            'daily_computation_days' => [[
+                'date' => '2026-09-17',
+                'status' => 'worked',
+                'is_rest_day' => false,
+                'required_minutes' => 480,
+                'regular_day_minutes' => 450,
+                'regular_night_minutes' => 0,
+                'regular_pay' => $regularPay,
+                'late_deduction_minutes' => 16,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '30 Minutes late',
+                'breakdown' => [[
+                    'component' => 'regular_pay',
+                    'minutes' => 450,
+                    'amount' => $regularPay,
+                ]],
+            ]],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $rows = collect($normalized['summary']['attendance_pay_breakdown']['rows'] ?? [])->keyBy('key');
+
+        $this->assertSame(30, (int) ($rows['late']['minutes'] ?? 0));
+        $this->assertEqualsWithDelta(
+            round($dailyRate - $regularPay, 2),
+            (float) ($rows['late']['deduction_amount'] ?? 0),
+            0.02
+        );
     }
 
     public function test_late_breakdown_prefers_ledger_minutes_over_inflated_policy_label(): void

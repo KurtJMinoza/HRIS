@@ -3381,7 +3381,42 @@ class PayrollComputationService implements PayrollBulkComputation
                     $shortfallMinutes = $hourlyRate > 0
                         ? (int) round(($dayRegularPayShortfall / $hourlyRate) * 60.0)
                         : 0;
-                    if ($tardinessStatus === 'late' || $dayLateMinutes > 0) {
+                    if ($dayLateMinutes > 0 && $dayUndertimeMinutes > 0) {
+                        $lateCount++;
+                        $undertimeCount++;
+                        $lateMinutes += $dayLateMinutes;
+                        $undertimeMinutes += $dayUndertimeMinutes;
+                        $split = $this->splitFixedRegularDayShortfallByTardinessMinutes(
+                            $dayRegularPayShortfall,
+                            $dayLateMinutes,
+                            $dayUndertimeMinutes
+                        );
+                        $lateAmountRunning += $split['late'];
+                        $undertimeAmountRunning += $split['undertime'];
+                    } elseif ($dayUndertimeMinutes > 0) {
+                        $undertimeCount++;
+                        $undertimeMinutes += max($shortfallMinutes, $dayUndertimeMinutes);
+                        $policyLateMinutes = $this->tardinessLabelMinutes((string) ($day['tardiness_label'] ?? ''));
+                        $showPolicyLate = $policyLateMinutes !== null
+                            && $policyLateMinutes > 0
+                            && $policyLateMinutes <= 120
+                            && ($tardinessStatus === 'late' || $dayLateMinutes > 0);
+                        if ($showPolicyLate) {
+                            $lateCount++;
+                            $displayLate = $dayLateMinutes > 0
+                                ? max($dayLateMinutes, $policyLateMinutes)
+                                : $policyLateMinutes;
+                            $lateMinutes += $displayLate;
+                            $dayLateAmount = round(min(
+                                $dayRegularPayShortfall,
+                                ($displayLate / 60.0) * $hourlyRate
+                            ), 2);
+                            $lateAmountRunning += $dayLateAmount;
+                            $undertimeAmountRunning += round($dayRegularPayShortfall - $dayLateAmount, 2);
+                        } else {
+                            $undertimeAmountRunning += $dayRegularPayShortfall;
+                        }
+                    } elseif ($tardinessStatus === 'late' || $dayLateMinutes > 0) {
                         $lateCount++;
                         $policyLateMinutes = $this->tardinessLabelMinutes((string) ($day['tardiness_label'] ?? ''));
                         if ($dayLateMinutes > 0) {
@@ -3392,10 +3427,6 @@ class PayrollComputationService implements PayrollBulkComputation
                             $lateMinutes += $shortfallMinutes;
                         }
                         $lateAmountRunning += $dayRegularPayShortfall;
-                    } elseif ($dayUndertimeMinutes > 0) {
-                        $undertimeCount++;
-                        $undertimeMinutes += max($shortfallMinutes, $dayUndertimeMinutes);
-                        $undertimeAmountRunning += $dayRegularPayShortfall;
                     }
                 } elseif ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
                     $lateCount++;
@@ -3519,6 +3550,33 @@ class PayrollComputationService implements PayrollBulkComputation
      *
      * @param  array<string, mixed>  $day
      */
+    /**
+     * Split one day's regular-pay shortfall across late vs undertime using attendance minutes
+     * so the larger undertime bucket keeps the larger peso share (single day's loss, no double count).
+     *
+     * @return array{late: float, undertime: float}
+     */
+    private function splitFixedRegularDayShortfallByTardinessMinutes(
+        float $dayRegularPayShortfall,
+        int $lateMinutes,
+        int $undertimeMinutes
+    ): array {
+        $shortfall = round(max(0.0, $dayRegularPayShortfall), 2);
+        $lateMin = max(0, $lateMinutes);
+        $utMin = max(0, $undertimeMinutes);
+        $total = $lateMin + $utMin;
+        if ($shortfall <= 0.0001 || $total <= 0) {
+            return ['late' => 0.0, 'undertime' => $shortfall];
+        }
+
+        $latePart = round($shortfall * ($lateMin / $total), 2);
+
+        return [
+            'late' => $latePart,
+            'undertime' => round($shortfall - $latePart, 2),
+        ];
+    }
+
     private function resolveFixedRegularDayRegularPayShortfall(array $day, float $dailyRate): float
     {
         $requiredMinutes = max(0, (int) ($day['required_minutes'] ?? 0));

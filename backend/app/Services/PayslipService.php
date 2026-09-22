@@ -2932,7 +2932,7 @@ class PayslipService
                 if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
                     $summary['attendance_pay_breakdown'] = app(PayrollComputationService::class)
                         ->buildFixedRegularAttendancePayBreakdown($dailyComputationDays, $dailyRate);
-                } elseif (! is_array($summary['attendance_pay_breakdown'] ?? null)) {
+                } else {
                     $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
                         $summary,
                         $dailyComputationDays,
@@ -4282,12 +4282,17 @@ class PayslipService
         $ads['total_regular_hours'] = (float) ($ads['total_regular_hours'] ?? 0);
         $ads['total_presence_regular_hours'] = (float) ($ads['total_presence_regular_hours'] ?? $ads['total_regular_hours'] ?? 0);
         $summary['attendance_display_summary'] = $ads;
-        if (! is_array($summary['attendance_pay_breakdown'] ?? null)) {
-            $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
-                $summary,
-                $dailyComputationDays,
-                $isExecomSnapshot || $isConsultantSnapshot
-            );
+        if (! $isExecomSnapshot && ! $isConsultantSnapshot && $dailyComputationDays !== []) {
+            if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+                $summary['attendance_pay_breakdown'] = app(PayrollComputationService::class)
+                    ->buildFixedRegularAttendancePayBreakdown($dailyComputationDays, $dailyRate);
+            } else {
+                $summary['attendance_pay_breakdown'] = $this->buildAttendancePayBreakdown(
+                    $summary,
+                    $dailyComputationDays,
+                    false
+                );
+            }
         }
         $summary['unworked_holiday_present_day_units'] = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
         $summary = $this->applyRegularPayDisplayAmounts(
@@ -4296,6 +4301,7 @@ class PayslipService
             $dailyRate
         );
         $summary = $this->applyWorkedHolidayDisplaySplit($summary, $dailyRate);
+        $summary = $this->normalizeAttendancePayBreakdownDetails($summary);
         $summary = $this->attachRegularPayAfterReductionsDisplay($summary, $dailyComputationDays);
         $summary['daily_computation_earning_lines'] = $this->reorderDailyComputationEarningLinesForDisplay(
             is_array($summary['daily_computation_earning_lines'] ?? null)
@@ -4596,6 +4602,19 @@ class PayslipService
                 // Fall back to a legacy label only when that metric was never stored, so
                 // the label cannot double count minutes already captured by undertime.
                 $dayLateMinutes = max($dayLateMinutes, $policyLateMinutes);
+            } elseif (
+                $status !== 'halfday'
+                && $tardinessStatus === 'late'
+                && $dayUndertimeMinutes === 0
+                && $policyLateMinutes !== null
+                && $dayLateMinutes > 0
+                && $policyLateMinutes > $dayLateMinutes
+                && $policyLateMinutes <= 120
+            ) {
+                // Segmentation can under-report lateness vs the attendance tardiness bucket
+                // (for example 16 ledger minutes vs a 30-minute policy label). Prefer the
+                // policy bucket for payslip units, but never inflate past plausible tardiness.
+                $dayLateMinutes = $policyLateMinutes;
             }
             if ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
                 $lateCount++;
