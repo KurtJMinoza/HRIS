@@ -52,10 +52,10 @@ return [
 
     // Face verification (Python FastAPI: InsightFace ArcFace embeddings and anti-spoof checks)
     'face_verification' => [
-        'url' => env('FACE_VERIFICATION_URL', 'http://127.0.0.1:5000'),
+        'url' => env('FACE_VERIFICATION_URL', 'http://127.0.0.1:2000'),
         'urls' => array_values(array_unique(array_filter(array_map(
             static fn ($url) => rtrim(trim((string) $url), '/'),
-            explode(',', (string) env('FACE_VERIFICATION_URLS', env('FACE_VERIFICATION_URL', 'http://127.0.0.1:5000')))
+            explode(',', (string) env('FACE_VERIFICATION_URLS', env('FACE_VERIFICATION_URL', 'http://127.0.0.1:2000,http://127.0.0.1:2001,http://127.0.0.1:2002,http://127.0.0.1:2003,http://127.0.0.1:2004')))
         )))),
         // Legacy option keys retained for compatibility; the current ONNX service uses ArcFace + SCRFD.
         'model_name' => env('FACE_VERIFICATION_MODEL_NAME', 'ArcFace'),

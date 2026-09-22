@@ -479,14 +479,14 @@ class AttendanceMonitoringController extends Controller
                 'calculated_pay_factor',
             ])
             ->whereIn('user_id', $userIds)
-            ->whereBetween('verified_at', [$fromUtc, $toUtc])
-            ->orderBy('verified_at')
+            ->whereEffectiveStampBetween($fromUtc, $toUtc)
+            ->orderByRaw('COALESCE(verified_at, created_at)')
             ->get();
 
         $logsByUserDate = [];
         foreach ($logs as $log) {
-            $stamp = $log->verified_at ?? $log->created_at;
-            if (! $stamp) {
+            $stamp = AttendanceLog::punchInstant($log);
+            if ($stamp === null) {
                 continue;
             }
             $dateKey = $stamp->copy()->setTimezone($tz)->toDateString();

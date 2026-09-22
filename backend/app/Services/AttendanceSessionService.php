@@ -120,9 +120,9 @@ class AttendanceSessionService
         $__t = microtime(true);
         $logs = AttendanceLog::query()
             ->whereIn('user_id', $userIds)
-            ->whereBetween('verified_at', [$rangeStartUtc, $rangeEndUtc])
-            ->orderBy('verified_at')
-            ->get(['id', 'user_id', 'type', 'verified_at']);
+            ->whereEffectiveStampBetween($rangeStartUtc, $rangeEndUtc)
+            ->orderByRaw('COALESCE(verified_at, created_at)')
+            ->get(['id', 'user_id', 'type', 'verified_at', 'created_at']);
 
         foreach ($logs as $log) {
             $uid = (int) $log->user_id;
@@ -148,7 +148,7 @@ class AttendanceSessionService
         $dayEndUtc = Carbon::parse($dateKey, $tz)->endOfDay()->timezone('UTC');
 
         foreach ($this->bulkLogsByUserId[$userId] ?? [] as $log) {
-            $v = $log->verified_at;
+            $v = AttendanceLog::punchInstant($log);
             if ($v !== null && $v >= $dayStartUtc && $v <= $dayEndUtc) {
                 return true;
             }
@@ -199,7 +199,7 @@ class AttendanceSessionService
 
         return AttendanceLog::query()
             ->where('user_id', $user->id)
-            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
+            ->whereEffectiveStampBetween($dayStartUtc, $dayEndUtc)
             ->exists();
     }
 
@@ -230,7 +230,7 @@ class AttendanceSessionService
         $dayEndUtc = Carbon::parse($dateKey, $tz)->endOfDay()->timezone('UTC');
 
         foreach ($this->bulkLogsByUserId[(int) $user->id] ?? [] as $log) {
-            $v = $log->verified_at;
+            $v = AttendanceLog::punchInstant($log);
             if ($v === null || $v < $dayStartUtc || $v > $dayEndUtc) {
                 continue;
             }
@@ -319,9 +319,9 @@ class AttendanceSessionService
 
         $clockIn = AttendanceLog::query()
             ->where('user_id', $user->id)
-            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
+            ->whereEffectiveStampBetween($dayStartUtc, $dayEndUtc)
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-            ->orderBy('verified_at')
+            ->orderByRaw('COALESCE(verified_at, created_at)')
             ->first();
 
         if (! $clockIn) {
@@ -329,26 +329,36 @@ class AttendanceSessionService
             $prevDayEnd = $dayEnd->copy()->subDay()->endOfDay();
             $clockIn = AttendanceLog::query()
                 ->where('user_id', $user->id)
-                ->whereBetween('verified_at', [$prevDayStart->setTimezone('UTC'), $prevDayEnd->setTimezone('UTC')])
+                ->whereEffectiveStampBetween($prevDayStart->setTimezone('UTC'), $prevDayEnd->setTimezone('UTC'))
                 ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                ->orderBy('verified_at')
+                ->orderByRaw('COALESCE(verified_at, created_at)')
                 ->first();
         }
 
         if ($clockIn) {
-            $candidateIn = $clockIn->verified_at->copy()->timezone($tz);
-            if ($candidateIn->toDateString() === $dateKey) {
+            $candidateIn = AttendanceLog::punchInstant($clockIn)?->copy()->timezone($tz);
+            if ($candidateIn !== null && $candidateIn->toDateString() === $dateKey) {
                 $timeIn = $candidateIn;
                 $clockOutSearchEndUtc = $this->clockOutSearchEndUtc($user, $dateKey, $tz, $dayEnd);
                 $clockOut = AttendanceLog::query()
                     ->where('user_id', $user->id)
-                    ->where('verified_at', '>=', $timeIn->copy()->setTimezone('UTC'))
-                    ->where('verified_at', '<=', $clockOutSearchEndUtc)
                     ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
-                    ->orderBy('verified_at')
+                    ->where(function ($q) use ($timeIn, $clockOutSearchEndUtc): void {
+                        $inUtc = $timeIn->copy()->setTimezone('UTC');
+                        $q->where(function ($verified) use ($inUtc, $clockOutSearchEndUtc): void {
+                            $verified->whereNotNull('verified_at')
+                                ->where('verified_at', '>=', $inUtc)
+                                ->where('verified_at', '<=', $clockOutSearchEndUtc);
+                        })->orWhere(function ($legacy) use ($inUtc, $clockOutSearchEndUtc): void {
+                            $legacy->whereNull('verified_at')
+                                ->where('created_at', '>=', $inUtc)
+                                ->where('created_at', '<=', $clockOutSearchEndUtc);
+                        });
+                    })
+                    ->orderByRaw('COALESCE(verified_at, created_at)')
                     ->first();
                 if ($clockOut) {
-                    $timeOut = $clockOut->verified_at->copy()->timezone($tz);
+                    $timeOut = AttendanceLog::punchInstant($clockOut)?->copy()->timezone($tz);
                 }
             }
         }
@@ -367,15 +377,25 @@ class AttendanceSessionService
             // device clock-out remains in attendance_logs. Payroll must merge those sources so
             // undertime days (e.g. 08:00 correction + 09:42 clock-out) pay actual worked time.
             $clockOutSearchEndUtc = $this->clockOutSearchEndUtc($user, $dateKey, $tz, $dayEnd);
+            $inUtc = $timeIn->copy()->setTimezone('UTC');
             $clockOut = AttendanceLog::query()
                 ->where('user_id', $user->id)
-                ->where('verified_at', '>=', $timeIn->copy()->setTimezone('UTC'))
-                ->where('verified_at', '<=', $clockOutSearchEndUtc)
                 ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
-                ->orderBy('verified_at')
+                ->where(function ($q) use ($inUtc, $clockOutSearchEndUtc): void {
+                    $q->where(function ($verified) use ($inUtc, $clockOutSearchEndUtc): void {
+                        $verified->whereNotNull('verified_at')
+                            ->where('verified_at', '>=', $inUtc)
+                            ->where('verified_at', '<=', $clockOutSearchEndUtc);
+                    })->orWhere(function ($legacy) use ($inUtc, $clockOutSearchEndUtc): void {
+                        $legacy->whereNull('verified_at')
+                            ->where('created_at', '>=', $inUtc)
+                            ->where('created_at', '<=', $clockOutSearchEndUtc);
+                    });
+                })
+                ->orderByRaw('COALESCE(verified_at, created_at)')
                 ->first();
             if ($clockOut) {
-                $timeOut = $clockOut->verified_at->copy()->timezone($tz);
+                $timeOut = AttendanceLog::punchInstant($clockOut)?->copy()->timezone($tz);
             }
         }
 
@@ -490,8 +510,8 @@ class AttendanceSessionService
         }
 
         if ($clockIn) {
-            $candidateIn = $clockIn->verified_at->copy()->timezone($tz);
-            if ($candidateIn->toDateString() === $dateKey) {
+            $candidateIn = AttendanceLog::punchInstant($clockIn)?->copy()->timezone($tz);
+            if ($candidateIn !== null && $candidateIn->toDateString() === $dateKey) {
                 $timeIn = $candidateIn;
                 $clockOutSearchEndUtc = $this->clockOutSearchEndUtc($user, $dateKey, $tz, $dayEnd);
                 $clockOut = $this->firstAttendanceLogInUtcWindow(
@@ -501,7 +521,7 @@ class AttendanceSessionService
                     $clockOutSearchEndUtc
                 );
                 if ($clockOut) {
-                    $timeOut = $clockOut->verified_at->copy()->timezone($tz);
+                    $timeOut = AttendanceLog::punchInstant($clockOut)?->copy()->timezone($tz);
                 }
             }
         }
@@ -524,7 +544,7 @@ class AttendanceSessionService
                 $clockOutSearchEndUtc
             );
             if ($clockOut) {
-                $timeOut = $clockOut->verified_at->copy()->timezone($tz);
+                $timeOut = AttendanceLog::punchInstant($clockOut)?->copy()->timezone($tz);
             }
         }
 
@@ -549,8 +569,8 @@ class AttendanceSessionService
             if ($log->type !== $type) {
                 continue;
             }
-            $v = $log->verified_at;
-            if ($v >= $startUtc && $v <= $endUtc) {
+            $v = AttendanceLog::punchInstant($log);
+            if ($v !== null && $v >= $startUtc && $v <= $endUtc) {
                 return $log;
             }
         }

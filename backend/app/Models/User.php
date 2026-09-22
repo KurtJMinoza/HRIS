@@ -600,13 +600,7 @@ class User extends Authenticatable
     {
         [$start, $end] = $this->attendanceDateRangeUtc($dateKey);
 
-        return $query->where(function ($q) use ($start, $end) {
-            $q->whereBetween('verified_at', [$start, $end])
-                ->orWhere(function ($fallback) use ($start, $end) {
-                    $fallback->whereNull('verified_at')
-                        ->whereBetween('created_at', [$start, $end]);
-                });
-        });
+        return $query->whereEffectiveStampBetween($start, $end);
     }
 
     protected function approvedAttendanceCorrectionForDate(string $dateKey)

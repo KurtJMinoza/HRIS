@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -80,6 +82,35 @@ class AttendanceLog extends Model
             'processing_delay_seconds' => 'integer',
             'calculated_pay_factor' => 'array',
         ];
+    }
+
+    /**
+     * Actual punch instant: verified_at when set, else legacy created_at.
+     */
+    public static function punchInstant(self $log): ?Carbon
+    {
+        $t = $log->verified_at ?? $log->created_at;
+        if ($t === null) {
+            return null;
+        }
+
+        return $t instanceof Carbon ? $t->copy() : Carbon::parse($t);
+    }
+
+    /**
+     * Match logs whose effective punch falls inside a UTC window (same rule as {@see User::attendanceLogEffectiveDateQuery}).
+     *
+     * @param  Builder<AttendanceLog>  $query
+     */
+    public function scopeWhereEffectiveStampBetween(Builder $query, Carbon $startUtc, Carbon $endUtc): Builder
+    {
+        return $query->where(function (Builder $q) use ($startUtc, $endUtc): void {
+            $q->whereBetween('verified_at', [$startUtc, $endUtc])
+                ->orWhere(function (Builder $fallback) use ($startUtc, $endUtc): void {
+                    $fallback->whereNull('verified_at')
+                        ->whereBetween('created_at', [$startUtc, $endUtc]);
+                });
+        });
     }
 
     public function user(): BelongsTo

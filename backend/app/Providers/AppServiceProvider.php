@@ -25,7 +25,9 @@ use App\Models\Payslip;
 use App\Models\SectionUnit;
 use App\Models\Team;
 use App\Models\User;
+use App\Services\AdminAttendanceCacheService;
 use App\Services\AttendanceCacheService;
+use App\Services\AttendanceSessionService;
 use App\Services\EmployeeDashboardCacheService;
 use App\Services\HolidayCalendarService;
 use App\Services\HolidayScopeResolver;
@@ -139,7 +141,18 @@ class AppServiceProvider extends ServiceProvider
                 : null;
             AttendanceCacheService::invalidate((int) $log->user_id, $date);
             EmployeeDashboardCacheService::invalidate((int) $log->user_id);
-            $companyId = User::query()->whereKey($log->user_id)->value('company_id');
+            $employee = User::query()
+                ->whereKey($log->user_id)
+                ->first(['id', 'company_id', 'branch_id']);
+            $companyId = $employee?->company_id;
+            AdminAttendanceCacheService::invalidateAffected(
+                (int) $log->user_id,
+                $date,
+                $companyId !== null ? (int) $companyId : null,
+                $employee?->branch_id !== null ? (int) $employee->branch_id : null,
+            );
+            // ponytail: Octane workers keep AttendanceSessionService in-memory times; flush after every punch.
+            app(AttendanceSessionService::class)->flushRuntimeCache();
             AdminDashboardCache::invalidateForUserCompany(
                 $companyId !== null ? (int) $companyId : null,
                 ['summary', 'attendance', 'charts', 'recent']
