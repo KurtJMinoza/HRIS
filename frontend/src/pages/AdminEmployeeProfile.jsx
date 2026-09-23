@@ -13,7 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import ApprovalRoutePreviewSection from '@/components/organization/ApprovalRoutePreviewSection'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { addEmployeeSkill, adjustEmployeeLeaveCredits, checkEmployeeCodeAvailability, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeOrganizationAssignments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeBankAccount, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
+import { addEmployeeSkill, adjustEmployeeLeaveCredits, checkEmployeeCodeAvailability, clearEmployeeSignature, createEmployeeCertification, createEmployeeDocument, createEmployeeGovernmentIdDocument, getAdminEmployeeScheduleRatePreview, getAdminEmployeeStatus, getDepartments, getCompanies, getBranches, getSectionsOrUnits, getEmployeeBenefits, getEmployeeCertifications, getEmployeeDocuments, getEmployeeGovernmentIdDocuments, getEmployeeOrganizationAssignments, getEmployeeProfileSnapshot, getEmployeeSkills, getEmployees, getPayrollPeriodsForEmployee, getSkillSuggestions, getWorkingSchedules, profileImageUrl, removeEmployeePhoto, removeEmployeeSkill, resetEmployeePassword, reviewEmployeeDocument, saveEmployeeSignature, toggleEmployeeActive, transferEmployee, updateEmployee, updateEmployeeBankAccount,
+  removeEmployeeBankAccount, updateEmployeeCertification, updateEmployeeDocument, updateEmployeeGovernmentIdDocument, updateEmployeeSkill, updateProfile, uploadEmployeePhoto, verifyEmployeeCertification, verifyEmployeeGovernmentIdDocument } from '@/api'
 import { composeEmployeeCode, employeeCodeDigits, EMPLOYEE_CODE_PREFIX, isValidEmployeeCode } from '@/lib/employeeCode'
 import { motion as Motion } from 'framer-motion'
 import { toast } from 'sonner'
@@ -901,6 +902,7 @@ export default function AdminEmployeeProfile() {
   const [activeGovDoc, setActiveGovDoc] = useState(null)
   const [govForm, setGovForm] = useState({ id_type: '', id_number: '', issuing_agency: '', expiry_date: '', document_file: null })
   const [bankAccount, setBankAccount] = useState(createEmptyBankAccountState())
+  const [bankAccountPersisted, setBankAccountPersisted] = useState(false)
   const [bankAccountErrors, setBankAccountErrors] = useState({})
   const [bankAccountSaving, setBankAccountSaving] = useState(false)
   const [govErrors, setGovErrors] = useState({})
@@ -1662,7 +1664,9 @@ export default function AdminEmployeeProfile() {
           })
         }
         if (data?.bank_account && typeof data.bank_account === 'object' && !Array.isArray(data.bank_account)) {
-          setBankAccount(normalizeBankAccountForm(data.bank_account))
+          const nextBankAccount = normalizeBankAccountForm(data.bank_account)
+          setBankAccount(nextBankAccount)
+          setBankAccountPersisted(bankAccountIsComplete(nextBankAccount))
         }
         deferredLoadedRef.current.governmentIds = true
       })
@@ -3109,11 +3113,31 @@ export default function AdminEmployeeProfile() {
     setBankAccountErrors({})
     try {
       const data = await updateEmployeeBankAccount(employee.id, normalized)
-      setBankAccount(normalizeBankAccountForm(data?.bank_account || normalized))
+      const saved = normalizeBankAccountForm(data?.bank_account || normalized)
+      setBankAccount(saved)
+      setBankAccountPersisted(bankAccountIsComplete(saved))
       deferredLoadedRef.current.governmentIds = false
       toast.success('Bank account saved.')
     } catch (e) {
       toast.error(e?.message || 'Failed to save bank account.')
+    } finally {
+      setBankAccountSaving(false)
+    }
+  }
+
+  async function removeBankAccount() {
+    if (!employee?.id || bankAccountSaving || !bankAccountPersisted) return
+    if (!window.confirm('Remove this saved bank account from payroll disbursement?')) return
+    setBankAccountSaving(true)
+    setBankAccountErrors({})
+    try {
+      await removeEmployeeBankAccount(employee.id)
+      setBankAccount(createEmptyBankAccountState())
+      setBankAccountPersisted(false)
+      deferredLoadedRef.current.governmentIds = false
+      toast.success('Bank account removed.')
+    } catch (e) {
+      toast.error(e?.message || 'Failed to remove bank account.')
     } finally {
       setBankAccountSaving(false)
     }
@@ -6304,11 +6328,13 @@ export default function AdminEmployeeProfile() {
               errors={bankAccountErrors}
               saving={bankAccountSaving}
               disabled={false}
+              canRemove={bankAccountPersisted}
               onChange={(next) => {
                 setBankAccount(next)
                 if (Object.keys(bankAccountErrors).length > 0) setBankAccountErrors({})
               }}
               onSave={saveBankAccount}
+              onRemove={removeBankAccount}
             />
           </Motion.div>
         </TabsContent>

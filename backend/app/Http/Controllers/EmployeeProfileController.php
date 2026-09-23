@@ -1180,6 +1180,24 @@ class EmployeeProfileController extends Controller
         ]);
     }
 
+    public function deleteBankAccount(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || ! $user->canAccessSelfServiceEmployeeProfile()) {
+            return response()->json(['message' => 'Unauthorized. Employee access required.'], 403);
+        }
+        if (! $this->canEditOwnProfile($user)) {
+            return $this->denyProfileEditResponse();
+        }
+
+        EmployeeBankAccount::query()->where('user_id', $user->id)->delete();
+
+        return response()->json([
+            'message' => 'Bank account removed.',
+            'bank_account' => BankAccountFormatter::serialize(null),
+        ]);
+    }
+
     public function replaceEmergencyContacts(Request $request): JsonResponse
     {
         $user = $request->user();

@@ -445,7 +445,8 @@ class BankPayrollExportService
         $sheet->setCellValue('A1', (string) ($payload['title_row'] ?? ''));
         $sheet->fromArray(self::EXPORT_HEADER_ROW, null, 'A3');
         $this->clearExportDataRows($sheet);
-        $this->writeExportDataRows($sheet, $payload['rows'] ?? []);
+        $lastDataRow = $this->writeExportDataRows($sheet, $payload['rows'] ?? []);
+        $this->trimExportDataRowsBelow($sheet, $lastDataRow);
 
         return $spreadsheet;
     }
@@ -470,7 +471,7 @@ class BankPayrollExportService
     /**
      * @param  list<array{employee_no:string,name:string,account_number:string,bank_code:string,salary:float}>  $rows
      */
-    private function writeExportDataRows(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, array $rows): void
+    private function writeExportDataRows(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, array $rows): int
     {
         $sheet->getStyle('C:C')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
 
@@ -490,6 +491,8 @@ class BankPayrollExportService
                 ->setFormatCode(NumberFormat::FORMAT_NUMBER_00);
             $rowIndex++;
         }
+
+        return $rowIndex > self::EXPORT_DATA_START_ROW ? $rowIndex - 1 : self::EXPORT_DATA_START_ROW - 1;
     }
 
     private function clearExportDataRows(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
@@ -497,9 +500,19 @@ class BankPayrollExportService
         $highestRow = max(self::EXPORT_DATA_START_ROW, (int) $sheet->getHighestRow());
         for ($rowIndex = self::EXPORT_DATA_START_ROW; $rowIndex <= $highestRow; $rowIndex++) {
             foreach (['A', 'B', 'C', 'D', 'E'] as $column) {
-                $sheet->setCellValue($column.$rowIndex, null);
+                $sheet->setCellValue($column.$rowIndex, '');
             }
         }
+    }
+
+    private function trimExportDataRowsBelow(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, int $lastDataRow): void
+    {
+        $highestRow = (int) $sheet->getHighestRow();
+        if ($highestRow <= $lastDataRow) {
+            return;
+        }
+
+        $sheet->removeRow($lastDataRow + 1, $highestRow - $lastDataRow);
     }
 
     /**

@@ -1,4 +1,4 @@
-import { Building2, Loader2 } from 'lucide-react'
+import { Building2, Loader2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -14,8 +14,10 @@ export function EmployeeBankAccountCard({
   errors = {},
   saving = false,
   disabled = false,
+  canRemove = false,
   onChange,
   onSave,
+  onRemove,
 }) {
   const form = normalizeBankAccountForm(value)
 
@@ -90,7 +92,19 @@ export function EmployeeBankAccountCard({
           </div>
         </div>
         {!disabled ? (
-          <div className="flex justify-end border-t border-border/40 pt-4">
+          <div className="flex flex-wrap justify-end gap-2 border-t border-border/40 pt-4">
+            {canRemove ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onRemove}
+                disabled={saving}
+                className="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive"
+              >
+                {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Trash2 className="mr-2 size-4" />}
+                Remove Bank Account
+              </Button>
+            ) : null}
             <Button type="button" onClick={onSave} disabled={saving}>
               {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
               Save Bank Account

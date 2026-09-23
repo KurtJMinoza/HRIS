@@ -267,6 +267,19 @@ class EmployeeGovernmentIdDocumentController extends Controller
         ]);
     }
 
+    public function deleteBankAccount(Request $request, int $userId): JsonResponse
+    {
+        $employee = User::where('id', $userId)->visibleEmployees()->firstOrFail();
+        $this->assertEmployeeOrgScope($request, $employee);
+
+        EmployeeBankAccount::query()->where('user_id', (int) $employee->id)->delete();
+
+        return response()->json([
+            'message' => 'Bank account removed.',
+            'bank_account' => BankAccountFormatter::serialize(null),
+        ]);
+    }
+
     private function syncRegistryFromDocument(int $userId, string $idType, string $idNumber): void
     {
         $field = GovernmentIdFormatter::registryFieldForType($idType);

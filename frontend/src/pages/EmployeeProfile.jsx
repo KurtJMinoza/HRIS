@@ -74,6 +74,7 @@ import {
   exportMyProfileCsv,
   replaceMyEmergencyContacts,
   updateMyBankAccount,
+  removeMyBankAccount,
   uploadProfilePhoto,
   removeProfilePhoto,
   updateProfile,
@@ -625,6 +626,7 @@ export default function EmployeeProfile() {
   const [govIdErrors, setGovIdErrors] = useState({})
   const govFileRef = useRef(null)
   const [bankAccount, setBankAccount] = useState(createEmptyBankAccountState())
+  const [bankAccountPersisted, setBankAccountPersisted] = useState(false)
   const [bankAccountErrors, setBankAccountErrors] = useState({})
   const [bankAccountSaving, setBankAccountSaving] = useState(false)
   const [bankAccountLoading, setBankAccountLoading] = useState(false)
@@ -880,7 +882,9 @@ export default function EmployeeProfile() {
       setProfileGovNumbers(null)
     }
     if (data?.bank_account != null && typeof data.bank_account === 'object' && !Array.isArray(data.bank_account)) {
-      setBankAccount(normalizeBankAccountForm(data.bank_account))
+      const nextBankAccount = normalizeBankAccountForm(data.bank_account)
+      setBankAccount(nextBankAccount)
+      setBankAccountPersisted(bankAccountIsComplete(nextBankAccount))
     }
     setLeaveCreditsInfo((prev) =>
       data?.leave_credits && typeof data.leave_credits === 'object' ? data.leave_credits : prev
@@ -1176,7 +1180,9 @@ export default function EmployeeProfile() {
       .then((data) => {
         if (!alive) return
         if (data?.bank_account && typeof data.bank_account === 'object') {
-          setBankAccount(normalizeBankAccountForm(data.bank_account))
+          const nextBankAccount = normalizeBankAccountForm(data.bank_account)
+          setBankAccount(nextBankAccount)
+          setBankAccountPersisted(bankAccountIsComplete(nextBankAccount))
         }
       })
       .catch(() => {})
@@ -1657,7 +1663,9 @@ export default function EmployeeProfile() {
     setBankAccountErrors({})
     try {
       const data = await updateMyBankAccount(normalized)
-      setBankAccount(normalizeBankAccountForm(data?.bank_account || normalized))
+      const saved = normalizeBankAccountForm(data?.bank_account || normalized)
+      setBankAccount(saved)
+      setBankAccountPersisted(bankAccountIsComplete(saved))
       void queryClient.invalidateQueries({ queryKey: ['employee-profile-snapshot'] })
       toast.success('Bank account saved.')
     } catch (e) {
@@ -1666,6 +1674,24 @@ export default function EmployeeProfile() {
       setBankAccountSaving(false)
     }
   }, [bankAccount, bankAccountSaving, canEdit, queryClient])
+
+  const removeBankAccount = useCallback(async () => {
+    if (!canEdit || bankAccountSaving || !bankAccountPersisted) return
+    if (!window.confirm('Remove this saved bank account from payroll disbursement?')) return
+    setBankAccountSaving(true)
+    setBankAccountErrors({})
+    try {
+      await removeMyBankAccount()
+      setBankAccount(createEmptyBankAccountState())
+      setBankAccountPersisted(false)
+      void queryClient.invalidateQueries({ queryKey: ['employee-profile-snapshot'] })
+      toast.success('Bank account removed.')
+    } catch (e) {
+      toast.error(e?.message || 'Failed to remove bank account.')
+    } finally {
+      setBankAccountSaving(false)
+    }
+  }, [bankAccountPersisted, bankAccountSaving, canEdit, queryClient])
 
   const govIdDefs = useMemo(
     () => {
@@ -3832,11 +3858,13 @@ export default function EmployeeProfile() {
             errors={bankAccountErrors}
             saving={bankAccountSaving}
             disabled={!canEdit}
+            canRemove={bankAccountPersisted}
             onChange={(next) => {
               setBankAccount(next)
               if (Object.keys(bankAccountErrors).length > 0) setBankAccountErrors({})
             }}
             onSave={saveBankAccount}
+            onRemove={removeBankAccount}
           />
         )}
         </div>

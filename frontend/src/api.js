@@ -1953,6 +1953,18 @@ export async function updateMyBankAccount(payload) {
   return data
 }
 
+export async function removeMyBankAccount() {
+  const res = await authenticatedFetch('/employee/profile/bank-account', {
+    method: 'DELETE',
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message || 'Failed to remove bank account')
+  }
+  clearEmployeeSelfServiceGetCaches()
+  return data
+}
+
 /** Admin: upsert employee bank account details for payroll disbursement. */
 export async function updateEmployeeBankAccount(employeeId, payload) {
   const res = await authenticatedFetch(`/admin/employees/${employeeId}/bank-account`, {
@@ -1963,6 +1975,18 @@ export async function updateEmployeeBankAccount(employeeId, payload) {
   if (!res.ok) {
     const msg = data.errors ? Object.values(data.errors).flat().filter(Boolean)[0] || data.message : data.message
     throw new Error(msg || 'Failed to update bank account')
+  }
+  clearCachesAfterAdminEmployeeDataChange(employeeId)
+  return data
+}
+
+export async function removeEmployeeBankAccount(employeeId) {
+  const res = await authenticatedFetch(`/admin/employees/${employeeId}/bank-account`, {
+    method: 'DELETE',
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message || 'Failed to remove bank account')
   }
   clearCachesAfterAdminEmployeeDataChange(employeeId)
   return data

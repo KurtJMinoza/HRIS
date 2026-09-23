@@ -245,6 +245,8 @@ class BankPayrollExportServiceTest extends TestCase
         $this->assertSame('', (string) $sheet->getCell('D4')->getValue());
         $this->assertEqualsWithDelta(6230.77, (float) $sheet->getCell('E4')->getValue(), 0.001);
         $this->assertGreaterThanOrEqual(2, $spreadsheet->getSheetCount());
+        $this->assertSame(4, (int) $sheet->getHighestRow());
+        $this->assertSame('', (string) $sheet->getCell('B5')->getValue());
     }
 
     public function test_export_net_pay_uses_frozen_column_when_finalized(): void
