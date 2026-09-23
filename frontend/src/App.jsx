@@ -1234,12 +1234,12 @@ function SmartDTRPreview({ className }) {
           <p className="pb-3 text-center text-xs text-[#5f6673] dark:text-muted-foreground">
             Developed by{' '}
             <a
-              href="https://www.facebook.com/kurtjerelle"
+              href="https://www.facebook.com/AGCTechSolutions"
               target="_blank"
               rel="noopener noreferrer"
               className="font-medium text-[#ff4f0b] transition-colors hover:text-[#db3f04] dark:text-[#fb923c] dark:hover:text-orange-300"
             >
-              Kurt Jerelle Minoza
+              AGCTek
             </a>
           </p>
 

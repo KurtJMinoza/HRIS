@@ -9,6 +9,7 @@ use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Writer\Xls;
@@ -34,13 +35,19 @@ class BankPayrollExportService
         ];
     }
 
-    /** @var array<string, array{label:string, title_row:string}> */
+    /** @var array<string, array{label:string, title_row:string, template?:string}> */
     private const BANK_DEFINITIONS = [
         self::BANK_AUB => [
             'label' => 'Asia United Bank (AUB)',
             'title_row' => 'AUB NetPay Upload File',
+            'template' => 'aub_netpay_upload_template.xls',
         ],
     ];
+
+    private const EXPORT_DATA_START_ROW = 4;
+
+    /** @var list<string> */
+    private const EXPORT_HEADER_ROW = ['Employee No.', 'Name', 'Account No.', 'Bank Code', 'Salary'];
 
     /**
      * @return array<string, array{label:string, title_row:string}>
@@ -428,40 +435,71 @@ class BankPayrollExportService
      */
     private function buildExportSpreadsheet(array $payload): Spreadsheet
     {
-        $spreadsheet = new Spreadsheet;
+        $bankCode = $this->normalizeBankCode((string) ($payload['bank'] ?? self::BANK_AUB));
+        $spreadsheet = $this->loadExportSpreadsheetTemplate($bankCode);
         $spreadsheet->getProperties()
             ->setCreator((string) config('app.name', 'HR'))
-            ->setTitle($payload['title_row']);
+            ->setTitle((string) ($payload['title_row'] ?? 'Bank Payroll Export'));
 
+        $sheet = $spreadsheet->getSheet(0);
+        $sheet->setCellValue('A1', (string) ($payload['title_row'] ?? ''));
+        $sheet->fromArray(self::EXPORT_HEADER_ROW, null, 'A3');
+        $this->clearExportDataRows($sheet);
+        $this->writeExportDataRows($sheet, $payload['rows'] ?? []);
+
+        return $spreadsheet;
+    }
+
+    private function loadExportSpreadsheetTemplate(string $bankCode): Spreadsheet
+    {
+        $template = self::BANK_DEFINITIONS[$bankCode]['template'] ?? null;
+        if (is_string($template) && $template !== '') {
+            $path = resource_path('templates/'.$template);
+            if (is_readable($path)) {
+                return IOFactory::load($path);
+            }
+        }
+
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Bank Payroll');
-        $sheet->setCellValue('A1', $payload['title_row']);
-        $sheet->fromArray(
-            ['Name', 'Account No.', 'Salary'],
-            null,
-            'A3'
-        );
-        $sheet->getStyle('B:B')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+        $sheet->setTitle('Sheet1');
 
-        $rowIndex = 4;
-        foreach ($payload['rows'] as $row) {
+        return $spreadsheet;
+    }
+
+    /**
+     * @param  list<array{employee_no:string,name:string,account_number:string,bank_code:string,salary:float}>  $rows
+     */
+    private function writeExportDataRows(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, array $rows): void
+    {
+        $sheet->getStyle('C:C')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+
+        $rowIndex = self::EXPORT_DATA_START_ROW;
+        foreach ($rows as $row) {
             $accountNumber = self::formatExportAccountNumber($row['account_number'] ?? '');
-            $accountCell = 'B'.$rowIndex;
-            $sheet->setCellValue('A'.$rowIndex, $row['name']);
+            $accountCell = 'C'.$rowIndex;
+            // ponytail: AUB upload template keeps Employee No. and Bank Code headers but leaves data cells blank.
+            $sheet->setCellValue('A'.$rowIndex, '');
+            $sheet->setCellValue('B'.$rowIndex, (string) ($row['name'] ?? ''));
             $sheet->getStyle($accountCell)->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             $sheet->setCellValueExplicit($accountCell, $accountNumber, DataType::TYPE_STRING);
-            $sheet->setCellValue('C'.$rowIndex, $row['salary']);
-            $sheet->getStyle('C'.$rowIndex)
+            $sheet->setCellValue('D'.$rowIndex, '');
+            $sheet->setCellValue('E'.$rowIndex, (float) ($row['salary'] ?? 0));
+            $sheet->getStyle('E'.$rowIndex)
                 ->getNumberFormat()
                 ->setFormatCode(NumberFormat::FORMAT_NUMBER_00);
             $rowIndex++;
         }
+    }
 
-        foreach (['A', 'B', 'C'] as $column) {
-            $sheet->getColumnDimension($column)->setAutoSize(true);
+    private function clearExportDataRows(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
+    {
+        $highestRow = max(self::EXPORT_DATA_START_ROW, (int) $sheet->getHighestRow());
+        for ($rowIndex = self::EXPORT_DATA_START_ROW; $rowIndex <= $highestRow; $rowIndex++) {
+            foreach (['A', 'B', 'C', 'D', 'E'] as $column) {
+                $sheet->setCellValue($column.$rowIndex, null);
+            }
         }
-
-        return $spreadsheet;
     }
 
     /**
@@ -482,18 +520,17 @@ class BankPayrollExportService
         fwrite($out, "\xEF\xBB\xBF");
         fputcsv($out, [$payload['title_row']]);
         fputcsv($out, []);
-        fputcsv($out, ['Name', 'Account No.', 'Salary']);
+        fputcsv($out, self::EXPORT_HEADER_ROW);
 
-        $rowIndex = 4;
         foreach ($payload['rows'] as $row) {
             $accountNumber = self::formatExportAccountNumber($row['account_number'] ?? '');
-            $line = implode(',', [
-                self::csvEscape((string) $sheet->getCell('A'.$rowIndex)->getValue()),
-                self::csvEscape(self::accountNumberForCsvField($accountNumber)),
-                number_format((float) $sheet->getCell('C'.$rowIndex)->getValue(), 2, '.', ''),
+            fputcsv($out, [
+                '',
+                (string) ($row['name'] ?? ''),
+                self::accountNumberForCsvField($accountNumber),
+                '',
+                number_format((float) ($row['salary'] ?? 0), 2, '.', ''),
             ]);
-            fwrite($out, $line.PHP_EOL);
-            $rowIndex++;
         }
 
         fclose($out);
@@ -527,16 +564,30 @@ class BankPayrollExportService
      */
     private function finalizedRunsForBankExportCutoff(string $start, string $end): Collection
     {
-        return PayrollBatchRun::query()
+        $runs = PayrollBatchRun::query()
             ->where('status', PayrollBatchRun::STATUS_FINALIZED)
             ->whereIn('payroll_module', $this->exportPayrollModules())
             ->whereDate('pay_period_start', $start)
             ->whereDate('pay_period_end', $end)
-            ->orderBy('company_id')
             ->orderByDesc('id')
-            ->get()
-            ->unique(fn (PayrollBatchRun $run): string => strtolower(trim((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)))
-                .':'.((int) ($run->company_id ?? 0)).':'.$start.':'.$end)
+            ->get();
+
+        /** @var array<string, PayrollBatchRun> $latestByScope */
+        $latestByScope = [];
+        foreach ($runs as $run) {
+            $scopeKey = strtolower(trim((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)))
+                .':'.((int) ($run->company_id ?? 0)).':'.$start.':'.$end;
+            if (! isset($latestByScope[$scopeKey])) {
+                $latestByScope[$scopeKey] = $run;
+            }
+        }
+
+        return collect(array_values($latestByScope))
+            ->sortBy(fn (PayrollBatchRun $run): string => sprintf(
+                '%04d-%010d',
+                (int) ($run->company_id ?? 0),
+                (int) $run->id
+            ))
             ->values();
     }
 
@@ -546,25 +597,42 @@ class BankPayrollExportService
      */
     private function finalizedPayslipsForRuns(Collection $runs): Collection
     {
-        $runIds = $runs->pluck('id')->filter()->values();
-        if ($runIds->isEmpty()) {
+        if ($runs->isEmpty()) {
             return collect();
         }
 
-        return Payslip::query()
-            ->with([
-                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id',
-            ])
-            ->whereIn('payroll_batch_run_id', $runIds)
-            ->whereNull('voided_at')
-            ->where('period_slot', 0)
-            ->whereIn('payroll_module', $this->exportPayrollModules())
-            ->whereIn('status', Payslip::lockingStatuses())
-            ->whereNotNull('snapshot')
-            ->orderByDesc('id')
-            ->get()
-            ->unique('user_id')
-            ->values();
+        /** @var array<string, Payslip> $mergedByKey */
+        $mergedByKey = [];
+        foreach ($runs as $run) {
+            if (! $run instanceof PayrollBatchRun) {
+                continue;
+            }
+
+            $query = Payslip::query()
+                ->with([
+                    'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id',
+                ])
+                ->where('payroll_batch_run_id', (int) $run->id)
+                ->whereNull('voided_at')
+                ->where('period_slot', 0)
+                ->whereIn('payroll_module', $this->exportPayrollModules())
+                ->whereIn('status', Payslip::lockingStatuses())
+                ->whereNotNull('snapshot')
+                ->orderByDesc('id');
+
+            $companyId = (int) ($run->company_id ?? 0);
+            if ($companyId > 0) {
+                $query->where('company_id', $companyId);
+            }
+
+            $module = strtolower(trim((string) ($run->payroll_module ?? PayrollBatchRun::MODULE_STANDARD)));
+            foreach ($query->get()->unique('user_id') as $payslip) {
+                $dedupeKey = (int) $payslip->user_id.'|'.$module;
+                $mergedByKey[$dedupeKey] = $payslip;
+            }
+        }
+
+        return collect(array_values($mergedByKey));
     }
 
     /**

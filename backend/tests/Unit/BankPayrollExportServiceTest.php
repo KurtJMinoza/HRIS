@@ -214,6 +214,39 @@ class BankPayrollExportServiceTest extends TestCase
         $this->assertEqualsWithDelta($expectedNet, $netPay, 0.02);
     }
 
+    public function test_build_export_spreadsheet_uses_aub_template_columns(): void
+    {
+        $service = app(BankPayrollExportService::class);
+        $method = new \ReflectionMethod($service, 'buildExportSpreadsheet');
+        $method->setAccessible(true);
+
+        $spreadsheet = $method->invoke($service, [
+            'bank' => BankPayrollExportService::BANK_AUB,
+            'title_row' => 'AUB NetPay Upload File',
+            'rows' => [[
+                'employee_no' => 'E001',
+                'name' => 'ACASO MARK DENNIS',
+                'account_number' => '934105099758',
+                'bank_code' => 'AUB',
+                'salary' => 6230.77,
+            ]],
+        ]);
+
+        $sheet = $spreadsheet->getSheet(0);
+        $this->assertSame('AUB NetPay Upload File', $sheet->getCell('A1')->getValue());
+        $this->assertSame('Employee No.', $sheet->getCell('A3')->getValue());
+        $this->assertSame('Name', $sheet->getCell('B3')->getValue());
+        $this->assertSame('Account No.', $sheet->getCell('C3')->getValue());
+        $this->assertSame('Bank Code', $sheet->getCell('D3')->getValue());
+        $this->assertSame('Salary', $sheet->getCell('E3')->getValue());
+        $this->assertSame('', (string) $sheet->getCell('A4')->getValue());
+        $this->assertSame('ACASO MARK DENNIS', $sheet->getCell('B4')->getValue());
+        $this->assertSame('934105099758', $sheet->getCell('C4')->getFormattedValue());
+        $this->assertSame('', (string) $sheet->getCell('D4')->getValue());
+        $this->assertEqualsWithDelta(6230.77, (float) $sheet->getCell('E4')->getValue(), 0.001);
+        $this->assertGreaterThanOrEqual(2, $spreadsheet->getSheetCount());
+    }
+
     public function test_export_net_pay_uses_frozen_column_when_finalized(): void
     {
         $expectedNet = 9759.60;
