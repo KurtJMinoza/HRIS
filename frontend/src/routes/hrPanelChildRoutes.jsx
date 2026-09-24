@@ -54,6 +54,14 @@ const EmployeeHolidaysPage = lazy(() => import('@/pages/EmployeeHolidaysPage'))
 const EmployeeCorrectionRequests = lazy(() => import('@/pages/EmployeeCorrectionRequests'))
 const EmployeeLeave = lazy(() => import('@/pages/EmployeeLeave'))
 const EmployeeOvertime = lazy(() => import('@/pages/EmployeeOvertime'))
+const AttendanceCorrections = lazy(() => import('@/pages/AttendanceCorrections'))
+const AdminSchedules = lazy(() => import('@/pages/AdminSchedules'))
+const AdminPolicySettings = lazy(() => import('@/pages/AdminPolicySettings'))
+const AdminApprovalWorkflowSettings = lazy(() => import('@/pages/AdminApprovalWorkflowSettings'))
+const AdminUsersPermissions = lazy(() => import('@/pages/AdminUsersPermissions'))
+const AdminPayrollLogisticsPlaceholder = lazy(() => import('@/pages/AdminPayrollLogisticsPlaceholder'))
+const AdminEmployeeCompensationPage = lazy(() => import('@/pages/AdminEmployeeCompensationPage'))
+const EmployeeMyQr = lazy(() => import('@/pages/EmployeeMyQr'))
 
 function withSuspense(node, fallback) {
   return (

@@ -1,7 +1,7 @@
 ﻿import { Suspense, lazy, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from 'react-router-dom'
 
-/** Matches Vite `base` (e.g. `/HR/` â†’ `/HR`) so routes work when deployed under a subpath */
+/** Matches Vite `base` (e.g. `/HR/` -> `/HR`) so routes work when deployed under a subpath */
 const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, '') || undefined
 import { Toaster, toast } from 'sonner'
 import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff, ClipboardList, User, LockKeyhole, Sun, Moon, MapPin, Monitor, Smartphone, Tablet, Laptop } from 'lucide-react'
@@ -105,7 +105,7 @@ function LoginHrFigureMark({ className, presentation = 'tile' }) {
   )
 }
 
-// â€”â€” Real-time clock for DTR â€”â€”
+// -- Real-time clock for DTR --
 const DEFAULT_ATTENDANCE_TIME_ZONE = 'Asia/Manila'
 
 function resolveAttendanceTimestamp(attendance) {
@@ -148,12 +148,12 @@ const FEATURES = [
 ]
 
 function formatKioskTime(iso, timeZone = DEFAULT_ATTENDANCE_TIME_ZONE) {
-  if (!iso) return 'â€”'
+  if (!iso) return '\u2014'
   const d = new Date(iso)
   return d.toLocaleString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone })
 }
 
-/** Kiosk attendance confirmation dialog header â€” follows app light/dark theme. */
+/** Kiosk attendance confirmation dialog header - follows app light/dark theme. */
 function KioskAttendanceModalBrandBar({ variant }) {
   const isOut = variant === 'clock_out'
   const { theme } = useTheme()
@@ -255,7 +255,7 @@ function SmartDTRPreview({ className }) {
     correctionSuggested: false,
     correctionReason: null,
   })
-  /** Duplicate clock-in at kiosk â†’ offer Presence / Attendance Correction filing (employee portal after login). */
+  /** Duplicate clock-in at kiosk -> offer Presence / Attendance Correction filing (employee portal after login). */
   const [kioskCorrectionModal, setKioskCorrectionModal] = useState({
     open: false,
     reason: null,
@@ -496,7 +496,7 @@ function SmartDTRPreview({ className }) {
         aria-hidden
       />
 
-      {/* Brand bar â€” AGC lockup + display theme (matches dashboard tokens) */}
+      {/* Brand bar - AGC lockup + display theme (matches dashboard tokens) */}
       <div className="relative z-10 flex flex-wrap items-start justify-between gap-3 px-8 pt-6 pb-0 sm:px-10 xl:px-12">
         <button
           type="button"
@@ -557,11 +557,11 @@ function SmartDTRPreview({ className }) {
 
       <div className="relative z-10 mx-11 h-px bg-[#e3e5ea] dark:bg-border" aria-hidden />
 
-      {/* Scrollable body â€” page scroll on mobile; panel scroll on desktop */}
+      {/* Scrollable body - page scroll on mobile; panel scroll on desktop */}
       <div className="relative z-10 flex-1 lg:overflow-hidden">
         <div className="space-y-3 px-8 pt-4 pb-2 sm:px-10 xl:px-12">
 
-          {/* Mode segmented control â€” iOS-style filled vs outline */}
+          {/* Mode segmented control - iOS-style filled vs outline */}
           <div className="flex items-center justify-center">
             <div
               className="inline-flex rounded-[14px] border border-[#e1e4ea] bg-white/85 p-1 shadow-[0_4px_18px_rgba(15,23,42,0.07)] dark:border-border dark:bg-card/90 dark:shadow-[0_4px_18px_rgba(0,0,0,0.2)]"
@@ -593,11 +593,11 @@ function SmartDTRPreview({ className }) {
             </div>
           </div>
 
-          {/* â”€â”€ Action area â”€â”€ */}
+          {/* -- Action area -- */}
           {attendanceMode === 'qr_code' ? (
-            /* â”€â”€ QR code scanner mode â”€â”€ */
+            /* -- QR code scanner mode -- */
             <div className="space-y-3">
-              {/* Clock In / Clock Out â€” explicit action required before scanning */}
+              {/* Clock In / Clock Out - explicit action required before scanning */}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -670,7 +670,7 @@ function SmartDTRPreview({ className }) {
               />
             </div>
           ) : !kioskType ? (
-            /* â”€â”€ Face recognition mode: choose action first â”€â”€ */
+            /* -- Face recognition mode: choose action first -- */
             <div className="space-y-3">
               <p className="text-center text-sm text-[#2f3542] dark:text-muted-foreground">
                 Use <span className="font-semibold text-[#ff4f0b] dark:text-[#fb923c]">Face Recognition</span> for instant attendance - no badge required
@@ -705,7 +705,7 @@ function SmartDTRPreview({ className }) {
               </div>
             </div>
           ) : (
-            /* â”€â”€ Face recognition capture â”€â”€ */
+            /* -- Face recognition capture -- */
             <div className="min-w-0 space-y-3 overflow-hidden max-[760px]:space-y-2">
               <p className="text-center text-xs text-[#6b7280] dark:text-muted-foreground max-[360px]:text-[11px]">
                 Look into the camera and hold still during the guided liveness check.
@@ -761,7 +761,7 @@ function SmartDTRPreview({ className }) {
                     onClick={() => { setKioskType(null); setError(null); setScanResult(null) }}
                     className="rounded-xl border border-[#e1e4ea] bg-white px-4 py-1.5 text-xs font-medium text-[#6b7280] shadow-sm transition-all hover:border-[#ffb28a] hover:text-[#111827] dark:border-border dark:bg-card dark:text-muted-foreground dark:shadow-none dark:hover:border-[#ff8a45]/35 dark:hover:text-foreground"
                   >
-                    â† Back
+                    {'\u2190'} Back
                   </button>
                 </div>
               )}
@@ -770,7 +770,7 @@ function SmartDTRPreview({ className }) {
 
           <div className="h-px bg-[#e3e5ea] dark:bg-border" aria-hidden />
 
-          {/* â”€â”€ Recent Activity feed â€” social proof, higher priority â”€â”€ */}
+          {/* -- Recent Activity feed - social proof, higher priority -- */}
           <div className="space-y-3 pt-0">
             <div className="flex items-center justify-between">
               <p className="text-xs font-bold uppercase tracking-wider text-[#5d6472] dark:text-muted-foreground">Recent Activity</p>
@@ -780,7 +780,7 @@ function SmartDTRPreview({ className }) {
                   onClick={() => setRecentExpanded(true)}
                   className="text-sm font-semibold text-[#ff4f0b] transition-colors hover:text-[#db3f04] dark:text-[#fb923c] dark:hover:text-orange-300"
                 >
-                  View More â†’
+                  View More {'\u2192'}
                 </button>
               )}
               {recentExpanded && (
@@ -796,7 +796,7 @@ function SmartDTRPreview({ className }) {
 
             {recentLogs.length === 0 ? (
               <p className="rounded-xl border border-[#e1e4ea] bg-white py-6 text-center text-xs text-[#6b7280] shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
-                No activity yet Â· use the scanner above to clock in or out
+                No activity yet {'\u00B7'} use the scanner above to clock in or out
               </p>
             ) : (
               <ul className="space-y-1.5">
@@ -813,7 +813,7 @@ function SmartDTRPreview({ className }) {
                       key={log.id}
                       className="flex items-center gap-3 rounded-xl border border-[#e1e4ea] bg-white px-4 py-2.5 shadow-[0_4px_15px_rgba(15,23,42,0.05)] transition-colors hover:border-[#ffdccb] dark:border-border dark:bg-card dark:shadow-[0_4px_15px_rgba(0,0,0,0.2)] dark:hover:border-white/10"
                     >
-                      {/* Avatar â€” same URL resolution as admin / employee profile */}
+                      {/* Avatar - same URL resolution as admin / employee profile */}
                       <Avatar className="size-10 shrink-0 rounded-full border border-[#fff0e7] shadow-sm ring-2 ring-[#fff4ed] dark:border-border dark:ring-white/5">
                         <AvatarImage
                           src={
@@ -837,7 +837,7 @@ function SmartDTRPreview({ className }) {
                       </Avatar>
                       {/* Name + action with icon */}
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-bold leading-tight text-[#111827] dark:text-foreground">{log.employee_name || 'â€”'}</p>
+                        <p className="truncate text-sm font-bold leading-tight text-[#111827] dark:text-foreground">{log.employee_name || '\u2014'}</p>
                         <p className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-[#374151] dark:text-zinc-300">
                           <span className="inline-flex items-center gap-1.5">
                             <StatusIcon className={cn('size-3.5 shrink-0', statusIconCls)} />
@@ -915,7 +915,7 @@ function SmartDTRPreview({ className }) {
           <div className="mb-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-xl border border-[#e1e4ea] bg-white/90 py-1.5 px-4 text-[11px] font-medium text-[#5f6673] shadow-sm dark:border-border dark:bg-card/80 dark:text-muted-foreground">
             {FEATURES.map((f, i) => (
               <span key={f} className="flex items-center gap-2">
-                {i > 0 && <span aria-hidden>Â·</span>}
+                {i > 0 && <span aria-hidden>{'\u00B7'}</span>}
                 <span>{f}</span>
               </span>
             ))}
@@ -936,7 +936,7 @@ function SmartDTRPreview({ className }) {
         </div>
       </div>{/* end scrollable body */}
 
-      {/* Summary modal: branded professional confirmation â€” same layout for Clock In / Clock Out (Welcome vs Goodbye) */}
+      {/* Summary modal: branded professional confirmation - same layout for Clock In / Clock Out (Welcome vs Goodbye) */}
       <Dialog open={summaryModal.open} onOpenChange={(open) => !open && closeSummaryModal()}>
         <DialogContent
           overlayClassName="bg-slate-900/45 backdrop-blur-sm dark:bg-black/65"
@@ -1047,7 +1047,7 @@ function SmartDTRPreview({ className }) {
                     {formatKioskTime(summaryModal.recordedAt, attendanceTimeZone)}
                   </p>
                 ) : (
-                  <p className="text-4xl font-bold text-slate-400 dark:text-zinc-500">â€”</p>
+                  <p className="text-4xl font-bold text-slate-400 dark:text-zinc-500">{'\u2014'}</p>
                 )}
 
                 <div className="mt-4 flex min-h-10 w-full flex-wrap items-center justify-center gap-2">
@@ -1111,7 +1111,7 @@ function SmartDTRPreview({ className }) {
 
               {kioskAutoCloseSeconds > 0 && summaryModal.open && !summaryModal.correctionSuggested && (
                 <p className="mt-6 text-sm font-medium text-slate-400 dark:text-zinc-500" role="status" aria-live="polite">
-                  Closing in {kioskAutoCloseSeconds} second{kioskAutoCloseSeconds === 1 ? '' : 's'}â€¦
+                  Closing in {kioskAutoCloseSeconds} second{kioskAutoCloseSeconds === 1 ? '' : 's'}...
                 </p>
               )}
 
@@ -1138,7 +1138,7 @@ function SmartDTRPreview({ className }) {
         </DialogContent>
       </Dialog>
 
-      {/* Kiosk: duplicate clock-in (face / QR) â†’ correction filing instead of forcing another punch */}
+      {/* Kiosk: duplicate clock-in (face / QR) -> correction filing instead of forcing another punch */}
       <Dialog open={kioskCorrectionModal.open} onOpenChange={(open) => !open && closeKioskCorrectionModal()}>
         <DialogContent
           overlayClassName="bg-slate-900/35 backdrop-blur-sm dark:bg-black/40 dark:backdrop-blur-md"
@@ -1165,7 +1165,7 @@ function SmartDTRPreview({ className }) {
             <p className="mx-auto max-w-prose text-sm leading-relaxed text-slate-600 dark:text-white/75">{kioskCorrectionConflictBody}</p>
             {/*
               Keep actions in a single column: sm:flex-row + w-full on both buttons forces each to 100% width
-              in a row and overflows (orange â€œFile correctionâ€ clipped past the modal edge).
+              in a row and overflows (orange "File correction" clipped past the modal edge).
             */}
             <DialogFooter className="mt-8 w-full min-w-0 max-w-full flex-col gap-3 border-0 p-0 sm:flex-col">
               <Button
@@ -1194,7 +1194,7 @@ function SmartDTRPreview({ className }) {
   )
 }
 
-// â€”â€” Right panel: shared form primitives â€”â€”
+// -- Right panel: shared form primitives --
 function AuthInput({
   label,
   type = 'text',
@@ -1308,7 +1308,7 @@ function AuthCheckbox({ label, name, checked, onCheckedChange }) {
   )
 }
 
-// â€”â€” Login: credentials only (QR scanner tab removed) â€”â€”
+// -- Login: credentials only (QR scanner tab removed) --
 function LoginFormWithTabs({ onSuccess, onError }) {
   return (
     <div className="space-y-5">
@@ -1317,7 +1317,7 @@ function LoginFormWithTabs({ onSuccess, onError }) {
   )
 }
 
-// â€”â€” Auth forms â€”â€”
+// -- Auth forms --
 function LoginForm({ onSuccess, onError }) {
   const [loading, setLoading] = useState(false)
   const [loginValue, setLoginValue] = useState('')
@@ -1404,13 +1404,13 @@ function LoginForm({ onSuccess, onError }) {
         disabled={loading}
         className="h-[54px] w-full rounded-xl bg-linear-to-r from-[#ffb300] to-[#ff4b0c] py-3 text-base font-bold text-white shadow-[0_12px_24px_rgba(255,91,20,0.22)] ring-1 ring-[#ff7a2e]/20 transition-all duration-200 hover:brightness-105 active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#ff6818]/35"
       >
-        {loading ? 'Signing inâ€¦' : 'Sign in to Dashboard'}
+        {loading ? 'Signing in...' : 'Sign in to Dashboard'}
       </Button>
     </form>
   )
 }
 
-// â€”â€” Right auth panel (shadcn Card + Tabs, desktop-friendly width) â€”â€”
+// -- Right auth panel (shadcn Card + Tabs, desktop-friendly width) --
 function AuthPanel({ className, onSuccess, resetSuccess }) {
   const [authError, setAuthError] = useState('')
 
@@ -1432,7 +1432,7 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
     >
       <div className="relative z-10 w-full max-w-[min(100%,44rem)] lg:translate-y-6">
 
-        {/* Kiosk-login brand â€” tight vertical rhythm */}
+        {/* Kiosk-login brand - tight vertical rhythm */}
         <div className="mb-6 flex flex-col items-center px-2">
           <div className="flex flex-col items-center gap-2 text-center">
             <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3">
@@ -1472,13 +1472,13 @@ function AuthPanel({ className, onSuccess, resetSuccess }) {
           </CardContent>
         </Card>
 
-        <p className="mt-6 text-center text-sm text-muted-foreground">Â© 2026 HRIS. All rights reserved.</p>
+        <p className="mt-6 text-center text-sm text-muted-foreground">{'\u00A9'} 2026 HRIS. All rights reserved.</p>
       </div>
     </div>
   )
 }
 
-// â€”â€” Login page: split screen with redirect on success â€”â€”
+// -- Login page: split screen with redirect on success --
 function LoginPageWrapper() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -1635,7 +1635,7 @@ function LoginPageWrapper() {
   )
 }
 
-// â€”â€” Redirect / to dashboard or login by auth state â€”â€”
+// -- Redirect / to dashboard or login by auth state --
 function HomeRedirect() {
   const { user, loading } = useAuth()
   if (loading) {
@@ -1680,7 +1680,7 @@ function ThemedToaster() {
   return <Toaster richColors position="top-right" closeButton theme={theme} />
 }
 
-// â€”â€” App: router + auth + role-based routes â€”â€”
+// -- App: router + auth + role-based routes --
 export default function App() {
   return (
     <BrowserRouter basename={routerBasename}>
