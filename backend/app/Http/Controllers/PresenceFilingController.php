@@ -96,10 +96,10 @@ class PresenceFilingController extends Controller
 
         $types = AttendanceLog::query()
             ->where('user_id', $userId)
-            ->whereBetween('verified_at', [
+            ->whereEffectiveStampBetween(
                 $dayStart->copy()->setTimezone('UTC'),
                 $dayEnd->copy()->setTimezone('UTC'),
-            ])
+            )
             ->whereIn('type', [AttendanceLog::TYPE_CLOCK_IN, AttendanceLog::TYPE_CLOCK_OUT])
             ->distinct()
             ->pluck('type');

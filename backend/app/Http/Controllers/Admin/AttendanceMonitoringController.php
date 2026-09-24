@@ -1385,4 +1385,42 @@ class AttendanceMonitoringController extends Controller
 
         return null;
     }
+
+    /**
+     * Build monitoring rows for one employee on one date (no HTTP cache).
+     * Used by attendance_daily_summaries sync jobs after clock in/out.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function monitoringRowsForEmployeeDate(int $employeeId, string $date, User $actor): array
+    {
+        if ($employeeId <= 0 || $date === '') {
+            return [];
+        }
+
+        $request = Request::create('/api/admin/attendance', 'GET', [
+            'from_date' => $date,
+            'to_date' => $date,
+            'employee_id' => $employeeId,
+        ]);
+        $request->setUserResolver(static fn (): User => $actor);
+
+        $validated = [
+            'from_date' => $date,
+            'to_date' => $date,
+            'employee_id' => $employeeId,
+        ];
+
+        $computed = $this->computeMonitoringRows($request, $validated, includePayrollImpact: false);
+        if ($computed instanceof JsonResponse) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $computed['rows'] ?? [],
+            static fn ($row): bool => is_array($row)
+                && (int) ($row['employee_id'] ?? 0) === $employeeId
+                && (string) ($row['date'] ?? '') === $date
+        ));
+    }
 }

@@ -131,12 +131,12 @@ class PresenceFilingService
 
         $hasIn = Schema::hasTable('attendance_logs') && AttendanceLog::query()
             ->where('user_id', $employee->id)
-            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
+            ->whereEffectiveStampBetween($dayStartUtc, $dayEndUtc)
             ->where('type', AttendanceLog::TYPE_CLOCK_IN)
             ->exists();
         $hasOut = Schema::hasTable('attendance_logs') && AttendanceLog::query()
             ->where('user_id', $employee->id)
-            ->whereBetween('verified_at', [$dayStartUtc, $dayEndUtc])
+            ->whereEffectiveStampBetween($dayStartUtc, $dayEndUtc)
             ->where('type', AttendanceLog::TYPE_CLOCK_OUT)
             ->exists();
 

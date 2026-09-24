@@ -81,6 +81,13 @@ Schedule::call(function () {
     CleanupExpiredPayslipBulkDownloadsJob::dispatchSync(7);
 })->dailyAt('02:30')->timezone(config('attendance.timezone', 'Asia/Manila'));
 
+// Daily HRIS database export → plain .sql file (see scripts/backup-hris.cjs)
+Schedule::command('backup:run')
+    ->dailyAt('03:00')
+    ->timezone(config('attendance.timezone', 'Asia/Manila'))
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/backup.log'));
+
 Artisan::command('payroll:process {date? : Date to process (Y-m-d). Default: yesterday}', function (?string $date = null) {
     $dateKey = $date ?? Carbon::yesterday(config('attendance.timezone', 'Asia/Manila'))->toDateString();
     $this->info("Processing daily payroll for {$dateKey}...");

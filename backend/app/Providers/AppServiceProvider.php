@@ -25,6 +25,7 @@ use App\Models\Payslip;
 use App\Models\SectionUnit;
 use App\Models\Team;
 use App\Models\User;
+use App\Jobs\SyncAttendanceDailySummaryJob;
 use App\Services\AdminAttendanceCacheService;
 use App\Services\AttendanceCacheService;
 use App\Services\AttendanceSessionService;
@@ -159,6 +160,10 @@ class AppServiceProvider extends ServiceProvider
             );
             AdminDashboardCache::invalidateCompany(0, ['summary', 'attendance', 'charts', 'recent']);
             PayrollCacheInvalidator::clear('attendance_changed', ['user_id' => (int) $log->user_id]);
+
+            if ($date !== null) {
+                SyncAttendanceDailySummaryJob::dispatch((int) $log->user_id, $date);
+            }
         };
         AttendanceLog::saved($invalidateAttendanceForLog);
         AttendanceLog::deleted($invalidateAttendanceForLog);
@@ -175,6 +180,9 @@ class AppServiceProvider extends ServiceProvider
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
                 EmployeeDashboardCacheService::invalidate((int) $correction->user_id);
+                if ($date !== null) {
+                    SyncAttendanceDailySummaryJob::dispatch((int) $correction->user_id, $date);
+                }
             }
         });
         AttendanceCorrection::deleted(function (AttendanceCorrection $correction): void {
@@ -189,6 +197,9 @@ class AppServiceProvider extends ServiceProvider
                 $date = $correction->date?->toDateString();
                 AttendanceCacheService::invalidate((int) $correction->user_id, $date);
                 EmployeeDashboardCacheService::invalidate((int) $correction->user_id);
+                if ($date !== null) {
+                    SyncAttendanceDailySummaryJob::dispatch((int) $correction->user_id, $date);
+                }
             }
         });
 

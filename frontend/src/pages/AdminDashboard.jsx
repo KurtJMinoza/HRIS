@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { isMobileDevice } from '@/lib/mobile'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion as Motion } from 'framer-motion'
@@ -651,6 +652,19 @@ function BirthdayPersonRow({ person, tone = 'upcoming', monthView = false, futur
 
 export default function AdminDashboard() {
   const { user, loading: authLoading } = useAuth()
+  const mobileDashboard = isMobileDevice()
+  const [loadSecondaryPanels, setLoadSecondaryPanels] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const activate = () => setLoadSecondaryPanels(true)
+    if ('requestIdleCallback' in window) {
+      const id = window.requestIdleCallback(activate, { timeout: mobileDashboard ? 2500 : 1500 })
+      return () => window.cancelIdleCallback(id)
+    }
+    const timer = window.setTimeout(activate, mobileDashboard ? 1800 : 900)
+    return () => window.clearTimeout(timer)
+  }, [mobileDashboard])
   const perms = useMemo(() => new Set(user?.permissions ?? []), [user?.permissions])
   const canViewCompanyDirectory = useMemo(() => perms.has('org.company.view'), [perms])
   const canViewHolidays = useMemo(() => perms.has('holidays.view') || perms.has('holiday.view'), [perms])
@@ -767,7 +781,7 @@ export default function AdminDashboard() {
   })
 
   const attendanceQuery = useQuery({
-    queryKey: ['admin-dashboard', 'attendance', attendanceFilter],
+    queryKey: ['admin-dashboard', 'attendance', attendanceFilter, mobileDashboard ? 50 : 500],
     queryFn: ({ signal }) =>
       getAdminDashboardAttendanceTodayLite(
         { page: 1, per_page: 500, filter: attendanceFilter, fresh: true },
@@ -793,7 +807,7 @@ export default function AdminDashboard() {
   const chartsQuery = useQuery({
     queryKey: ['admin-dashboard', 'charts'],
     queryFn: ({ signal }) => getAdminDashboardCharts({ signal }),
-    enabled: !authLoading,
+    enabled: !authLoading && loadSecondaryPanels,
     initialData: () => dashboardSnapshotSegment(data, 'charts'),
     staleTime: 45_000,
     refetchInterval: 60_000,
@@ -803,7 +817,7 @@ export default function AdminDashboard() {
   const recentActivityQuery = useQuery({
     queryKey: ['admin-dashboard', 'recent'],
     queryFn: ({ signal }) => getAdminDashboardRecentActivity({ signal }),
-    enabled: !authLoading,
+    enabled: !authLoading && loadSecondaryPanels,
     initialData: () => dashboardSnapshotSegment(data, 'recent'),
     staleTime: 20_000,
     refetchInterval: 30_000,
@@ -940,7 +954,7 @@ export default function AdminDashboard() {
         },
         { signal },
       ),
-    enabled: !authLoading,
+    enabled: !authLoading && loadSecondaryPanels,
     placeholderData: (previousData) => previousData,
     staleTime: 120_000,
     refetchOnWindowFocus: false,

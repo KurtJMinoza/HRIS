@@ -1,14 +1,7 @@
 import { Suspense, lazy } from 'react'
+import { lazyWithChunkReload } from '@/lib/lazyWithChunkReload'
 import { Navigate, Route } from 'react-router-dom'
 import { EmployeeListRedirect, LegacyTeamPayslipsRedirect, ToEmployeesRedirect } from '@/routes/hrPanelRouteRedirects'
-import AttendanceCorrections from '@/pages/AttendanceCorrections'
-import AdminSchedules from '@/pages/AdminSchedules'
-import AdminPolicySettings from '@/pages/AdminPolicySettings'
-import AdminApprovalWorkflowSettings from '@/pages/AdminApprovalWorkflowSettings'
-import AdminUsersPermissions from '@/pages/AdminUsersPermissions'
-import AdminPayrollLogisticsPlaceholder from '@/pages/AdminPayrollLogisticsPlaceholder'
-import AdminEmployeeCompensationPage from '@/pages/AdminEmployeeCompensationPage'
-import EmployeeMyQr from '@/pages/EmployeeMyQr'
 import { DataTableRouteFallback, MyScheduleRouteFallback, ProfileRouteFallback } from '@/components/skeletons/RoutePageFallbacks.jsx'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 
@@ -36,7 +29,7 @@ const AdminDashboard = lazy(() => import('@/pages/AdminDashboard'))
 const AdminAttendance = lazy(() => import('@/pages/AdminAttendance'))
 const ManualAttendance = lazy(() => import('@/pages/ManualAttendance'))
 const AdminEmployeeLogs = lazy(() => import('@/pages/AdminEmployeeLogs'))
-const AdminGeofencing = lazy(() => import('@/pages/AdminGeofencing'))
+const AdminGeofencing = lazyWithChunkReload(() => import('@/pages/AdminGeofencing'))
 const AdminReports = lazy(() => import('@/pages/AdminReports'))
 const AdminCompanies = lazy(() => import('@/pages/AdminCompanies'))
 const AdminAreas = lazy(() => import('@/pages/AdminAreas'))
@@ -76,7 +69,7 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-emp" path="employees" element={withSuspense(<AdminEmployees />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-emp-list" path="employees/list" element={<EmployeeListRedirect />} />,
   <Route key="hr-emp-add" path="employees/add" element={withSuspense(<AdminEmployees />, <DataTableRouteFallback titleWidth="w-72" />)} />,
-  <Route key="hr-users" path="users-permissions" element={<AdminUsersPermissions />} />,
+  <Route key="hr-users" path="users-permissions" element={withSuspense(<AdminUsersPermissions />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route
     key="hr-emp-id"
     path="employees/:employeeId"
@@ -133,10 +126,10 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-my-corr" path="my-corrections" element={withSuspense(<EmployeeCorrectionRequests />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-my-hol" path="my-holidays" element={withSuspense(<EmployeeHolidaysPage />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route key="hr-sr" path="schedule-requests" element={withSuspense(<ScheduleRequestsPage />, <DataTableRouteFallback titleWidth="w-72" />)} />,
-  <Route key="hr-dc-rules" path="daily-computation/rules" element={<AdminPayrollLogisticsPlaceholder />} />,
-  <Route key="hr-dc-audit" path="daily-computation/audit" element={<AdminPayrollLogisticsPlaceholder />} />,
-  <Route key="hr-dc-pol" path="daily-computation/policy-settings" element={<AdminPolicySettings />} />,
-  <Route key="hr-approval-workflow" path="approval-workflow-settings" element={<AdminApprovalWorkflowSettings />} />,
+  <Route key="hr-dc-rules" path="daily-computation/rules" element={withSuspense(<AdminPayrollLogisticsPlaceholder />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-dc-audit" path="daily-computation/audit" element={withSuspense(<AdminPayrollLogisticsPlaceholder />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-dc-pol" path="daily-computation/policy-settings" element={withSuspense(<AdminPolicySettings />, <DataTableRouteFallback titleWidth="w-64" />)} />,
+  <Route key="hr-approval-workflow" path="approval-workflow-settings" element={withSuspense(<AdminApprovalWorkflowSettings />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route
     key="hr-dc"
     path="daily-computation"
@@ -210,7 +203,7 @@ export const HR_PANEL_CHILD_ROUTES = [
     path="compensation/payslips/preview/view"
     element={withSuspense(<AdminPayslipViewPage />, <DataTableRouteFallback titleWidth="w-64" />)}
   />,
-  <Route key="hr-employee-compensation" path="compensation/employee-compensation" element={<AdminEmployeeCompensationPage />} />,
+  <Route key="hr-employee-compensation" path="compensation/employee-compensation" element={withSuspense(<AdminEmployeeCompensationPage />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route
     key="hr-govcontrib-redirect"
     path="government-contributions"
@@ -221,21 +214,21 @@ export const HR_PANEL_CHILD_ROUTES = [
   <Route key="hr-employee-logs" path="employee-logs" element={withSuspense(<AdminEmployeeLogs />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-geofencing" path="geofencing" element={withSuspense(<AdminGeofencing />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route key="hr-email-notifications" path="email-notifications" element={withSuspense(<AdminEmailNotifications />, <DataTableRouteFallback titleWidth="w-72" />)} />,
-  <Route key="hr-att-corr" path="attendance-corrections" element={<AttendanceCorrections />} />,
-  <Route key="hr-corr" path="corrections" element={<AttendanceCorrections />} />,
+  <Route key="hr-att-corr" path="attendance-corrections" element={withSuspense(<AttendanceCorrections />, <DataTableRouteFallback titleWidth="w-72" />)} />,
+  <Route key="hr-corr" path="corrections" element={withSuspense(<AttendanceCorrections />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route
     key="hr-eval"
     path="evaluations"
     element={withSuspense(<AdminEvaluation />, <DataTableRouteFallback titleWidth="w-72" />)}
   />,
-  <Route key="hr-qr" path="qr" element={<EmployeeMyQr />} />,
+  <Route key="hr-qr" path="qr" element={withSuspense(<EmployeeMyQr />, <DataTableRouteFallback titleWidth="w-56" />)} />,
   <Route key="hr-re" path="reports" element={withSuspense(<AdminReports />, <DataTableRouteFallback titleWidth="w-72" />)} />,
   <Route
     key="hr-my-loans"
     path="loans-deductions"
     element={withSuspense(<EmployeeLoansDeductionsPage />, <DataTableRouteFallback titleWidth="w-72" />)}
   />,
-  <Route key="hr-sc" path="schedules" element={<AdminSchedules />} />,
+  <Route key="hr-sc" path="schedules" element={withSuspense(<AdminSchedules />, <DataTableRouteFallback titleWidth="w-64" />)} />,
   <Route
     key="hr-pr"
     path="profile"

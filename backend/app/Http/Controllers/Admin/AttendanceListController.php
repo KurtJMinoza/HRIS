@@ -546,8 +546,9 @@ class AttendanceListController extends Controller
         $searchHash = substr(hash('xxh128', ($validated['search'] ?? '') . '|' . ($validated['status'] ?? '')), 0, 12);
 
         return sprintf(
-            'attendance:list:v3:%d:%s:%s:%s:%s:%s:%d:%d:%s:%s',
+            'attendance:list:v3:%d:v%d:%s:%s:%s:%s:%s:%d:%d:%s:%s',
             $userId,
+            AttendanceCacheService::adminVersion(),
             $validated['company_id'] ?? '_',
             $validated['branch_id'] ?? '_',
             $validated['department_id'] ?? '_',

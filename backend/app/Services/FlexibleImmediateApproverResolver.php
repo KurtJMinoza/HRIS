@@ -116,8 +116,8 @@ class FlexibleImmediateApproverResolver
             'visibility_permissions_ignored_for_approval' => true,
         ]);
 
-        if ($requesterLevel === 'company_head') {
-            $this->log($context, 'requester is company head — no org approver before HR');
+        if ($this->requesterRoutesDirectlyToHr($requesterLevel)) {
+            $this->log($context, 'requester is '.$requesterLevel.' — no org approver before HR');
 
             return null;
         }
@@ -211,7 +211,11 @@ class FlexibleImmediateApproverResolver
                 }
             }
 
-            if ($directlyAssignedToDepartment && $this->usesDepartmentFirstApproval($requestType)) {
+            if (
+                $directlyAssignedToDepartment
+                && $this->usesDepartmentFirstApproval($requestType)
+                && ! $this->shouldSkipDepartmentHeadForRequester($requesterLevel)
+            ) {
                 $departmentResolved = $this->resolveDepartmentHeadForRequester(
                     $subject,
                     $hierarchy,
@@ -247,20 +251,22 @@ class FlexibleImmediateApproverResolver
                 return null;
             }
 
-            $departmentResolved = $this->resolveDepartmentHeadForRequester(
-                $subject,
-                $hierarchy,
-                $skipIds,
-                $context,
-                $requestType,
-                'department_head_before_parent_walk',
-                $primaryAssignment,
-                false,
-            );
-            if ($departmentResolved !== null) {
-                $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, true));
+            if (! $this->shouldSkipDepartmentHeadForRequester($requesterLevel)) {
+                $departmentResolved = $this->resolveDepartmentHeadForRequester(
+                    $subject,
+                    $hierarchy,
+                    $skipIds,
+                    $context,
+                    $requestType,
+                    'department_head_before_parent_walk',
+                    $primaryAssignment,
+                    false,
+                );
+                if ($departmentResolved !== null) {
+                    $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, true));
 
-                return $departmentResolved;
+                    return $departmentResolved;
+                }
             }
 
             $this->log($context, 'no section/unit head found — continuing to parent approver fallback', [
@@ -332,18 +338,20 @@ class FlexibleImmediateApproverResolver
         }
 
         if (! $hasFlexibleOrg || $unitChain->isEmpty()) {
-            $departmentResolved = $this->resolveDepartmentHeadForRequester(
-                $subject,
-                $hierarchy,
-                $skipIds,
-                $context,
-                $requestType,
-                'department_head_without_organization_units',
-            );
-            if ($departmentResolved !== null) {
-                $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, true));
+            if (! $this->shouldSkipDepartmentHeadForRequester($requesterLevel)) {
+                $departmentResolved = $this->resolveDepartmentHeadForRequester(
+                    $subject,
+                    $hierarchy,
+                    $skipIds,
+                    $context,
+                    $requestType,
+                    'department_head_without_organization_units',
+                );
+                if ($departmentResolved !== null) {
+                    $this->log($context, 'final selected first approver', $this->finalApproverLogPayload($departmentResolved, true));
 
-                return $departmentResolved;
+                    return $departmentResolved;
+                }
             }
 
             $this->log($context, 'parent approver fallback unavailable — flexible organization units missing', [
@@ -1357,12 +1365,23 @@ class FlexibleImmediateApproverResolver
         User $requestor,
         array $hierarchy,
     ): int {
-        $departmentIndex = $this->findUnitIndexByHierarchyLevel($unitChain, 'department');
-        if ($departmentIndex !== null) {
-            return $departmentIndex;
-        }
-
         return $this->startingUnitIndex($requesterLevel, $unitChain, $requestor, $hierarchy);
+    }
+
+    private function requesterRoutesDirectlyToHr(string $requesterLevel): bool
+    {
+        return in_array($requesterLevel, ['company_head', 'division_head'], true);
+    }
+
+    private function shouldSkipDepartmentHeadForRequester(string $requesterLevel): bool
+    {
+        return in_array($requesterLevel, [
+            'company_head',
+            'officer_in_charge',
+            'area_head',
+            'branch_head',
+            'division_head',
+        ], true);
     }
 
     /**

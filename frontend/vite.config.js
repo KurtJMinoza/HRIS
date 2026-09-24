@@ -27,7 +27,7 @@ function resolveAppVersion(mode) {
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
-  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8000'
+  const proxyTarget = env.VITE_DEV_API_PROXY_TARGET || 'http://127.0.0.1:8200'
   const appVersion = resolveAppVersion(mode)
 
   // Set VITE_BASE=/HR/ in .env when the built app lives under a subpath (e.g. http://localhost/HR/).
@@ -57,14 +57,41 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: {
       include: ['@mediapipe/tasks-vision'],
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined
+            if (id.includes('react-dom') || id.includes('/react/')) return 'vendor-react'
+            if (id.includes('react-router')) return 'vendor-router'
+            if (id.includes('@tanstack/react-query')) return 'vendor-query'
+            if (id.includes('framer-motion')) return 'vendor-motion'
+            if (id.includes('recharts')) return 'vendor-charts'
+            if (id.includes('lucide-react')) return 'vendor-icons'
+            if (id.includes('@mediapipe')) return 'vendor-mediapipe'
+            if (id.includes('maplibre') || id.includes('mapillary') || id.includes('@turf')) return 'vendor-maps'
+            if (id.includes('exceljs')) return 'vendor-excel'
+            if (id.includes('@react-pdf')) return 'vendor-pdf'
+            if (id.includes('survey-core') || id.includes('survey-react-ui')) return 'vendor-survey'
+            return undefined
+          },
+        },
+      },
+    },
     server: {
-      port: 5173,
+      port: 5100,
       host: true,
       strictPort: true,
       headers: {
         'Cache-Control': 'no-store, must-revalidate',
       },
       allowedHosts: mode === 'development' ? true : ['localhost', '127.0.0.1', 'hris.agctek.co'],
+      warmup: {
+        clientFiles: [
+          './src/pages/AdminGeofencing.jsx',
+          './src/pages/AdminEvaluation.jsx',
+        ],
+      },
       // Same-origin /api in dev → no CORS issues. Set VITE_API_URL=/api in .env (see .env.example).
       proxy: {
         '/api': {

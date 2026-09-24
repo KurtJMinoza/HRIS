@@ -5,6 +5,7 @@ use App\Http\Controllers\Admin\ApprovalWorkflowSettingsController;
 use App\Http\Controllers\Admin\AreaController;
 use App\Http\Controllers\Admin\AttendanceCorrectionController;
 use App\Http\Controllers\Admin\EmployeeActivityLogController;
+use App\Http\Controllers\Admin\AttendanceListController;
 use App\Http\Controllers\Admin\AttendanceMonitoringController;
 use App\Http\Controllers\Admin\BenefitCatalogController;
 use App\Http\Controllers\Admin\BranchController;
@@ -303,6 +304,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:attendance.view')->group(function () {
             Route::get('/admin/attendance', [AttendanceMonitoringController::class, 'index']);
+            Route::get('/admin/attendance/list', [AttendanceListController::class, 'index']);
+            Route::get('/admin/attendance/filters', [AttendanceListController::class, 'filters']);
+            Route::get('/admin/attendance/{id}/details-lite', [AttendanceListController::class, 'detailsLite'])->whereNumber('id');
             Route::get('/admin/attendance/export', [AttendanceMonitoringController::class, 'export']);
         });
         Route::middleware('permission:audit_logs.view|attendance.view')->group(function () {

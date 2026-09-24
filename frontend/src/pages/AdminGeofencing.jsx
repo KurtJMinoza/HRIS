@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Viewer as MapillaryViewer } from 'mapillary-js'
@@ -20,7 +20,6 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
-import AdminGeofenceLiveMonitor from '@/pages/AdminGeofenceLiveMonitor'
 import {
   captureAttendanceLocation,
   companyLogoUrl,
@@ -60,6 +59,7 @@ const DEVICE_SCOPE_OPTIONS = [
   { value: 'kiosk', label: 'Kiosk only', mapLabel: 'Kiosk', color: '#9333ea' },
 ]
 const EMPTY_FEATURE_COLLECTION = { type: 'FeatureCollection', features: [] }
+const AdminGeofenceLiveMonitor = lazy(() => import('@/pages/AdminGeofenceLiveMonitor'))
 const MAPILLARY_ACCESS_TOKEN = import.meta.env.VITE_MAPILLARY_ACCESS_TOKEN || ''
 const MAPILLARY_TILE_URL = MAPILLARY_ACCESS_TOKEN
   ? `https://tiles.mapillary.com/maps/vtp/mly1_public/2/{z}/{x}/{y}?access_token=${encodeURIComponent(MAPILLARY_ACCESS_TOKEN)}`
@@ -2311,7 +2311,9 @@ export default function AdminGeofencing() {
       </div>
 
       {activeTab === 'live_monitoring' && canViewLiveMonitoring ? (
-        <AdminGeofenceLiveMonitor />
+        <Suspense fallback={<div className="rounded-lg border border-slate-200 bg-white p-8 text-sm text-slate-500 dark:border-border dark:bg-card dark:text-muted-foreground">Loading live monitoring…</div>}>
+          <AdminGeofenceLiveMonitor />
+        </Suspense>
       ) : (
         <>
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-border dark:bg-card">

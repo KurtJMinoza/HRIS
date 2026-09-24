@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Http\Controllers\Admin\AttendanceMonitoringController;
 use App\Models\AttendanceDailySummary;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -17,6 +19,57 @@ class AttendanceSummarySyncService
     public function __construct(
         private readonly AttendanceCacheService $cacheService,
     ) {}
+
+    /**
+     * Recompute and upsert one employee's attendance_daily_summaries row for a calendar date.
+     */
+    public function syncEmployeeDate(int $employeeId, string $date): void
+    {
+        if ($employeeId <= 0 || $date === '') {
+            return;
+        }
+
+        $admin = User::query()
+            ->where('is_active', true)
+            ->where(function ($query): void {
+                $query->where('is_super_admin', true)
+                    ->orWhere('role', User::ROLE_SUPER_ADMIN)
+                    ->orWhere('role', User::ROLE_ADMIN);
+            })
+            ->orderByDesc('is_super_admin')
+            ->first();
+
+        if (! $admin) {
+            Log::warning('AttendanceSummarySyncService: no admin actor for employee date sync', [
+                'employee_id' => $employeeId,
+                'date' => $date,
+            ]);
+
+            return;
+        }
+
+        $controller = app(AttendanceMonitoringController::class);
+        $rows = $controller->monitoringRowsForEmployeeDate($employeeId, $date, $admin);
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            if ((int) ($row['employee_id'] ?? 0) !== $employeeId) {
+                continue;
+            }
+            if ((string) ($row['date'] ?? '') !== $date) {
+                continue;
+            }
+            $this->syncFromMonitoringRow($row);
+
+            return;
+        }
+
+        Log::info('AttendanceSummarySyncService: no monitoring row to sync', [
+            'employee_id' => $employeeId,
+            'date' => $date,
+        ]);
+    }
 
     /**
      * Sync a single employee+date from a pre-computed monitoring row array.

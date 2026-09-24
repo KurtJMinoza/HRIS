@@ -11,21 +11,21 @@ use App\Models\Department;
 use App\Models\Division;
 use App\Models\EmployeeOrganizationAssignment;
 use App\Models\LeaveRequest;
-use App\Models\OrgApprovalRecord;
 use App\Models\OrganizationPositionAssignment;
 use App\Models\OrganizationPositionType;
 use App\Models\OrganizationType;
 use App\Models\OrganizationUnit;
 use App\Models\OrganizationUnitLeader;
+use App\Models\OrgApprovalRecord;
 use App\Models\SectionUnit;
 use App\Models\User;
 use App\Services\FlexibleImmediateApproverResolver;
 use App\Services\HrApprovalChainResolver;
 use App\Services\HrRoleResolver;
-use App\Services\OrganizationLeadershipService;
-use App\Support\ManagementRole;
-use App\Services\OrgApprovalWorkflowService;
 use App\Services\OrganizationLeadershipAssignmentScopeService;
+use App\Services\OrganizationLeadershipService;
+use App\Services\OrgApprovalWorkflowService;
+use App\Support\ManagementRole;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -1208,6 +1208,81 @@ class FlexibleImmediateApproverResolverTest extends TestCase
 
         $this->assertNotNull($resolved);
         $this->assertSame($divHead->id, $resolved['approver_id']);
+    }
+
+    public function test_division_head_filing_leave_routes_directly_to_hr(): void
+    {
+        $deptHead = $this->user();
+        $divHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+        $divisionLegacyId = 92011;
+        $branch = $this->unit('Branch', null, [], 'branch');
+        $division = $this->unit('Division', $branch, [
+            'legacy_source_type' => 'division',
+            'legacy_source_id' => $divisionLegacyId,
+        ], 'division');
+        $otherDivisionLegacyId = 92012;
+        $otherDivision = $this->unit('Other Division', $branch, [
+            'legacy_source_type' => 'division',
+            'legacy_source_id' => $otherDivisionLegacyId,
+        ], 'division');
+        $finance = $this->createLegacyDepartment($otherDivisionLegacyId, $otherDivision, 'Finance');
+
+        Division::query()->whereKey($divisionLegacyId)->update(['division_head_id' => $divHead->id]);
+        app(OrganizationLeadershipService::class)->upsertLegacyHeadAssignment(
+            'division',
+            $divisionLegacyId,
+            (int) $divHead->id,
+        );
+        $this->assignDepartmentHead($deptHead, $finance['unit'], $finance['id']);
+
+        $divHead->forceFill([
+            'department_id' => $finance['id'],
+            'division_id' => null,
+        ])->save();
+
+        $resolved = app(FlexibleImmediateApproverResolver::class)->resolveImmediateApprover($divHead, 'leave', $divHead);
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($divHead, 'leave', $divHead);
+
+        $this->assertNull($resolved);
+        $this->assertCount(1, $chain);
+        $this->assertSame('admin_hr', $chain[0]['approval_level']);
+    }
+
+    public function test_legacy_division_head_assignment_routes_division_level_employee_without_department(): void
+    {
+        $this->setWorkflowFallbackToParent('leave', true);
+
+        $employee = $this->user();
+        $divHead = $this->user();
+        $this->user(['role' => User::ROLE_ADMIN, 'is_super_admin' => true]);
+        $divisionLegacyId = 92010;
+        $branch = $this->unit('Branch', null, [], 'branch');
+        $division = $this->unit('Division', $branch, [
+            'legacy_source_type' => 'division',
+            'legacy_source_id' => $divisionLegacyId,
+        ], 'division');
+
+        Division::query()->whereKey($divisionLegacyId)->update(['division_head_id' => $divHead->id]);
+        app(OrganizationLeadershipService::class)->upsertLegacyHeadAssignment(
+            'division',
+            $divisionLegacyId,
+            (int) $divHead->id,
+        );
+
+        $employee->forceFill([
+            'division_id' => $divisionLegacyId,
+            'department_id' => null,
+        ])->save();
+
+        $resolved = app(FlexibleImmediateApproverResolver::class)->resolveImmediateApprover($employee, 'leave', $employee);
+        $chain = app(HrApprovalChainResolver::class)->resolveApprovalChain($employee, 'leave', $employee);
+
+        $this->assertNotNull($resolved);
+        $this->assertSame($divHead->id, $resolved['approver_id']);
+        $this->assertCount(2, $chain);
+        $this->assertSame($divHead->id, $chain[0]['approver_id']);
+        $this->assertSame('admin_hr', $chain[1]['approval_level']);
     }
 
     public function test_division_head_with_no_department_scope_is_not_used(): void

@@ -389,9 +389,10 @@ class OrganizationLeadershipService
                 ]);
         }
 
+        $assignment = null;
         if ($employeeId !== null) {
             $this->assertActiveEmployee($employeeId);
-            OrganizationPositionAssignment::query()->updateOrCreate(
+            $assignment = OrganizationPositionAssignment::query()->updateOrCreate(
                 [
                     'organization_unit_id' => (int) $unit->id,
                     'position_type_id' => (int) $positionType->id,
@@ -406,6 +407,18 @@ class OrganizationLeadershipService
                     'is_active' => true,
                 ],
             );
+
+            if ($legacyType === 'division') {
+                $this->assignmentScopeService->syncAssignmentScopes(
+                    $assignment->fresh(['positionType']),
+                    [
+                        'department_scope_mode' => 'all',
+                        'scope_request_type' => 'all',
+                    ],
+                    'division',
+                    $legacyId,
+                );
+            }
         }
 
         $this->syncUnitLeadersFromAssignments($unit);

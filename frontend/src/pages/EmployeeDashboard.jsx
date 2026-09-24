@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
 import { Activity, ClipboardCheck, Clock, FileCheck, Target, User, ScanLine, ArrowUpRight, ArrowDownRight, ArrowUpDown, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText, Search, SlidersHorizontal, MoreVertical } from 'lucide-react'
@@ -6,7 +6,11 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { FaceVerificationLiveness } from '@/components/FaceVerificationLiveness'
+const FaceVerificationLiveness = lazy(() =>
+  import('@/components/FaceVerificationLiveness').then((module) => ({
+    default: module.FaceVerificationLiveness,
+  })),
+)
 import {
   Dialog,
   DialogContent,
@@ -4133,15 +4137,17 @@ export default function EmployeeDashboard() {
           </DialogHeader>
           <div className="min-w-0 overflow-x-hidden bg-card px-4 py-5 @sm:px-6 max-[760px]:px-2 max-[760px]:py-2">
             {faceAttendanceOpen ? (
-              <FaceVerificationLiveness
-                kioskMode
-                authenticatedAttendance
-                surface="light"
-                kioskType={faceAttendanceType}
-                onKioskSuccess={handleFaceAttendanceSuccess}
-                onKioskCancel={() => setFaceAttendanceOpen(false)}
-                instructionText="Face the camera straight, align your face in the frame, and hold still in good lighting."
-              />
+              <Suspense fallback={<div className="py-8 text-center text-sm text-muted-foreground">Loading camera…</div>}>
+                <FaceVerificationLiveness
+                  kioskMode
+                  authenticatedAttendance
+                  surface="light"
+                  kioskType={faceAttendanceType}
+                  onKioskSuccess={handleFaceAttendanceSuccess}
+                  onKioskCancel={() => setFaceAttendanceOpen(false)}
+                  instructionText="Face the camera straight, align your face in the frame, and hold still in good lighting."
+                />
+              </Suspense>
             ) : null}
           </div>
         </DialogContent>

@@ -1,5 +1,6 @@
 import { Suspense, lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { NotificationsProvider } from '@/contexts/NotificationsContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { HrPanelLayout } from '@/layouts/HrPanelLayout'
 import { EmployeeDashboardLayout } from '@/layouts/EmployeeDashboardLayout'
@@ -96,9 +97,11 @@ function authenticatedRoutes() {
 
 export default function AuthenticatedRoutes() {
   return (
-    <Routes>
-      {authenticatedRoutes()}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <NotificationsProvider>
+      <Routes>
+        {authenticatedRoutes()}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </NotificationsProvider>
   )
 }
