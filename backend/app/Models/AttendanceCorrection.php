@@ -37,6 +37,7 @@ class AttendanceCorrection extends Model
         'final_approved_by',
         'reason_code',
         'manual_presence_reason',
+        'document_paths',
         'filed_at',
         'filed_by',
         'filer_signature',
@@ -82,7 +83,24 @@ class AttendanceCorrection extends Model
             'second_approved_at' => 'datetime',
             'attendance_logs_synced_at' => 'datetime',
             'is_incomplete_record' => 'boolean',
+            'document_paths' => 'array',
         ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function resolveDocumentPaths(): array
+    {
+        $paths = $this->document_paths;
+        if (! is_array($paths)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            $paths,
+            static fn ($p) => is_string($p) && trim($p) !== ''
+        )));
     }
 
     public function user(): BelongsTo

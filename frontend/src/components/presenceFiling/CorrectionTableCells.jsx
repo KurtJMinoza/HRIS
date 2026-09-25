@@ -1,6 +1,16 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, Clock, FileText, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, Clock, Eye, FileText, XCircle } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import SupportingDocumentFilePreview from '@/components/SupportingDocumentFilePreview'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -13,6 +23,7 @@ import {
   reviewStatusBadgeClass,
   reviewStatusKey,
   reviewStatusLabel,
+  attachmentCount,
   formatTimeOnly,
 } from '@/lib/presenceFilingTable'
 import { EMPTY_PLACEHOLDER } from '@/lib/formatEmpty'
@@ -70,7 +81,7 @@ export function EmployeeAvatarNameRoleCell({
   )
 
   return (
-    <div className={cn('flex min-w-0 w-full max-w-full items-start gap-3', compact && 'gap-2.5')}>
+    <div className={cn('flex min-w-0 w-full max-w-full items-center gap-3', compact && 'gap-2.5')}>
       {profileTo ? (
         <Link
           to={profileTo}
@@ -220,10 +231,10 @@ export function ReviewStatusTableBadge({ item, showApprover = true, showApprover
   const Icon =
     key === 'rejected' ? XCircle : key === 'hr_approved' ? CheckCircle2 : Clock
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div className="flex min-w-0 flex-col justify-center gap-1">
       <span
         className={cn(
-          'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-tight shadow-sm',
+          'inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold leading-tight shadow-sm',
           reviewStatusBadgeClass(key)
         )}
       >
@@ -249,12 +260,12 @@ export function RemarksPreviewCell({ text }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="group min-w-0 w-full max-w-full text-left text-sm text-foreground outline-none transition hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          className="group flex min-h-9 w-full max-w-full items-center gap-2 text-left text-sm text-foreground outline-none transition hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
-          <span className="line-clamp-3 break-words whitespace-normal font-normal leading-snug text-foreground/90">
+          <span className="line-clamp-1 min-w-0 flex-1 break-words font-normal leading-snug text-foreground/90">
             {clean}
           </span>
-          <span className="mt-1 block text-xs font-semibold text-primary underline-offset-2 group-hover:underline">
+          <span className="shrink-0 text-xs font-semibold text-primary underline-offset-2 group-hover:underline">
             View full
           </span>
         </button>
@@ -280,10 +291,10 @@ export function IssueTypeCell({ issueType, reasonCode }) {
   const sub = reasonLabel(reasonCode)
   const label = issueLabel(issueType)
   return (
-    <div className="flex min-w-0 max-w-full flex-col gap-1">
+    <div className="flex min-w-0 max-w-full flex-col justify-center gap-1">
       <Badge
         variant="outline"
-        className="max-w-full justify-start rounded-lg border-slate-200/90 bg-white px-2 py-0.5 text-[11px] font-medium shadow-sm dark:border-slate-700 dark:bg-slate-900/40"
+        className="w-fit max-w-full justify-start rounded-lg border-slate-200/90 bg-white px-2 py-0.5 text-[11px] font-medium shadow-sm dark:border-slate-700 dark:bg-slate-900/40"
         title={label}
       >
         <span className="min-w-0 truncate">{label}</span>
@@ -293,6 +304,247 @@ export function IssueTypeCell({ issueType, reasonCode }) {
           {sub}
         </span>
       ) : null}
+    </div>
+  )
+}
+
+function correctionDocumentLinks(documents) {
+  const docs = Array.isArray(documents) ? documents : []
+  return docs
+    .map((doc, i) => {
+      if (typeof doc === 'string' && doc.trim()) {
+        const path = doc.replace(/^\/+/, '')
+        const url = profileImageUrl(
+          path.startsWith('api/') || path.startsWith('storage/')
+            ? `/${path.replace(/^storage\//, 'api/media/public/')}`
+            : `/api/media/public/${path}`,
+        )
+        return { url, filename: doc.split(/[/\\]/).pop() || `Document ${i + 1}` }
+      }
+      const url = profileImageUrl(doc?.url) || doc?.url
+      return {
+        url,
+        filename: doc?.filename || `Document ${i + 1}`,
+      }
+    })
+    .filter((d) => d.url)
+}
+
+const previewDocNavBtnClass =
+  'shrink-0 gap-1 border-brand/40 bg-background text-foreground hover:border-brand hover:bg-brand/10 hover:text-brand sm:px-3'
+const previewDocTabActiveClass =
+  'border-brand bg-brand text-brand-foreground shadow-sm hover:bg-brand-strong hover:text-brand-foreground'
+const previewDocTabClass =
+  'border-brand/35 bg-background text-foreground hover:border-brand/60 hover:bg-brand/10 hover:text-brand'
+
+/** Approver table preview: remarks + supporting documents only. */
+export function CorrectionReasonPreviewCell({ item, loadDocuments }) {
+  const [open, setOpen] = useState(false)
+  const [activeDocIndex, setActiveDocIndex] = useState(0)
+  const [fetchedDocs, setFetchedDocs] = useState(null)
+  const [docsLoading, setDocsLoading] = useState(false)
+  const remarks = remarksUserText(item?.remarks || '')
+  const listDocLinks = useMemo(() => correctionDocumentLinks(item?.documents), [item?.documents])
+  const docLinks = useMemo(() => {
+    if (fetchedDocs) return correctionDocumentLinks(fetchedDocs)
+    return listDocLinks
+  }, [fetchedDocs, listDocLinks])
+  const declaredCount = attachmentCount(item)
+  const hasContent = Boolean(remarks || docLinks.length > 0 || declaredCount > 0)
+
+  const activeDoc = docLinks[activeDocIndex] ?? docLinks[0] ?? null
+  const docCount = docLinks.length
+
+  function goToPrevDoc() {
+    setActiveDocIndex((i) => (i <= 0 ? docCount - 1 : i - 1))
+  }
+
+  function goToNextDoc() {
+    setActiveDocIndex((i) => (i >= docCount - 1 ? 0 : i + 1))
+  }
+
+  useEffect(() => {
+    if (activeDocIndex >= docCount && docCount > 0) {
+      setActiveDocIndex(docCount - 1)
+    }
+  }, [activeDocIndex, docCount])
+
+  useEffect(() => {
+    if (!open) {
+      setActiveDocIndex(0)
+      setFetchedDocs(null)
+      setDocsLoading(false)
+      return
+    }
+    setActiveDocIndex(0)
+    if (listDocLinks.length > 0 || !loadDocuments || !item?.id) return
+    if (declaredCount <= 0) return
+
+    let cancelled = false
+    setDocsLoading(true)
+    loadDocuments(item.id)
+      .then((documents) => {
+        if (!cancelled && Array.isArray(documents) && documents.length > 0) {
+          setFetchedDocs(documents)
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setDocsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, item?.id, loadDocuments, listDocLinks.length, declaredCount])
+
+  useEffect(() => {
+    if (!open || docCount <= 1) return undefined
+    function onKeyDown(e) {
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        setActiveDocIndex((i) => (i <= 0 ? docCount - 1 : i - 1))
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        setActiveDocIndex((i) => (i >= docCount - 1 ? 0 : i + 1))
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, docCount])
+
+  if (!hasContent) {
+    return <span className="text-sm text-muted-foreground">—</span>
+  }
+
+  return (
+    <div className="flex w-full min-w-0 items-center justify-start">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 max-w-full shrink-0 gap-1 rounded-md border-brand/35 bg-background px-2 text-[11px] font-medium text-foreground shadow-none hover:border-brand/60 hover:bg-brand/10 hover:text-brand dark:bg-transparent"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen(true)
+        }}
+      >
+        <Eye className="size-3 shrink-0 opacity-70" aria-hidden />
+        Preview
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          className="z-[60] flex max-h-[min(92dvh,900px)] w-[calc(100vw-1.5rem)] max-w-4xl flex-col overflow-hidden p-0"
+          overlayClassName="z-[60]"
+          innerClassName="flex min-h-0 flex-1 flex-col overflow-hidden p-4 sm:p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <DialogHeader className="shrink-0 space-y-1 text-left">
+            <DialogTitle>Request preview</DialogTitle>
+            <DialogDescription>Remarks and supporting document preview.</DialogDescription>
+          </DialogHeader>
+
+          {remarks ? (
+            <div className="shrink-0 rounded-lg border border-border/60 bg-muted/25 px-3 py-2.5 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Remarks</p>
+              <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed text-foreground">{remarks}</p>
+            </div>
+          ) : null}
+
+          <div className="flex min-h-0 flex-1 flex-col gap-3 pt-1">
+            {docsLoading ? (
+              <div className="flex min-h-[240px] flex-1 items-center justify-center text-sm text-muted-foreground">
+                Loading attachments…
+              </div>
+            ) : docLinks.length === 0 ? (
+              <div className="flex min-h-[120px] flex-1 items-center justify-center text-sm text-muted-foreground">
+                None attached
+              </div>
+            ) : (
+              <>
+                {docCount > 1 ? (
+                  <div className="flex shrink-0 flex-col gap-2">
+                    <div className="flex items-center gap-2 rounded-xl border border-brand/25 bg-brand/5 p-2 sm:gap-3 sm:p-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={previewDocNavBtnClass}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          goToPrevDoc()
+                        }}
+                      >
+                        <ChevronLeft className="size-4 shrink-0" aria-hidden />
+                        <span className="hidden sm:inline">Previous</span>
+                      </Button>
+                      <div className="min-w-0 flex-1 px-1 text-center">
+                        <p
+                          className="truncate text-sm font-semibold text-foreground"
+                          title={activeDoc?.filename}
+                        >
+                          {activeDoc?.filename}
+                        </p>
+                        <p className="text-xs tabular-nums text-muted-foreground">
+                          File {activeDocIndex + 1} of {docCount}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={previewDocNavBtnClass}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          goToNextDoc()
+                        }}
+                      >
+                        <span className="hidden sm:inline">Next</span>
+                        <ChevronRight className="size-4 shrink-0" aria-hidden />
+                      </Button>
+                    </div>
+                    <div
+                      className="flex gap-1.5 overflow-x-auto overscroll-contain pb-0.5"
+                      role="tablist"
+                      aria-label="Supporting documents"
+                    >
+                      {docLinks.map((doc, i) => (
+                        <Button
+                          key={doc.url || i}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          role="tab"
+                          aria-selected={i === activeDocIndex}
+                          className={cn(
+                            'h-8 min-w-8 shrink-0 px-2.5 tabular-nums',
+                            i === activeDocIndex ? previewDocTabActiveClass : previewDocTabClass,
+                          )}
+                          title={doc.filename}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setActiveDocIndex(i)
+                          }}
+                        >
+                          {i + 1}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {activeDoc ? (
+                  <SupportingDocumentFilePreview
+                    key={activeDoc.url}
+                    url={activeDoc.url}
+                    filename={activeDoc.filename}
+                    className="min-h-0 flex-1"
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

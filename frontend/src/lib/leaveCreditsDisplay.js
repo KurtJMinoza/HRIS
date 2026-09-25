@@ -35,6 +35,14 @@ export function formConsumesLeaveCredits(type) {
   return ['vacation', 'sick', 'emergency', 'other', 'half_day'].includes(String(type || '').toLowerCase())
 }
 
+/** Short hint for leave-type pickers (file-leave modals). */
+export function leaveTypeMinCreditsHint(type) {
+  const t = String(type || '').toLowerCase()
+  if (t === 'half_day') return 'Min. 0.5 leave credits'
+  if (t === 'vacation' || t === 'sick' || t === 'emergency') return 'Min. 1 leave credit'
+  return null
+}
+
 function pluralCreditLabel(value) {
   return `credit${Number(value) === 1 ? '' : 's'}`
 }

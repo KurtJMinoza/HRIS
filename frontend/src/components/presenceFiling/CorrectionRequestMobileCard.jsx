@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
+  CorrectionReasonPreviewCell,
   IssueTypeCell,
   ReviewStatusTableBadge,
   TimeCell,
@@ -55,6 +56,7 @@ export default function CorrectionRequestMobileCard({
   onApprove,
   onReject,
   onDelete,
+  loadDocuments,
 }) {
   const empName = item?.employee_name || item?.requested_by_name || '—'
   const empImg = item?.employee_profile_image_url || item?.requested_by_profile_image_url
@@ -90,8 +92,11 @@ export default function CorrectionRequestMobileCard({
           className="min-w-0 flex-1 text-left transition active:scale-[0.99]"
         >
           <div className="flex items-start justify-between gap-3">
-            <IssueTypeCell issueType={item?.issue_type} reasonCode={item?.reason_code} />
+            <IssueTypeCell issueType={item?.issue_type} />
             <ReviewStatusTableBadge item={item} showApprover={false} />
+          </div>
+          <div className="mt-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <CorrectionReasonPreviewCell item={item} loadDocuments={loadDocuments} />
           </div>
 
           {showEmployee ? (

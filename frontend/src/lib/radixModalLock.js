@@ -76,3 +76,39 @@ export function navigateAfterOverlayDismiss(navigate, to, options) {
     navigate(to, options)
   })
 }
+
+/** DialogContent props for modals with native file pickers (Radix focus-outside lock). */
+export function corrFileDialogContentProps() {
+  return {
+    onOpenAutoFocus: (e) => e.preventDefault(),
+    onCloseAutoFocus: (e) => {
+      e.preventDefault()
+      scheduleRadixModalLockReset()
+    },
+    onFocusOutside: (e) => e.preventDefault(),
+    onInteractOutside: (e) => {
+      const target = e.detail?.originalEvent?.target
+      if (target instanceof Element && target.closest?.('[data-native-file-upload-trigger]')) {
+        e.preventDefault()
+      }
+    },
+    onPointerDownOutside: (e) => {
+      const target = e.detail?.originalEvent?.target
+      if (target instanceof Element && target.closest?.('[data-native-file-upload-trigger]')) {
+        e.preventDefault()
+      }
+    },
+  }
+}
+
+/** After native file dialog closes (pick or cancel). */
+export function scheduleUnlockAfterNativeFilePicker() {
+  if (typeof window === 'undefined') return
+  window.addEventListener(
+    'focus',
+    () => {
+      scheduleRadixModalLockReset()
+    },
+    { once: true },
+  )
+}

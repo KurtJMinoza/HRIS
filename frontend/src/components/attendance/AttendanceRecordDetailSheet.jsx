@@ -113,13 +113,12 @@ export function AttendanceRecordDetailSheet({
     ? adminHoursDetailSummary(row, { showPayroll: !!showPayrollColumns })
     : employeeHoursDetailSummary(row)
 
-  const docCount = isAdmin
-    ? row.has_correction
-      ? 1
-      : 0
-    : row.presence_filing
-      ? 1
-      : 0
+  const docCount =
+    Number(
+      isAdmin
+        ? row.correction_documents_count ?? row.attachment_count
+        : row.presence_filing?.documents_count ?? row.presence_filing?.attachment_count,
+    ) || 0
 
   const timelineCorrection = isAdmin && row.has_correction
   const hasThirdStep = Boolean(timelineCorrection || row.presence_filing)

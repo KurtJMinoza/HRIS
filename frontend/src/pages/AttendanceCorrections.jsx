@@ -2,7 +2,7 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState } from
 import { motion as Motion } from 'framer-motion'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { exportRowsToXlsx } from '@/lib/excelExport'
-import { resetRadixModalLock } from '@/lib/radixModalLock'
+import { corrFileDialogContentProps, resetRadixModalLock } from '@/lib/radixModalLock'
 import {
   Loader2,
   RefreshCw,
@@ -106,10 +106,18 @@ import {
   EmployeeAvatarNameRoleCell,
   ReviewStatusTableBadge,
   RemarksPreviewCell,
+  CorrectionReasonPreviewCell,
   IssueTypeCell,
   TimeCell,
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
+import PresenceFilingReasonFields from '@/components/presenceFiling/PresenceFilingReasonFields'
+import {
+  MAX_PRESENCE_FILING_FILE_BYTES,
+  MAX_PRESENCE_FILING_SUPPORTING_FILES,
+  CORR_FILE_MODAL_SCROLL_CLASS,
+  CORR_FILE_MODAL_SHELL_CLASS,
+} from '@/components/presenceFiling/PresenceFilingSupportingDocumentsField'
 import CorrectionRequestMobileCard from '@/components/presenceFiling/CorrectionRequestMobileCard'
 import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -392,8 +400,6 @@ const corrViewModalInnerClass =
   'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0'
 const corrViewModalBodyClass =
   'min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain bg-card px-4 py-4 text-sm sm:space-y-5 sm:px-7 sm:py-6 dark:bg-card'
-const corrFileModalShellClass =
-  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:bg-card dark:scheme-dark'
 const corrFileFieldClass =
   'h-11 w-full rounded-xl border-input bg-background px-3 text-base text-foreground shadow-sm sm:h-[3.25rem] sm:px-4'
 const corrViewDetailDlClass =
@@ -585,6 +591,16 @@ export default function AttendanceCorrections() {
   // Heads: My Filings default. Admin HR stays on All Filings (deep links still open approval tab).
   const [tab, setTab] = useState(() => (canSeeAll && isAdminHr ? 'all' : 'mine'))
 
+  const loadCorrectionDocuments = useCallback(
+    async (id) => {
+      const useAdmin = tab === 'all' && canSeeAll
+      const loader = useAdmin ? getAdminPresenceFilingDetail : getMyPresenceFilingDetail
+      const data = await loader(id)
+      return data?.presence_filing?.documents ?? []
+    },
+    [tab, canSeeAll],
+  )
+
   const [mineItems, setMineItems] = useState([])
   const [allItems, setAllItems] = useState([])
   const [loadingMine, setLoadingMine] = useState(() => !(canSeeAll && isAdminHr))
@@ -647,6 +663,7 @@ export default function AttendanceCorrections() {
   const [fileTimeIn, setFileTimeIn] = useState('')
   const [fileTimeOut, setFileTimeOut] = useState('')
   const [fileRemarks, setFileRemarks] = useState('')
+  const [fileAttachments, setFileAttachments] = useState([])
   const [attendanceDetail, setAttendanceDetail] = useState(null)
   const [attendanceDetailLoading, setAttendanceDetailLoading] = useState(false)
   const [attendanceDetailError, setAttendanceDetailError] = useState('')
@@ -1225,6 +1242,7 @@ export default function AttendanceCorrections() {
   }
 
   function openFile() {
+    resetRadixModalLock()
     const today = new Date().toISOString().split('T')[0]
     setFileDate(today)
     setFileEmployeeId('')
@@ -1232,9 +1250,16 @@ export default function AttendanceCorrections() {
     setFileTimeIn('')
     setFileTimeOut('')
     setFileRemarks('')
+    setFileAttachments([])
     setAttendanceDetail(null)
     setAttendanceDetailError('')
     setFileOpen(true)
+  }
+
+  function scrollFileFieldIntoView(fieldId) {
+    window.requestAnimationFrame(() => {
+      document.getElementById(fieldId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
   }
 
   function handleFileIssueKindChange(next) {
@@ -1245,7 +1270,7 @@ export default function AttendanceCorrections() {
 
   const handleFileOpenChange = useCallback((open) => {
     setFileOpen(open)
-    if (!open) resetRadixModalLock()
+    resetRadixModalLock()
   }, [])
 
   function handleFileForMyself() {
@@ -1381,10 +1406,12 @@ export default function AttendanceCorrections() {
   async function submitFile() {
     if (canSeeAll && !fileEmployeeId) {
       toast({ title: 'Employee required', description: 'Select the employee for this correction.', variant: 'error' })
+      scrollFileFieldIntoView('file-employee')
       return
     }
     if (!fileDate) {
       toast({ title: 'Date required', description: 'Select the attendance date.', variant: 'error' })
+      scrollFileFieldIntoView('file-date')
       return
     }
     const ti = String(fileTimeIn || '').trim()
@@ -1397,6 +1424,7 @@ export default function AttendanceCorrections() {
         description: 'Enter your actual clock in time.',
         variant: 'error',
       })
+      scrollFileFieldIntoView('file-time-in')
       return
     }
     if (needOut && !to) {
@@ -1405,18 +1433,48 @@ export default function AttendanceCorrections() {
         description: 'Enter your actual clock out time.',
         variant: 'error',
       })
+      scrollFileFieldIntoView('file-time-out')
       return
     }
     if (needIn && !/^\d{2}:\d{2}$/.test(ti)) {
       toast({ title: 'Invalid time', description: 'Use a valid clock in time.', variant: 'error' })
+      scrollFileFieldIntoView('file-time-in')
       return
     }
     if (needOut && !/^\d{2}:\d{2}$/.test(to)) {
       toast({ title: 'Invalid time', description: 'Use a valid clock out time.', variant: 'error' })
+      scrollFileFieldIntoView('file-time-out')
       return
     }
     if (!fileRemarks.trim()) {
       toast({ title: 'Remarks required', description: 'Explain why you need this correction.', variant: 'error' })
+      scrollFileFieldIntoView('file-remarks')
+      return
+    }
+    if (fileAttachments.length === 0) {
+      toast({
+        title: 'Supporting document required',
+        description: 'Upload at least one supporting document.',
+        variant: 'error',
+      })
+      scrollFileFieldIntoView('file-supporting-docs')
+      return
+    }
+    const tooLarge = fileAttachments.find((f) => f.size > MAX_PRESENCE_FILING_FILE_BYTES)
+    if (tooLarge) {
+      toast({
+        title: 'File too large',
+        description: `${tooLarge.name} exceeds 10 MB.`,
+        variant: 'error',
+      })
+      return
+    }
+    if (fileAttachments.length > MAX_PRESENCE_FILING_SUPPORTING_FILES) {
+      toast({
+        title: 'Too many files',
+        description: `You can attach up to ${MAX_PRESENCE_FILING_SUPPORTING_FILES} files.`,
+        variant: 'error',
+      })
       return
     }
     try {
@@ -1427,6 +1485,7 @@ export default function AttendanceCorrections() {
         time_in: needIn ? ti : undefined,
         time_out: needOut ? to : undefined,
         remarks: fileRemarks.trim(),
+        attachments: fileAttachments,
       }
       if (canSeeAll) {
         await submitAdminPresenceFiling({
@@ -1934,6 +1993,7 @@ export default function AttendanceCorrections() {
                       <CorrectionRequestMobileCard
                         key={item.id}
                         item={item}
+                        loadDocuments={loadCorrectionDocuments}
                         employeeProfileTo={
                           canViewEmployeeProfile && item.user_id
                             ? hrPanelPath(hrBase, `employees/${item.user_id}`)
@@ -1953,8 +2013,8 @@ export default function AttendanceCorrections() {
                     ))}
                   </div>
 
-                  <div className="hidden w-full min-w-0 overflow-hidden bg-card px-4 pb-8 pt-2 sm:px-6 md:block md:px-8">
-                    <Table className="w-full min-w-0 table-fixed text-[12px]">
+                  <div className="hidden w-full min-w-0 overflow-x-auto bg-card px-4 pb-8 pt-2 sm:px-6 md:block md:px-8">
+                    <Table className="w-full min-w-[980px] table-fixed text-[12px]">
                       <TableHeader>
                         <TableRow className="border-b border-border/60 bg-muted/40 hover:bg-muted/40 dark:bg-muted/25 dark:hover:bg-muted/25">
                           {tab === 'all' && canSeeAll ? (
@@ -1980,13 +2040,18 @@ export default function AttendanceCorrections() {
                           <TableHead className="w-[4%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                             Day
                           </TableHead>
-                          <TableHead className="w-[11%] px-1.5 py-2.5">
+                          <TableHead className="w-[10%] px-2 py-2.5">
                             <SortHead col="issue_type" label="Issue type" />
                           </TableHead>
-                          <TableHead className="w-[6%] px-1.5 py-2.5">
+                          <TableHead className="w-[5.75rem] min-w-[5.75rem] px-2 py-2.5">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              Preview
+                            </span>
+                          </TableHead>
+                          <TableHead className="w-[6.5rem] min-w-[6.5rem] px-2 py-2.5">
                             <SortHead col="time_in" label="Time in" />
                           </TableHead>
-                          <TableHead className="w-[6%] px-1.5 py-2.5">
+                          <TableHead className="w-[6.5rem] min-w-[6.5rem] px-2 py-2.5">
                             <SortHead col="time_out" label="Time out" />
                           </TableHead>
                           <TableHead className="w-[12%] px-1.5 py-2.5">
@@ -2027,7 +2092,7 @@ export default function AttendanceCorrections() {
                               key={item.id}
                               className={cn(
                                 'border-b border-border/50 text-[12px] leading-snug transition-colors',
-                                'hover:bg-muted/25',
+                                'hover:bg-muted/25 [&>td]:align-middle',
                                 rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/20 dark:bg-muted/10'
                               )}
                             >
@@ -2057,13 +2122,22 @@ export default function AttendanceCorrections() {
                               <TableCell className={cn('align-middle text-foreground', cellPad)}>
                                 {formatDayName(item.date, item.day_name)}
                               </TableCell>
-                              <TableCell className={cn('align-middle', cellPad)}>
-                                <IssueTypeCell issueType={item.issue_type} reasonCode={item.reason_code} />
+                              <TableCell className={cn('max-w-0 overflow-hidden align-middle px-2!', cellPad)}>
+                                <IssueTypeCell issueType={item.issue_type} />
                               </TableCell>
-                              <TableCell className={cn('align-middle', cellPad)}>
+                              <TableCell
+                                className={cn(
+                                  'w-[5.75rem] min-w-[5.75rem] overflow-hidden align-middle px-2! py-2!',
+                                  cellPad,
+                                )}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <CorrectionReasonPreviewCell item={item} loadDocuments={loadCorrectionDocuments} />
+                              </TableCell>
+                              <TableCell className={cn('w-[6.5rem] min-w-[6.5rem] align-middle px-2!', cellPad)}>
                                 <TimeCell iso={tIn} />
                               </TableCell>
-                              <TableCell className={cn('align-middle', cellPad)}>
+                              <TableCell className={cn('w-[6.5rem] min-w-[6.5rem] align-middle px-2!', cellPad)}>
                                 <TimeCell iso={tOut} />
                               </TableCell>
                               <TableCell className={cn('max-w-[12rem] align-middle', cellPad)}>
@@ -2073,7 +2147,7 @@ export default function AttendanceCorrections() {
                                 <ApproverAvatarNameCell {...approverFromRequestRow(item)} />
                               </TableCell>
                               <TableCell
-                                className={cn('hidden min-w-0 align-top xl:table-cell', cellPad)}
+                                className={cn('hidden min-w-0 align-middle xl:table-cell', cellPad)}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <RemarksPreviewCell text={item.remarks} />
@@ -2275,6 +2349,26 @@ export default function AttendanceCorrections() {
                     </CorrectionDetailSection>
                   ) : null}
 
+                  {Array.isArray(selectedItem.documents) && selectedItem.documents.length > 0 ? (
+                    <CorrectionDetailSection icon={FileText} title="Supporting documents">
+                      <ul className="flex flex-col gap-2">
+                        {selectedItem.documents.map((doc, i) => (
+                          <li key={doc.url || i}>
+                            <a
+                              href={profileImageUrl(doc.url) || doc.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"
+                            >
+                              <FileText className="size-4" aria-hidden />
+                              {doc.filename || `Document ${i + 1}`}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </CorrectionDetailSection>
+                  ) : null}
+
                   {selectedItem.hr_wait_message ? (
                     <div
                       role="status"
@@ -2460,12 +2554,14 @@ export default function AttendanceCorrections() {
 
       <Dialog open={fileOpen} onOpenChange={handleFileOpenChange}>
         <DialogContent
+          pinFooter
           showCloseButton
           closeButtonClassName="right-3 top-3 size-9 rounded-lg border-border/80 bg-card/95 text-foreground shadow-md hover:bg-muted sm:right-4 sm:top-4 sm:size-10"
           innerClassName={corrViewModalInnerClass}
-          className={corrFileModalShellClass}
+          className={CORR_FILE_MODAL_SHELL_CLASS}
+          {...corrFileDialogContentProps()}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card">
+          <div className={CORR_FILE_MODAL_SCROLL_CLASS}>
             <DialogHeader className="border-b border-border/70 px-4 pb-4 pt-4 text-left sm:px-7 sm:pb-5 sm:pt-7">
               <div className="flex flex-col gap-3 pr-10 sm:flex-row sm:items-start sm:gap-4 sm:pr-12">
                 <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border sm:size-14">
@@ -2479,7 +2575,7 @@ export default function AttendanceCorrections() {
                     File correction request
                   </DialogTitle>
                   <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
-                    Choose the date and issue type. Only the time fields that apply are shown. Remarks are required.
+                    Choose the date and issue type. Remarks and at least one supporting document are required.
                   </DialogDescription>
                 </div>
               </div>
@@ -2629,9 +2725,16 @@ export default function AttendanceCorrections() {
                   </span>
                 </div>
               </div>
+              <div id="file-supporting-docs">
+                <PresenceFilingReasonFields
+                  attachments={fileAttachments}
+                  onAttachmentsChange={setFileAttachments}
+                  required
+                />
+              </div>
             </div>
           </div>
-          <DialogFooter className="mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border bg-muted/15 px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5">
+          <DialogFooter className="relative z-10 mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border bg-card px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5">
             <Button
               type="button"
               variant="outline"

@@ -16,6 +16,7 @@ class PresenceFilingCorrectionFormatter
     public function __construct(
         private readonly AttendanceCorrectionApprovalService $approvalService,
         private readonly HrRoleResolver $hrRoleResolver,
+        private readonly PresenceFilingService $presenceFilingService,
     ) {}
 
     /**
@@ -147,6 +148,8 @@ class PresenceFilingCorrectionFormatter
             'time_out' => $this->toIso8601InTz($c->time_out, $tz),
             'remarks' => $c->remarks,
             'reason_code' => $c->reason_code,
+            'reason_label' => PresenceFilingService::reasonLabels()[$c->reason_code ?? ''] ?? $c->reason_code,
+            'manual_presence_reason' => $c->manual_presence_reason,
             'pending_approval' => (bool) $c->pending_approval,
             'approved' => (bool) $c->approved,
             'approved_by' => $c->approved_by,
@@ -168,6 +171,10 @@ class PresenceFilingCorrectionFormatter
             'approval_chain' => $this->chainPayload($chain),
             'last_updated' => $this->toIso8601($c->updated_at),
         ];
+        $documents = $this->presenceFilingService->serializeSupportingDocuments($c);
+        $row['documents'] = $documents;
+        $row['documents_count'] = count($documents);
+        $row['attachment_count'] = count($documents);
         if ($includeEmployee && $c->relationLoaded('user') && $c->user) {
             $row['employee_name'] = $c->user->display_name;
             $row['employee_code'] = $c->user->employee_code;

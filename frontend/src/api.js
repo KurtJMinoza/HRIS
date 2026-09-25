@@ -7507,65 +7507,64 @@ export async function getEmployeeDashboardPerformanceKpi(options = {}) {
   return data
 }
 
-/** Employee: submit presence filing (pending approval). */
-export async function submitPresenceFiling(payload) {
+function presenceFilingSubmitError(data, fallback) {
+  return (
+    data.errors?.attachments?.[0] ||
+    data.errors?.date?.[0] ||
+    data.errors?.issue_kind?.[0] ||
+    data.errors?.time_in?.[0] ||
+    data.errors?.time_out?.[0] ||
+    data.errors?.remarks?.[0] ||
+    data.errors?.employee_id?.[0] ||
+    firstValidationMessage(data) ||
+    data.message ||
+    fallback
+  )
+}
+
+function buildPresenceFilingFormData(payload) {
+  const formData = new FormData()
+  formData.append('date', String(payload.date))
+  formData.append('issue_kind', String(payload.issue_kind))
+  formData.append('remarks', String(payload.remarks ?? '').trim())
   const ti = payload.time_in != null ? String(payload.time_in).trim() : ''
   const to = payload.time_out != null ? String(payload.time_out).trim() : ''
-  const body = {
-    date: payload.date != null ? String(payload.date) : undefined,
-    issue_kind: String(payload.issue_kind),
-    remarks: String(payload.remarks ?? '').trim(),
-    time_in: ti === '' ? undefined : ti,
-    time_out: to === '' ? undefined : to,
+  if (ti !== '') formData.append('time_in', ti)
+  if (to !== '') formData.append('time_out', to)
+  if (payload.employee_id != null) formData.append('employee_id', String(payload.employee_id))
+  const files = Array.isArray(payload.attachments) ? payload.attachments : []
+  for (const file of files) {
+    if (file instanceof File) formData.append('attachments[]', file, file.name)
   }
+  return formData
+}
+
+export async function getPresenceFilingOptions(options = {}) {
+  const path = options.admin ? '/admin/presence-filings/options' : '/employee/presence-filing/options'
+  const res = await authenticatedFetch(path, options.signal ? { signal: options.signal } : undefined)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load correction filing options')
+  return data
+}
+
+/** Employee: submit presence filing (pending approval). */
+export async function submitPresenceFiling(payload) {
   const res = await authenticatedFetch('/employee/presence-filing', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: buildPresenceFilingFormData(payload),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const msg =
-      data.errors?.date?.[0] ||
-      data.errors?.issue_kind?.[0] ||
-      data.errors?.time_in?.[0] ||
-      data.errors?.time_out?.[0] ||
-      data.errors?.remarks?.[0] ||
-      data.message ||
-      'Failed to submit presence filing'
-    throw new Error(msg)
-  }
+  if (!res.ok) throw new Error(presenceFilingSubmitError(data, 'Failed to submit presence filing'))
   return data
 }
 
 export async function submitAdminPresenceFiling(payload) {
-  const body = {
-    employee_id: Number(payload.employee_id),
-    date: String(payload.date),
-    issue_kind: String(payload.issue_kind || payload.issue_type || ''),
-    remarks: String(payload.remarks || '').trim(),
-  }
-  if (payload.time_in != null && String(payload.time_in).trim() !== '') body.time_in = String(payload.time_in).trim()
-  if (payload.time_out != null && String(payload.time_out).trim() !== '') body.time_out = String(payload.time_out).trim()
-
   const res = await authenticatedFetch('/admin/presence-filings', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: buildPresenceFilingFormData(payload),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) {
-    const msg =
-      firstValidationMessage(data) ||
-      data.errors?.employee_id?.[0] ||
-      data.errors?.date?.[0] ||
-      data.errors?.time_in?.[0] ||
-      data.errors?.time_out?.[0] ||
-      data.errors?.remarks?.[0] ||
-      data.message ||
-      'Failed to submit presence filing'
-    throw new Error(msg)
-  }
+  if (!res.ok) throw new Error(presenceFilingSubmitError(data, 'Failed to submit presence filing'))
   return data
 }
 

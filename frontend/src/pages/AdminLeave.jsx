@@ -40,6 +40,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { isRosterStaffMember } from '@/lib/rosterStaff'
+import { leaveTypeMinCreditsHint } from '@/lib/leaveCreditsDisplay'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -2682,9 +2683,14 @@ export default function AdminLeave() {
                     }}
                     className={adminLeaveModalSelectClass}
                   >
-                    {LEAVE_TYPES.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
+                    {LEAVE_TYPES.map((t) => {
+                      const hint = leaveTypeMinCreditsHint(t.value)
+                      return (
+                        <option key={t.value} value={t.value}>
+                          {hint ? `${t.label} — ${hint}` : t.label}
+                        </option>
+                      )
+                    })}
                   </select>
                 </div>
 

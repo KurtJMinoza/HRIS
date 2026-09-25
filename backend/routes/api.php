@@ -5,7 +5,6 @@ use App\Http\Controllers\Admin\ApprovalWorkflowSettingsController;
 use App\Http\Controllers\Admin\AreaController;
 use App\Http\Controllers\Admin\AttendanceCorrectionController;
 use App\Http\Controllers\Admin\EmployeeActivityLogController;
-use App\Http\Controllers\Admin\AttendanceListController;
 use App\Http\Controllers\Admin\AttendanceMonitoringController;
 use App\Http\Controllers\Admin\BenefitCatalogController;
 use App\Http\Controllers\Admin\BranchController;
@@ -168,6 +167,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::get('/attendance/summary', [AttendanceController::class, 'summary']);
     Route::get('/employee/presence-filing/attendance-detail', [PresenceFilingController::class, 'attendanceDetail']);
+    Route::get('/employee/presence-filing/options', [PresenceFilingController::class, 'filingOptions']);
     Route::post('/employee/presence-filing', [PresenceFilingController::class, 'store']);
     Route::get('/employee/presence-filing', [PresenceFilingController::class, 'mine']);
     Route::get('/employee/presence-filings', [PresenceFilingController::class, 'listMine']);
@@ -304,9 +304,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('permission:attendance.view')->group(function () {
             Route::get('/admin/attendance', [AttendanceMonitoringController::class, 'index']);
-            Route::get('/admin/attendance/list', [AttendanceListController::class, 'index']);
-            Route::get('/admin/attendance/filters', [AttendanceListController::class, 'filters']);
-            Route::get('/admin/attendance/{id}/details-lite', [AttendanceListController::class, 'detailsLite'])->whereNumber('id');
             Route::get('/admin/attendance/export', [AttendanceMonitoringController::class, 'export']);
         });
         Route::middleware('permission:audit_logs.view|attendance.view')->group(function () {
@@ -363,6 +360,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('permission:attendance.manual.bulk_create')->post('/admin/attendance/manual/bulk', [\App\Http\Controllers\Admin\ManualAttendanceController::class, 'bulk']);
 
         Route::middleware('permission:attendance.corrections.approve')->group(function () {
+            Route::get('/admin/presence-filings/options', [PresenceFilingController::class, 'filingOptions']);
             Route::get('/admin/presence-filings', [PresenceFilingController::class, 'adminIndex']);
             Route::get('/attendance-corrections', [PresenceFilingController::class, 'adminIndex']);
             Route::get('/admin/presence-filings/counts', [PresenceFilingController::class, 'counts']);

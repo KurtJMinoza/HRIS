@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion as Motion } from 'framer-motion'
 import {
   Calendar,
@@ -121,6 +121,8 @@ import { LeaveRequestDetailModal } from '@/components/leave/LeaveRequestDetailMo
 import { EmployeeLeaveCalendarView } from '@/components/leave/EmployeeLeaveCalendarView'
 import { LeaveCreditsSummaryPanel } from '@/components/leave/LeaveCreditsSummaryPanel'
 import { LeaveModalCreditsCard } from '@/components/leave/LeaveModalCreditsCard'
+import LeaveTypeSelectItemLabel from '@/components/leave/LeaveTypeSelectItemLabel'
+import { getLeaveTypeIcon } from '@/lib/leaveTypeIcon'
 import { formConsumesLeaveCredits } from '@/lib/leaveCreditsDisplay'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
@@ -218,18 +220,7 @@ function LeaveTypeBadge({ type }) {
     half_day: 'border-violet-200/90 bg-gradient-to-br from-violet-50 to-purple-50 text-violet-950 dark:text-violet-50',
     other: 'border-slate-200/90 bg-gradient-to-br from-slate-50 to-zinc-50 text-slate-900 dark:text-slate-100',
   }
-  const Icon =
-    t === 'vacation'
-      ? Palmtree
-      : t === 'sick'
-        ? HeartPulse
-        : t === 'emergency'
-          ? AlertTriangle
-          : t === 'undertime'
-            ? Clock
-            : t === 'half_day'
-              ? CalendarClock
-              : Briefcase
+  const Icon = getLeaveTypeIcon(t)
   return (
     <span
       className={cn(
@@ -1386,7 +1377,11 @@ function EmployeeLeaveSelfService() {
                   <SelectTrigger id="leave-type" className={leaveModalSelectClass}>
                     <SelectValue>
                       <span className="flex items-center gap-3 sm:gap-4">
-                        <Briefcase className="size-4 text-brand sm:size-5" strokeWidth={2.2} aria-hidden />
+                        {createElement(getLeaveTypeIcon(addForm.type), {
+                          className: 'size-4 text-brand sm:size-5',
+                          strokeWidth: 2.2,
+                          'aria-hidden': true,
+                        })}
                         {leaveTypeLabel(addForm.type)}
                       </span>
                     </SelectValue>
@@ -1394,22 +1389,37 @@ function EmployeeLeaveSelfService() {
                   <SelectContent
                     position="popper"
                     align="start"
-                    className="z-[80] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10"
+                    className="z-[80] w-[var(--radix-select-trigger-width)] min-w-[min(100vw-2rem,22rem)] rounded-xl border-border/80 bg-popover p-1 text-popover-foreground shadow-xl dark:border-white/10 sm:min-w-[20rem]"
                   >
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="vacation">
-                      Vacation
+                    <SelectItem
+                      className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground [&_[data-slot=select-item-text]]:w-full"
+                      value="vacation"
+                    >
+                      <LeaveTypeSelectItemLabel title="Vacation" type="vacation" />
                     </SelectItem>
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="sick">
-                      Sick
+                    <SelectItem
+                      className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground [&_[data-slot=select-item-text]]:w-full"
+                      value="sick"
+                    >
+                      <LeaveTypeSelectItemLabel title="Sick" type="sick" />
                     </SelectItem>
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="emergency">
-                      Emergency
+                    <SelectItem
+                      className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground [&_[data-slot=select-item-text]]:w-full"
+                      value="emergency"
+                    >
+                      <LeaveTypeSelectItemLabel title="Emergency" type="emergency" />
                     </SelectItem>
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="half_day">
-                      Half Day
+                    <SelectItem
+                      className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground [&_[data-slot=select-item-text]]:w-full"
+                      value="half_day"
+                    >
+                      <LeaveTypeSelectItemLabel title="Half Day" type="half_day" />
                     </SelectItem>
-                    <SelectItem className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground" value="other">
-                      Other
+                    <SelectItem
+                      className="rounded-lg px-4 py-3 text-base focus:bg-brand/10 focus:text-foreground [&_[data-slot=select-item-text]]:w-full"
+                      value="other"
+                    >
+                      <LeaveTypeSelectItemLabel title="Other" type="other" />
                     </SelectItem>
                   </SelectContent>
                 </Select>

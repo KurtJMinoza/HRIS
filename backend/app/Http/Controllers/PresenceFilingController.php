@@ -96,10 +96,10 @@ class PresenceFilingController extends Controller
 
         $types = AttendanceLog::query()
             ->where('user_id', $userId)
-            ->whereEffectiveStampBetween(
+            ->whereBetween('verified_at', [
                 $dayStart->copy()->setTimezone('UTC'),
                 $dayEnd->copy()->setTimezone('UTC'),
-            )
+            ])
             ->whereIn('type', [AttendanceLog::TYPE_CLOCK_IN, AttendanceLog::TYPE_CLOCK_OUT])
             ->distinct()
             ->pluck('type');
@@ -218,22 +218,7 @@ class PresenceFilingController extends Controller
 
         $tz = $this->presenceFilingService->attendanceTimezone();
 
-        $validated = $request->validate([
-            'date' => ['required', 'date', 'before_or_equal:today'],
-            'issue_kind' => ['required', 'string', 'in:missing_in,missing_out,both'],
-            'remarks' => ['required', 'string', 'min:1', 'max:65535'],
-            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
-            'time_in' => [
-                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_in', 'both'], true)),
-                'nullable',
-                'date_format:H:i',
-            ],
-            'time_out' => [
-                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_out', 'both'], true)),
-                'nullable',
-                'date_format:H:i',
-            ],
-        ]);
+        $validated = $this->validatePresenceFilingCore($request);
 
         $dateKey = $validated['date'];
         $kind = $validated['issue_kind'];
@@ -291,6 +276,8 @@ class PresenceFilingController extends Controller
             ->whereDate('date', $dateKey)
             ->first();
 
+        $documentPaths = $this->resolveDocumentPathsForFiling($request, $existing);
+
         // Resolve org context as of filing time so late corrections for past dates
         // still route to the employee's current shared/primary head (not a stale primary).
         $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
@@ -316,7 +303,7 @@ class PresenceFilingController extends Controller
         }
         $auditReason = $fullRemarks;
 
-        $correction = DB::transaction(function () use ($employee, $dateKey, $timeInUtc, $timeOutUtc, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $auditReason, $assignmentContext) {
+        $correction = DB::transaction(function () use ($employee, $dateKey, $timeInUtc, $timeOutUtc, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $auditReason, $assignmentContext, $validated, $documentPaths) {
             $correction = AttendanceCorrection::updateOrCreate(
                 [
                     'user_id' => $employee->id,
@@ -327,7 +314,7 @@ class PresenceFilingController extends Controller
                     'time_out' => $timeOutUtc,
                     'issue_kind' => $kind,
                     'remarks' => $fullRemarks,
-                    'reason_code' => PresenceFilingService::REASON_FORGOT_PUNCH,
+                    'reason_code' => null,
                     'pending_approval' => true,
                     'status' => AttendanceCorrectionStatusService::STATUS_PENDING,
                     'approved' => false,
@@ -340,6 +327,7 @@ class PresenceFilingController extends Controller
                     'rejected_by' => null,
                     'rejection_note' => null,
                     'manual_presence_reason' => null,
+                    ...$this->documentPathsColumnPayload($documentPaths),
                     'approval_stage' => $initialStage,
                     'first_approver_id' => $firstApproverId,
                     'first_approved_at' => null,
@@ -425,6 +413,17 @@ class PresenceFilingController extends Controller
         ], 201);
     }
 
+    public function filingOptions(Request $request): JsonResponse
+    {
+        if (! $request->user()) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        return response()->json([
+            'reason_options' => PresenceFilingService::reasonOptionsForApi(),
+        ]);
+    }
+
     public function mine(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -487,23 +486,7 @@ class PresenceFilingController extends Controller
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $validated = $request->validate([
-            'employee_id' => ['required', 'integer', 'exists:users,id'],
-            'date' => ['required', 'date', 'before_or_equal:today'],
-            'issue_kind' => ['required', 'string', 'in:missing_in,missing_out,both'],
-            'remarks' => ['required', 'string', 'min:1', 'max:65535'],
-            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
-            'time_in' => [
-                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_in', 'both'], true)),
-                'nullable',
-                'date_format:H:i',
-            ],
-            'time_out' => [
-                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_out', 'both'], true)),
-                'nullable',
-                'date_format:H:i',
-            ],
-        ]);
+        $validated = $this->validatePresenceFilingCore($request, requireEmployeeId: true);
 
         $employee = User::query()
             ->whereKey((int) $validated['employee_id'])
@@ -559,6 +542,8 @@ class PresenceFilingController extends Controller
             ->whereDate('date', $dateKey)
             ->first();
 
+        $documentPaths = $this->resolveDocumentPathsForFiling($request, $existing);
+
         $selectedAssignment = $this->organizationAssignments->resolveRequestAssignment(
             $employee,
             isset($validated['assignment_id']) ? (int) $validated['assignment_id'] : null,
@@ -583,7 +568,7 @@ class PresenceFilingController extends Controller
             ]);
         }
 
-        $correction = DB::transaction(function () use ($employee, $actor, $dateKey, $timeIn, $timeOut, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $assignmentContext) {
+        $correction = DB::transaction(function () use ($employee, $actor, $dateKey, $timeIn, $timeOut, $fullRemarks, $existing, $initialStage, $isIncompleteRecord, $kind, $firstApproverId, $hrApproverId, $assignmentContext, $validated, $documentPaths) {
             $correction = AttendanceCorrection::updateOrCreate(
                 [
                     'user_id' => $employee->id,
@@ -594,7 +579,7 @@ class PresenceFilingController extends Controller
                     'time_out' => $timeOut ? $timeOut->copy()->setTimezone('UTC') : null,
                     'issue_kind' => $kind,
                     'remarks' => $fullRemarks,
-                    'reason_code' => PresenceFilingService::REASON_FORGOT_PUNCH,
+                    'reason_code' => null,
                     'pending_approval' => true,
                     'status' => AttendanceCorrectionStatusService::STATUS_PENDING,
                     'approved' => false,
@@ -607,6 +592,7 @@ class PresenceFilingController extends Controller
                     'rejected_by' => null,
                     'rejection_note' => null,
                     'manual_presence_reason' => null,
+                    ...$this->documentPathsColumnPayload($documentPaths),
                     'approval_stage' => $initialStage,
                     'first_approver_id' => $firstApproverId,
                     'first_approved_at' => null,
@@ -804,6 +790,9 @@ class PresenceFilingController extends Controller
                 'division_id',
                 'department_id',
                 'section_unit_id',
+                'reason_code',
+                'manual_presence_reason',
+                'document_paths',
             ])
             ->where('user_id', $user->id)
             ->where(function ($sub) {
@@ -1015,6 +1004,9 @@ class PresenceFilingController extends Controller
                 'division_id',
                 'department_id',
                 'section_unit_id',
+                'reason_code',
+                'manual_presence_reason',
+                'document_paths',
             ])
             ->with([
                 'user:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,department_id,department',
@@ -1339,7 +1331,7 @@ class PresenceFilingController extends Controller
         $company = (string) ($filters['company_id'] ?? 'all');
         $status = (string) ($filters['status'] ?? 'all');
 
-        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v6:v'.AttendanceCorrectionModuleCache::version();
+        return 'attendance_correction:list:'.$actor->id.':'.$company.':'.$status.':'.$page.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':labels-v7-docs:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1450,7 +1442,7 @@ class PresenceFilingController extends Controller
             'actor_can_reject' => $canApprove,
             'can_approve' => $canApprove,
             'can_reject' => $canApprove,
-        ], $approverFields);
+        ], $approverFields, $this->presenceFilingService->documentsListFields($c));
     }
 
     private function employeePresenceFilingsListCacheKey(User $user, Request $request, int $perPage, int $page): string
@@ -1463,7 +1455,7 @@ class PresenceFilingController extends Controller
             'per_page' => $perPage,
         ], static fn ($value): bool => $value !== null && $value !== '');
 
-        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':actions-v2:v'.AttendanceCorrectionModuleCache::version();
+        return 'employee.presence_filings:list:'.(int) $user->id.':'.md5(json_encode($filters, JSON_THROW_ON_ERROR)).':actions-v3-docs:v'.AttendanceCorrectionModuleCache::version();
     }
 
     /**
@@ -1542,7 +1534,7 @@ class PresenceFilingController extends Controller
             'can_approve' => $canAct,
             'can_reject' => $canAct,
             'actor_can_delete' => $canDelete,
-        ], $approverFields);
+        ], $approverFields, $this->presenceFilingService->documentsListFields($c));
     }
 
     /**
@@ -1816,6 +1808,7 @@ class PresenceFilingController extends Controller
             'actor_can_reject' => $auth['can_reject'],
             'created_at' => $c->created_at?->toIso8601String(),
             'filed_at' => ($c->filed_at ?? $c->created_at)?->toIso8601String(),
+            ...$this->presenceFilingService->documentsListFields($c),
         ];
     }
 
@@ -1915,6 +1908,7 @@ class PresenceFilingController extends Controller
             ->select([
                 'id', 'user_id', 'date', 'time_in', 'time_out', 'remarks', 'issue_kind',
                 'approved', 'approved_by', 'approved_at', 'pending_approval', 'reason_code',
+                'manual_presence_reason', 'document_paths',
                 'filed_at', 'filed_by', 'rejected_at', 'rejected_by', 'rejection_note',
                 'approval_stage', 'first_approver_id', 'first_approved_at',
                 'second_approver_id', 'second_approved_at', 'is_incomplete_record',
@@ -2006,6 +2000,7 @@ class PresenceFilingController extends Controller
                     'first_approver_id', 'second_approver_id', 'created_at',
                     'assignment_id', 'assignment_type', 'company_id', 'branch_id',
                     'division_id', 'department_id', 'section_unit_id',
+                    'document_paths',
                 ])
                 ->with([
                     'user:id,name,first_name,middle_name,last_name,suffix,employee_code,company_id,department_id,department',
@@ -2927,5 +2922,67 @@ class PresenceFilingController extends Controller
             'message' => 'Remark recorded.',
             'presence_filing' => $this->correctionFormatter->format($this->correctionFormatter->freshWithDisplayRelations($correction), $tz, includeEmployee: true, actor: $actor, includeDisplayFields: true),
         ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validatePresenceFilingCore(Request $request, bool $requireEmployeeId = false): array
+    {
+        $rules = [
+            'date' => ['required', 'date', 'before_or_equal:today'],
+            'issue_kind' => ['required', 'string', 'in:missing_in,missing_out,both'],
+            'remarks' => ['required', 'string', 'min:1', 'max:65535'],
+            'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
+            'time_in' => [
+                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_in', 'both'], true)),
+                'nullable',
+                'date_format:H:i',
+            ],
+            'time_out' => [
+                Rule::requiredIf(fn () => in_array($request->input('issue_kind'), ['missing_out', 'both'], true)),
+                'nullable',
+                'date_format:H:i',
+            ],
+            'attachments' => ['nullable', 'array', 'max:15'],
+            'attachments.*' => ['file', 'mimes:pdf,jpg,jpeg,png,doc,docx', 'max:10240'],
+        ];
+        if ($requireEmployeeId) {
+            $rules['employee_id'] = ['required', 'integer', 'exists:users,id'];
+        }
+
+        return $request->validate($rules);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function resolveDocumentPathsForFiling(Request $request, ?AttendanceCorrection $existing): array
+    {
+        $newPaths = $this->presenceFilingService->storeUploadedSupportingDocuments($request);
+        $paths = array_values(array_unique([
+            ...($existing?->resolveDocumentPaths() ?? []),
+            ...$newPaths,
+        ]));
+        if ($paths === []) {
+            throw ValidationException::withMessages([
+                'attachments' => ['At least one supporting document is required.'],
+            ]);
+        }
+
+        return $paths;
+    }
+
+    /**
+     * @param  array<int, string>  $documentPaths
+     * @return array<string, mixed>
+     */
+    private function documentPathsColumnPayload(array $documentPaths): array
+    {
+        if (! Schema::hasColumn('attendance_corrections', 'document_paths')) {
+            return [];
+        }
+
+        return ['document_paths' => $documentPaths];
     }
 }

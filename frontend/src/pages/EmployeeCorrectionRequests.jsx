@@ -40,6 +40,7 @@ import {
   getMyPresenceFilingAttendanceDetail,
   getMyPresenceFilings,
   getMyPresenceFilingDetail,
+  profileImageUrl,
   submitPresenceFiling,
 } from '@/api'
 import { Input } from '@/components/ui/input'
@@ -77,14 +78,22 @@ import {
   EmployeeAvatarNameRoleCell,
   ReviewStatusTableBadge,
   RemarksPreviewCell,
+  CorrectionReasonPreviewCell,
   IssueTypeCell,
   TimeCell,
   getInitials,
 } from '@/components/presenceFiling/CorrectionTableCells'
+import PresenceFilingReasonFields from '@/components/presenceFiling/PresenceFilingReasonFields'
+import {
+  MAX_PRESENCE_FILING_FILE_BYTES,
+  MAX_PRESENCE_FILING_SUPPORTING_FILES,
+  CORR_FILE_MODAL_SCROLL_CLASS,
+  CORR_FILE_MODAL_SHELL_CLASS,
+} from '@/components/presenceFiling/PresenceFilingSupportingDocumentsField'
 import CorrectionRequestMobileCard from '@/components/presenceFiling/CorrectionRequestMobileCard'
 import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { formatDayName } from '@/components/attendance/attendanceRecordUtils'
-import { resetRadixModalLock } from '@/lib/radixModalLock'
+import { corrFileDialogContentProps, resetRadixModalLock } from '@/lib/radixModalLock'
 
 const ISSUE_KIND_OPTIONS = [
   { value: 'missing_in', label: 'Missing Clock In' },
@@ -248,13 +257,13 @@ const brandCardClass =
   'rounded-2xl border border-border bg-card text-card-foreground shadow-sm dark:shadow-[0_18px_50px_-36px_rgba(0,0,0,0.45)]'
 
 const corrModalShellClass =
-  'flex max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:scheme-dark'
+  'flex h-auto max-h-[min(90dvh,calc(100dvh-2.5rem))] w-[calc(100vw-1.5rem)] max-w-[min(100vw-1.5rem,40rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-0 text-card-foreground shadow-[0_24px_80px_-28px_rgba(0,0,0,0.55)] scheme-light sm:max-h-[min(90vh,calc(100dvh-2.5rem))] sm:w-[calc(100vw-2rem)] dark:border-white/10 dark:scheme-dark'
 const corrModalInnerClass = 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden p-0'
 const corrModalHeaderPad = 'shrink-0 border-b border-border bg-card px-4 pb-4 pt-4 text-left sm:px-7 sm:pb-5 sm:pt-7'
 const corrModalBodyPad =
   'min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain bg-card px-4 py-4 sm:space-y-6 sm:px-7 sm:py-6'
 const corrModalFooterClass =
-  'mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border bg-muted/15 px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5'
+  'relative z-10 mt-auto flex shrink-0 flex-col-reverse gap-2 border-t border-border bg-card px-4 py-4 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-5'
 const corrFormFieldClass =
   'h-11 w-full rounded-xl border-input bg-background px-3 text-base text-foreground shadow-sm sm:h-[3.25rem] sm:px-4'
 const corrDetailDlClass =
@@ -600,6 +609,7 @@ function EmployeeCorrectionRequestsSelfService() {
   const [fileTimeIn, setFileTimeIn] = useState('')
   const [fileTimeOut, setFileTimeOut] = useState('')
   const [fileRemarks, setFileRemarks] = useState('')
+  const [fileAttachments, setFileAttachments] = useState([])
   const [fileSubmitting, setFileSubmitting] = useState(false)
   const [attendanceDetail, setAttendanceDetail] = useState(null)
   const [attendanceDetailLoading, setAttendanceDetailLoading] = useState(false)
@@ -613,6 +623,11 @@ function EmployeeCorrectionRequestsSelfService() {
   const [toDate, setToDate] = useState('')
   const [sortKey, setSortKey] = useState('filed_at')
   const [sortDir, setSortDir] = useState('desc')
+
+  const loadCorrectionDocuments = useCallback(async (id) => {
+    const data = await getMyPresenceFilingDetail(id)
+    return data?.presence_filing?.documents ?? []
+  }, [])
 
   const filingsQuery = useQuery({
     queryKey: ['employee-presence-filings'],
@@ -830,11 +845,13 @@ function EmployeeCorrectionRequestsSelfService() {
   }
 
   function openFileDialog() {
+    resetRadixModalLock()
     setFileDate(getLocalDateStr())
     setFileIssueKind('missing_in')
     setFileTimeIn('')
     setFileTimeOut('')
     setFileRemarks('')
+    setFileAttachments([])
     setAttendanceDetail(null)
     setAttendanceDetailError('')
     setFileOpen(true)
@@ -842,8 +859,15 @@ function EmployeeCorrectionRequestsSelfService() {
 
   const handleFileOpenChange = useCallback((open) => {
     setFileOpen(open)
-    if (!open) resetRadixModalLock()
+    if (open) resetRadixModalLock()
+    else resetRadixModalLock()
   }, [])
+
+  function scrollFileFieldIntoView(fieldId) {
+    window.requestAnimationFrame(() => {
+      document.getElementById(fieldId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }
 
   function handleFileIssueKindChange(next) {
     setFileIssueKind(next)
@@ -854,6 +878,7 @@ function EmployeeCorrectionRequestsSelfService() {
   async function submitFile() {
     if (!fileDate) {
       toast({ title: 'Date required', description: 'Select the attendance date.', variant: 'error' })
+      scrollFileFieldIntoView('emp-corr-date')
       return
     }
     const ti = String(fileTimeIn || '').trim()
@@ -866,6 +891,7 @@ function EmployeeCorrectionRequestsSelfService() {
         description: 'Enter your actual clock in time.',
         variant: 'error',
       })
+      scrollFileFieldIntoView('emp-corr-time-in')
       return
     }
     if (needOut && !to) {
@@ -874,18 +900,48 @@ function EmployeeCorrectionRequestsSelfService() {
         description: 'Enter your actual clock out time.',
         variant: 'error',
       })
+      scrollFileFieldIntoView('emp-corr-time-out')
       return
     }
     if (needIn && !/^\d{2}:\d{2}$/.test(ti)) {
       toast({ title: 'Invalid time', description: 'Use a valid clock in time.', variant: 'error' })
+      scrollFileFieldIntoView('emp-corr-time-in')
       return
     }
     if (needOut && !/^\d{2}:\d{2}$/.test(to)) {
       toast({ title: 'Invalid time', description: 'Use a valid clock out time.', variant: 'error' })
+      scrollFileFieldIntoView('emp-corr-time-out')
       return
     }
     if (!fileRemarks.trim()) {
       toast({ title: 'Remarks required', description: 'Explain why you need this correction.', variant: 'error' })
+      scrollFileFieldIntoView('emp-corr-remarks')
+      return
+    }
+    if (fileAttachments.length === 0) {
+      toast({
+        title: 'Supporting document required',
+        description: 'Upload at least one supporting document.',
+        variant: 'error',
+      })
+      scrollFileFieldIntoView('emp-corr-supporting-docs')
+      return
+    }
+    const tooLarge = fileAttachments.find((f) => f.size > MAX_PRESENCE_FILING_FILE_BYTES)
+    if (tooLarge) {
+      toast({
+        title: 'File too large',
+        description: `${tooLarge.name} exceeds 10 MB.`,
+        variant: 'error',
+      })
+      return
+    }
+    if (fileAttachments.length > MAX_PRESENCE_FILING_SUPPORTING_FILES) {
+      toast({
+        title: 'Too many files',
+        description: `You can attach up to ${MAX_PRESENCE_FILING_SUPPORTING_FILES} files.`,
+        variant: 'error',
+      })
       return
     }
     try {
@@ -896,6 +952,7 @@ function EmployeeCorrectionRequestsSelfService() {
         time_in: needIn ? ti : undefined,
         time_out: needOut ? to : undefined,
         remarks: fileRemarks.trim(),
+        attachments: fileAttachments,
       })
       toast({
         title: 'Request submitted',
@@ -1150,7 +1207,7 @@ function EmployeeCorrectionRequestsSelfService() {
 
                 {/* Desktop: scrollable table from md up */}
                 <div className="hidden w-full min-w-0 overflow-x-auto border-t border-border bg-card md:block">
-                  <Table className="w-full min-w-[920px] text-[12px]">
+                  <Table className="w-full min-w-[980px] table-fixed text-[12px]">
                     <TableHeader className="[&_tr]:border-b-0">
                       <TableRow className="border-0 bg-muted/30">
                         <TableHead className="w-[14%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
@@ -1165,10 +1222,13 @@ function EmployeeCorrectionRequestsSelfService() {
                         <TableHead className="w-[10%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="issue_type" label="Issue type" />
                         </TableHead>
-                        <TableHead className="w-[7%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                        <TableHead className="w-[5.75rem] min-w-[5.75rem] px-2 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                          Preview
+                        </TableHead>
+                        <TableHead className="w-[6.5rem] min-w-[6.5rem] px-2 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="time_in" label="Time in" />
                         </TableHead>
-                        <TableHead className="w-[7%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                        <TableHead className="w-[6.5rem] min-w-[6.5rem] px-2 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           <SortHead col="time_out" label="Time out" />
                         </TableHead>
                         <TableHead className="w-[12%] px-1.5 py-2.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
@@ -1210,10 +1270,11 @@ function EmployeeCorrectionRequestsSelfService() {
                             }}
                             className={cn(
                               'cursor-pointer border-border/80 transition-colors hover:bg-muted/50',
+                              '[&>td]:align-middle',
                               rowIdx % 2 === 1 ? 'bg-card' : 'bg-muted/15'
                             )}
                           >
-                            <TableCell className="px-1.5! py-2.5! align-top">
+                            <TableCell className="px-1.5! py-2.5! align-middle">
                               <EmployeeAvatarNameRoleCell
                                 name={empName}
                                 imageUrl={empImg}
@@ -1229,23 +1290,29 @@ function EmployeeCorrectionRequestsSelfService() {
                             <TableCell className="px-1.5! py-2.5! align-middle text-foreground">
                               {formatDayName(row.date, row.day_name)}
                             </TableCell>
-                            <TableCell className="px-1.5! py-2.5! align-top">
-                              <IssueTypeCell issueType={row.issue_type} reasonCode={row.reason_code} />
+                            <TableCell className="max-w-0 overflow-hidden px-2! py-2.5! align-middle">
+                              <IssueTypeCell issueType={row.issue_type} />
                             </TableCell>
-                            <TableCell className="px-1.5! py-2.5! align-middle">
+                            <TableCell
+                              className="w-[5.75rem] min-w-[5.75rem] overflow-hidden px-2! py-2.5! align-middle"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <CorrectionReasonPreviewCell item={row} loadDocuments={loadCorrectionDocuments} />
+                            </TableCell>
+                            <TableCell className="w-[6.5rem] min-w-[6.5rem] px-2! py-2.5! align-middle">
                               <TimeCell iso={tIn} />
                             </TableCell>
-                            <TableCell className="px-1.5! py-2.5! align-middle">
+                            <TableCell className="w-[6.5rem] min-w-[6.5rem] px-2! py-2.5! align-middle">
                               <TimeCell iso={tOut} />
                             </TableCell>
-                            <TableCell className="px-1.5! py-2.5! align-top">
+                            <TableCell className="px-1.5! py-2.5! align-middle">
                               <ReviewStatusTableBadge item={row} showApprover={false} />
                             </TableCell>
                             <TableCell className="px-1.5! py-2.5! align-middle">
                               <ApproverAvatarNameCell {...approverFromRequestRow(row)} />
                             </TableCell>
                             <TableCell
-                              className="hidden max-w-48 px-1.5! py-2.5! align-top xl:table-cell"
+                              className="hidden max-w-48 px-1.5! py-2.5! align-middle xl:table-cell"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <RemarksPreviewCell text={row.remarks} />
@@ -1275,6 +1342,7 @@ function EmployeeCorrectionRequestsSelfService() {
                     <CorrectionRequestMobileCard
                       key={row.id}
                       item={{ ...row, employee_name: row.employee_name || 'You' }}
+                      loadDocuments={loadCorrectionDocuments}
                       showDelete={Boolean(row.actor_can_delete)}
                       onView={openDetail}
                       onDelete={(item) => setDeleteDialog({ open: true, item })}
@@ -1290,12 +1358,14 @@ function EmployeeCorrectionRequestsSelfService() {
 
       <Dialog open={fileOpen} onOpenChange={handleFileOpenChange}>
         <DialogContent
+          pinFooter
           showCloseButton
           closeButtonClassName="right-3 top-3 border-border bg-card/95 text-foreground shadow-sm hover:bg-muted sm:right-4 sm:top-4"
           innerClassName={corrModalInnerClass}
-          className={corrModalShellClass}
+          className={CORR_FILE_MODAL_SHELL_CLASS}
+          {...corrFileDialogContentProps()}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-card">
+          <div className={CORR_FILE_MODAL_SCROLL_CLASS}>
             <DialogHeader className={corrModalHeaderPad}>
               <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:gap-4 sm:pr-2">
                 <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border sm:size-16">
@@ -1428,6 +1498,13 @@ function EmployeeCorrectionRequestsSelfService() {
                   </span>
                 </div>
               </div>
+              <div id="emp-corr-supporting-docs">
+                <PresenceFilingReasonFields
+                  attachments={fileAttachments}
+                  onAttachmentsChange={setFileAttachments}
+                  required
+                />
+              </div>
             </div>
           </div>
           <DialogFooter className={corrModalFooterClass}>
@@ -1551,6 +1628,26 @@ function EmployeeCorrectionRequestsSelfService() {
                 {selected.remarks ? (
                   <CorrectionDetailSection icon={MessageSquareText} title="Your remarks">
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selected.remarks}</p>
+                  </CorrectionDetailSection>
+                ) : null}
+
+                {Array.isArray(selected.documents) && selected.documents.length > 0 ? (
+                  <CorrectionDetailSection icon={FileText} title="Supporting documents">
+                    <ul className="flex flex-col gap-2">
+                      {selected.documents.map((doc, i) => (
+                        <li key={doc.url || i}>
+                          <a
+                            href={profileImageUrl(doc.url) || doc.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:underline"
+                          >
+                            <FileText className="size-4" aria-hidden />
+                            {doc.filename || `Document ${i + 1}`}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
                   </CorrectionDetailSection>
                 ) : null}
 

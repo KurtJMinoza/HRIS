@@ -31,6 +31,16 @@ function DialogOverlay({ className, ...props }) {
   )
 }
 
+function DialogFooter({ className, ...props }) {
+  return (
+    <div
+      data-slot="dialog-footer"
+      className={cn("flex flex-col gap-2 pt-3 sm:flex-row sm:justify-end", className)}
+      {...props}
+    />
+  )
+}
+
 function DialogContent({
   className,
   children,
@@ -39,8 +49,20 @@ function DialogContent({
   closeButtonClassName,
   overlayClassName,
   surfaceStyle,
+  /** Keep DialogFooter fixed below scroll body (file upload modals only). */
+  pinFooter = false,
   ...props
 }) {
+  const childArray = React.Children.toArray(children)
+  const isDialogFooter = (child) =>
+    React.isValidElement(child) &&
+    (child.type === DialogFooter || child.props?.['data-slot'] === 'dialog-footer')
+  const footerNodes = pinFooter ? childArray.filter(isDialogFooter) : []
+  const bodyNodes =
+    pinFooter && footerNodes.length > 0
+      ? childArray.filter((child) => !isDialogFooter(child))
+      : childArray
+
   return (
     <DialogPortal>
       <DialogOverlay className={overlayClassName} />
@@ -70,12 +92,15 @@ function DialogContent({
         )}
         <div
           className={cn(
-            "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5 pl-5 pr-14 pt-5",
+            pinFooter
+              ? "flex min-h-0 flex-1 flex-col gap-0 overflow-hidden px-5 pb-5 pl-5 pr-14 pt-5"
+              : "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5 pl-5 pr-14 pt-5",
             innerClassName
           )}
         >
-          {children}
+          {bodyNodes}
         </div>
+        {pinFooter ? footerNodes : null}
       </DialogPrimitive.Content>
     </DialogPortal>
   )
@@ -86,16 +111,6 @@ function DialogHeader({ className, ...props }) {
     <div
       data-slot="dialog-header"
       className={cn("flex flex-col gap-1.5", className)}
-      {...props}
-    />
-  )
-}
-
-function DialogFooter({ className, ...props }) {
-  return (
-    <div
-      data-slot="dialog-footer"
-      className={cn("flex flex-col gap-2 pt-3 sm:flex-row sm:justify-end", className)}
       {...props}
     />
   )
