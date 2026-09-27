@@ -1209,4 +1209,64 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
 
         $this->assertSame($expectedNet, round((float) ($normalized['summary']['display_net_pay'] ?? 0), 2));
     }
+
+    public function test_headline_day_units_use_scheduled_only_for_full_fixed_basic(): void
+    {
+        $service = app(PayrollComputationService::class);
+
+        $full = $service->resolveFixedRegularRegularPayHeadlineDayUnits(
+            13.0,
+            13.0,
+            false,
+            9000.0,
+            9000.0
+        );
+        $this->assertSame('scheduled_regular_days', $full['basis']);
+        $this->assertSame(13.0, $full['units']);
+
+        $partial = $service->resolveFixedRegularRegularPayHeadlineDayUnits(
+            13.0,
+            8.0,
+            true,
+            9000.0,
+            4615.38
+        );
+        $this->assertSame('present_regular_days', $partial['basis']);
+        $this->assertSame(8.0, $partial['units']);
+    }
+
+    public function test_normalize_does_not_force_scheduled_units_when_attendance_is_partial(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $dailyRate = 461.54;
+        $snapshot = [
+            'daily_rate' => $dailyRate,
+            'summary' => [
+                'daily_rate' => $dailyRate,
+                'regular_fixed_semi_monthly_payroll' => true,
+                'fixed_semi_monthly_basic_gross' => 6000.0,
+                'semi_monthly_basic_salary' => 6000.0,
+                'regular_pay_present_day_units' => 10.0,
+                'regular_fixed_present_day_cap_applied' => true,
+                'regular_pay_scheduled_day_units' => 13.0,
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 4615.38,
+                    'display_amount' => 4615.38,
+                    'units' => '13 days',
+                ]],
+                'attendance_pay_breakdown' => [
+                    'scheduled_days_count' => 13,
+                ],
+            ],
+            'daily_computation_days' => [],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $line = $normalized['summary']['daily_computation_earning_lines'][0] ?? [];
+
+        $this->assertSame('10 days', (string) ($line['units'] ?? ''));
+        $this->assertSame(10.0, (float) ($normalized['summary']['regular_pay_headline_day_units'] ?? 0));
+    }
 }

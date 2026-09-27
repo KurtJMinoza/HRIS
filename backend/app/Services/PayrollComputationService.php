@@ -1096,7 +1096,7 @@ class PayrollComputationService implements PayrollBulkComputation
 
         // RH: 1.00× stays in regular pay, premium increment on holiday line.
         // SH (special non-working): full 1.30× on holiday line; that day is excluded from regular pay.
-        // RD (rest day worked): full RD multiplier on rest_day_worked_pay; excluded from regular pay.
+        // RD (rest day worked): 1× base in regular_pay + RD increment on rest_day_worked_pay.
         // RHRD/SHRD/DHRD: full statutory rate on one holiday line (no separate rest_day_worked_pay).
         if ($isWorkedSpecialNonWorking) {
             $regularBasePayOnly = 0.0;
@@ -1107,9 +1107,10 @@ class PayrollComputationService implements PayrollBulkComputation
             $holidayIncrementMultiplier = $first8;
             $holidayPremiumPay = round($baseRegularPay * $first8, 2);
         } elseif ($isRestDayWorked) {
-            $regularBasePayOnly = 0.0;
+            $restDayIncrement = max(0.0, $restDayMultiplier - 1.0);
+            $regularBasePayOnly = round($baseRegularPay, 2);
             $holidayPremiumPay = 0.0;
-            $restDayWorkedPay = round($baseRegularPay * $restDayMultiplier, 2);
+            $restDayWorkedPay = round($baseRegularPay * $restDayIncrement, 2);
         } else {
             $regularBasePayOnly = round($baseRegularPay, 2);
             $holidayPremiumPay = $qualifiesStatutoryHolidayPremium
@@ -2593,9 +2594,19 @@ class PayrollComputationService implements PayrollBulkComputation
                 }, $premiumLines));
             }
 
-            $regularPayUnits = $regularPayWorkedDayUnits > 0.0001
-                ? $this->formatLeaveAdjustmentDayUnits($regularPayWorkedDayUnits)
+            $regularPayHeadline = $this->resolveFixedRegularRegularPayHeadlineDayUnits(
+                (float) $scheduledRegularDays,
+                (float) $regularPayPresentDayUnits,
+                (bool) $regularFixedPresentDayCapApplied,
+                (float) $regularFixedSemiMonthlyGross,
+                (float) $regularPayDisplayAmount,
+                (float) $paidLeavePremiumAmount
+            );
+            $regularPayUnits = $regularPayHeadline['units'] > 0.0001
+                ? $this->formatLeaveAdjustmentDayUnits($regularPayHeadline['units'])
                 : null;
+
+            $premiumLines = $this->injectFixedRegularRestDayWorkedDisplayLines($premiumLines, $days, $dailyRate);
 
             $dailyComputationEarningLines = array_values(array_merge([
                 [
@@ -2609,6 +2620,9 @@ class PayrollComputationService implements PayrollBulkComputation
                     'metadata' => [
                         'regular_fixed_semi_monthly_payroll' => true,
                         'regular_fixed_present_day_cap_applied' => $regularFixedPresentDayCapApplied,
+                        'regular_pay_units_basis' => $regularPayHeadline['basis'],
+                        'scheduled_regular_day_units' => $scheduledRegularDays,
+                        'actual_worked_day_units' => round($regularPayWorkedDayUnits, 4),
                     ],
                 ],
             ], $premiumLines));
@@ -2727,6 +2741,15 @@ class PayrollComputationService implements PayrollBulkComputation
                     : null,
                 'regular_pay_worked_day_units' => $regularFixedSemiMonthlyPayroll
                     ? round($regularPayWorkedDayUnits ?? 0.0, 4)
+                    : null,
+                'regular_pay_scheduled_day_units' => $regularFixedSemiMonthlyPayroll
+                    ? round((float) ($scheduledRegularDays ?? 0), 4)
+                    : null,
+                'regular_pay_headline_day_units' => $regularFixedSemiMonthlyPayroll
+                    ? round((float) ($regularPayHeadline['units'] ?? 0), 4)
+                    : null,
+                'regular_pay_units_basis' => $regularFixedSemiMonthlyPayroll
+                    ? (string) ($regularPayHeadline['basis'] ?? '')
                     : null,
                 'regular_fixed_paid_leave_amount' => $regularFixedSemiMonthlyPayroll
                     ? round($paidLeavePremiumAmount ?? 0.0, 2)
@@ -3634,6 +3657,173 @@ class PayrollComputationService implements PayrollBulkComputation
         }
 
         return round(max(0.0, $expectedRegularPay - $actualRegularPay), 2);
+    }
+
+    /**
+     * Regular pay "units" on fixed semi-monthly payslips: scheduled days only when the employee
+     * earns the full fixed basic for the cutoff; otherwise present (+ paid leave) day units.
+     *
+     * @return array{units: float, basis: string}
+     */
+    public function resolveFixedRegularRegularPayHeadlineDayUnits(
+        float $scheduledRegularDays,
+        float $regularPayPresentDayUnits,
+        bool $regularFixedPresentDayCapApplied,
+        float $regularFixedSemiMonthlyGross,
+        float $regularPayDisplayAmount,
+        float $paidLeavePremiumAmount = 0.0
+    ): array {
+        $targetFullDisplay = round(max(0.0, $regularFixedSemiMonthlyGross - $paidLeavePremiumAmount), 2);
+        $presentCoversSchedule = $scheduledRegularDays <= 0.0001
+            || $regularPayPresentDayUnits + 0.0001 >= $scheduledRegularDays;
+        $showsFullFixedBasic = ! $regularFixedPresentDayCapApplied
+            && $presentCoversSchedule
+            && $targetFullDisplay > 0.0001
+            && $regularPayDisplayAmount + 0.02 >= $targetFullDisplay;
+
+        if ($showsFullFixedBasic && $scheduledRegularDays > 0.0001) {
+            return [
+                'units' => round($scheduledRegularDays, 4),
+                'basis' => 'scheduled_regular_days',
+            ];
+        }
+
+        if ($regularPayPresentDayUnits > 0.0001) {
+            return [
+                'units' => round($regularPayPresentDayUnits, 4),
+                'basis' => 'present_regular_days',
+            ];
+        }
+
+        if ($scheduledRegularDays > 0.0001) {
+            return [
+                'units' => round($scheduledRegularDays, 4),
+                'basis' => 'scheduled_regular_days',
+            ];
+        }
+
+        return ['units' => 0.0, 'basis' => 'present_regular_days'];
+    }
+
+    /**
+     * Fixed semi-monthly payslip: rest-day 1× base and 30% increment as separate earning lines.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @param  list<array<string, mixed>>  $days
+     * @return list<array<string, mixed>>
+     */
+    public function injectFixedRegularRestDayWorkedDisplayLines(array $lines, array $days, float $dailyRate): array
+    {
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($line['key'] ?? '')));
+            $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+            if (str_contains($key, 'rest_day_worked_base') || ! empty($metadata['rest_day_worked_base'])) {
+                return $lines;
+            }
+        }
+
+        $baseAmount = 0.0;
+        $baseMinutes = 0;
+        foreach ($days as $day) {
+            if (! is_array($day) || ! (bool) ($day['is_rest_day'] ?? false)) {
+                continue;
+            }
+
+            $dayBase = max(0.0, (float) ($day['regular_pay'] ?? 0));
+            if ($dayBase <= 0.0001) {
+                foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+                    if (! is_array($entry)) {
+                        continue;
+                    }
+                    if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                        continue;
+                    }
+                    $dayBase = max($dayBase, max(0.0, (float) ($entry['amount'] ?? 0)));
+                }
+            }
+            if ($dayBase <= 0.0001 && $dailyRate > 0.0001) {
+                $hasPremium = collect((array) ($day['breakdown'] ?? []))
+                    ->contains(fn ($entry) => is_array($entry)
+                        && strtolower(trim((string) ($entry['component'] ?? ''))) === 'rest_day_worked_pay'
+                        && (float) ($entry['amount'] ?? 0) > 0.0001);
+                if ($hasPremium) {
+                    $dayBase = round($dailyRate, 2);
+                }
+            }
+            if ($dayBase <= 0.0001) {
+                continue;
+            }
+
+            $baseAmount += $dayBase;
+            $mins = max(
+                0,
+                (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)
+            );
+            if ($mins <= 0) {
+                $mins = max(0, (int) ($day['required_minutes'] ?? 480));
+            }
+            $baseMinutes += $mins;
+        }
+
+        $baseAmount = round($baseAmount, 2);
+        if ($baseAmount <= 0.0001) {
+            return $lines;
+        }
+
+        $hourlyRate = $dailyRate > 0 ? round($dailyRate / 8.0, 4) : null;
+        $baseLine = [
+            'key' => 'daily:rest_day_worked_base',
+            'label' => 'Rest Day Worked Pay',
+            'amount' => $baseAmount,
+            'display_amount' => $baseAmount,
+            'units' => null,
+            'minutes_worked' => $baseMinutes > 0 ? $baseMinutes : null,
+            'hourly_rate' => $hourlyRate,
+            'component_code' => 'REST_DAY_WORKED_BASE',
+            'metadata' => [
+                'rest_day_worked_base' => true,
+                'display_split_applied' => true,
+            ],
+        ];
+
+        $out = [];
+        $baseInserted = false;
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($line['key'] ?? '')));
+            $isRestPremium = str_contains($key, 'rest_day_worked')
+                && ! str_contains($key, 'rest_day_worked_base');
+            if ($isRestPremium && ! $baseInserted) {
+                $out[] = $baseLine;
+                $baseInserted = true;
+            }
+            if ($isRestPremium) {
+                $fullAmount = round((float) ($line['amount'] ?? 0), 2);
+                if ($fullAmount > ($baseAmount * 0.35) + 0.02) {
+                    $line['amount'] = round($baseAmount * 0.30, 2);
+                }
+                $line['label'] = 'Rest Day Worked Pay (30% Additional)';
+                $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+                $metadata['display_split_applied'] = true;
+                $metadata['rest_day_worked_increment'] = true;
+                if (isset($metadata['gross_statutory_amount'])) {
+                    unset($metadata['gross_statutory_amount']);
+                }
+                $line['metadata'] = $metadata;
+            }
+            $out[] = $line;
+        }
+
+        if (! $baseInserted) {
+            $out[] = $baseLine;
+        }
+
+        return array_values($out);
     }
 
     /**

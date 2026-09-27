@@ -2919,6 +2919,9 @@ class PayslipService
         if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
             $summary = $this->repairMissingUnworkedHolidayEarningLines($summary, $dailyComputationDays);
         }
+        if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
+            $summary = $this->repairFixedSemiMonthlyPayslipDisplay($summary, $dailyComputationDays, $dailyRate);
+        }
         $summary = $this->precomputeWorkedHolidayDisplayMetadata($summary, $dailyRate);
         $regularPayPresentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyComputationDays);
         if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
@@ -4193,6 +4196,10 @@ class PayslipService
 
         if (! $isExecomSnapshot && ! $isConsultantSnapshot) {
             $summary = $this->repairMissingUnworkedHolidayEarningLines($summary, $dailyComputationDays);
+        }
+
+        if (! $isExecomSnapshot && ! $isConsultantSnapshot) {
+            $summary = $this->repairFixedSemiMonthlyPayslipDisplay($summary, $dailyComputationDays, $dailyRate);
         }
 
         $summary = $this->precomputeWorkedHolidayDisplayMetadata($summary, $dailyRate);
@@ -6094,10 +6101,16 @@ class PayslipService
         $key = strtolower(trim((string) ($line['key'] ?? '')));
         $componentCode = strtolower(trim((string) ($line['component_code'] ?? '')));
         $label = strtolower(trim((string) ($line['label'] ?? '')));
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+
+        if (! empty($metadata['rest_day_worked_base'])) {
+            return false;
+        }
 
         return str_contains($key, 'rest_day_worked_pay')
-            || str_contains($componentCode, 'rest_day_worked')
-            || $label === 'rest day worked pay';
+            || (str_contains($key, 'rest_day_worked') && ! str_contains($key, 'rest_day_worked_base'))
+            || (str_contains($componentCode, 'rest_day_worked') && $componentCode !== 'rest_day_worked_base')
+            || str_contains($label, '30% additional');
     }
 
     /**
@@ -6194,6 +6207,15 @@ class PayslipService
             }
 
             if (! $this->isWorkedHolidayPayLine($line) && ! $this->isRestDayWorkedPremiumLine($line)) {
+                $newLines[] = $line;
+
+                continue;
+            }
+
+            if (
+                ! empty($summary['regular_fixed_semi_monthly_payroll'])
+                && $this->isRestDayWorkedPremiumLine($line)
+            ) {
                 $newLines[] = $line;
 
                 continue;
@@ -8178,6 +8200,136 @@ class PayslipService
     }
 
     /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function resolveFixedRegularPayHeadlineDayUnitsFromSummary(array $summary): ?float
+    {
+        if (empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            return null;
+        }
+
+        if (is_numeric($summary['regular_pay_headline_day_units'] ?? null)) {
+            $stored = (float) $summary['regular_pay_headline_day_units'];
+            if ($stored > 0.0001) {
+                return round($stored, 4);
+            }
+        }
+
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : [];
+        $scheduledDays = is_numeric($summary['regular_pay_scheduled_day_units'] ?? null)
+            ? (float) $summary['regular_pay_scheduled_day_units']
+            : (float) max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
+
+        $lines = is_array($summary['daily_computation_earning_lines'] ?? null)
+            ? $summary['daily_computation_earning_lines']
+            : [];
+        $regularPayDisplayAmount = round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2);
+        foreach ($lines as $line) {
+            if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                continue;
+            }
+            $regularPayDisplayAmount = round((float) ($line['display_amount'] ?? $line['amount'] ?? $regularPayDisplayAmount), 2);
+            break;
+        }
+
+        $headline = app(PayrollComputationService::class)->resolveFixedRegularRegularPayHeadlineDayUnits(
+            $scheduledDays,
+            (float) ($summary['regular_pay_present_day_units'] ?? 0),
+            ! empty($summary['regular_fixed_present_day_cap_applied']),
+            round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2),
+            $regularPayDisplayAmount,
+            round((float) ($summary['regular_fixed_paid_leave_amount'] ?? 0), 2)
+        );
+
+        return $headline['units'] > 0.0001 ? round($headline['units'], 4) : null;
+    }
+
+    /**
+     * Fixed semi-monthly payslips: headline day units + rest-day base line on older snapshots.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  list<array<string, mixed>>  $dailyDays
+     * @return array<string, mixed>
+     */
+    private function repairFixedSemiMonthlyPayslipDisplay(array $summary, array $dailyDays, float $dailyRate): array
+    {
+        if (empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            return $summary;
+        }
+
+        $payrollComputation = app(PayrollComputationService::class);
+
+        if ($dailyDays !== []) {
+            $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+                ? $summary['attendance_pay_breakdown']
+                : null;
+            if (! is_array($breakdown) || ! array_key_exists('scheduled_days_count', $breakdown)) {
+                $summary['attendance_pay_breakdown'] = $payrollComputation
+                    ->buildFixedRegularAttendancePayBreakdown($dailyDays, $dailyRate);
+            }
+        }
+
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : [];
+        $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
+        if ($scheduledDays <= 0 && is_numeric($summary['regular_pay_scheduled_day_units'] ?? null)) {
+            $scheduledDays = (int) round((float) $summary['regular_pay_scheduled_day_units']);
+        }
+        if ($scheduledDays > 0) {
+            $summary['regular_pay_scheduled_day_units'] = round((float) $scheduledDays, 4);
+        }
+
+        $lineKey = 'daily_computation_earning_lines';
+        $lines = is_array($summary[$lineKey] ?? null) ? array_values($summary[$lineKey]) : [];
+        if ($lines !== [] && $dailyDays !== []) {
+            $lines = $payrollComputation->injectFixedRegularRestDayWorkedDisplayLines($lines, $dailyDays, $dailyRate);
+        }
+
+        if ($lines !== []) {
+            $regularPayDisplayAmount = round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2);
+            foreach ($lines as $line) {
+                if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                    continue;
+                }
+                $regularPayDisplayAmount = round((float) ($line['display_amount'] ?? $line['amount'] ?? $regularPayDisplayAmount), 2);
+                break;
+            }
+            $headline = $payrollComputation->resolveFixedRegularRegularPayHeadlineDayUnits(
+                (float) $scheduledDays,
+                (float) ($summary['regular_pay_present_day_units'] ?? 0),
+                ! empty($summary['regular_fixed_present_day_cap_applied']),
+                round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2),
+                $regularPayDisplayAmount,
+                round((float) ($summary['regular_fixed_paid_leave_amount'] ?? 0), 2)
+            );
+            if ($headline['units'] > 0.0001) {
+                $summary['regular_pay_headline_day_units'] = round($headline['units'], 4);
+                $summary['regular_pay_units_basis'] = $headline['basis'];
+                $unitsLabel = $this->formatRegularPayPresentDaysUnits($headline['units']);
+                foreach ($lines as $idx => $line) {
+                    if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                        continue;
+                    }
+                    $lines[$idx]['units'] = $unitsLabel;
+                    $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+                    $metadata['regular_pay_units_basis'] = $headline['basis'];
+                    $metadata['scheduled_regular_day_units'] = $scheduledDays;
+                    $lines[$idx]['metadata'] = $metadata;
+                }
+            }
+        }
+
+        if ($lines !== []) {
+            $summary[$lineKey] = $lines;
+        }
+
+        return $summary;
+    }
+
+    /**
      * Present-day count for regular-pay display decisions only — not used for payroll amounts.
      * Clocked half-day classifications count as 0.5 day. Every other clocked regular-pay day,
      * including late and undertime days, counts as one present day. Qualified unworked regular
@@ -8190,13 +8342,12 @@ class PayslipService
      */
     private function resolveRegularPayPresentDaysCount(array $summary, array $dailyDays = []): ?float
     {
-        if (
-            ! empty($summary['regular_fixed_semi_monthly_payroll'])
-            && is_numeric($summary['regular_pay_worked_day_units'] ?? null)
-        ) {
-            $workedUnits = (float) $summary['regular_pay_worked_day_units'];
-            if ($workedUnits > 0.0001) {
-                return round($workedUnits, 4);
+        if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            $headlineUnits = $this->resolveFixedRegularPayHeadlineDayUnitsFromSummary($summary);
+            if ($headlineUnits !== null && $headlineUnits > 0.0001) {
+                $headlineUnits += $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
+
+                return round($headlineUnits, 4);
             }
         }
 
