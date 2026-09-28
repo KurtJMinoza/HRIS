@@ -296,6 +296,72 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         );
     }
 
+    public function test_paid_leave_split_regular_pay_headline_excludes_leave_amount_when_cap_flag_set(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $paidLeave = 1538.46;
+        $fixedGross = 10000.0;
+        $regularDisplay = round($fixedGross - $paidLeave, 2);
+
+        $snapshot = [
+            'daily_rate' => 769.23,
+            'summary' => [
+                'daily_rate' => 769.23,
+                'regular_fixed_semi_monthly_payroll' => true,
+                'regular_fixed_present_day_cap_applied' => true,
+                'regular_fixed_present_day_base_pay' => 9999.99,
+                'fixed_semi_monthly_basic_gross' => $fixedGross,
+                'semi_monthly_basic_salary' => $fixedGross,
+                'basic_pay_this_period' => $fixedGross,
+                'regular_pay_present_day_units' => 13.0,
+                'regular_pay_worked_day_units' => 11.0,
+                'regular_fixed_paid_leave_day_units' => 2.0,
+                'daily_computation_earning_lines' => [
+                    [
+                        'key' => 'daily:regular_pay',
+                        'label' => 'Regular pay',
+                        'amount' => $regularDisplay,
+                        'display_amount' => 9999.99,
+                        'units' => '11 days',
+                        'metadata' => [
+                            'regular_fixed_semi_monthly_payroll' => true,
+                            'regular_fixed_present_day_cap_applied' => true,
+                        ],
+                    ],
+                    [
+                        'key' => 'daily:paid_leave',
+                        'label' => 'Leave adjustments',
+                        'amount' => $paidLeave,
+                        'display_amount' => $paidLeave,
+                        'units' => '2 days',
+                        'metadata' => [
+                            'included_in_fixed_semi_monthly_basic' => true,
+                            'leave_day_units' => 2.0,
+                        ],
+                    ],
+                ],
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'scheduled_days_count' => 13,
+                    'total_deduction' => 0.0,
+                    'rows' => [],
+                ],
+            ],
+            'daily_computation_days' => [],
+        ];
+
+        $normalized = $payslipService->normalizeSnapshotForPayslipView($snapshot);
+        $regularLine = $normalized['summary']['daily_computation_earning_lines'][0] ?? [];
+
+        $this->assertSame($regularDisplay, round((float) ($regularLine['display_amount'] ?? 0), 2));
+        $this->assertSame('11 days', (string) ($regularLine['units'] ?? ''));
+        $this->assertSame(
+            $regularDisplay,
+            round((float) ($normalized['summary']['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 2)
+        );
+        $this->assertSame($fixedGross, round($regularDisplay + $paidLeave, 2));
+    }
+
     public function test_evalaroza_style_regular_and_leave_display_sum_to_semi_monthly(): void
     {
         $semiMonthlyGross = 10000.0;
@@ -1268,5 +1334,23 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
 
         $this->assertSame('10 days', (string) ($line['units'] ?? ''));
         $this->assertSame(10.0, (float) ($normalized['summary']['regular_pay_headline_day_units'] ?? 0));
+    }
+
+    public function test_paid_leave_split_regular_pay_units_show_worked_days_not_scheduled(): void
+    {
+        $service = app(PayrollComputationService::class);
+
+        $headline = $service->resolveFixedRegularRegularPayHeadlineDayUnits(
+            13.0,
+            13.0,
+            false,
+            10000.0,
+            8461.54,
+            1538.46,
+            11.0
+        );
+
+        $this->assertSame('worked_regular_days', $headline['basis']);
+        $this->assertSame(11.0, $headline['units']);
     }
 }

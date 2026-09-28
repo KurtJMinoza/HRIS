@@ -2563,6 +2563,15 @@ class PayrollComputationService implements PayrollBulkComputation
                     2
                 );
                 $regularPayDisplayAmount = $regularPayGrossDisplay;
+                if (
+                    $regularFixedFullAttendanceDeduction <= 0.0001
+                    && $regularFixedNonAbsenceAttendanceDeduction <= 0.0001
+                    && $scheduledRegularDays > 0
+                    && $regularPayPresentDayUnits + 0.0001 >= $scheduledRegularDays
+                ) {
+                    // Leave fills the cutoff with worked days; Regular pay headline is worked portion only.
+                    $regularFixedPresentDayCapApplied = false;
+                }
             }
 
             $leavePayableAmount = round(min($paidLeavePremiumAmount, $basicPayThisPeriod), 2);
@@ -2600,7 +2609,8 @@ class PayrollComputationService implements PayrollBulkComputation
                 (bool) $regularFixedPresentDayCapApplied,
                 (float) $regularFixedSemiMonthlyGross,
                 (float) $regularPayDisplayAmount,
-                (float) $paidLeavePremiumAmount
+                (float) $paidLeavePremiumAmount,
+                (float) $regularPayWorkedDayUnits
             );
             $regularPayUnits = $regularPayHeadline['units'] > 0.0001
                 ? $this->formatLeaveAdjustmentDayUnits($regularPayHeadline['units'])
@@ -3671,8 +3681,16 @@ class PayrollComputationService implements PayrollBulkComputation
         bool $regularFixedPresentDayCapApplied,
         float $regularFixedSemiMonthlyGross,
         float $regularPayDisplayAmount,
-        float $paidLeavePremiumAmount = 0.0
+        float $paidLeavePremiumAmount = 0.0,
+        float $regularPayWorkedDayUnits = 0.0
     ): array {
+        if ($paidLeavePremiumAmount > 0.0001 && $regularPayWorkedDayUnits > 0.0001) {
+            return [
+                'units' => round($regularPayWorkedDayUnits, 4),
+                'basis' => 'worked_regular_days',
+            ];
+        }
+
         $targetFullDisplay = round(max(0.0, $regularFixedSemiMonthlyGross - $paidLeavePremiumAmount), 2);
         $presentCoversSchedule = $scheduledRegularDays <= 0.0001
             || $regularPayPresentDayUnits + 0.0001 >= $scheduledRegularDays;
