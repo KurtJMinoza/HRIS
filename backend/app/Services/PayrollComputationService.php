@@ -1868,7 +1868,7 @@ class PayrollComputationService implements PayrollBulkComputation
             $this->activeAssignmentIdsByUser[(int) $user->id] = $this->resolvePayrollAssignmentIdsForUsers([(int) $user->id], $to)[(int) $user->id] ?? null;
         }
         $dailyRateDivisorDays = $isConsultant
-            ? $this->resolveConsultantWorkingDays($periodContext)
+            ? $this->resolveConsultantWorkingDays($periodContext, $effectiveSchedule)
             : $this->resolveStableScheduleMonthlyDivisor($effectiveSchedule);
         $scheduleMetrics = $this->scheduleRateService->describeForUser(
             $user,
@@ -1889,17 +1889,18 @@ class PayrollComputationService implements PayrollBulkComputation
             )
             : 0.0;
         $dailyRate = $overrideDailyRate
-            ?? ($isConsultant && $monthlyBaseForRate > 0
-                ? round($monthlyBaseForRate / max(1, $dailyRateDivisorDays), 2)
-                : ($resolvedScheduleDailyRate > 0
-                    ? $resolvedScheduleDailyRate
-                    : $this->resolvePayrollDailyRateForPeriod(
-                        $user,
-                        $from,
-                        $to,
-                        $monthlyBaseForRate,
-                        $effectiveSchedule
-                    )));
+            ?? ($resolvedScheduleDailyRate > 0
+                ? $resolvedScheduleDailyRate
+                : $this->resolvePayrollDailyRateForPeriod(
+                    $user,
+                    $from,
+                    $to,
+                    $monthlyBaseForRate,
+                    $effectiveSchedule
+                ));
+        if ($resolvedScheduleDailyRate > 0 && is_numeric($scheduleMetrics['working_days_per_month'] ?? null)) {
+            $dailyRateDivisorDays = max(1, (int) round((float) $scheduleMetrics['working_days_per_month']));
+        }
         if ($dailyRate <= 0) {
             if (is_object($timingSink)) {
                 $timingSink->load_schedules_ms = ($timingSink->load_schedules_ms ?? 0.0) + (microtime(true) - $__segStart) * 1000;
@@ -4389,12 +4390,16 @@ class PayrollComputationService implements PayrollBulkComputation
     /**
      * @return int<1, max>
      */
-    private function resolveConsultantWorkingDays(array $periodContext): int
+    private function resolveConsultantWorkingDays(array $periodContext, ?array $effectiveSchedule = null): int
     {
         foreach (['company_working_days', 'working_days_per_month', 'daily_rate_divisor_days'] as $key) {
             if (isset($periodContext[$key]) && is_numeric($periodContext[$key])) {
                 return max(1, (int) round((float) $periodContext[$key]));
             }
+        }
+
+        if (is_array($effectiveSchedule) && $effectiveSchedule !== []) {
+            return $this->resolveStableScheduleMonthlyDivisor($effectiveSchedule);
         }
 
         try {

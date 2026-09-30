@@ -2912,6 +2912,22 @@ class PayslipService
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
             $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
+        if ($this->isConsultantSnapshot($out, $summary) && $payslip instanceof Payslip) {
+            $employee = $payslip->relationLoaded('user') ? $payslip->user : User::query()->find($payslip->user_id);
+            if ($employee instanceof User) {
+                $summary = $this->alignConsultantPayslipDailyRate(
+                    $summary,
+                    $employee,
+                    $payslip->pay_period_end
+                );
+                if (isset($summary['daily_rate'])) {
+                    $out['daily_rate'] = $summary['daily_rate'];
+                }
+                if (isset($summary['daily_rate_divisor_days'])) {
+                    $out['daily_rate_divisor_days'] = $summary['daily_rate_divisor_days'];
+                }
+            }
+        }
         $summary = $this->withPayslipSalaryDisplay($summary, $out);
         $dailyComputationDays = $this->cleanDailyComputationDays($out['daily_computation_days'] ?? null);
         $dailyRate = (float) ($summary['daily_rate'] ?? ($out['daily_rate'] ?? 0));
@@ -7467,6 +7483,58 @@ class PayslipService
         }
 
         return false;
+    }
+
+    /**
+     * Consultant payslips must show the same schedule-derived daily rate as the employee Salary tab,
+     * not legacy monthly ÷ config(22) from older payroll runs.
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    private function alignConsultantPayslipDailyRate(array $summary, User $employee, ?Carbon $referenceDate): array
+    {
+        $monthly = 0.0;
+        foreach ([
+            $summary['monthly_basic_salary'] ?? null,
+            $summary['consultant_fixed_salary'] ?? null,
+            $summary['monthly_salary'] ?? null,
+            $employee->monthly_salary ?? null,
+            $employee->monthly_rate ?? null,
+        ] as $candidate) {
+            if (is_numeric($candidate) && (float) $candidate > 0.0) {
+                $monthly = round((float) $candidate, 2);
+                break;
+            }
+        }
+        if ($monthly <= 0.0) {
+            return $summary;
+        }
+
+        $ref = $referenceDate instanceof Carbon
+            ? $referenceDate->copy()->startOfDay()
+            : ($referenceDate !== null ? Carbon::parse($referenceDate)->startOfDay() : now()->startOfDay());
+
+        $rateService = app(ScheduleRateService::class);
+        $derivedDaily = $rateService->resolveDailyRate($employee, null, null, $ref, $monthly);
+        if ($derivedDaily <= 0.0) {
+            $profileDaily = (float) ($employee->daily_rate ?? 0);
+            if ($profileDaily > 0.0) {
+                $derivedDaily = round($profileDaily, 2);
+            }
+        }
+        if ($derivedDaily <= 0.0) {
+            return $summary;
+        }
+
+        $metrics = $rateService->describeForUser($employee, $monthly, $ref);
+        $divisor = (int) round((float) ($metrics['working_days_per_month'] ?? 0));
+
+        $summary['daily_rate'] = round($derivedDaily, 2);
+        if ($divisor > 0) {
+            $summary['daily_rate_divisor_days'] = $divisor;
+        }
+
+        return $summary;
     }
 
     /**
