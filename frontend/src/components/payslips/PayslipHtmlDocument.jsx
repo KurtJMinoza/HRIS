@@ -515,7 +515,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                           </td>
                           <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-semibold tabular-nums text-[#0A0A0A]">
                             {displayAmount(
-                              isRegularPayLine && line?.display_amount != null
+                              line?.display_amount != null && line?.display_amount !== ''
                                 ? line.display_amount
                                 : (line?.amount || 0),
                             )}

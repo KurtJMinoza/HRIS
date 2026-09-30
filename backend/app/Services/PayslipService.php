@@ -4797,8 +4797,21 @@ class PayslipService
                         && $presentDayBasePay !== null
                         && $presentDayBasePay + 0.005 < $fixedGross
                     ) {
-                        $lines[$idx]['display_amount'] = $presentDayBasePay;
+                        $holidayHeadlineAdd = $this->resolveFixedSemiMonthlyWorkedHolidayBaseForRegularPayHeadline(
+                            $summary,
+                            $attendanceBreakdown,
+                            $fixedGross,
+                            $presentDayBasePay,
+                            $presentDayCapApplied,
+                            $paidLeaveDisplay,
+                            $presentDayBasePay
+                        );
+                        $lines[$idx]['display_amount'] = round($presentDayBasePay + $holidayHeadlineAdd, 2);
                         $lines[$idx]['computed_amount'] = $netAmount;
+                        $headlineDayUnits = $this->resolveFixedSemiMonthlyRegularPayHeadlineDayUnits($summary);
+                        if ($headlineDayUnits !== null && $headlineDayUnits > 0.0001) {
+                            $lines[$idx]['units'] = $this->formatRegularPayPresentDaysUnits($headlineDayUnits);
+                        }
                         $updated = true;
                         $displayApplied = true;
 
@@ -4814,15 +4827,38 @@ class PayslipService
                     }
                     if ($presentDayCapApplied) {
                         $splitRegularHeadline = $this->resolveFixedSemiMonthlyRegularPaySplitHeadlineDisplay($summary);
-                        $lines[$idx]['display_amount'] = $splitRegularHeadline ?? ($presentDayBasePay ?? $netAmount);
+                        $displayAmount = $splitRegularHeadline ?? ($presentDayBasePay ?? $netAmount);
+                        $holidayHeadlineAdd = $this->resolveFixedSemiMonthlyWorkedHolidayBaseForRegularPayHeadline(
+                            $summary,
+                            $attendanceBreakdown,
+                            $fixedGross,
+                            $presentDayBasePay,
+                            $presentDayCapApplied,
+                            $paidLeaveDisplay,
+                            $displayAmount
+                        );
+                        $lines[$idx]['display_amount'] = round($displayAmount + $holidayHeadlineAdd, 2);
                         $lines[$idx]['computed_amount'] = $netAmount;
+                        $headlineDayUnits = $this->resolveFixedSemiMonthlyRegularPayHeadlineDayUnits($summary);
+                        if ($headlineDayUnits !== null && $headlineDayUnits > 0.0001) {
+                            $lines[$idx]['units'] = $this->formatRegularPayPresentDaysUnits($headlineDayUnits);
+                        }
                         $updated = true;
                         $displayApplied = true;
 
                         continue;
                     }
                     if ($nonAbsenceDeduction > 0.0001 && $presentDayBasePay !== null) {
-                        $lines[$idx]['display_amount'] = $presentDayBasePay;
+                        $holidayHeadlineAdd = $this->resolveFixedSemiMonthlyWorkedHolidayBaseForRegularPayHeadline(
+                            $summary,
+                            $attendanceBreakdown,
+                            $fixedGross,
+                            $presentDayBasePay,
+                            $presentDayCapApplied,
+                            $paidLeaveDisplay,
+                            $presentDayBasePay
+                        );
+                        $lines[$idx]['display_amount'] = round($presentDayBasePay + $holidayHeadlineAdd, 2);
                         $lines[$idx]['computed_amount'] = $netAmount;
                         $updated = true;
                         $displayApplied = true;
@@ -4838,6 +4874,21 @@ class PayslipService
                         continue;
                     }
                     if ($fixedGross > 0.0001) {
+                        $lines[$idx]['display_amount'] = $fixedGross;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
+                }
+
+                if (! empty($summary['regular_fixed_semi_monthly_payroll']) && $fixedGross > 0.0001) {
+                    $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+                        ? $summary['attendance_pay_breakdown']
+                        : [];
+                    $totalDeduction = round((float) ($attendanceBreakdown['total_deduction'] ?? 0), 2);
+                    if ($totalDeduction <= 0.0001) {
                         $lines[$idx]['display_amount'] = $fixedGross;
                         $lines[$idx]['computed_amount'] = $netAmount;
                         $updated = true;
@@ -5039,6 +5090,127 @@ class PayslipService
         return round(max(0.0, $fixedGross - $paidLeaveDisplay), 2);
     }
 
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function resolveFixedSemiMonthlyWorkedHolidayBaseInRegularPay(array $summary): float
+    {
+        if (empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            return 0.0;
+        }
+
+        return round(max(0.0, (float) ($summary['worked_holiday_base_pay_total'] ?? 0)), 2);
+    }
+
+    /**
+     * Worked special-holiday 1× base rolls into Regular pay headline only when present-day
+     * pay is below the semi-monthly cap (partial attendance). Full basic already includes that day.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $breakdown
+     */
+    private function resolveFixedSemiMonthlyWorkedHolidayBaseForRegularPayHeadline(
+        array $summary,
+        array $breakdown,
+        float $fixedGross,
+        ?float $presentDayBasePay,
+        bool $presentDayCapApplied,
+        float $paidLeaveDisplay,
+        float $headlineBeforeAdd
+    ): float {
+        $workedHolidayBase = $this->resolveFixedSemiMonthlyWorkedHolidayBaseInRegularPay($summary);
+        if ($workedHolidayBase <= 0.0001 || $paidLeaveDisplay > 0.0001) {
+            return 0.0;
+        }
+
+        $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
+        $presentUnits = (float) ($summary['regular_pay_present_day_units'] ?? 0);
+        if (
+            $fixedGross > 0.0001
+            && $presentDayBasePay !== null
+            && $presentDayBasePay + 0.005 >= $fixedGross
+            && $scheduledDays > 0
+            && $presentUnits + 0.0001 >= $scheduledDays
+        ) {
+            return 0.0;
+        }
+
+        if ($fixedGross > 0.0001 && abs($headlineBeforeAdd - $fixedGross) <= 0.02) {
+            return 0.0;
+        }
+
+        if ($fixedGross > 0.0001 && $headlineBeforeAdd + 0.005 >= $fixedGross) {
+            return 0.0;
+        }
+
+        if (
+            ($presentDayCapApplied
+                || ($presentDayBasePay !== null && $fixedGross > 0.0001 && $presentDayBasePay + 0.005 < $fixedGross))
+            && $headlineBeforeAdd + 0.005 < $fixedGross
+        ) {
+            return $workedHolidayBase;
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function resolveFixedSemiMonthlyRegularPayHeadlineDayUnits(array $summary): ?float
+    {
+        if (empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            return null;
+        }
+
+        if ($this->resolveFixedSemiMonthlyPaidLeaveDisplayAmount($summary) > 0.0001) {
+            return null;
+        }
+
+        $presentUnits = (float) ($summary['regular_pay_present_day_units'] ?? 0);
+        $workedHolidayUnits = $this->resolveWorkedHolidayPresentDayUnitsFromSummary($summary);
+        $workedHolidayBase = $this->resolveFixedSemiMonthlyWorkedHolidayBaseInRegularPay($summary);
+        if ($workedHolidayBase <= 0.0001 || $workedHolidayUnits <= 0.0001) {
+            return null;
+        }
+
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : [];
+        $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
+        $fixedGross = round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2);
+        $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
+        $presentDayCapApplied = ! empty($summary['regular_fixed_present_day_cap_applied']);
+        if (
+            $this->resolveFixedSemiMonthlyWorkedHolidayBaseForRegularPayHeadline(
+                $summary,
+                $breakdown,
+                $fixedGross,
+                $presentDayBasePay,
+                $presentDayCapApplied,
+                $this->resolveFixedSemiMonthlyPaidLeaveDisplayAmount($summary),
+                $fixedGross > 0.0001 ? $fixedGross : ($presentDayBasePay ?? 0.0)
+            ) <= 0.0001
+        ) {
+            if ($scheduledDays > 0) {
+                return round((float) $scheduledDays, 4);
+            }
+
+            return $presentUnits > 0.0001 ? round($presentUnits, 4) : null;
+        }
+
+        if ($presentUnits <= 0.0001) {
+            return round($workedHolidayUnits, 4);
+        }
+
+        $withHolidayWork = round($presentUnits + $workedHolidayUnits, 4);
+        if ($scheduledDays <= 0 || $withHolidayWork <= $scheduledDays + 0.0001) {
+            return $withHolidayWork;
+        }
+
+        return round($presentUnits, 4);
+    }
+
     private function attachFixedSemiMonthlyRegularPayAfterReductionsDisplay(
         array $summary,
         array $breakdown,
@@ -5119,6 +5291,27 @@ class PayslipService
             $headlineDisplayAmount = $splitRegularHeadline;
         }
 
+        $workedHolidayHeadlineAdd = $this->resolveFixedSemiMonthlyWorkedHolidayBaseForRegularPayHeadline(
+            $summary,
+            $breakdown,
+            $fixedGross,
+            $presentDayBasePay,
+            $presentDayCapApplied,
+            $paidLeaveDisplay,
+            $headlineDisplayAmount
+        );
+        if ($workedHolidayHeadlineAdd > 0.0001) {
+            $headlineDisplayAmount = round($headlineDisplayAmount + $workedHolidayHeadlineAdd, 2);
+        }
+        $workedHolidayBaseInRegular = $workedHolidayHeadlineAdd;
+        if (
+            $fixedGross > 0.0001
+            && $rowBasedDeduction <= 0.0001
+            && $headlineDisplayAmount > $fixedGross + 0.02
+        ) {
+            $headlineDisplayAmount = $fixedGross;
+        }
+
         $breakdown['rows'] = $rows;
         $breakdown['total_deduction'] = round($totalDeduction, 2);
         $breakdown['total_deduction_units_label'] = '—';
@@ -5134,6 +5327,11 @@ class PayslipService
             && abs($rowBasedDeduction - $storedNetGapDeduction) > 0.015
         ) {
             $regularPayAfterReductions = round(max(0.0, $headlineDisplayAmount - $rowBasedDeduction), 2);
+        } elseif ($workedHolidayBaseInRegular > 0.0001 && $rowBasedDeduction > 0.0001) {
+            $regularPayAfterReductions = round(
+                max(0.0, $headlineDisplayAmount - $nonAbsenceDeduction - $absenceDeduction),
+                2
+            );
         } else {
             $regularPayAfterReductions = round(max(0.0, $netAmount), 2);
         }
@@ -5152,6 +5350,10 @@ class PayslipService
                     continue;
                 }
                 $lines[$index]['computed_amount'] = $regularPayAfterReductions;
+                $headlineDayUnits = $this->resolveFixedSemiMonthlyRegularPayHeadlineDayUnits($summary);
+                if ($headlineDayUnits !== null && $headlineDayUnits > 0.0001) {
+                    $lines[$index]['units'] = $this->formatRegularPayPresentDaysUnits($headlineDayUnits);
+                }
                 $summary[$lineKey] = $lines;
                 break 2;
             }
@@ -6147,6 +6349,10 @@ class PayslipService
      */
     public function isRestDayWorkedPremiumLine(array $line): bool
     {
+        if ($this->isWorkedHolidayPayLine($line)) {
+            return false;
+        }
+
         $key = strtolower(trim((string) ($line['key'] ?? '')));
         $componentCode = strtolower(trim((string) ($line['component_code'] ?? '')));
         $label = strtolower(trim((string) ($line['label'] ?? '')));
@@ -6171,21 +6377,50 @@ class PayslipService
      */
     public function resolveWorkedHolidayDisplaySplit(array $line, ?float $dailyRate = null): array
     {
+        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
         $amount = round(max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0)), 2);
+        $grossStatutory = is_numeric($metadata['gross_statutory_amount'] ?? null)
+            ? round((float) $metadata['gross_statutory_amount'], 2)
+            : 0.0;
+        if ($grossStatutory > $amount + 0.02) {
+            $amount = $grossStatutory;
+        }
         if ($amount <= 0.0001) {
             return ['base' => 0.0, 'premium' => 0.0, 'rolls_base_into_regular' => false];
         }
 
-        if (! $this->workedHolidayLineRollsBaseIntoRegular($line)) {
+        $rollsBaseIntoRegular = $this->workedHolidayLineRollsBaseIntoRegular($line);
+        if (! $rollsBaseIntoRegular) {
             return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => false];
         }
 
-        $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
-        if (($metadata['display_split_applied'] ?? false) === true) {
-            return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => true];
+        $multiplier = $this->resolvePremiumLineMultiplier($line, $dailyRate);
+        if (($metadata['display_split_applied'] ?? false) === true
+            && ! $this->workedHolidayAmountLooksLikeFullStatutoryGross($line, $amount, $dailyRate, $multiplier)) {
+            $expectedPremium = $this->expectedWorkedHolidayPremiumFromLine($line, $dailyRate, $multiplier);
+            if ($expectedPremium !== null && abs($amount - $expectedPremium) <= 0.02) {
+                return [
+                    'base' => 0.0,
+                    'premium' => $amount,
+                    'rolls_base_into_regular' => $rollsBaseIntoRegular,
+                ];
+            }
+            if ($expectedPremium !== null && $amount < ($expectedPremium - 0.02) && $amount < ($expectedPremium * 0.75)) {
+                return [
+                    'base' => 0.0,
+                    'premium' => round($expectedPremium, 2),
+                    'rolls_base_into_regular' => $rollsBaseIntoRegular,
+                ];
+            }
+            if ($expectedPremium !== null && $amount <= ($expectedPremium + 0.02)) {
+                return [
+                    'base' => 0.0,
+                    'premium' => $amount,
+                    'rolls_base_into_regular' => $rollsBaseIntoRegular,
+                ];
+            }
         }
 
-        $multiplier = $this->resolvePremiumLineMultiplier($line, $dailyRate);
         if ($multiplier <= 1.00001) {
             return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => false];
         }
@@ -6193,13 +6428,17 @@ class PayslipService
         $expectedPremium = $this->expectedWorkedHolidayPremiumFromLine($line, $dailyRate, $multiplier);
         if ($expectedPremium !== null) {
             if (abs($amount - $expectedPremium) <= 0.02) {
-                return ['base' => 0.0, 'premium' => $amount, 'rolls_base_into_regular' => true];
+                return [
+                    'base' => 0.0,
+                    'premium' => $amount,
+                    'rolls_base_into_regular' => $rollsBaseIntoRegular,
+                ];
             }
             if ($amount < ($expectedPremium - 0.02) && $amount < ($expectedPremium * 0.75)) {
                 return [
                     'base' => 0.0,
                     'premium' => round($expectedPremium, 2),
-                    'rolls_base_into_regular' => true,
+                    'rolls_base_into_regular' => $rollsBaseIntoRegular,
                 ];
             }
         }
@@ -6210,7 +6449,7 @@ class PayslipService
         return [
             'base' => $base,
             'premium' => $premium,
-            'rolls_base_into_regular' => true,
+            'rolls_base_into_regular' => $rollsBaseIntoRegular,
         ];
     }
 
@@ -6227,8 +6466,13 @@ class PayslipService
             if (! $split['rolls_base_into_regular']) {
                 continue;
             }
-            $baseTotal += $split['base'];
-            $presentUnits += $this->resolvePremiumLinePresentDayUnits($line);
+            $lineDayUnits = $this->resolvePremiumLinePresentDayUnits($line);
+            $base = $split['base'];
+            if ($base <= 0.005 && $dailyRate > 0.0001 && $lineDayUnits > 0.0001) {
+                $base = round($dailyRate * $lineDayUnits, 2);
+            }
+            $baseTotal += $base;
+            $presentUnits += $lineDayUnits;
         }
 
         $summary['worked_holiday_base_pay_total'] = round($baseTotal, 2);
@@ -6275,8 +6519,21 @@ class PayslipService
                 continue;
             }
 
+            if ($split['rolls_base_into_regular'] && $dailyRate > 0.0001) {
+                $multiplier = $this->resolvePremiumLineMultiplier($line, $dailyRate);
+                $dayUnits = $this->resolvePremiumLinePresentDayUnits($line);
+                $maxPremium = round($dailyRate * $dayUnits * max(0.0, $multiplier - 1.0) * 1.05, 2);
+                $gross = round((float) ($line['amount'] ?? 0), 2);
+                if ($maxPremium > 0.0001 && $split['premium'] > $maxPremium + 0.05
+                    && $this->workedHolidayAmountLooksLikeFullStatutoryGross($line, $gross, $dailyRate, $multiplier)) {
+                    $split['base'] = round($gross / $multiplier, 2);
+                    $split['premium'] = round($gross - $split['base'], 2);
+                }
+            }
+
             $premiumLine = $line;
             $premiumLine['amount'] = $split['premium'];
+            $premiumLine['display_amount'] = $split['premium'];
             $minutesWorked = is_numeric($premiumLine['minutes_worked'] ?? null)
                 ? (int) round((float) $premiumLine['minutes_worked'])
                 : null;
@@ -6365,6 +6622,12 @@ class PayslipService
             ? max(0, (int) round((float) $line['minutes_worked']))
             : 0;
         if ($minutes <= 0) {
+            $unitsRaw = trim((string) ($line['units'] ?? ''));
+            if (preg_match('/^(\d+(?:\.\d+)?)\s*hrs?\b/i', $unitsRaw, $matches) === 1) {
+                $minutes = max(0, (int) round((float) $matches[1] * 60.0));
+            }
+        }
+        if ($minutes <= 0) {
             return null;
         }
 
@@ -6372,6 +6635,39 @@ class PayslipService
         $increment = max(0.0, $multiplier - 1.0);
 
         return round($basePay * $increment, 2);
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    private function workedHolidayAmountLooksLikeFullStatutoryGross(
+        array $line,
+        float $amount,
+        ?float $dailyRate,
+        float $multiplier
+    ): bool {
+        if ($amount <= 0.0001 || $multiplier <= 1.00001) {
+            return false;
+        }
+
+        $expectedPremium = $this->expectedWorkedHolidayPremiumFromLine($line, $dailyRate, $multiplier);
+        if ($expectedPremium !== null && $amount > $expectedPremium + 0.05) {
+            return true;
+        }
+
+        if ($dailyRate === null || $dailyRate <= 0.0001) {
+            return false;
+        }
+
+        $dayUnits = $this->resolvePremiumLinePresentDayUnits($line);
+        $incrementCap = round($dailyRate * $dayUnits * max(0.0, $multiplier - 1.0) * 1.1, 2);
+        if ($incrementCap > 0.0001 && $amount > $incrementCap + 0.05) {
+            return true;
+        }
+
+        $fullStatutory = round($dailyRate * $dayUnits * $multiplier, 2);
+
+        return $fullStatutory > 0.0001 && $amount + 0.05 >= $fullStatutory * 0.9;
     }
 
     /**
