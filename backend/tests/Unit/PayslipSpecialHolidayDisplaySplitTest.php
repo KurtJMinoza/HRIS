@@ -131,7 +131,7 @@ class PayslipSpecialHolidayDisplaySplitTest extends TestCase
         $this->assertNotNull($regularLine);
         $this->assertEqualsWithDelta(round(13 * $dailyRate, 2), (float) ($regularLine['display_amount'] ?? 0), 0.02);
         $this->assertStringContainsString('13', (string) ($regularLine['units'] ?? ''));
-        $this->assertEqualsWithDelta(6501.79, (float) ($summary['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta(round($presentDayBase - 319.75, 2), (float) ($summary['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0), 0.02);
     }
 
     public function test_already_split_snapshot_is_not_split_again(): void

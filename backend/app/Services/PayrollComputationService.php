@@ -2013,12 +2013,12 @@ class PayrollComputationService implements PayrollBulkComputation
             // halfday = worked half + approved half-day leave; still include the worked regular_pay slice.
             $countsAsOrdinaryRegular = in_array($dayStatus, ['worked', 'halfday'], true) && ! $dayIsRest;
             $regularBasePay = collect($dayBreakdown)
-                ->filter(function ($entry) use ($countsAsOrdinaryRegular): bool {
-                    if (! $countsAsOrdinaryRegular) {
+                ->filter(function ($entry) use ($countsAsOrdinaryRegular, $dayIsRest): bool {
+                    if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
                         return false;
                     }
 
-                    return strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay';
+                    return $countsAsOrdinaryRegular || $dayIsRest;
                 })
                 ->sum(function ($entry): float {
                     return (float) ($entry['amount'] ?? 0);
@@ -2061,8 +2061,8 @@ class PayrollComputationService implements PayrollBulkComputation
                 if ($component === '' || $amount <= 0) {
                     continue;
                 }
-                // Regular-pay line is ordinary worked non-rest-day only (includes halfday worked half).
-                if ($component === 'regular_pay' && ! $countsAsOrdinaryRegular) {
+                // RD worked: 1× base rolls into Regular pay; premium stays on rest_day_worked_pay.
+                if ($component === 'regular_pay' && ! $countsAsOrdinaryRegular && ! $dayIsRest) {
                     continue;
                 }
                 // Accumulate exact (unrounded) amounts to avoid compounding rounding errors across days.
@@ -2559,11 +2559,18 @@ class PayrollComputationService implements PayrollBulkComputation
                     max(0.0, $attendancePremiumPayThisPeriod - $paidLeavePremiumAmount),
                     2
                 );
-                $regularPayGrossDisplay = round(
-                    max(0.0, $regularFixedSemiMonthlyGross - $paidLeavePremiumAmount),
-                    2
-                );
-                $regularPayDisplayAmount = $regularPayGrossDisplay;
+                if ($regularFixedPresentDayCapApplied) {
+                    // Leave is on its own line; Regular pay headline is worked days only (not present incl. leave).
+                    $regularPayDisplayAmount = $regularWorkedBasePay !== null && $regularWorkedBasePay > 0.0001
+                        ? round($regularWorkedBasePay, 2)
+                        : round(max(0.0, $presentDayBaseRegularPay - $paidLeavePremiumAmount), 2);
+                } else {
+                    $regularPayGrossDisplay = round(
+                        max(0.0, $regularFixedSemiMonthlyGross - $paidLeavePremiumAmount),
+                        2
+                    );
+                    $regularPayDisplayAmount = $regularPayGrossDisplay;
+                }
                 if (
                     $regularFixedFullAttendanceDeduction <= 0.0001
                     && $regularFixedNonAbsenceAttendanceDeduction <= 0.0001
@@ -4572,7 +4579,12 @@ class PayrollComputationService implements PayrollBulkComputation
                 continue;
             }
             if ($dayIsScheduledRestDay) {
-                // Present on a rest day is treated as premium/rest-day work, not ordinary regular day.
+                // Worked rest day: 1× base is on Regular pay; count as one headline day.
+                $totalMinutesAllPresence += $attendanceRegularMinutes;
+                $presenceDayUnits += 1.0;
+                $regularRateDayUnits += 1.0;
+                $totalMinutesRegularRateDays += $attendanceRegularMinutes;
+
                 continue;
             }
 
