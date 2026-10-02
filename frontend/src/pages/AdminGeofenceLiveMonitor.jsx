@@ -1,10 +1,11 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Laptop, LocateFixed, MapPin, Monitor, RefreshCw, ScanLine, Search, Smartphone, Tablet, Trash2 } from 'lucide-react'
+import { Laptop, LocateFixed, MapPin, Monitor, RefreshCw, ScanFace, ScanLine, Search, Smartphone, Tablet, Trash2 } from 'lucide-react'
 import {
   getAdminGeofencing,
   getGeofenceLiveMonitorBoundaries,
+  getGeofenceLiveMonitorEventFace,
   getGeofenceLiveMonitorEvents,
   getGeofenceLiveMonitorSummary,
 } from '@/api'
@@ -15,6 +16,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 
 const DEFAULT_CENTER = [7.0731, 125.6128]
@@ -267,9 +276,10 @@ function accuracyLabel(event) {
   return Number.isFinite(number) ? `${Math.round(number)}m` : String(value)
 }
 
-function LiveMonitorEventRow({ event, isFocused, onFollow }) {
+function LiveMonitorEventRow({ event, isFocused, onFollow, onViewFace }) {
   const StatusIcon = DEVICE_ICONS[event.device_type] || Monitor
   const status = statusMeta(event)
+  const canViewFace = Boolean(event.can_view_face)
 
   return (
     <article
@@ -278,7 +288,7 @@ function LiveMonitorEventRow({ event, isFocused, onFollow }) {
         isFocused && 'bg-orange-50/80 ring-1 ring-inset ring-orange-200',
       )}
     >
-      <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,0.95fr)_minmax(0,0.75fr)_auto] lg:items-center lg:gap-4">
+      <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,0.95fr)_minmax(0,0.75fr)_auto_auto] lg:items-center lg:gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[10px] font-extrabold text-orange-700 ring-1 ring-orange-200">
             {employeeInitials(event.employee_name)}
@@ -342,6 +352,26 @@ function LiveMonitorEventRow({ event, isFocused, onFollow }) {
           <LocateFixed className="mr-1 size-3" />
           Follow
         </Button>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!canViewFace}
+          className={cn(
+            'h-8 w-full rounded-md px-2.5 text-[10px] font-bold shadow-sm lg:w-auto',
+            canViewFace
+              ? 'border-slate-200 bg-white text-slate-700'
+              : 'border-slate-100 bg-slate-50 text-slate-400',
+          )}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (canViewFace) onViewFace?.(event)
+          }}
+        >
+          <ScanFace className="mr-1 size-3" />
+          Face
+        </Button>
       </div>
     </article>
   )
@@ -378,6 +408,11 @@ export default function AdminGeofenceLiveMonitor() {
   const [focusedEventId, setFocusedEventId] = useState('')
   const [employeeSearch, setEmployeeSearch] = useState('')
   const [debouncedEmployeeSearch, setDebouncedEmployeeSearch] = useState('')
+  const [viewFaceOpen, setViewFaceOpen] = useState(false)
+  const [viewFaceEvent, setViewFaceEvent] = useState(null)
+  const [viewFaceImage, setViewFaceImage] = useState(null)
+  const [viewFaceMessage, setViewFaceMessage] = useState(null)
+  const [viewFaceLoading, setViewFaceLoading] = useState(false)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedEmployeeSearch(employeeSearch.trim()), 350)
@@ -560,6 +595,52 @@ export default function AdminGeofenceLiveMonitor() {
     }, 250)
   }, [])
 
+  const closeViewFace = useCallback(() => {
+    setViewFaceOpen(false)
+    setViewFaceEvent(null)
+    setViewFaceImage(null)
+    setViewFaceMessage(null)
+  }, [])
+
+  const openViewFace = useCallback(async (event) => {
+    if (!event?.can_view_face || !event?.event_id) return
+    mapRef.current?.closePopup()
+    setViewFaceEvent(event)
+    setViewFaceOpen(true)
+    setViewFaceImage(null)
+    setViewFaceMessage(null)
+    setViewFaceLoading(true)
+    try {
+      const data = await getGeofenceLiveMonitorEventFace(event.event_id)
+      if (!data?.has_face_capture) {
+        setViewFaceMessage(data?.message || 'No face capture available for this punch.')
+        return
+      }
+      setViewFaceImage(data.face_image)
+      setViewFaceMessage(data.message || null)
+    } catch (e) {
+      setViewFaceMessage(e?.message || 'Failed to load face capture.')
+    } finally {
+      setViewFaceLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return undefined
+    if (viewFaceOpen) {
+      map.closePopup()
+      map.dragging.disable()
+      map.scrollWheelZoom.disable()
+      map.doubleClickZoom.disable()
+    } else {
+      map.dragging.enable()
+      map.scrollWheelZoom.enable()
+      map.doubleClickZoom.enable()
+    }
+    return undefined
+  }, [viewFaceOpen])
+
   useEffect(() => {
     if (!user?.id) return undefined
     const echo = getRealtimeEcho()
@@ -642,7 +723,12 @@ export default function AdminGeofenceLiveMonitor() {
       {error ? <div className="mx-4 mt-3 rounded-md border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{error}</div> : null}
 
       <div className="flex flex-col gap-4 p-4">
-        <div className="relative min-h-[480px] h-[min(560px,58vh)] overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm">
+        <div
+          className={cn(
+            'relative min-h-[480px] h-[min(560px,58vh)] overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-sm',
+            viewFaceOpen && 'geofence-live-monitor-map--face-modal-open pointer-events-none',
+          )}
+        >
           <div ref={mapElRef} className="h-full w-full" />
           <div className="absolute left-4 top-4 z-500 rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-[11px] shadow-md backdrop-blur">
             <div className="mb-1.5 font-bold text-slate-800">Legend</div>
@@ -739,13 +825,14 @@ export default function AdminGeofenceLiveMonitor() {
       </div>
 
       <div className="border-t border-slate-100">
-        <div className="hidden border-b border-slate-100 bg-white px-4 py-3 text-[10px] font-extrabold uppercase tracking-wide text-slate-500 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,0.95fr)_minmax(0,0.75fr)_auto] lg:gap-4">
+        <div className="hidden border-b border-slate-100 bg-white px-4 py-3 text-[10px] font-extrabold uppercase tracking-wide text-slate-500 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,0.95fr)_minmax(0,0.75fr)_auto_auto] lg:gap-4">
           <span>Employee</span>
           <span>Event</span>
           <span>Company / Branch</span>
           <span>Device</span>
           <span>Status</span>
           <span>Map</span>
+          <span>Face</span>
         </div>
         <div className="max-h-[290px] overflow-y-auto">
           {filteredEvents.map((event) => (
@@ -754,6 +841,7 @@ export default function AdminGeofenceLiveMonitor() {
               event={event}
               isFocused={focusedEventId === String(event.event_id)}
               onFollow={followEventOnMap}
+              onViewFace={openViewFace}
             />
           ))}
           {filteredEvents.length === 0 ? (
@@ -767,6 +855,47 @@ export default function AdminGeofenceLiveMonitor() {
           ) : null}
         </div>
       </div>
+
+      <Dialog open={viewFaceOpen} onOpenChange={(open) => !open && closeViewFace()}>
+        <DialogContent
+          className="z-[2001] max-w-md"
+          overlayClassName="z-[2000] bg-black/55 backdrop-blur-sm"
+        >
+          <DialogHeader>
+            <DialogTitle>Punch face capture</DialogTitle>
+            <DialogDescription>
+              {viewFaceEvent?.employee_name || 'Employee'}
+              {' · '}
+              {viewFaceEvent?.clock_type === 'clock_out' ? 'Clock out' : 'Clock in'}
+              {' · '}
+              {dateTimeLabel(viewFaceEvent?.created_at || viewFaceEvent?.time)}
+            </DialogDescription>
+          </DialogHeader>
+          {viewFaceLoading ? (
+            <div className="py-10 text-center text-sm text-slate-500">Loading face capture…</div>
+          ) : viewFaceImage ? (
+            <div className="space-y-3">
+              <img
+                src={viewFaceImage}
+                alt={`Face capture for ${viewFaceEvent?.employee_name || 'employee'}`}
+                className="mx-auto max-h-[360px] w-full rounded-lg border border-slate-200 object-contain"
+              />
+              {viewFaceMessage ? (
+                <p className="text-center text-xs text-slate-500">{viewFaceMessage}</p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="py-6 text-center text-sm text-slate-500">
+              {viewFaceMessage || 'No face capture available for this punch.'}
+            </p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeViewFace}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

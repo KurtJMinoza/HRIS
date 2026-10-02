@@ -57,6 +57,7 @@ class AttendanceLog extends Model
         'similarity_score',
         'liveness_score',
         'authentication_method',
+        'face_capture_path',
         'method',
         'processing_delay_seconds',
         'client_attempt_id',

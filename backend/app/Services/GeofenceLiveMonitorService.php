@@ -8,6 +8,8 @@ use App\Models\AttendanceLog;
 use App\Models\BranchGeofence;
 use App\Models\GeofenceValidationLog;
 use App\Models\User;
+use App\Support\AttendanceFaceCaptureStorage;
+use App\Support\FaceImageDataUrl;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -146,6 +148,7 @@ class GeofenceLiveMonitorService
                 'branch.company:id,name',
                 'company:id,name',
                 'matchedGeofence:id,name',
+                'attendanceLog:id,type,authentication_method,face_capture_path',
             ])
             ->findOrFail($eventId);
 
@@ -155,6 +158,86 @@ class GeofenceLiveMonitorService
         }
 
         return ['event' => $this->payloadFromEvent($event, includeDetail: true)];
+    }
+
+    /**
+     * @return array{has_face_capture: bool, face_image: ?string, message: ?string, source: ?string, clock_type: ?string, employee_name: ?string}
+     */
+    public function faceCaptureForEvent(User $actor, int $eventId): array
+    {
+        $this->ensureAuthorized($actor);
+
+        $event = AttendanceGeofenceEvent::query()
+            ->with([
+                'employee:id,name,first_name,middle_name,last_name,suffix,employee_code,face_image',
+                'attendanceLog:id,user_id,type,authentication_method,face_capture_path,verified_at,created_at',
+            ])
+            ->findOrFail($eventId);
+
+        $scopedBranchIds = $this->scopedBranchIds($actor);
+        if ($scopedBranchIds !== null && ! in_array((int) $event->branch_id, $scopedBranchIds, true)) {
+            abort(404);
+        }
+
+        $log = $event->attendanceLog;
+        $employee = $event->employee;
+        $clockLabel = $event->clock_type === 'clock_out' ? 'Clock out' : 'Clock in';
+        $employeeName = $employee?->display_name ?? 'Employee';
+
+        if (! $log) {
+            return [
+                'has_face_capture' => false,
+                'face_image' => null,
+                'message' => 'No attendance punch is linked to this live event.',
+                'source' => null,
+                'clock_type' => $event->clock_type,
+                'employee_name' => $employeeName,
+            ];
+        }
+
+        $punchCapture = AttendanceFaceCaptureStorage::toDataUrl($log->face_capture_path);
+        if ($punchCapture !== null) {
+            return [
+                'has_face_capture' => true,
+                'face_image' => $punchCapture,
+                'message' => null,
+                'source' => 'punch_capture',
+                'clock_type' => $event->clock_type,
+                'employee_name' => $employeeName,
+            ];
+        }
+
+        if ($log->authentication_method === AttendanceLog::AUTH_METHOD_FACE && $employee !== null) {
+            $reference = FaceImageDataUrl::toDataUrl($employee->face_image);
+            if ($reference !== null) {
+                return [
+                    'has_face_capture' => true,
+                    'face_image' => $reference,
+                    'message' => 'Punch photo was not stored for this event. Showing the enrolled reference face instead.',
+                    'source' => 'enrolled_reference',
+                    'clock_type' => $event->clock_type,
+                    'employee_name' => $employeeName,
+                ];
+            }
+
+            return [
+                'has_face_capture' => false,
+                'face_image' => null,
+                'message' => 'Face attendance was used, but no punch or reference photo is available.',
+                'source' => null,
+                'clock_type' => $event->clock_type,
+                'employee_name' => $employeeName,
+            ];
+        }
+
+        return [
+            'has_face_capture' => false,
+            'face_image' => null,
+            'message' => 'This punch was not recorded with face recognition.',
+            'source' => null,
+            'clock_type' => $event->clock_type,
+            'employee_name' => $employeeName,
+        ];
     }
 
     /**
@@ -205,7 +288,7 @@ class GeofenceLiveMonitorService
                     'attemptedBranch.company:id,name',
                     'company:id,name',
                     'matchedGeofence:id,name',
-                    'attendanceLog:id,type,created_at,verified_at',
+                    'attendanceLog:id,type,created_at,verified_at,authentication_method,face_capture_path',
                 ])
                 ->find($validationLogId);
 
@@ -275,6 +358,7 @@ class GeofenceLiveMonitorService
                     'branch.company:id,name',
                     'company:id,name',
                     'matchedGeofence:id,name',
+                    'attendanceLog:id,type,authentication_method,face_capture_path',
                 ])
                 ->find($event->id);
 
@@ -294,6 +378,11 @@ class GeofenceLiveMonitorService
         $company = $event->company ?? $branch?->company ?? $employee?->company;
         $time = ($event->created_at ?? now())->copy()->timezone(config('attendance.timezone', config('app.timezone', 'Asia/Manila')));
 
+        $attendanceLog = $event->relationLoaded('attendanceLog') ? $event->attendanceLog : null;
+        $authenticationMethod = $attendanceLog?->authentication_method;
+        $hasFaceCapture = filled($attendanceLog?->face_capture_path);
+        $canViewFace = $hasFaceCapture || $authenticationMethod === AttendanceLog::AUTH_METHOD_FACE;
+
         $payload = [
             'event_id' => (int) $event->id,
             'employee_name' => $employee?->display_name ?? 'Unknown employee',
@@ -311,12 +400,15 @@ class GeofenceLiveMonitorService
             'created_at' => $time->toIso8601String(),
             'department' => $employee?->departmentRelation?->name,
             'matched_geofence' => $event->matchedGeofence?->name,
+            'attendance_log_id' => $event->attendance_log_id ? (int) $event->attendance_log_id : null,
+            'authentication_method' => $authenticationMethod,
+            'has_face_capture' => $hasFaceCapture,
+            'can_view_face' => $canViewFace,
         ];
 
         if ($includeDetail) {
             $payload += [
                 'id' => (int) $event->id,
-                'attendance_log_id' => $event->attendance_log_id ? (int) $event->attendance_log_id : null,
                 'geofence_validation_log_id' => $event->geofence_validation_log_id ? (int) $event->geofence_validation_log_id : null,
                 'employee_id' => (int) $event->employee_id,
                 'company_id' => $event->company_id ? (int) $event->company_id : null,
@@ -546,6 +638,7 @@ class GeofenceLiveMonitorService
                 'branch.company:id,name',
                 'company:id,name',
                 'matchedGeofence:id,name',
+                'attendanceLog:id,type,authentication_method,face_capture_path',
             ])
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')

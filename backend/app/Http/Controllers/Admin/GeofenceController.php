@@ -543,6 +543,11 @@ class GeofenceController extends Controller
         return response()->json($this->geofenceLiveMonitor->event($request->user(), $eventId));
     }
 
+    public function liveMonitorEventFace(Request $request, int $eventId): JsonResponse
+    {
+        return response()->json($this->geofenceLiveMonitor->faceCaptureForEvent($request->user(), $eventId));
+    }
+
     public function liveMonitorBoundaries(Request $request): JsonResponse
     {
         return response()->json(['boundaries' => $this->geofenceLiveMonitor->boundaries($request->user(), $request->query())]);

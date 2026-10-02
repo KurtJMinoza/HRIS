@@ -31,6 +31,7 @@ use App\Services\PayrollComputationService;
 use App\Services\PremiumPayCalculatorService;
 use App\Services\PresenceFilingCorrectionFormatter;
 use App\Services\ScheduleComputationService;
+use App\Support\AttendanceFaceCaptureStorage;
 use App\Support\EmployeeScheduleResolver;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -811,6 +812,28 @@ class AttendanceController extends Controller
         }
     }
 
+    private function attachFaceCaptureToLog(AttendanceLog $log, Request $request): void
+    {
+        if (($log->authentication_method ?? null) !== AttendanceLog::AUTH_METHOD_FACE) {
+            return;
+        }
+        if (! Schema::hasColumn('attendance_logs', 'face_capture_path')) {
+            return;
+        }
+
+        $imageBase64 = $request->input('image_base64');
+        if (! is_string($imageBase64) || trim($imageBase64) === '') {
+            return;
+        }
+
+        $path = AttendanceFaceCaptureStorage::store((int) $log->user_id, (int) $log->id, $imageBase64);
+        if ($path === null) {
+            return;
+        }
+
+        $log->forceFill(['face_capture_path' => $path])->save();
+    }
+
     private function linkGeofenceValidationLog(Request $request, AttendanceLog $log): void
     {
         $geofence = $request->attributes->get('geofence_result');
@@ -1311,6 +1334,7 @@ class AttendanceController extends Controller
             }
 
             $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
+            $this->attachFaceCaptureToLog($log, $request);
             $this->linkGeofenceValidationLog($request, $log);
             $punchAt = $this->attendanceLogPunchInstant($log);
             $attendanceTime = $punchAt->copy()->timezone($this->attendanceTimezone());
@@ -2023,6 +2047,7 @@ class AttendanceController extends Controller
         $suggestCorrectionAfterClockOut = $type === AttendanceLog::TYPE_CLOCK_OUT && ! $user->hasTimedInToday();
 
         $log = AttendanceLog::create($this->attendanceLogData($request, $user, $type, $faceContext));
+        $this->attachFaceCaptureToLog($log, $request);
         $this->linkGeofenceValidationLog($request, $log);
         $punchAt = $this->attendanceLogPunchInstant($log);
         FaceRecognitionAuditService::record($request, [

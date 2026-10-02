@@ -674,6 +674,14 @@ html:not(.dark) :where(
   z-index: 999999 !important;
 }
 
+/* Geofence live monitor: Leaflet panes default to z-index 400–700 and paint over z-50 dialogs */
+.geofence-live-monitor-map--face-modal-open .leaflet-pane,
+.geofence-live-monitor-map--face-modal-open .leaflet-top,
+.geofence-live-monitor-map--face-modal-open .leaflet-bottom,
+.geofence-live-monitor-map--face-modal-open .leaflet-control-container {
+  z-index: 1 !important;
+}
+
 /* Hide scrollbar while keeping scroll functionality (used for tab nav rows) */
 .scrollbar-hide {
   scrollbar-width: none; /* Firefox */

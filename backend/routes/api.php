@@ -328,6 +328,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/geofencing/live-monitor/events', [GeofenceController::class, 'liveMonitorEvents']);
             Route::get('/geofencing/live-monitor/summary', [GeofenceController::class, 'liveMonitorSummary']);
             Route::get('/geofencing/live-monitor/event/{eventId}', [GeofenceController::class, 'liveMonitorEvent'])->whereNumber('eventId');
+            Route::get('/geofencing/live-monitor/event/{eventId}/face', [GeofenceController::class, 'liveMonitorEventFace'])->whereNumber('eventId');
             Route::get('/geofencing/live-monitor/boundaries', [GeofenceController::class, 'liveMonitorBoundaries']);
         });
         Route::middleware('permission:geofence.create')->post('/admin/branches/{id}/geofences', [GeofenceController::class, 'store'])->whereNumber('id');

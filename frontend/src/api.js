@@ -8938,6 +8938,13 @@ export async function getGeofenceLiveMonitorEvent(eventId) {
   return data
 }
 
+export async function getGeofenceLiveMonitorEventFace(eventId) {
+  const res = await authenticatedFetch(`/geofencing/live-monitor/event/${eventId}/face`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || 'Failed to load punch face capture')
+  return data
+}
+
 export async function getGeofenceLiveMonitorBoundaries(params = {}) {
   const res = await authenticatedFetch(`/geofencing/live-monitor/boundaries${geofenceLiveMonitorQuery(params)}`)
   const data = await res.json().catch(() => ({}))
