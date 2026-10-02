@@ -934,6 +934,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const canExport = isHr && perms.has('overtime.export')
   const canApproveOvertime = perms.has('overtime.approve')
   const isAdminHr = user?.hr_role === 'admin_hr'
+  const canUseApprovalQueue = canSeeAllTab && (isHr || canApproveOvertime)
   const allOvertimeTabLabel = isAdminHr ? 'All Filings' : 'For My Approval'
 
   const [monthYear, setMonthYear] = useState(() => new Date().getFullYear())
@@ -966,7 +967,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
   const initialReviewIdRaw = searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id')
   const initialReviewId = parseReviewRequestId(initialReviewIdRaw)
-  const hasDeepLinkReview = Boolean(isHr && canSeeAllTab && initialReviewId)
+  const hasDeepLinkReview = Boolean(canUseApprovalQueue && initialReviewId)
   // Heads: My Filings default. Admin HR (and deep-link review) stay on All Filings.
   const [tab, setTab] = useState(() => (hasDeepLinkReview || isAdminHr ? 'all' : 'mine'))
 
@@ -974,7 +975,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [allItems, setAllItems] = useState([])
   const [approvalQueueBadgeCount, setApprovalQueueBadgeCount] = useState(0)
   const [loadingMine, setLoadingMine] = useState(true)
-  const [loadingAll, setLoadingAll] = useState(() => Boolean(hasDeepLinkReview || (isHr && isAdminHr && canSeeAllTab)))
+  const [loadingAll, setLoadingAll] = useState(() => Boolean(hasDeepLinkReview || (canUseApprovalQueue && isAdminHr)))
   const mineListAbortRef = useRef(null)
   const allListAbortRef = useRef(null)
   const allListLoadedOnceRef = useRef(false)
@@ -1025,7 +1026,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setSearchParams(next, { replace: true })
   }, [isHr, dateFromUrl, segmentsFromUrl, searchParams, setSearchParams])
 
-  const deepLinkedOtRequestId = isHr && canSeeAllTab
+  const deepLinkedOtRequestId = canUseApprovalQueue
     ? parseReviewRequestId(
         searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'),
       )
@@ -1331,7 +1332,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [tab, canSeeAllTab, loadAll])
 
   useEffect(() => {
-    if (!deepLinkedOtRequestId || !isHr || !canSeeAllTab) {
+    if (!deepLinkedOtRequestId || !canUseApprovalQueue) {
       handledOtDeepLinkRef.current = null
       return
     }
@@ -1379,7 +1380,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       })
 
     clearRequestReviewSearchParams(setSearchParams)
-  }, [deepLinkedOtRequestId, isHr, canSeeAllTab, location.state, setSearchParams, toast])
+  }, [canUseApprovalQueue, deepLinkedOtRequestId, location.state, setSearchParams, toast])
 
   useEffect(() => {
     let cancelled = false

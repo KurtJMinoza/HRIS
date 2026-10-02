@@ -20,6 +20,7 @@ import { useNotifications } from '@/contexts/NotificationsContext'
 import { useTheme } from '@/contexts/useTheme'
 import { cn } from '@/lib/utils'
 import { hrPanelPath } from '@/lib/hrRoutes'
+import { resolveNotificationActionPath } from '@/lib/notificationActionUrl'
 import { getEmployees, prefetchLeaveRequestReview } from '@/api'
 import { employeeAvatarSrc, getEmployeeAvatarColorClass } from '@/lib/employeeAvatar'
 import { formatEmployeeName } from '@/lib/employeeSort'
@@ -180,7 +181,7 @@ function leaveReviewIdFromActionUrl(actionUrl) {
   try {
     const parsed = new URL(actionUrl, window.location.origin)
     const path = parsed.pathname.toLowerCase()
-    if (!path.includes('/leave')) return null
+    if (!path.includes('/leave') && !path.includes('/requests')) return null
     const id = parsed.searchParams.get('review_id') || parsed.searchParams.get('reviewRequestId') || parsed.searchParams.get('request_id')
     return id && /^\d+$/.test(String(id)) ? String(id) : null
   } catch {
@@ -737,9 +738,10 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
   const markNotificationRead = (id) => {
     const item = notifications.find((n) => n.id === id)
     markNotificationReadBackend(id).catch(() => {})
-    if (item?.actionUrl) {
-      prefetchNotificationTarget(item)
-      navigate(item.actionUrl)
+    const targetPath = resolveNotificationActionPath(item?.actionUrl, user)
+    if (targetPath) {
+      prefetchNotificationTarget({ ...item, actionUrl: targetPath })
+      navigate(targetPath)
     } else {
       navigate(role === 'employee' ? `/employee/notifications?notification=${encodeURIComponent(String(id))}` : `${hrPanelPath(hrBasePath, 'notifications')}?notification=${encodeURIComponent(String(id))}`)
     }

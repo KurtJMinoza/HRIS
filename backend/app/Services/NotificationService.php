@@ -8,6 +8,7 @@ use App\Jobs\MarkNotificationsReadJob;
 use App\Models\HrisNotification;
 use App\Models\OrgApprovalRecord;
 use App\Models\User;
+use App\Support\NotificationActionUrl;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -35,6 +36,13 @@ class NotificationService
 
         $type = (string) ($payload['type'] ?? 'notification.created');
         $module = (string) ($payload['module'] ?? $this->moduleFromType($type));
+        $entityId = isset($payload['entity_id']) ? (int) $payload['entity_id'] : 0;
+        $actionUrl = $payload['action_url'] ?? null;
+        if ($entityId > 0 && in_array($module, ['leave', 'overtime', 'attendance_correction'], true)) {
+            if ($actionUrl === null || str_starts_with((string) $actionUrl, '/admin/')) {
+                $actionUrl = NotificationActionUrl::forApprover($user, $module, $entityId);
+            }
+        }
 
         $notification = HrisNotification::query()->create([
             'id' => (string) Str::uuid(),
@@ -46,7 +54,7 @@ class NotificationService
             'module' => $module,
             'entity_id' => $payload['entity_id'] ?? null,
             'entity_type' => $payload['entity_type'] ?? null,
-            'action_url' => $payload['action_url'] ?? null,
+            'action_url' => $actionUrl,
             'recipient_user_id' => $user->id,
             'recipient_role' => $payload['recipient_role'] ?? $this->recipientRole($user),
             'company_id' => $payload['company_id'] ?? $user->getEffectiveCompanyId(),

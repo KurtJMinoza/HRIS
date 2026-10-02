@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { resolveNotificationActionPath } from '@/lib/notificationActionUrl'
+import { prefetchLeaveRequestReview } from '@/api'
 import {
   dismissNotification,
   getNotificationModuleCounts,
@@ -27,8 +30,21 @@ function normalizeCounts(counts) {
   return { ...EMPTY_COUNTS, ...(counts || {}) }
 }
 
+function leaveReviewIdFromActionUrl(actionUrl) {
+  if (!actionUrl || typeof actionUrl !== 'string') return null
+  try {
+    const parsed = new URL(actionUrl, window.location.origin)
+    if (!parsed.pathname.toLowerCase().includes('leave') && !parsed.pathname.includes('requests')) return null
+    const id = parsed.searchParams.get('review_id') || parsed.searchParams.get('reviewRequestId') || parsed.searchParams.get('request_id')
+    return id && /^\d+$/.test(String(id)) ? String(id) : null
+  } catch {
+    return null
+  }
+}
+
 export function NotificationsProvider({ children }) {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [items, setItems] = useState([])
   const [moduleCounts, setModuleCounts] = useState(EMPTY_COUNTS)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -74,14 +90,6 @@ export function NotificationsProvider({ children }) {
   }, [refresh, user?.id])
 
   useEffect(() => {
-    if (!user?.id) return undefined
-    const timer = window.setInterval(() => {
-      refreshCounts().catch(() => {})
-    }, 30000)
-    return () => window.clearInterval(timer)
-  }, [refreshCounts, user?.id])
-
-  useEffect(() => {
     if (!user?.id || typeof window === 'undefined') return undefined
     const echo = getRealtimeEcho()
     if (!echo) return undefined
@@ -93,8 +101,20 @@ export function NotificationsProvider({ children }) {
         setItems((prev) => [notification, ...prev.filter((item) => item.id !== notification.id)].slice(0, 20))
         setModuleCounts(normalizeCounts(event.module_counts))
         setUnreadCount(Number(event.unread_count || 0))
+        const targetPath = resolveNotificationActionPath(notification.action_url, user)
         toast(notification.title || 'Notification', {
           description: notification.message || undefined,
+          ...(targetPath
+            ? {
+                className: 'cursor-pointer',
+                onClick: () => {
+                  const leaveReviewId = leaveReviewIdFromActionUrl(targetPath)
+                  if (leaveReviewId) prefetchLeaveRequestReview(leaveReviewId)?.catch(() => {})
+                  markNotificationRead(notification.id).catch(() => {})
+                  navigate(targetPath)
+                },
+              }
+            : {}),
         })
       })
       .listen('.dashboard.counts_updated', () => {
@@ -110,7 +130,7 @@ export function NotificationsProvider({ children }) {
         // ignore client disconnect issues
       }
     }
-  }, [user?.id])
+  }, [navigate, user, user?.id])
 
   const markRead = useCallback(async (id) => {
     const result = await markNotificationRead(id)

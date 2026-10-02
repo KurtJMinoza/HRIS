@@ -12,7 +12,8 @@ function resolveAppVersion(mode) {
   }
 
   if (mode === 'development') {
-    return `dev-${Date.now()}`
+    // Stable in dev — avoids index.html cache-bust reload on every Vite/PM2 restart.
+    return 'dev'
   }
 
   try {

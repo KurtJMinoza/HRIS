@@ -24,13 +24,17 @@
       (() => {
         const version = '__HRIS_APP_VERSION__'
         const key = 'hris_frontend_cache_version'
-        const marker = '_hris_cache_refreshed'
 
         try {
-          const current = window.localStorage.getItem(key)
-          const params = new URLSearchParams(window.location.search)
+          // Dev uses a stable version; skip forced reload (was firing on every frontend restart).
+          if (version === 'dev' || String(version).startsWith('dev-')) {
+            window.localStorage.setItem(key, version)
+            return
+          }
 
-          if (current !== version && !params.has(marker)) {
+          const current = window.localStorage.getItem(key)
+
+          if (current !== version) {
             window.localStorage.setItem(key, version)
             try {
               sessionStorage.removeItem('hris_chunk_reload_version')
@@ -50,10 +54,8 @@
               )
             }
 
-            Promise.allSettled(clearCaches).finally(() => {
-              params.set(marker, version)
-              window.location.replace(`${window.location.pathname}?${params.toString()}${window.location.hash}`)
-            })
+            // ponytail: no forced full-page reload; stale lazy chunks still recover via chunkReload.js.
+            void Promise.allSettled(clearCaches)
           }
         } catch (_) {
           // Cache reset is best-effort; the app should still boot if browser storage is unavailable.

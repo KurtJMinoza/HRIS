@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { useNotifications } from '@/contexts/NotificationsContext'
 import { cn } from '@/lib/utils'
 import { prefetchLeaveRequestReview } from '@/api'
+import { resolveNotificationActionPath } from '@/lib/notificationActionUrl'
+import { useAuth } from '@/contexts/AuthContext'
 
 const MODULES = [
   ['all', 'All'],
@@ -27,7 +29,8 @@ function leaveReviewIdFromActionUrl(actionUrl) {
   if (!actionUrl || typeof actionUrl !== 'string') return null
   try {
     const parsed = new URL(actionUrl, window.location.origin)
-    if (!parsed.pathname.toLowerCase().includes('/leave')) return null
+    const path = parsed.pathname.toLowerCase()
+    if (!path.includes('/leave') && !path.includes('/requests')) return null
     const id = parsed.searchParams.get('review_id') || parsed.searchParams.get('reviewRequestId') || parsed.searchParams.get('request_id')
     return id && /^\d+$/.test(String(id)) ? String(id) : null
   } catch {
@@ -36,6 +39,7 @@ function leaveReviewIdFromActionUrl(actionUrl) {
 }
 
 export default function NotificationsCenter() {
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { items, moduleCounts, unreadCount, markRead, markAllRead, dismiss } = useNotifications()
@@ -62,7 +66,8 @@ export default function NotificationsCenter() {
     const leaveReviewId = leaveReviewIdFromActionUrl(item.action_url)
     if (leaveReviewId) prefetchLeaveRequestReview(leaveReviewId)?.catch(() => {})
     await markRead(item.id).catch(() => {})
-    if (item.action_url) navigate(item.action_url)
+    const targetPath = resolveNotificationActionPath(item.action_url, user)
+    if (targetPath) navigate(targetPath)
     else setSearchParams({ notification: String(item.id) })
   }
 
