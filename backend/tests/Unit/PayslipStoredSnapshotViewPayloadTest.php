@@ -55,20 +55,20 @@ class PayslipStoredSnapshotViewPayloadTest extends TestCase
         $this->assertSame(1700.00, $totals['total_deductions']);
     }
 
-    public function test_finalized_display_totals_use_after_reductions_when_stored_gross_is_stale_high(): void
+    public function test_finalized_display_totals_keep_stored_columns_even_when_snapshot_lines_differ(): void
     {
         $regularAfterLate = 6810.80;
         $paidLeave = 570.54;
         $holidayPay = 570.54;
-        $expectedGross = round($regularAfterLate + $paidLeave + $holidayPay, 2);
         $staleStoredGross = round(6846.46 + $paidLeave + $holidayPay, 2);
+        $storedNet = round($staleStoredGross - 416.67, 2);
 
         $payslip = new Payslip;
         $payslip->forceFill([
             'status' => Payslip::STATUS_FINALIZED,
             'gross_pay' => $staleStoredGross,
             'total_deductions' => 416.67,
-            'net_pay' => round($staleStoredGross - 416.67, 2),
+            'net_pay' => $storedNet,
             'snapshot' => [
                 'summary' => [
                     'regular_fixed_semi_monthly_payroll' => true,
@@ -109,8 +109,8 @@ class PayslipStoredSnapshotViewPayloadTest extends TestCase
 
         $totals = app(PayslipService::class)->payslipTotalsForDisplay($payslip);
 
-        $this->assertEqualsWithDelta($expectedGross, $totals['gross_pay'], 0.02);
-        $this->assertEqualsWithDelta(round($expectedGross - 416.67, 2), $totals['net_pay'], 0.02);
+        $this->assertEqualsWithDelta($staleStoredGross, $totals['gross_pay'], 0.02);
+        $this->assertEqualsWithDelta($storedNet, $totals['net_pay'], 0.02);
         $this->assertEqualsWithDelta(416.67, $totals['total_deductions'], 0.02);
     }
 
