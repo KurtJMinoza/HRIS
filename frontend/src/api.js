@@ -1589,6 +1589,26 @@ export async function logout() {
   }
 }
 
+/** Live server check for the one-time COO welcome letter (bypasses cached auth user snapshot). */
+export async function getCooWelcomeLetterStatus() {
+  const res = await authenticatedFetch('/auth/coo-welcome-letter/status')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message || 'Failed to load welcome letter status.')
+  }
+  return data
+}
+
+/** Dismiss the one-time COO welcome letter (server-persisted; user id 1842 only). */
+export async function dismissCooWelcomeLetter() {
+  const res = await authenticatedFetch('/auth/coo-welcome-letter/dismiss', { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.message || 'Failed to dismiss welcome letter.')
+  }
+  return data
+}
+
 /**
  * Get current user from API. Returns null if not authenticated or token invalid.
  */
@@ -4511,8 +4531,12 @@ export async function getMyOrganizationAssignments(params = {}) {
  * Download full employee roster workbook (one sheet per company).
  * @returns {Promise<{ blob: Blob, filename: string }>}
  */
-export async function exportAllEmployeesCsv() {
-  const res = await authenticatedFetch('/admin/employees/export/csv', {
+export async function exportAllEmployeesCsv({ companyIds = [], branchIds = [] } = {}) {
+  const params = new URLSearchParams()
+  companyIds.forEach((id) => params.append('company_ids[]', String(id)))
+  branchIds.forEach((id) => params.append('branch_ids[]', String(id)))
+  const query = params.toString()
+  const res = await authenticatedFetch(`/admin/employees/export/csv${query ? `?${query}` : ''}`, {
     timeoutMs: 120000,
   })
   if (!res.ok) {

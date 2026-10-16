@@ -434,7 +434,7 @@ export function CorrectionReasonPreviewCell({ item, loadDocuments }) {
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          className="z-[60] flex max-h-[min(92dvh,900px)] w-[calc(100vw-1.5rem)] max-w-4xl flex-col overflow-hidden p-0"
+          className="z-[60] flex h-[min(92dvh,900px)] max-h-[min(92dvh,900px)] w-[calc(100vw-1.5rem)] max-w-4xl flex-col overflow-hidden p-0"
           overlayClassName="z-[60]"
           innerClassName="flex min-h-0 flex-1 flex-col overflow-hidden p-4 sm:p-6"
           onClick={(e) => e.stopPropagation()}
@@ -462,6 +462,14 @@ export function CorrectionReasonPreviewCell({ item, loadDocuments }) {
               </div>
             ) : (
               <>
+                {activeDoc ? (
+                  <SupportingDocumentFilePreview
+                    key={activeDoc.url}
+                    url={activeDoc.url}
+                    filename={activeDoc.filename}
+                    className="min-h-0 flex-1"
+                  />
+                ) : null}
                 {docCount > 1 ? (
                   <div className="flex shrink-0 flex-col gap-2">
                     <div className="flex items-center gap-2 rounded-xl border border-brand/25 bg-brand/5 p-2 sm:gap-3 sm:p-3">
@@ -531,14 +539,6 @@ export function CorrectionReasonPreviewCell({ item, loadDocuments }) {
                       ))}
                     </div>
                   </div>
-                ) : null}
-                {activeDoc ? (
-                  <SupportingDocumentFilePreview
-                    key={activeDoc.url}
-                    url={activeDoc.url}
-                    filename={activeDoc.filename}
-                    className="min-h-0 flex-1"
-                  />
                 ) : null}
               </>
             )}

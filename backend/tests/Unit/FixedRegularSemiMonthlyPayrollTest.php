@@ -1020,6 +1020,54 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertSame(615.38, (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0));
     }
 
+    public function test_near_full_cutoff_with_fewer_scheduled_days_keeps_fixed_gross_headline_and_payable_gross(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $method = new \ReflectionMethod($payslipService, 'attachFixedSemiMonthlyRegularPayAfterReductionsDisplay');
+        $method->setAccessible(true);
+
+        // 12 scheduled days (3 rest-day Saturdays), 11 present, 1 absence, 55 mins undertime; semi-monthly covers 13 days.
+        $summary = [
+            'regular_fixed_semi_monthly_payroll' => true,
+            'regular_fixed_present_day_cap_applied' => true,
+            'fixed_semi_monthly_basic_gross' => 6825.0,
+            'regular_pay_present_day_units' => 11.0,
+            'regular_fixed_present_day_base_pay' => 5775.0,
+            'daily_rate' => 525.0,
+            'basic_pay_this_period' => 6239.84,
+            'attendance_deduction' => 585.16,
+            'daily_computation_earning_lines' => [[
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => 6239.84,
+                'display_amount' => 5775.0,
+                'units' => '11 days',
+                'metadata' => [
+                    'regular_fixed_semi_monthly_payroll' => true,
+                    'regular_fixed_present_day_cap_applied' => true,
+                ],
+            ]],
+            'attendance_pay_breakdown' => [
+                'scheduled_days_count' => 12,
+            ],
+        ];
+        $breakdown = [
+            'scheduled_days_count' => 12,
+            'rows' => [
+                ['key' => 'absence', 'label' => 'Absence', 'deduction_amount' => 525.0, 'details' => '1 day'],
+                ['key' => 'undertime', 'label' => 'Undertime', 'deduction_amount' => 60.16, 'details' => '55 mins'],
+            ],
+            'total_deduction' => 585.16,
+        ];
+
+        $updated = $method->invoke($payslipService, $summary, $breakdown, $summary['daily_computation_earning_lines'][0]);
+        $line = $updated['daily_computation_earning_lines'][0];
+
+        $this->assertSame(6825.0, (float) ($line['display_amount'] ?? 0));
+        $this->assertSame(585.16, (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0));
+        $this->assertSame(6239.84, (float) ($updated['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0));
+    }
+
     public function test_present_day_cap_display_shows_base_pay_with_late_deducted_separately(): void
     {
         $payslipService = app(\App\Services\PayslipService::class);

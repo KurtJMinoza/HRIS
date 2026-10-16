@@ -604,10 +604,19 @@ class EmployeeController extends Controller
             abort(401);
         }
 
+        $validated = $request->validate([
+            'company_ids' => ['nullable', 'array'],
+            'company_ids.*' => ['integer'],
+            'branch_ids' => ['nullable', 'array'],
+            'branch_ids.*' => ['integer'],
+        ]);
+        $companyIds = array_values(array_unique(array_map('intval', $validated['company_ids'] ?? [])));
+        $branchIds = array_values(array_unique(array_map('intval', $validated['branch_ids'] ?? [])));
+
         $fileName = 'employees_by_company_'.now()->format('Ymd_His').'.xlsx';
         $header = $this->employeeExportHeader();
 
-        return response()->streamDownload(function () use ($viewer, $header) {
+        return response()->streamDownload(function () use ($viewer, $header, $companyIds, $branchIds) {
             $spreadsheet = new Spreadsheet;
             $spreadsheet->getProperties()
                 ->setCreator((string) config('app.name', 'HR'))
@@ -617,7 +626,8 @@ class EmployeeController extends Controller
             $usedTitles = [];
             $employeeCount = 0;
 
-            $query = $this->employeeExportQuery($viewer);
+            $query = $this->employeeExportQuery($viewer)->where('is_active', true);
+            $this->applyEmployeeExportOrgFilter($query, $companyIds, $branchIds);
             $query->chunk(250, function (Collection $users) use ($spreadsheet, $header, &$sheets, &$usedTitles, &$employeeCount) {
                 foreach ($users as $user) {
                     $company = $this->employeeExportCompany($user);
@@ -799,6 +809,66 @@ class EmployeeController extends Controller
         $this->dataScopeService->restrictEmployeeQuery($viewer, $query);
 
         return $query;
+    }
+
+    /**
+     * Whole companies in $companyIds OR specific branches in $branchIds; both empty exports everything in scope.
+     * Company/branch resolution mirrors employeeExportCompany(): direct column first, then branch, then department.
+     *
+     * @param  list<int>  $companyIds
+     * @param  list<int>  $branchIds
+     */
+    private function applyEmployeeExportOrgFilter($query, array $companyIds, array $branchIds): void
+    {
+        if ($companyIds === [] && $branchIds === []) {
+            return;
+        }
+
+        $query->where(function ($outer) use ($companyIds, $branchIds) {
+            if ($companyIds !== []) {
+                $outer->orWhere(function ($q) use ($companyIds) {
+                    $q->whereIn('company_id', $companyIds)
+                        ->orWhere(function ($q) use ($companyIds) {
+                            $q->whereNull('company_id')
+                                ->whereHas('branch', fn ($b) => $b->whereIn('company_id', $companyIds));
+                        })
+                        ->orWhere(function ($q) use ($companyIds) {
+                            $q->whereNull('company_id')
+                                ->whereNull('branch_id')
+                                ->whereHas('departmentRelation.branch', fn ($b) => $b->whereIn('company_id', $companyIds));
+                        });
+                });
+            }
+
+            if ($branchIds === []) {
+                return;
+            }
+
+            // An employee whose own company differs from the branch's company lands on that other
+            // company's sheet, so a branch only pulls employees with no company or the same company.
+            $branchIdsByCompany = Branch::query()
+                ->whereIn('id', $branchIds)
+                ->get(['id', 'company_id'])
+                ->groupBy(fn ($branch) => (int) $branch->company_id);
+
+            foreach ($branchIdsByCompany as $branchCompanyId => $branchesOfCompany) {
+                $ids = $branchesOfCompany->pluck('id')->map(fn ($id) => (int) $id)->all();
+                $outer->orWhere(function ($q) use ($ids, $branchCompanyId) {
+                    $q->where(function ($q) use ($ids) {
+                        $q->whereIn('branch_id', $ids)
+                            ->orWhere(function ($q) use ($ids) {
+                                $q->whereNull('branch_id')
+                                    ->whereHas('departmentRelation', fn ($d) => $d->whereIn('branch_id', $ids));
+                            });
+                    })->where(function ($q) use ($branchCompanyId) {
+                        $q->whereNull('company_id');
+                        if ($branchCompanyId > 0) {
+                            $q->orWhere('company_id', $branchCompanyId);
+                        }
+                    });
+                });
+            }
+        });
     }
 
     /**

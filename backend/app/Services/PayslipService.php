@@ -5251,7 +5251,13 @@ class PayslipService
         }
 
         if ($nearFullCutoff) {
-            if ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross) {
+            // Present-day base only replaces the fixed gross for daily-rate rounding (a few centavos).
+            // Cutoffs with fewer scheduled days than divisor / 2, or worked days with no paid minutes,
+            // still pay the fixed semi-monthly basic minus attendance rows (basic_pay_this_period).
+            $presentDayIsRoundingOfFixed = $presentDayBasePay !== null
+                && $presentDayBasePay + 0.005 < $fixedGross
+                && $fixedGross - $presentDayBasePay <= 0.50;
+            if ($presentDayIsRoundingOfFixed) {
                 $totalDeduction = $rowBasedDeduction > 0.0001
                     ? $rowBasedDeduction
                     : round((float) ($breakdown['total_deduction'] ?? max(0.0, $fixedGross - $netAmount)), 2);

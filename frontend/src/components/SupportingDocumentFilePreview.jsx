@@ -84,52 +84,38 @@ export default function SupportingDocumentFilePreview({ url, filename, className
 
   const download = () => window.open(url, '_blank', 'noopener,noreferrer')
 
-  return (
-    <div className={className}>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="min-w-0 truncate text-sm font-medium text-foreground" title={filename}>
-          {filename || 'Document'}
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="shrink-0 gap-1.5 border-brand/40 text-foreground hover:border-brand hover:bg-brand/10 hover:text-brand"
-          onClick={download}
-        >
-          <FileDown className="size-4" aria-hidden />
-          Download
-        </Button>
-      </div>
+  const frameClass = 'h-full min-h-0 w-full flex-1 rounded-lg border border-brand/20'
 
+  return (
+    <div className={`flex min-h-0 min-w-0 flex-1 flex-col ${className || ''}`}>
       {kind === 'pdf' ? (
         <iframe
           title={filename || 'Document preview'}
           src={url}
-          className="h-[min(62vh,520px)] min-h-[240px] w-full rounded-lg border border-brand/20 bg-muted/10"
+          className={`${frameClass} bg-muted/10`}
         />
       ) : null}
 
       {kind === 'image' ? (
-        <div className="flex max-h-[min(62vh,520px)] min-h-[200px] items-center justify-center overflow-auto rounded-lg border border-brand/20 bg-muted/20 p-3">
+        <div className={`relative overflow-hidden bg-muted/20 ${frameClass}`}>
           <img
             src={url}
             alt={filename || 'Supporting document'}
-            className="max-h-[min(58vh,480px)] max-w-full rounded-md object-contain"
+            className="absolute inset-0 h-full w-full object-contain p-2"
           />
         </div>
       ) : null}
 
       {kind === 'docx' ? (
         docxLoading ? (
-          <div className="flex h-[min(62vh,520px)] min-h-[200px] items-center justify-center rounded-lg border border-brand/20">
+          <div className={`flex items-center justify-center ${frameClass}`}>
             <Loader2 className="mr-2 size-5 animate-spin text-muted-foreground" aria-hidden />
             <span className="text-sm text-muted-foreground">Generating preview…</span>
           </div>
         ) : docxError ? (
           <PreviewFallback message={docxError} onDownload={download} />
         ) : (
-          <div className="h-[min(62vh,520px)] min-h-[200px] overflow-auto rounded-lg border border-brand/20 bg-background p-4">
+          <div className={`overflow-auto bg-background p-4 ${frameClass}`}>
             <div
               className="prose prose-sm max-w-none dark:prose-invert"
               dangerouslySetInnerHTML={{ __html: docxHtml || '<p>No preview content.</p>' }}
@@ -140,7 +126,7 @@ export default function SupportingDocumentFilePreview({ url, filename, className
 
       {kind === 'doc' || kind === 'xlsx' || kind === 'file' ? (
         blobLoading ? (
-          <div className="flex h-[min(62vh,520px)] min-h-[200px] items-center justify-center rounded-lg border border-brand/20">
+          <div className={`flex items-center justify-center ${frameClass}`}>
             <Loader2 className="mr-2 size-5 animate-spin text-muted-foreground" aria-hidden />
             <span className="text-sm text-muted-foreground">Loading file…</span>
           </div>
@@ -150,7 +136,7 @@ export default function SupportingDocumentFilePreview({ url, filename, className
           <iframe
             title={filename || 'Document preview'}
             src={blobUrl}
-            className="h-[min(62vh,520px)] min-h-[240px] w-full rounded-lg border border-brand/20 bg-muted/10"
+            className={`${frameClass} bg-muted/10`}
           />
         ) : (
           <PreviewFallback
@@ -165,13 +151,29 @@ export default function SupportingDocumentFilePreview({ url, filename, className
           />
         )
       ) : null}
+
+      <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-sm font-medium text-foreground" title={filename}>
+          {filename || 'Document'}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0 gap-1.5 border-brand/40 text-foreground hover:border-brand hover:bg-brand/10 hover:text-brand"
+          onClick={download}
+        >
+          <FileDown className="size-4" aria-hidden />
+          Download
+        </Button>
+      </div>
     </div>
   )
 }
 
 function PreviewFallback({ message, onDownload }) {
   return (
-    <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-lg border border-brand/20 bg-muted/20 p-6 text-center">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-brand/20 bg-muted/20 p-6 text-center">
       <p className="text-sm text-muted-foreground">{message}</p>
       <Button
         type="button"

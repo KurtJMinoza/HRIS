@@ -86,6 +86,7 @@ import {
 } from '@/api'
 import { TableSkeleton } from '@/components/skeletons'
 import ImportEmployeesModal from '@/components/admin/ImportEmployeesModal'
+import ExportEmployeesFilterDialog from '@/components/admin/ExportEmployeesFilterDialog'
 import { EmployeeScheduleAssignDialog } from '@/components/schedules/EmployeeScheduleAssignDialog'
 import { ScheduleAdjustmentDialog } from '@/components/schedules/ScheduleAdjustmentDialog'
 import { QRCodeCanvas } from 'qrcode.react'
@@ -489,6 +490,7 @@ export default function AdminEmployees() {
   const [employees, setEmployees] = useState([])
   const [error, setError] = useState(null)
   const [exportingCsv, setExportingCsv] = useState(false)
+  const [exportFilterOpen, setExportFilterOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ total: 0, perPage: 20, lastPage: 1 })
@@ -2085,7 +2087,19 @@ export default function AdminEmployees() {
     setAddOpen(true)
   }, [canCreateEmployees, toast])
 
-  const handleExportAllCsv = useCallback(async () => {
+  const openExportFilter = useCallback(() => {
+    if (!canExportEmployees) {
+      toast({
+        title: 'Access denied',
+        description: 'You do not have permission to export employees.',
+        variant: 'destructive',
+      })
+      return
+    }
+    setExportFilterOpen(true)
+  }, [canExportEmployees, toast])
+
+  const handleExportAllCsv = useCallback(async ({ companyIds = [], branchIds = [] } = {}) => {
     if (!canExportEmployees) {
       toast({
         title: 'Access denied',
@@ -2098,13 +2112,14 @@ export default function AdminEmployees() {
     setExportingCsv(true)
     setError(null)
     try {
-      const { blob, filename } = await exportAllEmployeesCsv()
+      const { blob, filename } = await exportAllEmployeesCsv({ companyIds, branchIds })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = filename || `employees_by_company_${new Date().toISOString().slice(0, 10)}.xlsx`
       anchor.click()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setExportFilterOpen(false)
       toast({ title: 'Export started', description: 'Employee workbook has been downloaded.' })
     } catch (e) {
       const message = e?.message || 'Failed to export employee workbook.'
@@ -2264,7 +2279,7 @@ export default function AdminEmployees() {
                   type="button"
                   variant="outline"
                   className="h-10 rounded-md border-brand/70 px-4 text-xs font-bold text-brand hover:bg-brand/8 hover:text-brand"
-                  onClick={handleExportAllCsv}
+                  onClick={openExportFilter}
                   disabled={!canExportEmployees || exportingCsv}
                   title={canExportEmployees ? 'Export employees by company workbook' : 'No export permission'}
                 >
@@ -3886,6 +3901,15 @@ export default function AdminEmployees() {
         toast={toast}
         canUndoImport={canDeleteEmployees}
         onImported={() => queryClient.invalidateQueries({ queryKey: ['admin-employees-list'] })}
+      />
+
+      <ExportEmployeesFilterDialog
+        open={exportFilterOpen}
+        onOpenChange={setExportFilterOpen}
+        companies={companies}
+        branches={branches}
+        exporting={exportingCsv}
+        onExport={handleExportAllCsv}
       />
 
       {/* Regenerate QR confirmation */}
