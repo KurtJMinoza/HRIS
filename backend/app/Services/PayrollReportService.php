@@ -136,7 +136,7 @@ class PayrollReportService
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle($sheetTitle);
             $sheet->fromArray(array_map(
-                static fn (array $column): string => (string) ($column['label'] ?? ''),
+                fn (array $column): string => $this->excelColumnHeading($column),
                 $columns,
             ), null, 'A1');
 
@@ -162,7 +162,12 @@ class PayrollReportService
     {
         return array_map(function (array $column) use ($row): int|float|string {
             $key = (string) ($column['key'] ?? '');
-            if ($key === 'row_number' || $key === 'employee_name' || ($column['format'] ?? '') === 'text') {
+            if (
+                $key === 'row_number'
+                || $key === 'employee_id'
+                || $key === 'employee_name'
+                || ($column['format'] ?? '') === 'text'
+            ) {
                 return (string) ($row[$key] ?? '');
             }
 
@@ -182,10 +187,10 @@ class PayrollReportService
             if ($key === 'row_number') {
                 return '';
             }
-            if ($key === 'employee_name') {
+            if ($key === 'employee_id') {
                 return 'Total';
             }
-            if (($column['format'] ?? '') === 'text') {
+            if ($key === 'employee_name' || ($column['format'] ?? '') === 'text') {
                 return '';
             }
 
@@ -282,21 +287,15 @@ class PayrollReportService
             })
             ->all();
 
-        $dynamicColumns = [
-            'holiday_pay' => collect($rows)->sum('holiday_pay') > 0.004,
-            'overtime_pay' => collect($rows)->sum('overtime_pay') > 0.004,
-            'night_differential' => collect($rows)->sum('night_differential') > 0.004,
-            'paid_leave' => collect($rows)->sum('paid_leave') > 0.004,
-            'other_earnings' => collect($rows)->sum('other_earnings') > 0.004,
-        ];
+        $dynamicColumns = [];
 
         $totals = [];
         foreach ([
+            'attendance_refund',
+            'leave_with_pay',
             'regular_basic_pay',
-            'holiday_pay',
             'overtime_pay',
             'night_differential',
-            'paid_leave',
             'other_earnings',
             'allowance',
             'sss',
@@ -326,10 +325,11 @@ class PayrollReportService
         $isExecom = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_EXECOM;
         $isConsultant = strtolower(trim((string) ($run->payroll_module ?? ''))) === PayrollBatchRun::MODULE_CONSULTANT;
         $includeCompanyColumn = $isExecom || $isConsultant;
+        $rollupBreakdownIntoBasicPay = $this->payslipsUsePayrollReportV2BasicPayRollup($payslips);
 
         $columns = $deductionOnly
             ? $this->deductionReportColumns($deductionColumnLabels, $includeCompanyColumn)
-            : $this->reportColumns($dynamicColumns, $includeCompanyColumn);
+            : $this->reportColumns($dynamicColumns, $includeCompanyColumn, $rollupBreakdownIntoBasicPay);
         $layout = $this->layoutForColumnCount(count($columns));
 
         return [
@@ -356,29 +356,34 @@ class PayrollReportService
      * @param  array<string, bool>  $dynamicColumns
      * @return list<array{key:string,label:string,group:string,class:string}>
      */
-    private function reportColumns(array $dynamicColumns, bool $includeCompanyColumn = false): array
+    private function reportColumns(array $dynamicColumns, bool $includeCompanyColumn = false, bool $rollupBreakdownIntoBasicPay = true): array
     {
         $columns = [
-            ['key' => 'row_number', 'label' => 'No.', 'group' => '#', 'class' => 'num row-number'],
-            ['key' => 'employee_name', 'label' => 'Employee', 'group' => 'Employee', 'class' => 'employee'],
+            ['key' => 'employee_id', 'label' => 'Employee ID', 'group' => 'Employee', 'class' => 'employee', 'format' => 'text'],
+            ['key' => 'employee_name', 'label' => 'Employee Name', 'group' => 'Employee', 'class' => 'employee'],
         ];
         if ($includeCompanyColumn) {
             $columns[] = ['key' => 'company_name', 'label' => 'Company', 'group' => 'Employee', 'class' => 'employee', 'format' => 'text'];
         }
-        $columns[] = ['key' => 'total_attendance', 'label' => 'Total Attendance', 'group' => 'Attendance', 'class' => 'employee', 'format' => 'text'];
+        $breakdownSubtitle = $rollupBreakdownIntoBasicPay ? 'Included in Basic Pay' : '';
+        $columns[] = [
+            'key' => 'attendance_refund',
+            'label' => 'Attendance Refund',
+            'subtitle' => $breakdownSubtitle,
+            'group' => 'Earnings',
+            'class' => 'num earnings',
+        ];
+        $columns[] = [
+            'key' => 'leave_with_pay',
+            'label' => 'Leave With Pay',
+            'subtitle' => $breakdownSubtitle,
+            'group' => 'Earnings',
+            'class' => 'num earnings',
+        ];
         $columns[] = ['key' => 'regular_basic_pay', 'label' => 'Basic Pay', 'group' => 'Earnings', 'class' => 'num earnings'];
-
-        foreach ([
-            'holiday_pay' => 'Holiday',
-            'overtime_pay' => 'OT',
-            'night_differential' => 'Night Diff',
-            'paid_leave' => 'Leave',
-            'other_earnings' => 'Other',
-        ] as $key => $label) {
-            if ($dynamicColumns[$key] ?? false) {
-                $columns[] = ['key' => $key, 'label' => $label, 'group' => 'Earnings', 'class' => 'num earnings'];
-            }
-        }
+        $columns[] = ['key' => 'overtime_pay', 'label' => 'Overtime', 'group' => 'Earnings', 'class' => 'num earnings'];
+        $columns[] = ['key' => 'night_differential', 'label' => 'Night Differential', 'group' => 'Earnings', 'class' => 'num earnings'];
+        $columns[] = ['key' => 'other_earnings', 'label' => 'Other Earnings', 'group' => 'Earnings', 'class' => 'num earnings'];
 
         return array_merge($columns, [
             ['key' => 'allowance', 'label' => 'Allowance', 'group' => 'Allowance', 'class' => 'num'],
@@ -387,9 +392,9 @@ class PayrollReportService
             ['key' => 'pagibig', 'label' => 'HDMF', 'group' => 'Govt. Deductions', 'class' => 'num'],
             ['key' => 'withholding_tax', 'label' => 'WHT', 'group' => 'Govt. Deductions', 'class' => 'num'],
             ['key' => 'other_deductions', 'label' => 'Other Ded.', 'group' => 'Other Ded.', 'class' => 'num deductions'],
-            ['key' => 'gross_earnings', 'label' => 'Gross', 'group' => 'Totals', 'class' => 'num gross'],
-            ['key' => 'total_deductions', 'label' => 'Deduct.', 'group' => 'Totals', 'class' => 'num deductions'],
-            ['key' => 'net_pay', 'label' => 'Net', 'group' => 'Totals', 'class' => 'num net'],
+            ['key' => 'gross_earnings', 'label' => 'Gross Pay', 'group' => 'Totals', 'class' => 'num gross'],
+            ['key' => 'total_deductions', 'label' => 'Total Deductions', 'group' => 'Totals', 'class' => 'num deductions'],
+            ['key' => 'net_pay', 'label' => 'Net Pay', 'group' => 'Totals', 'class' => 'num net'],
         ]);
     }
 
@@ -635,10 +640,26 @@ class PayrollReportService
         $categoryTotals = is_array($reportMetrics['category_totals'] ?? null)
             ? $reportMetrics['category_totals']
             : [];
+        $paidLeaveBucket = round(
+            $this->preferLineBucketAmount($earnings['paid_leave'], $reportMetrics, $categoryTotals, 'paid_leave')
+                + $refundBucketTotals['paid_leave'],
+            2
+        );
+        $leaveAmounts = $this->payslipService->paidLeaveAmountsForPayrollReport(
+            $summary,
+            $paidLeaveBucket,
+        );
+        $leaveWithPay = (float) $leaveAmounts['breakdown'];
+        $attendanceRefund = round((float) ($refundBucketTotals['regular_basic_pay'] ?? 0), 2);
+
+        $rollupReportBasicPay = $this->usesPayrollReportV2BasicPayRollup($payslip, $snapshot);
         if ($isConsultant) {
-            $earnings['regular_basic_pay'] = $this->payslipService->consultantBasicPayAmountForDisplay($summary, $snapshot);
+            $baseBasicPay = $this->payslipService->consultantBasicPayAmountForDisplay($summary, $snapshot);
+            $earnings['regular_basic_pay'] = $rollupReportBasicPay
+                ? round($baseBasicPay + $attendanceRefund + $leaveWithPay, 2)
+                : round($baseBasicPay, 2);
         } else {
-            $earnings['regular_basic_pay'] = round(
+            $baseBasicPay = round(
                 $this->regularBasicPayForReport(
                     $summary,
                     round(
@@ -647,9 +668,12 @@ class PayrollReportService
                             + $workedHolidayBase,
                         2
                     ),
-                ) + $refundBucketTotals['regular_basic_pay'],
+                ),
                 2
             );
+            $earnings['regular_basic_pay'] = $rollupReportBasicPay
+                ? round($baseBasicPay + $attendanceRefund + $leaveWithPay, 2)
+                : round($baseBasicPay, 2);
         }
         $earnings['holiday_pay'] = round(max(0.0, $workedHolidayPremium + $refundBucketTotals['holiday_pay']), 2);
         $earnings['overtime_pay'] = round(
@@ -662,15 +686,16 @@ class PayrollReportService
                 + $refundBucketTotals['night_differential'],
             2
         );
-        $earnings['paid_leave'] = round(
-            $this->preferLineBucketAmount($earnings['paid_leave'], $reportMetrics, $categoryTotals, 'paid_leave')
-                + $refundBucketTotals['paid_leave'],
-            2
-        );
+        $earnings['leave_with_pay'] = $leaveWithPay;
+        $earnings['paid_leave'] = $leaveWithPay;
         $earnings['allowance'] = $this->preferLineBucketAmount($earnings['allowance'], $reportMetrics, $categoryTotals, 'allowances', 'allowance');
         // Other earnings come only from explicit report buckets (uncategorized lines).
         // Refund lines are routed to their source component columns (Basic Pay, OT, etc.).
-        $earnings['other_earnings'] = round(max(0.0, $earnings['other_earnings'] + $refundBucketTotals['other_earnings'] + $otherPremiumPay), 2);
+        $earnings['other_earnings'] = round(
+            max(0.0, $earnings['other_earnings'] + $refundBucketTotals['other_earnings'] + $otherPremiumPay + $earnings['holiday_pay']),
+            2
+        );
+        $earnings['holiday_pay'] = 0.0;
 
         $deductions = [
             'sss' => 0.0,
@@ -712,7 +737,14 @@ class PayrollReportService
         $totalDeductions = round((float) $displayTotals['total_deductions'], 2);
         $netPay = round((float) $displayTotals['net_pay'], 2);
 
+        $employeeCode = $employee instanceof User
+            ? trim((string) ($employee->employee_code ?? ''))
+            : trim((string) data_get($snapshot, 'employee.employee_code', ''));
+
         return array_merge($earnings, $deductions, $detailedDeductions['amounts'], [
+            'attendance_refund' => $attendanceRefund,
+            'leave_with_pay' => $leaveWithPay,
+            'employee_id' => $employeeCode !== '' ? $employeeCode : '—',
             'employee_name' => $name !== '' ? $name : 'Employee '.$payslip->user_id,
             'employee_sort_key' => $employee instanceof User ? $employee->employeeListingSortKey() : mb_strtolower($name),
             'company_name' => $this->resolvePayslipCompanyName($payslip),
@@ -862,10 +894,8 @@ class PayrollReportService
     {
         $fromBuckets = round(
             (float) ($earnings['regular_basic_pay'] ?? 0)
-            + (float) ($earnings['holiday_pay'] ?? 0)
             + (float) ($earnings['overtime_pay'] ?? 0)
             + (float) ($earnings['night_differential'] ?? 0)
-            + (float) ($earnings['paid_leave'] ?? 0)
             + (float) ($earnings['other_earnings'] ?? 0)
             + (float) ($earnings['allowance'] ?? 0),
             2
@@ -910,6 +940,54 @@ class PayrollReportService
         }
 
         return round((float) ($metrics['net_pay'] ?? 0), 2);
+    }
+
+    /**
+     * New payroll export rolls Attendance Refund + Leave With Pay into Basic Pay. Already-finalized
+     * payslips without {@see summary.payroll_report_v2} keep the legacy Basic Pay base only.
+     *
+     * @param  array<string, mixed>  $snapshot
+     */
+    private function usesPayrollReportV2BasicPayRollup(Payslip $payslip, array $snapshot): bool
+    {
+        if (! in_array((string) $payslip->status, Payslip::lockingStatuses(), true)) {
+            return true;
+        }
+
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+
+        return ! empty($summary['payroll_report_v2']);
+    }
+
+    /**
+     * @param  Collection<int, Payslip>  $payslips
+     */
+    private function payslipsUsePayrollReportV2BasicPayRollup(Collection $payslips): bool
+    {
+        foreach ($payslips as $payslip) {
+            $snapshot = is_array($payslip->snapshot)
+                ? $payslip->snapshot
+                : (is_string($payslip->snapshot) ? json_decode($payslip->snapshot, true) : []);
+            if (! $this->usesPayrollReportV2BasicPayRollup($payslip, is_array($snapshot) ? $snapshot : [])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array{key?:string,label?:string,subtitle?:string}  $column
+     */
+    private function excelColumnHeading(array $column): string
+    {
+        $label = (string) ($column['label'] ?? '');
+        $subtitle = trim((string) ($column['subtitle'] ?? ''));
+        if ($subtitle === '') {
+            return $label;
+        }
+
+        return $label.' ('.$subtitle.')';
     }
 
     /**

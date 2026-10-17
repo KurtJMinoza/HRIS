@@ -40,6 +40,9 @@ export const BASIC_PAY_REPORT_REASONS = new Set([
   'missing_attendance',
 ])
 
+/** Attendance refunds shown in the breakdown column — already included in Basic Pay. */
+export const ATTENDANCE_REFUND_INCLUDED_IN_BASIC_PAY_REASONS = BASIC_PAY_REPORT_REASONS
+
 /** Mirrors backend RefundPayrollApplicationService::LINE_MAP display/report routing. */
 export const REFUND_COMPONENT_META = {
   regular_pay: { label: 'Basic Pay', payslipLine: 'Attendance Refund', reportColumn: 'Other' },

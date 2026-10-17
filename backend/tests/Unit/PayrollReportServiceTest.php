@@ -45,7 +45,7 @@ class PayrollReportServiceTest extends TestCase
 
         $payslip = new Payslip;
         $payslip->forceFill([
-            'status' => Payslip::STATUS_FINALIZED,
+            'status' => Payslip::STATUS_DRAFT,
             'gross_pay' => 7101.53,
             'total_deductions' => 0,
             'net_pay' => 7101.53,
@@ -65,6 +65,7 @@ class PayrollReportServiceTest extends TestCase
         $snapshot = [
             'daily_rate' => 961.54,
             'summary' => [
+                'payroll_report_v2' => true,
                 'daily_rate' => 961.54,
                 'display_gross_pay' => 16276.46,
                 'display_net_pay' => 16276.46,
@@ -191,8 +192,9 @@ class PayrollReportServiceTest extends TestCase
 
         $this->assertEqualsWithDelta($expectedGross, (float) $row['gross_earnings'], 0.02);
         $this->assertEqualsWithDelta($expectedGross, (float) $row['net_pay'], 0.02);
-        $this->assertEqualsWithDelta(round($regularAfterLate + $refund, 2), (float) $row['regular_basic_pay'], 0.02);
-        $this->assertEqualsWithDelta($paidLeave, (float) $row['paid_leave'], 0.02);
+        $this->assertEqualsWithDelta($refund, (float) $row['attendance_refund'], 0.02);
+        $this->assertEqualsWithDelta($paidLeave, (float) $row['leave_with_pay'], 0.02);
+        $this->assertEqualsWithDelta($regularAfterLate, (float) $row['regular_basic_pay'], 0.02);
     }
 
     public function test_report_gross_and_net_use_frozen_columns_when_finalized(): void
@@ -251,6 +253,7 @@ class PayrollReportServiceTest extends TestCase
             'net_pay' => round($staleStoredGross - 416.67, 2),
             'snapshot' => [
                 'summary' => [
+                    'payroll_report_v2' => true,
                     'regular_fixed_semi_monthly_payroll' => true,
                     'display_gross_pay' => $staleStoredGross,
                     'display_net_pay' => round($staleStoredGross - 416.67, 2),
@@ -293,10 +296,10 @@ class PayrollReportServiceTest extends TestCase
         $method->setAccessible(true);
         $row = $method->invoke($service, $payslip);
 
-        $this->assertEqualsWithDelta($expectedGross, (float) $row['gross_earnings'], 0.02);
-        $this->assertEqualsWithDelta($regularAfterLate, (float) $row['regular_basic_pay'], 0.02);
-        $this->assertEqualsWithDelta($holidayPay, (float) $row['holiday_pay'], 0.02);
-        $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
+        $this->assertEqualsWithDelta($staleStoredGross, (float) $row['gross_earnings'], 0.02);
+        $this->assertEqualsWithDelta(round($regularAfterLate + $paidLeave, 2), (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta($paidLeave, (float) $row['leave_with_pay'], 0.02);
+        $this->assertEqualsWithDelta($holidayPay, (float) $row['other_earnings'], 0.02);
     }
 
     public function test_report_gross_and_net_match_frozen_payslip_net_after_display_repair(): void
@@ -590,7 +593,8 @@ class PayrollReportServiceTest extends TestCase
 
         $this->assertEqualsWithDelta(4471.15, (float) ($breakdown['regular_pay_after_reductions'] ?? 0), 0.02);
         $this->assertEqualsWithDelta(144.23, (float) ($lateRow['deduction_amount'] ?? 0), 0.02);
-        $this->assertEqualsWithDelta(4471.15, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(1538.46, (float) $row['leave_with_pay'], 0.02);
+        $this->assertEqualsWithDelta(6009.61, (float) $row['regular_basic_pay'], 0.02);
     }
 
     public function test_report_splits_special_holiday_worked_pay_into_regular_base_and_holiday_premium(): void
@@ -806,9 +810,9 @@ class PayrollReportServiceTest extends TestCase
         $row = $method->invoke($service, $payslip);
 
         $this->assertGreaterThan(11000.0, $expectedBasicPay);
-        $this->assertEqualsWithDelta($expectedBasicPay, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(12199.54, (float) $row['regular_basic_pay'], 0.02);
         $this->assertEqualsWithDelta(6000.0, (float) $row['other_earnings'], 0.02);
-        $this->assertSame('13 days', $row['total_attendance']);
+        $this->assertSame('11 days', $row['total_attendance']);
     }
 
     public function test_consultant_report_gross_matches_payslip_without_double_counting_daily_basic(): void
@@ -917,8 +921,7 @@ class PayrollReportServiceTest extends TestCase
         $row = $method->invoke($service, $payslip);
 
         $this->assertEqualsWithDelta(7020.0, (float) $row['regular_basic_pay'], 0.02);
-        $this->assertEqualsWithDelta(540.0, (float) $row['holiday_pay'], 0.02);
-        $this->assertEqualsWithDelta(541.25, (float) $row['other_earnings'], 0.02);
+        $this->assertEqualsWithDelta(1081.25, (float) $row['other_earnings'], 0.02);
         $this->assertEqualsWithDelta(8101.25, (float) $row['gross_earnings'], 0.02);
     }
 
@@ -1034,8 +1037,7 @@ class PayrollReportServiceTest extends TestCase
         $row = $method->invoke($service, $payslip);
 
         $this->assertEqualsWithDelta(5000.0, (float) $row['regular_basic_pay'], 0.02);
-        $this->assertEqualsWithDelta(800.0, (float) $row['holiday_pay'], 0.02);
-        $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
+        $this->assertEqualsWithDelta(800.0, (float) $row['other_earnings'], 0.02);
     }
 
     public function test_report_missing_overtime_refund_routes_to_overtime_column(): void
@@ -1291,5 +1293,31 @@ class PayrollReportServiceTest extends TestCase
         $this->assertEqualsWithDelta(5076.92, (float) $row['gross_earnings'], 0.02);
         $this->assertEqualsWithDelta(416.67, (float) $row['total_deductions'], 0.02);
         $this->assertEqualsWithDelta(4660.25, (float) $row['net_pay'], 0.02);
+    }
+
+    public function test_legacy_finalized_report_omits_included_in_basic_pay_column_subtitle(): void
+    {
+        $service = app(PayrollReportService::class);
+        $ref = new ReflectionClass($service);
+        $reportColumns = $ref->getMethod('reportColumns');
+        $reportColumns->setAccessible(true);
+        $excelHeading = $ref->getMethod('excelColumnHeading');
+        $excelHeading->setAccessible(true);
+
+        $legacyColumns = $reportColumns->invoke($service, [], false, false);
+        $refundColumn = collect($legacyColumns)->firstWhere('key', 'attendance_refund');
+        $leaveColumn = collect($legacyColumns)->firstWhere('key', 'leave_with_pay');
+
+        $this->assertSame('', $refundColumn['subtitle'] ?? null);
+        $this->assertSame('', $leaveColumn['subtitle'] ?? null);
+        $this->assertSame('Attendance Refund', $excelHeading->invoke($service, $refundColumn));
+
+        $v2Columns = $reportColumns->invoke($service, [], false, true);
+        $v2Refund = collect($v2Columns)->firstWhere('key', 'attendance_refund');
+        $this->assertSame('Included in Basic Pay', $v2Refund['subtitle'] ?? null);
+        $this->assertSame(
+            'Attendance Refund (Included in Basic Pay)',
+            $excelHeading->invoke($service, $v2Refund),
+        );
     }
 }

@@ -1829,6 +1829,7 @@ class PayslipService
         $summary['net_pay_after_withholding_estimate'] = $displayTotals['net_pay'];
         $summary['display_gross_pay'] = $displayTotals['gross_pay'];
         $summary['display_net_pay'] = $displayTotals['net_pay'];
+        $summary['payroll_report_v2'] = true;
         $snapshot['summary'] = $summary;
         $snapshot['finalization_frozen_at'] = now()->toIso8601String();
         $snapshot['finalization_source'] = 'draft_snapshot_copy';
@@ -2912,6 +2913,11 @@ class PayslipService
         $summary = ($isConsultantSnapshot || $isExecomSnapshot)
             ? $this->refreshFixedPayrollDisplayTotals($summary)
             : $this->refreshRegularPayDisplayTotals($summary);
+        if (! $isConsultantSnapshot && ! $isExecomSnapshot) {
+            $summary['attendance_refund'] = $this->attendanceRefundIncludedInBasicPayAmount($summary);
+            $summary['leave_with_pay'] = $this->leaveWithPayReportBreakdownAmount($summary);
+            $summary['leave_with_pay_day_units'] = $this->leaveWithPayDayUnitsForDisplay($summary);
+        }
         $summary['payslip_custom_deduction_lines'] = $this->normalizePayslipCustomDeductionLines(
             $summary['payslip_custom_deduction_lines'] ?? [],
             $summary
@@ -2944,6 +2950,11 @@ class PayslipService
         );
         $summary['display_gross_pay'] = round((float) ($summary['display_gross_pay'] ?? $payslip->gross_pay ?? 0), 2);
         $summary['display_net_pay'] = round((float) ($summary['display_net_pay'] ?? $payslip->net_pay ?? 0), 2);
+        if (! $this->isConsultantSnapshot($out, $summary) && ! $this->isExecomSnapshot($out, $summary)) {
+            $summary['attendance_refund'] = $this->attendanceRefundIncludedInBasicPayAmount($summary);
+            $summary['leave_with_pay'] = $this->leaveWithPayReportBreakdownAmount($summary);
+            $summary['leave_with_pay_day_units'] = $this->leaveWithPayDayUnitsForDisplay($summary);
+        }
         $out['summary'] = $summary;
 
         return $out;
@@ -7425,6 +7436,156 @@ class PayslipService
         }
 
         return null;
+    }
+
+    /**
+     * Approved attendance refunds already rolled into Basic Pay (Missing Time In/Out/Attendance).
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    public function attendanceRefundIncludedInBasicPayAmount(array $summary): float
+    {
+        $lines = array_values(array_merge(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : [],
+            is_array($summary['payslip_earning_lines'] ?? null)
+                ? $summary['payslip_earning_lines']
+                : [],
+        ));
+        $total = 0.0;
+        foreach ($lines as $line) {
+            if (! is_array($line) || ! $this->isPayrollAdjustmentRefundLine($line)) {
+                continue;
+            }
+            $source = strtolower(trim((string) ($line['source'] ?? $line['category'] ?? '')));
+            $component = strtolower(trim((string) ($line['component_code'] ?? $line['key'] ?? '')));
+            if ($source !== 'basic_pay' && ! str_contains($component, 'refund_basic_pay')) {
+                continue;
+            }
+            $reason = $this->refundReasonFromLine($line);
+            if ($reason !== null && ! RefundRequest::attendanceRefundIncludedInBasicPayReason($reason)) {
+                continue;
+            }
+            $amount = max(0.0, (float) ($line['amount'] ?? $line['resolved_amount'] ?? 0));
+            if ($amount <= 0.0001) {
+                continue;
+            }
+            $total += $amount;
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * Paid leave for the informational "Leave With Pay" column (included in Basic Pay, not Gross).
+     *
+     * @param  array<string, mixed>  $summary
+     */
+    public function leaveWithPayReportBreakdownAmount(array $summary): float
+    {
+        $lines = array_values(array_merge(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : [],
+            is_array($summary['payslip_earning_lines'] ?? null)
+                ? $summary['payslip_earning_lines']
+                : [],
+        ));
+        $total = 0.0;
+        foreach ($lines as $line) {
+            if (! is_array($line) || $this->isPayrollAdjustmentRefundLine($line)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($line['key'] ?? '')));
+            $category = strtolower(trim((string) ($line['category'] ?? '')));
+            if (
+                ! in_array($key, ['daily:paid_leave', 'daily:paid_leave_daily_flat'], true)
+                && $category !== 'paid_leave'
+                && ! str_contains($key, 'paid_leave')
+            ) {
+                continue;
+            }
+            $amount = max(0.0, (float) ($line['display_amount'] ?? $line['amount'] ?? $line['resolved_amount'] ?? 0));
+            if ($amount <= 0.0001) {
+                continue;
+            }
+            $total += $amount;
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    public function leaveWithPayDayUnitsForDisplay(array $summary): float
+    {
+        $lines = array_values(array_merge(
+            is_array($summary['daily_computation_earning_lines'] ?? null)
+                ? $summary['daily_computation_earning_lines']
+                : [],
+            is_array($summary['payslip_earning_lines'] ?? null)
+                ? $summary['payslip_earning_lines']
+                : [],
+        ));
+        $days = 0.0;
+        foreach ($lines as $line) {
+            if (! is_array($line) || $this->isPayrollAdjustmentRefundLine($line)) {
+                continue;
+            }
+            $key = strtolower(trim((string) ($line['key'] ?? '')));
+            $category = strtolower(trim((string) ($line['category'] ?? '')));
+            if (
+                ! in_array($key, ['daily:paid_leave', 'daily:paid_leave_daily_flat'], true)
+                && $category !== 'paid_leave'
+                && ! str_contains($key, 'paid_leave')
+            ) {
+                continue;
+            }
+            $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+            $fromMeta = (float) ($metadata['leave_day_units'] ?? $metadata['paid_leave_day_units'] ?? 0);
+            if ($fromMeta > 0.0001) {
+                $days += $fromMeta;
+
+                continue;
+            }
+            $units = trim((string) ($line['units'] ?? ''));
+            if ($units !== '' && preg_match('/^(\d+(?:\.\d+)?)\s*days?$/i', $units, $matches) === 1) {
+                $days += (float) $matches[1];
+            }
+        }
+        if ($days <= 0.0001) {
+            $days = (float) (
+                $summary['regular_fixed_paid_leave_day_units']
+                ?? $summary['paid_leave_day_units']
+                ?? 0
+            );
+        }
+        if ($days <= 0.0001) {
+            $amount = $this->leaveWithPayReportBreakdownAmount($summary);
+            $dailyRate = (float) ($summary['daily_rate'] ?? 0);
+            if ($amount > 0.0001 && $dailyRate > 0.0001) {
+                $days = $amount / $dailyRate;
+            }
+        }
+
+        return round(max(0.0, $days), 4);
+    }
+
+    /**
+     * @return array{breakdown: float}
+     */
+    public function paidLeaveAmountsForPayrollReport(
+        array $summary,
+        float $paidLeaveBucketTotal,
+    ): array {
+        $breakdown = $this->leaveWithPayReportBreakdownAmount($summary);
+        if ($paidLeaveBucketTotal > $breakdown + 0.02) {
+            $breakdown = round($paidLeaveBucketTotal, 2);
+        }
+
+        return ['breakdown' => round($breakdown, 2)];
     }
 
     /**

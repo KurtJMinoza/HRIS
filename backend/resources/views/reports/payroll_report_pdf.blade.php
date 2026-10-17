@@ -412,8 +412,8 @@
       <colgroup>
         @foreach($columns as $column)
           <col
-            class="{{ $column['key'] === 'row_number' ? 'col-number' : (($column['key'] === 'employee_name' || ($column['format'] ?? '') === 'text') ? 'col-employee' : 'col-numeric') }}"
-            width="{{ $column['key'] === 'row_number' ? ($layout['row_number_width'] ?? 4) : (($column['key'] === 'employee_name' || ($column['format'] ?? '') === 'text') ? $layout['employee_width'] : $layout['numeric_width']) }}%"
+            class="{{ $column['key'] === 'row_number' ? 'col-number' : ((in_array($column['key'], ['employee_id', 'employee_name'], true) || ($column['format'] ?? '') === 'text') ? 'col-employee' : 'col-numeric') }}"
+            width="{{ $column['key'] === 'row_number' ? ($layout['row_number_width'] ?? 4) : ((in_array($column['key'], ['employee_id', 'employee_name'], true) || ($column['format'] ?? '') === 'text') ? $layout['employee_width'] : $layout['numeric_width']) }}%"
           >
         @endforeach
       </colgroup>
@@ -425,7 +425,12 @@
         </tr>
         <tr>
           @foreach($columns as $column)
-            <th>{{ $column['label'] }}</th>
+            <th>
+              {{ $column['label'] }}
+              @if(in_array($column['key'] ?? '', ['attendance_refund', 'leave_with_pay'], true) && ! empty($column['subtitle']))
+                <br><span style="font-size:6px;font-weight:600;">{{ $column['subtitle'] }}</span>
+              @endif
+            </th>
           @endforeach
         </tr>
       </thead>
@@ -435,7 +440,7 @@
             @foreach($columns as $column)
               @if($column['key'] === 'row_number')
                 <td class="{{ $column['class'] }}">{{ $row[$column['key']] }}</td>
-              @elseif($column['key'] === 'employee_name' || ($column['format'] ?? '') === 'text')
+              @elseif(in_array($column['key'], ['employee_id', 'employee_name'], true) || ($column['format'] ?? '') === 'text')
                 <td class="{{ $column['class'] }}">{{ $row[$column['key']] ?? '—' }}</td>
               @else
                 <td class="{{ $column['class'] }}">{{ $money($row[$column['key']] ?? 0) }}</td>
@@ -449,8 +454,10 @@
           @foreach($columns as $column)
             @if($column['key'] === 'row_number')
               <td></td>
-            @elseif($column['key'] === 'employee_name')
+            @elseif($column['key'] === 'employee_id')
               <td>Total</td>
+            @elseif($column['key'] === 'employee_name')
+              <td></td>
             @elseif(($column['format'] ?? '') === 'text')
               <td></td>
             @else

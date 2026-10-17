@@ -44,6 +44,56 @@ function formatUnits(_minutesWorked, unitsFallback) {
   return null
 }
 
+function dayUnitsFromPaidLeaveLine(line) {
+  const metadata = line?.metadata && typeof line.metadata === 'object' ? line.metadata : {}
+  const fromMeta = Number(
+    metadata.leave_day_units
+    ?? metadata.paid_leave_day_units
+    ?? 0,
+  )
+  if (Number.isFinite(fromMeta) && fromMeta > 0) {
+    return fromMeta
+  }
+  const units = String(line?.units || '').trim()
+  const match = units.match(/^(\d+(?:\.\d+)?)\s*days?$/i)
+  if (match) {
+    return Number(match[1])
+  }
+  return 0
+}
+
+function formatLeaveWithPayDayUnits(lines, summary) {
+  let days = (Array.isArray(lines) ? lines : []).reduce(
+    (sum, line) => sum + dayUnitsFromPaidLeaveLine(line),
+    0,
+  )
+  if (days <= 0.0001) {
+    days = Number(
+      summary?.leave_with_pay_day_units
+      ?? summary?.regular_fixed_paid_leave_day_units
+      ?? summary?.paid_leave_day_units
+      ?? 0,
+    )
+  }
+  if (days <= 0.0001) {
+    const leaveAmount = Number(summary?.leave_with_pay ?? 0)
+    const dailyRate = Number(summary?.daily_rate ?? 0)
+    if (leaveAmount > 0 && dailyRate > 0) {
+      days = leaveAmount / dailyRate
+    }
+  }
+  if (days <= 0.0001) {
+    return null
+  }
+  const rounded = Math.round(days * 10000) / 10000
+  const whole = Math.round(rounded)
+  const label = Math.abs(rounded - whole) < 0.00005
+    ? String(whole)
+    : String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+  const n = Number(label)
+  return `${label} ${n === 1 ? 'day' : 'days'}`
+}
+
 function isUnworkedHolidayPayLine(line) {
   const key = String(line?.key || '').trim().toLowerCase()
   const code = String(line?.component_code || '').trim().toUpperCase()
@@ -69,6 +119,18 @@ function isRefundBasicPayLine(line) {
   const source = String(line?.source || line?.category || '').trim().toLowerCase()
   const component = String(line?.component_code || line?.key || '').trim().toLowerCase()
   return source === 'basic_pay' || component === 'refund_basic_pay'
+}
+
+function isPaidLeaveBreakdownLine(line) {
+  if (isPayrollAdjustmentRefundLine(line)) return false
+  const key = String(line?.key || '').trim().toLowerCase()
+  const category = String(line?.category || '').trim().toLowerCase()
+  const isPaidLeave = key === 'daily:paid_leave'
+    || key === 'daily:paid_leave_daily_flat'
+    || category === 'paid_leave'
+    || key.includes('paid_leave')
+  if (!isPaidLeave) return false
+  return true
 }
 
 const REFUND_COMPONENT_LABELS = new Set([
@@ -220,19 +282,24 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
       })
     }
     if (isExecomPayroll) {
-      return { coreEarnings: uniqueLines(earnings), basicPayRefunds: [], otherPayrollAdjustments: [] }
+      return { coreEarnings: uniqueLines(earnings), basicPayRefunds: [], leaveWithPayLines: [], otherPayrollAdjustments: [] }
     }
     if (isConsultantPayroll) {
-      return { coreEarnings: uniqueLines(earnings), basicPayRefunds: [], otherPayrollAdjustments: [] }
+      return { coreEarnings: uniqueLines(earnings), basicPayRefunds: [], leaveWithPayLines: [], otherPayrollAdjustments: [] }
     }
     if (dailyComputationEarnings.length > 0 || earnings.length > 0) {
       const merged = uniqueLines([...dailyComputationEarnings, ...earnings].filter((line) => !isUnworkedHolidayPayLine(line)))
       const basicPayRefunds = []
+      const leaveWithPayLines = []
       const otherPayrollAdjustments = []
       const coreEarnings = []
       merged.forEach((line) => {
         if (isRefundBasicPayLine(line)) {
           basicPayRefunds.push(line)
+          return
+        }
+        if (isPaidLeaveBreakdownLine(line)) {
+          leaveWithPayLines.push(line)
           return
         }
         if (isPayrollAdjustmentRefundLine(line)) {
@@ -241,7 +308,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
         }
         coreEarnings.push(line)
       })
-      return { coreEarnings, basicPayRefunds, otherPayrollAdjustments }
+      return { coreEarnings, basicPayRefunds, leaveWithPayLines, otherPayrollAdjustments }
     }
     const fallback = []
     const basic = Number(summary?.basic_pay || summary?.basic_pay_this_period || 0)
@@ -256,8 +323,37 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
     if (!isExecomPayroll && !isConsultantPayroll && premium > 0) {
       fallback.push({ key: 'fallback:attendance_premium', label: 'Attendance premiums (OT/ND/Holiday)', amount: premium })
     }
-    return { coreEarnings: fallback, basicPayRefunds: [], otherPayrollAdjustments: [] }
+    return { coreEarnings: fallback, basicPayRefunds: [], leaveWithPayLines: [], otherPayrollAdjustments: [] }
   }, [dailyComputationEarnings, earnings, isConsultantPayroll, isExecomPayroll, summary])
+
+  const attendanceRefundTotal = useMemo(() => {
+    const fromSummary = Number(summary?.attendance_refund ?? NaN)
+    if (Number.isFinite(fromSummary) && fromSummary > 0) {
+      return fromSummary
+    }
+    return displayEarnings.basicPayRefunds.reduce(
+      (sum, line) => sum + Number(line?.amount || 0),
+      0,
+    )
+  }, [displayEarnings.basicPayRefunds, summary?.attendance_refund])
+
+  const leaveWithPayTotal = useMemo(() => {
+    const fromSummary = Number(summary?.leave_with_pay ?? NaN)
+    if (Number.isFinite(fromSummary) && fromSummary > 0) {
+      return fromSummary
+    }
+    return (displayEarnings.leaveWithPayLines || []).reduce(
+      (sum, line) => sum + Number(line?.display_amount ?? line?.amount ?? 0),
+      0,
+    )
+  }, [displayEarnings.leaveWithPayLines, summary?.leave_with_pay])
+
+  const leaveWithPayUnits = useMemo(
+    () => formatLeaveWithPayDayUnits(displayEarnings.leaveWithPayLines, summary),
+    [displayEarnings.leaveWithPayLines, summary],
+  )
+
+  const basicPayIncludedAdjustments = attendanceRefundTotal + leaveWithPayTotal
 
   const flatDisplayEarnings = useMemo(
     () => [
@@ -498,12 +594,29 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                   {displayEarnings.coreEarnings.map((line, idx) => {
                     const isThirteenthMonth = String(line?.component_code || '').trim().toUpperCase() === '13TH_MONTH_PAY'
                     const basisType = String(line?.metadata?.basis_type || '').trim().toLowerCase()
-                    const earningLabel = isThirteenthMonth
-                      ? `13th Month Pay (${basisType === 'gross' ? 'Gross Pay' : 'Basic Pay'} Method)`
-                      : (line?.label || 'Daily computation')
                     const lineKey = String(line?.key || '').trim().toLowerCase()
                     const lineLabel = String(line?.label || '').trim().toLowerCase()
-                    const isRegularPayLine = lineKey === 'daily:regular_pay' || lineLabel === 'regular pay'
+                    const isRegularPayLine = lineKey === 'daily:regular_pay'
+                      || lineKey === 'fallback:regular_pay'
+                      || lineLabel === 'regular pay'
+                    const earningLabel = isThirteenthMonth
+                      ? `13th Month Pay (${basisType === 'gross' ? 'Gross Pay' : 'Basic Pay'} Method)`
+                      : (isRegularPayLine && basicPayIncludedAdjustments > 0.0001
+                        ? 'Basic Pay'
+                        : (line?.label || 'Daily computation'))
+                    const lineAmountBase = (() => {
+                      if (
+                        isRegularPayLine
+                        && attendanceBreakdown?.regular_pay_after_reductions != null
+                        && attendanceBreakdown?.regular_pay_after_reductions !== ''
+                      ) {
+                        return Number(attendanceBreakdown.regular_pay_after_reductions)
+                      }
+                      if (line?.display_amount != null && line?.display_amount !== '') {
+                        return Number(line.display_amount)
+                      }
+                      return Number(line?.amount || 0)
+                    })()
                     return (
                       <Fragment key={`dc-${idx}`}>
                         <tr className="border-b border-slate-100/90 transition-colors last:border-b-0 bg-white hover:bg-white">
@@ -514,11 +627,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                             {formatUnits(line?.minutes_worked, line?.units) || '-'}
                           </td>
                           <td className="py-2.5 pl-2 pr-3 text-right text-[14px] font-semibold tabular-nums text-[#0A0A0A]">
-                            {displayAmount(
-                              line?.display_amount != null && line?.display_amount !== ''
-                                ? line.display_amount
-                                : (line?.amount || 0),
-                            )}
+                            {displayAmount(lineAmountBase)}
                           </td>
                         </tr>
                         {isRegularPayLine && !isConsultantPayroll && attendanceBreakdown?.available ? (
@@ -553,17 +662,6 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                                 </td>
                               </tr>
                             ) : null}
-                            {displayEarnings.basicPayRefunds.map((refundLine, refundIdx) => (
-                              <tr key={`basic-pay-refund-${refundIdx}`} className="border-b border-emerald-100 bg-emerald-50/35">
-                                <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/75">
-                                  {refundPayslipLabel(refundLine)}
-                                </td>
-                                <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
-                                <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
-                                  {displayAmount(refundLine?.amount || 0)}
-                                </td>
-                              </tr>
-                            ))}
                             {attendanceBreakdown?.note ? (
                               <tr className="border-b border-slate-100 bg-slate-50/35">
                                 <td colSpan={3} className="px-6 py-1.5 text-[11px] leading-relaxed text-[#0A0A0A]/55">{attendanceBreakdown.note}</td>
@@ -571,19 +669,44 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                             ) : null}
                           </>
                         ) : null}
-                        {isRegularPayLine && !isConsultantPayroll && !attendanceBreakdown?.available && displayEarnings.basicPayRefunds.length > 0
-                          ? displayEarnings.basicPayRefunds.map((refundLine, refundIdx) => (
-                            <tr key={`basic-pay-refund-fallback-${refundIdx}`} className="border-b border-emerald-100 bg-emerald-50/35">
-                              <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/75">
-                                {refundPayslipLabel(refundLine)}
-                              </td>
-                              <td className="px-2 py-1.5 text-center text-[12px] text-[#0A0A0A]/60">—</td>
-                              <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
-                                {displayAmount(refundLine?.amount || 0)}
-                              </td>
-                            </tr>
-                          ))
-                          : null}
+                        {isRegularPayLine && basicPayIncludedAdjustments > 0.0001 ? (
+                          <>
+                            {attendanceRefundTotal > 0.0001 ? (
+                              <>
+                                <tr className="bg-slate-50/45">
+                                  <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/70">Attendance Refund</td>
+                                  <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">—</td>
+                                  <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
+                                    {displayAmount(attendanceRefundTotal)}
+                                  </td>
+                                </tr>
+                                <tr className="border-b border-slate-100 bg-slate-50/35">
+                                  <td colSpan={3} className="px-8 py-1 text-[11px] leading-relaxed text-[#0A0A0A]/55">
+                                    Included in Basic Pay
+                                  </td>
+                                </tr>
+                              </>
+                            ) : null}
+                            {leaveWithPayTotal > 0.0001 ? (
+                              <>
+                                <tr className="bg-slate-50/45">
+                                  <td className="py-1.5 pl-6 pr-2 text-[13px] text-[#0A0A0A]/70">Leave With Pay</td>
+                                  <td className="px-2 py-1.5 text-center text-[12px] tabular-nums text-[#0A0A0A]/60">
+                                    {leaveWithPayUnits || '-'}
+                                  </td>
+                                  <td className="py-1.5 pl-2 pr-3 text-right text-[13px] font-semibold tabular-nums text-[#0A0A0A]">
+                                    {displayAmount(leaveWithPayTotal)}
+                                  </td>
+                                </tr>
+                                <tr className="border-b border-slate-100 bg-slate-50/35">
+                                  <td colSpan={3} className="px-8 py-1 text-[11px] leading-relaxed text-[#0A0A0A]/55">
+                                    Included in Basic Pay
+                                  </td>
+                                </tr>
+                              </>
+                            ) : null}
+                          </>
+                        ) : null}
                       </Fragment>
                     )
                   })}
