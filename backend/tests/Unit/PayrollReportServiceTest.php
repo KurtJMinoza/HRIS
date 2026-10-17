@@ -999,7 +999,7 @@ class PayrollReportServiceTest extends TestCase
         $this->assertEqualsWithDelta(1500.0, (float) $row['other_earnings'], 0.02);
     }
 
-    public function test_report_missing_rest_day_refund_routes_to_basic_pay(): void
+    public function test_report_missing_rest_day_refund_routes_to_holiday_pay_not_basic_pay(): void
     {
         $snapshot = [
             'summary' => [
@@ -1033,8 +1033,8 @@ class PayrollReportServiceTest extends TestCase
         $method->setAccessible(true);
         $row = $method->invoke($service, $payslip);
 
-        $this->assertEqualsWithDelta(5800.0, (float) $row['regular_basic_pay'], 0.02);
-        $this->assertEqualsWithDelta(0.0, (float) $row['holiday_pay'], 0.02);
+        $this->assertEqualsWithDelta(5000.0, (float) $row['regular_basic_pay'], 0.02);
+        $this->assertEqualsWithDelta(800.0, (float) $row['holiday_pay'], 0.02);
         $this->assertEqualsWithDelta(0.0, (float) $row['other_earnings'], 0.02);
     }
 

@@ -73,9 +73,6 @@ class RefundRequest extends Model
         self::REASON_MISSING_TIME_IN,
         self::REASON_MISSING_TIME_OUT,
         self::REASON_MISSING_ATTENDANCE,
-        self::REASON_INCORRECT_LATE_DEDUCTION,
-        self::REASON_INCORRECT_UNDERTIME_DEDUCTION,
-        self::REASON_MISSING_REST_DAY_PAY,
     ];
 
     /** Refund reasons that land in the payroll report Holiday column (Excel/PDF). */

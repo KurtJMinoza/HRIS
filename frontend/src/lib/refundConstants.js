@@ -38,9 +38,6 @@ export const BASIC_PAY_REPORT_REASONS = new Set([
   'missing_time_in',
   'missing_time_out',
   'missing_attendance',
-  'incorrect_late_deduction',
-  'incorrect_undertime_deduction',
-  'missing_rest_day_pay',
 ])
 
 /** Mirrors backend RefundPayrollApplicationService::LINE_MAP display/report routing. */
