@@ -8,13 +8,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     private function indexExists(string $table, string $indexName): bool
     {
-        $dbName = DB::getDatabaseName();
-        $row = DB::selectOne(
-            'SELECT 1 FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ? LIMIT 1',
-            [$dbName, $table, $indexName]
-        );
-
-        return $row !== null;
+        return Schema::hasIndex($table, $indexName);
     }
 
     public function up(): void

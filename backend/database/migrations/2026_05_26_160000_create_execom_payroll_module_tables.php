@@ -144,8 +144,20 @@ return new class extends Migration
             return false;
         }
 
-        $rows = DB::select("SHOW INDEX FROM `{$tableName}` WHERE Key_name = ?", [$indexName]);
+        try {
+            if (DB::connection()->getDriverName() === 'mysql') {
+                return count(DB::select("SHOW INDEX FROM `{$tableName}` WHERE Key_name = ?", [$indexName])) > 0;
+            }
 
-        return count($rows) > 0;
+            foreach (Schema::getIndexes($tableName) as $candidate) {
+                if (($candidate['name'] ?? null) === $indexName) {
+                    return true;
+                }
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return false;
     }
 };

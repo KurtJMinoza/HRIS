@@ -24,8 +24,20 @@ return new class extends Migration
 
     private function indexExists(string $table, string $indexName): bool
     {
-        $indexes = DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]);
+        try {
+            if (DB::connection()->getDriverName() === 'mysql') {
+                return count(DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName])) > 0;
+            }
 
-        return count($indexes) > 0;
+            foreach (Schema::getIndexes($table) as $candidate) {
+                if (($candidate['name'] ?? null) === $indexName) {
+                    return true;
+                }
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return false;
     }
 };

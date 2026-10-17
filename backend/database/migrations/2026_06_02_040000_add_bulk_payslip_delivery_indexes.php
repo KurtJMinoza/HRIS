@@ -45,14 +45,20 @@ return new class extends Migration
 
     private function indexExists(string $table, string $index): bool
     {
-        $database = DB::getDatabaseName();
-        $rows = DB::select(
-            'SELECT COUNT(1) AS aggregate
-             FROM information_schema.statistics
-             WHERE table_schema = ? AND table_name = ? AND index_name = ?',
-            [$database, $table, $index]
-        );
+        try {
+            if (DB::connection()->getDriverName() === 'mysql') {
+                return count(DB::select('SHOW INDEX FROM `'.$table.'` WHERE Key_name = ?', [$index])) > 0;
+            }
 
-        return (int) ($rows[0]->aggregate ?? 0) > 0;
+            foreach (Schema::getIndexes($table) as $candidate) {
+                if (($candidate['name'] ?? null) === $index) {
+                    return true;
+                }
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return false;
     }
 };

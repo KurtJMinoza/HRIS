@@ -28,7 +28,8 @@ return new class extends Migration
         });
 
         // overall_rating holds a text label (e.g. "Outstanding"), not a numeric value.
-        if (Schema::hasColumn('evaluations', 'overall_rating')) {
+        // MySQL-only MODIFY syntax; skip on other drivers (e.g. sqlite tests).
+        if (DB::getDriverName() === 'mysql' && Schema::hasColumn('evaluations', 'overall_rating')) {
             DB::statement('ALTER TABLE evaluations MODIFY overall_rating VARCHAR(255) NULL');
         }
     }

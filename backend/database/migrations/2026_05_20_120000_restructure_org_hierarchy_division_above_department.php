@@ -109,7 +109,9 @@ return new class extends Migration
             });
         }
 
-        if (Schema::hasColumn('divisions', 'department_id')) {
+        // SQLite cannot drop a column still referenced by the divisions FK definition;
+        // the legacy column is dropped on MySQL only and left in place for tests.
+        if (Schema::hasColumn('divisions', 'department_id') && DB::getDriverName() === 'mysql') {
             DB::statement('ALTER TABLE `divisions` DROP COLUMN `department_id`');
         }
 
@@ -123,27 +125,57 @@ return new class extends Migration
     private function foreignKeyExists(string $table, string $foreignKey): bool
     {
         $connection = Schema::getConnection();
-        $database = $connection->getDatabaseName();
 
-        $result = $connection->select(
-            'SELECT COUNT(*) AS aggregate FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = ? AND CONSTRAINT_TYPE = ?',
-            [$database, $table, $foreignKey, 'FOREIGN KEY'],
-        );
+        try {
+            if ($connection->getDriverName() === 'mysql') {
+                $database = $connection->getDatabaseName();
 
-        return (int) ($result[0]->aggregate ?? 0) > 0;
+                $result = $connection->select(
+                    'SELECT COUNT(*) AS aggregate FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = ? AND CONSTRAINT_TYPE = ?',
+                    [$database, $table, $foreignKey, 'FOREIGN KEY'],
+                );
+
+                return (int) ($result[0]->aggregate ?? 0) > 0;
+            }
+
+            foreach (Schema::getForeignKeys($table) as $candidate) {
+                if (($candidate['name'] ?? null) === $foreignKey) {
+                    return true;
+                }
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return false;
     }
 
     private function indexExists(string $table, string $index): bool
     {
         $connection = Schema::getConnection();
-        $database = $connection->getDatabaseName();
 
-        $result = $connection->select(
-            'SELECT COUNT(*) AS aggregate FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ?',
-            [$database, $table, $index],
-        );
+        try {
+            if ($connection->getDriverName() === 'mysql') {
+                $database = $connection->getDatabaseName();
 
-        return (int) ($result[0]->aggregate ?? 0) > 0;
+                $result = $connection->select(
+                    'SELECT COUNT(*) AS aggregate FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ?',
+                    [$database, $table, $index],
+                );
+
+                return (int) ($result[0]->aggregate ?? 0) > 0;
+            }
+
+            foreach (Schema::getIndexes($table) as $candidate) {
+                if (($candidate['name'] ?? null) === $index) {
+                    return true;
+                }
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return false;
     }
 
     public function down(): void

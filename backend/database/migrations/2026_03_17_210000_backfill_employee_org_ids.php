@@ -11,6 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // MySQL-only multi-table UPDATE ... JOIN data backfill; skip on other
+        // drivers (e.g. the sqlite test database).
+        if (DB::getDriverName() !== 'mysql') {
+            return;
+        }
+
         // Employees with department_id: set company_id, branch_id from department's branch
         DB::statement("
             UPDATE users u

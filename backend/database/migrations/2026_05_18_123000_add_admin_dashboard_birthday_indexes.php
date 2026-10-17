@@ -40,11 +40,7 @@ return new class extends Migration
             return false;
         }
 
-        return DB::table('information_schema.statistics')
-            ->where('table_schema', DB::getDatabaseName())
-            ->where('table_name', $table)
-            ->where('index_name', $indexName)
-            ->exists();
+        return Schema::hasIndex($table, $indexName);
     }
 
     private function dropIndexIfExists(string $table, string $indexName): void

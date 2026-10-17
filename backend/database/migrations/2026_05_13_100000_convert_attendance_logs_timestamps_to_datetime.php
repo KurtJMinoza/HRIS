@@ -12,6 +12,11 @@ return new class extends Migration
             return;
         }
 
+        // MySQL-only TIMESTAMP → DATETIME conversion; skip on other drivers (e.g. sqlite tests).
+        if (DB::getDriverName() !== 'mysql') {
+            return;
+        }
+
         $this->withUtcMysqlSession(function (): void {
             DB::statement('ALTER TABLE attendance_logs
                 MODIFY verified_at DATETIME NULL,
@@ -23,6 +28,10 @@ return new class extends Migration
     public function down(): void
     {
         if (! Schema::hasTable('attendance_logs')) {
+            return;
+        }
+
+        if (DB::getDriverName() !== 'mysql') {
             return;
         }
 
