@@ -2660,6 +2660,17 @@ class PayrollComputationService implements PayrollBulkComputation
                     ],
                 ],
             ], $premiumLines));
+        } elseif (
+            $runFullDailyComputation
+            && ! $isConsultant
+            && ! $deductionRosterMode
+            && $this->usesSeparateRestDayWorkedPayDisplayForEmploymentStatus((string) ($user->employment_status ?? ''))
+        ) {
+            $dailyComputationEarningLines = $this->applySeparateRestDayWorkedPayDisplayLines(
+                $dailyComputationEarningLines,
+                $days,
+                $dailyRate
+            );
         }
 
         $employeeStatutoryThisPeriod = (float) ($deductionSchedule['employee_statutory_this_period'] ?? $employeeStatutoryFullMonthly);
@@ -3877,6 +3888,66 @@ class PayrollComputationService implements PayrollBulkComputation
         }
 
         return array_values($out);
+    }
+
+    public function usesSeparateRestDayWorkedPayDisplayForEmploymentStatus(?string $employmentStatus): bool
+    {
+        $status = EmploymentStatus::tryFromStored((string) ($employmentStatus ?? ''));
+
+        return $status === EmploymentStatus::Probationary
+            || $status === EmploymentStatus::ProjectBased;
+    }
+
+    /**
+     * Probationary / project-based daily payslips: Rest Day Worked Pay 1× base and 30% increment as separate lines.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @param  list<array<string, mixed>>  $days
+     * @return list<array<string, mixed>>
+     */
+    public function applySeparateRestDayWorkedPayDisplayLines(array $lines, array $days, float $dailyRate): array
+    {
+        if ($lines === [] || $days === []) {
+            return $lines;
+        }
+
+        $lines = $this->injectFixedRegularRestDayWorkedDisplayLines($lines, $days, $dailyRate);
+
+        $restDayBaseAmount = 0.0;
+        $restDayBaseMinutes = 0;
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $metadata = is_array($line['metadata'] ?? null) ? $line['metadata'] : [];
+            if (! empty($metadata['rest_day_worked_base'])) {
+                $restDayBaseAmount = round((float) ($line['amount'] ?? 0), 2);
+                $restDayBaseMinutes = max(0, (int) ($line['minutes_worked'] ?? 0));
+                break;
+            }
+        }
+        if ($restDayBaseAmount <= 0.0001) {
+            return $lines;
+        }
+
+        foreach ($lines as $idx => $line) {
+            if (! is_array($line) || ($line['key'] ?? '') !== 'daily:regular_pay') {
+                continue;
+            }
+            $lines[$idx]['amount'] = round(max(0.0, (float) ($line['amount'] ?? 0) - $restDayBaseAmount), 2);
+            if (is_numeric($line['display_amount'] ?? null)) {
+                $lines[$idx]['display_amount'] = round(
+                    max(0.0, (float) $line['display_amount'] - $restDayBaseAmount),
+                    2
+                );
+            }
+            if ((int) ($line['minutes_worked'] ?? 0) > 0) {
+                $lines[$idx]['minutes_worked'] = max(0, (int) $line['minutes_worked'] - $restDayBaseMinutes);
+            }
+            break;
+        }
+
+        return array_values($lines);
     }
 
     /**

@@ -6551,8 +6551,11 @@ class PayslipService
             }
 
             if (
-                ! empty($summary['regular_fixed_semi_monthly_payroll'])
-                && $this->isRestDayWorkedPremiumLine($line)
+                $this->isRestDayWorkedPremiumLine($line)
+                && (
+                    ! empty($summary['regular_fixed_semi_monthly_payroll'])
+                    || $this->employmentStatusUsesSeparateRestDayWorkedPayDisplay($summary)
+                )
             ) {
                 $newLines[] = $line;
 
@@ -8151,6 +8154,11 @@ class PayslipService
         $fallbackHourlyRate = null;
 
         foreach ($days as $day) {
+            if ((bool) ($day['is_rest_day'] ?? false)
+                && $this->employmentStatusUsesSeparateRestDayWorkedPayDisplay($summary)) {
+                continue;
+            }
+
             $status = strtolower(trim((string) ($day['status'] ?? '')));
             // halfday keeps the worked regular_pay slice; leave pay stays on the leave line.
             if (! in_array($status, ['worked', 'halfday'], true)) {
@@ -8714,13 +8722,35 @@ class PayslipService
      * @param  list<array<string, mixed>>  $dailyDays
      * @return array<string, mixed>
      */
+    private function employmentStatusUsesSeparateRestDayWorkedPayDisplay(array $summary): bool
+    {
+        return app(PayrollComputationService::class)
+            ->usesSeparateRestDayWorkedPayDisplayForEmploymentStatus((string) ($summary['employment_status'] ?? ''));
+    }
+
     private function repairFixedSemiMonthlyPayslipDisplay(array $summary, array $dailyDays, float $dailyRate): array
     {
-        if (empty($summary['regular_fixed_semi_monthly_payroll'])) {
+        $usesFixedRegular = ! empty($summary['regular_fixed_semi_monthly_payroll']);
+        $usesSeparateRestDay = $this->employmentStatusUsesSeparateRestDayWorkedPayDisplay($summary);
+        if (! $usesFixedRegular && ! $usesSeparateRestDay) {
             return $summary;
         }
 
         $payrollComputation = app(PayrollComputationService::class);
+
+        if ($usesSeparateRestDay && ! $usesFixedRegular) {
+            $lineKey = 'daily_computation_earning_lines';
+            $lines = is_array($summary[$lineKey] ?? null) ? array_values($summary[$lineKey]) : [];
+            if ($lines !== [] && $dailyDays !== []) {
+                $summary[$lineKey] = $payrollComputation->applySeparateRestDayWorkedPayDisplayLines(
+                    $lines,
+                    $dailyDays,
+                    $dailyRate
+                );
+            }
+
+            return $summary;
+        }
 
         if ($dailyDays !== []) {
             $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
@@ -8832,6 +8862,9 @@ class PayslipService
                 $dayIsRest = (bool) ($day['is_rest_day'] ?? false);
                 $attendanceRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
                 if ($dayIsRest) {
+                    if ($this->employmentStatusUsesSeparateRestDayWorkedPayDisplay($summary)) {
+                        continue;
+                    }
                     $status = strtolower(trim((string) ($day['status'] ?? '')));
                     if ($attendanceRegularMinutes <= 0 && $status === 'worked') {
                         $attendanceRegularMinutes = (int) (($day['regular_day_minutes'] ?? 0) + ($day['regular_night_minutes'] ?? 0));
