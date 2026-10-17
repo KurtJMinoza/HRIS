@@ -607,6 +607,7 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                     const lineAmountBase = (() => {
                       if (
                         isRegularPayLine
+                        && basicPayIncludedAdjustments > 0.0001
                         && attendanceBreakdown?.regular_pay_after_reductions != null
                         && attendanceBreakdown?.regular_pay_after_reductions !== ''
                       ) {
