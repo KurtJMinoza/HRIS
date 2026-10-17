@@ -85,6 +85,12 @@ class RefundCalculationService
             $input['cutoff_end_date'] ?? null
         );
 
+        // An explicitly selected payroll cycle must still be open: a finalized
+        // (locked) cycle can never absorb or reflect another adjustment.
+        if (! empty($input['cutoff_start_date']) && ! empty($input['cutoff_end_date'])) {
+            $this->assertSelectedCycleIsOpen($employee, $cutoffStart, $cutoffEnd);
+        }
+
         if (array_key_exists('direct_refund_amount', $input) && $input['direct_refund_amount'] !== null && $input['direct_refund_amount'] !== '') {
             return $this->previewDirectAmount(
                 $employee,
@@ -442,6 +448,34 @@ class RefundCalculationService
         $end = $from->day <= 15 ? $from->copy()->startOfMonth()->addDays(14) : $from->copy()->endOfMonth();
 
         return [$start->startOfDay(), $end->endOfDay()];
+    }
+
+    /**
+     * Guard: a refund may only target an OPEN payroll cycle. When the
+     * explicitly selected cycle is already finalized (locked), creating,
+     * editing, and submitting the refund is rejected instead of silently
+     * rerouting the amount to another payroll.
+     *
+     * @throws InvalidArgumentException when the selected window is frozen
+     */
+    public function assertSelectedCycleIsOpen(User $employee, Carbon|string|null $cutoffStart, Carbon|string|null $cutoffEnd): void
+    {
+        if ($cutoffStart === null || $cutoffEnd === null) {
+            return;
+        }
+
+        $freeze = $this->payrollFreeze->isWindowFrozenForEmployee((int) $employee->id, $cutoffStart, $cutoffEnd);
+        if (! ($freeze['frozen'] ?? false)) {
+            return;
+        }
+
+        $label = ! empty($freeze['period_start']) && ! empty($freeze['period_end'])
+            ? "{$freeze['period_start']} → {$freeze['period_end']}"
+            : Carbon::parse((string) $cutoffStart)->toDateString().' → '.Carbon::parse((string) $cutoffEnd)->toDateString();
+
+        throw new InvalidArgumentException(
+            "This payroll period has already been finalized and is locked ({$label}). Select an open payroll cycle for this adjustment."
+        );
     }
 
     /**

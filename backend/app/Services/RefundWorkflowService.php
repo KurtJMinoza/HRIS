@@ -159,6 +159,19 @@ class RefundWorkflowService
             $refund = $fresh;
             $fromStatus = $refund->status;
 
+            // A refund can never be submitted against a finalized (locked)
+            // payroll cycle; the admin must re-target an open cycle first.
+            if ($action === 'submit') {
+                $employee = $refund->employee()->first();
+                if ($employee instanceof User) {
+                    $this->calculationService->assertSelectedCycleIsOpen(
+                        $employee,
+                        $refund->cutoff_start_date,
+                        $refund->cutoff_end_date,
+                    );
+                }
+            }
+
             $now = now();
             switch ($action) {
                 case 'submit':

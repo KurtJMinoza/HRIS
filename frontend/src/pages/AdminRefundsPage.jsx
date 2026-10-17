@@ -805,7 +805,7 @@ function CreateRefundDialog({ open, onOpenChange, onCreated, perms, editId = nul
                       <Info className="size-4" strokeWidth={2.4} aria-hidden />
                     </span>
                     <p>
-                      When an employee was underpaid or overpaid on a <strong>finalized</strong> payroll — for example missing attendance on the previous pay run — create a refund here. After approval, the adjustment is applied automatically on the <strong>next payroll</strong> as extra pay or a payroll recovery deduction. The closed payslip is never changed.
+                      When an employee was underpaid or overpaid on a <strong>finalized</strong> payroll — for example missing attendance on the previous pay run — create a refund here and select the next <strong>open payroll cycle</strong> as the target. After approval, the adjustment is applied on that open cycle as extra pay or a payroll recovery deduction. Already-finalized cycles are locked and cannot receive adjustments; the closed payslip is never changed.
                     </p>
                   </div>
 
@@ -940,7 +940,7 @@ function CreateRefundDialog({ open, onOpenChange, onCreated, perms, editId = nul
                             })}
                           </select>
                           <p className={refundModalHintClass}>
-                            The selected payroll cycle becomes the target period where this adjustment will appear.
+                            The selected payroll cycle becomes the target period where this adjustment will appear. Already-finalized cycles are locked and rejected — choose the next open cycle.
                           </p>
                         </div>
 
