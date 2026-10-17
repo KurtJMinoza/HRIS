@@ -605,14 +605,6 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
                         ? 'Basic Pay'
                         : (line?.label || 'Daily computation'))
                     const lineAmountBase = (() => {
-                      if (
-                        isRegularPayLine
-                        && basicPayIncludedAdjustments > 0.0001
-                        && attendanceBreakdown?.regular_pay_after_reductions != null
-                        && attendanceBreakdown?.regular_pay_after_reductions !== ''
-                      ) {
-                        return Number(attendanceBreakdown.regular_pay_after_reductions)
-                      }
                       if (line?.display_amount != null && line?.display_amount !== '') {
                         return Number(line.display_amount)
                       }
