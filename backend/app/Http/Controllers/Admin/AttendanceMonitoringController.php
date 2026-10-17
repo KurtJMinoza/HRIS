@@ -754,9 +754,24 @@ class AttendanceMonitoringController extends Controller
                         }
 
                         $isUndertime = $undertimeMinutes !== null && $undertimeMinutes > 0;
+                        $isPairHalfDay = isset($inCarbon, $outCarbon)
+                            && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+                                $dateKey,
+                                $todaySchedule,
+                                $inCarbon,
+                                $outCarbon,
+                                $tz
+                            );
+                        if ($isPairHalfDay) {
+                            // Completed pair at the schedule's exact half-day unit (e.g., 08:00 → 12:00):
+                            // Half Day, with no overlapping undertime or late units.
+                            $undertimeMinutes = 0;
+                            $lateLabel = null;
+                            $lateMinutes = null;
+                        }
                         if ($isHalfDayLeave) {
                             $status = 'halfday';
-                        } elseif ($isHalfDay) {
+                        } elseif ($isHalfDay || $isPairHalfDay) {
                             $status = 'halfday';
                         } elseif ($isUndertime) {
                             $status = 'undertime';

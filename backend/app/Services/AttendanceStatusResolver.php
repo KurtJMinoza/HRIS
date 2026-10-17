@@ -355,6 +355,14 @@ class AttendanceStatusResolver
                 $earlyTimeout,
             );
 
+            // Completed pair at the schedule's exact half-day unit (e.g., 08:00 → 12:00) is a
+            // Half Day: the missing half is the half-day unit itself, never undertime minutes.
+            if (app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+                $dateKey, $daySchedule, $timeInCarbon, $outCarbon, $tz
+            )) {
+                $metrics['undertime_minutes'] = 0;
+            }
+
             if (! empty($daySchedule['out'])) {
                 $otBreakdown = AttendanceStatusService::computeRawOvertimeBreakdown(
                     $dateKey,
@@ -485,15 +493,16 @@ class AttendanceStatusResolver
             ? $effectiveTimeOut->copy()->timezone($tz)
             : Carbon::parse($effectiveTimeOut, $tz)->timezone($tz);
 
-        $computed = app(ScheduleComputationService::class)->compute(
+        // Single schedule-aware decision shared with payroll, payslip and kiosk:
+        // exact half-day unit OR a completed half block (early arrival / small
+        // overshoot still counts as Half Day).
+        return app(ScheduleComputationService::class)->isCompletedPairHalfDay(
             $dateKey,
             $daySchedule,
             $timeIn,
             $timeOut,
             $tz,
         );
-
-        return ($computed['status'] ?? null) === 'half_day';
     }
 
     /**

@@ -930,8 +930,8 @@ class PayrollComputationService implements PayrollBulkComputation
             ]);
         }
 
-        $timeInTz = $timeIn->copy()->timezone($tz)->second(0);
-        $timeOutTz = $timeOut->copy()->timezone($tz)->second(0);
+        $timeInTz = $timeIn->copy()->timezone($tz)->startOfMinute();
+        $timeOutTz = $timeOut->copy()->timezone($tz)->startOfMinute();
 
         // Phase 4: Time Segmentation with ND Regular vs ND OT split (net of meal break when schedule has break)
         $seg = $this->timeSegmentation->segment($timeInTz, $timeOutTz, $tz, $computationSchedule, $dateKey, $ndStartHour, $ndEndHour);
@@ -950,6 +950,15 @@ class PayrollComputationService implements PayrollBulkComputation
                 $dateKey, $computationSchedule, $timeInTz, $timeOutTz, $tz, $earlyTimeout
             );
         }
+
+        // A completed pair at the schedule's exact half-day unit (e.g., 08:00–12:00 on an
+        // 08:00–17:00 schedule with a 12:00–13:00 break) is a Half Day, not Undertime.
+        // The same schedule engine used by attendance and the kiosk owns the decision.
+        $completedHalfDayPair = $computationSchedule !== null
+            && ! $isRestDay
+            && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+                $dateKey, $computationSchedule, $timeInTz, $timeOutTz, $tz
+            );
 
         // Tardiness / half-day: cap paid regular minutes (net of segmentation) before pay; OT after scheduled end unchanged.
         $paidReg = $regSeg;
@@ -1233,7 +1242,7 @@ class PayrollComputationService implements PayrollBulkComputation
             ];
         }
 
-        if ($undertimeDeductionMinutes > 0) {
+        if ($undertimeDeductionMinutes > 0 && ! $completedHalfDayPair) {
             $breakdown[] = [
                 'component' => 'undertime_deduction',
                 'minutes' => $undertimeDeductionMinutes,
@@ -1272,8 +1281,14 @@ class PayrollComputationService implements PayrollBulkComputation
             $workedMinutes,
             $halfDayLeaveRegularPay
         );
+        $completedHalfDay = false;
         if ($halfDayLeaveStatus !== null) {
             $dayStatus = $halfDayLeaveStatus;
+        } elseif ($completedHalfDayPair) {
+            // The pair itself is the day's attendance (no leave fill): label it Half Day
+            // and carry the missing half on the Half Day reduction row, never Undertime.
+            $completedHalfDay = true;
+            $undertimeDeductionMinutes = 0;
         }
 
         return array_merge($this->buildDayResult($dateKey, $isRestDay, $holiday, $dayStatus, $conditions, $breakdown, round($totalPay, 2), $workedMinutes, $regularDayMinutes, $regularNightMinutes, $paidOtDayMinutes, $paidOtNightMinutes, $requiredMinutes, $lateDeductionMinutes, $undertimeDeductionMinutes), [
@@ -1302,6 +1317,7 @@ class PayrollComputationService implements PayrollBulkComputation
             'segmented_regular_minutes' => $regSeg,
             'paid_regular_minutes' => $paidReg,
             'grace_period_credit_minutes' => $graceCreditMinutes,
+            'completed_half_day' => $completedHalfDay,
         ]);
     }
 
@@ -3397,6 +3413,17 @@ class PayrollComputationService implements PayrollBulkComputation
                 $halfDayReferenceMinutes += $leaveHalfMinutes;
             }
 
+            // Completed pair at the schedule's exact half-day unit (e.g., 08:00–12:00):
+            // the scheduled day still counts toward Regular earnings; the missing half is
+            // carried by this Half Day row instead of an Undertime row.
+            if (! empty($day['completed_half_day'])) {
+                $halfDayBaselineMinutes = (int) round($requiredMinutes / 2.0);
+                $halfDayCount++;
+                $halfDayDeductionMinutes += $halfDayBaselineMinutes;
+
+                continue;
+            }
+
             $dayLateMinutes = max(0, (int) ($day['late_deduction_minutes'] ?? 0));
             $dayUndertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
             $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
@@ -3930,6 +3957,14 @@ class PayrollComputationService implements PayrollBulkComputation
             }
 
             $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
+            if (! empty($day['completed_half_day'])) {
+                // Completed half-day pair: the day still counts as a scheduled regular
+                // day in the Regular pay headline; the missing half is carried by the
+                // Half Day row (see computeFixedRegularAttendanceDeductions).
+                $units += 1.0;
+
+                continue;
+            }
             if ($status === 'halfday' || $tardinessStatus === 'half_day') {
                 $units += 0.5;
 

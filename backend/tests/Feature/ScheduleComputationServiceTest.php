@@ -118,6 +118,183 @@ class ScheduleComputationServiceTest extends TestCase
         $this->assertSame('half_day', $result['status']);
     }
 
+    public function test_exact_half_day_with_clock_seconds_is_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+        ];
+
+        // Minute precision: 08:00:37 → 12:00:12 is the exact 240-minute half-day unit,
+        // not a 239-minute undertime pair.
+        $timeIn = Carbon::parse('2026-08-15 08:00:37', $tz);
+        $timeOut = Carbon::parse('2026-08-15 12:00:12', $tz);
+
+        $result = $this->service->compute('2026-08-15', $daySchedule, $timeIn, $timeOut, $tz);
+
+        $this->assertSame(240, $result['payable_minutes']);
+        $this->assertSame('half_day', $result['status']);
+        $this->assertTrue($this->service->isCompletedPairHalfDay('2026-08-15', $daySchedule, $timeIn, $timeOut, $tz));
+    }
+
+    public function test_afternoon_half_day_pair_is_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+        ];
+
+        // 13:00 → 17:00 returns the exact 240-minute half-day unit of the 08:00–17:00 shift.
+        $result = $this->service->compute(
+            '2026-08-17',
+            $daySchedule,
+            Carbon::parse('2026-08-17 13:00:00', $tz),
+            Carbon::parse('2026-08-17 17:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(240, $result['payable_minutes']);
+        $this->assertSame(240, $result['half_day_threshold_minutes']);
+        $this->assertSame('half_day', $result['status']);
+    }
+
+    public function test_different_schedule_9_to_6_exact_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '09:00',
+            'out' => '18:00',
+            'break_start' => '13:00',
+            'break_end' => '14:00',
+            'shift_type' => 'fixed',
+        ];
+
+        // Half-day detection follows the employee's schedule: 09:00 → 13:00 on a
+        // 09:00–18:00 shift with a 13:00–14:00 lunch is the exact half-day unit.
+        $result = $this->service->compute(
+            '2026-08-18',
+            $daySchedule,
+            Carbon::parse('2026-08-18 09:00:00', $tz),
+            Carbon::parse('2026-08-18 13:00:00', $tz),
+            $tz,
+        );
+
+        $this->assertSame(240, $result['payable_minutes']);
+        $this->assertSame('half_day', $result['status']);
+    }
+
+    public function test_undertime_pair_stays_undertime_not_half_day(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+        ];
+
+        $timeIn = Carbon::parse('2026-08-19 08:00:00', $tz);
+        $timeOut = Carbon::parse('2026-08-19 15:00:00', $tz);
+
+        $result = $this->service->compute('2026-08-19', $daySchedule, $timeIn, $timeOut, $tz);
+
+        $this->assertSame(360, $result['payable_minutes']);
+        $this->assertSame(120, $result['undertime_minutes']);
+        $this->assertSame('undertime', $result['status']);
+        $this->assertFalse($this->service->isCompletedPairHalfDay('2026-08-19', $daySchedule, $timeIn, $timeOut, $tz));
+    }
+
+    public function test_is_completed_pair_half_day_requires_both_punches(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+        ];
+
+        $timeIn = Carbon::parse('2026-08-20 08:00:00', $tz);
+        $timeOut = Carbon::parse('2026-08-20 12:00:00', $tz);
+
+        $this->assertFalse($this->service->isCompletedPairHalfDay('2026-08-20', $daySchedule, null, null, $tz));
+        $this->assertFalse($this->service->isCompletedPairHalfDay('2026-08-20', null, $timeIn, $timeOut, $tz));
+        $this->assertFalse($this->service->isCompletedPairHalfDay('2026-08-20', $daySchedule, $timeIn, null, $tz));
+        $this->assertTrue($this->service->isCompletedPairHalfDay('2026-08-20', $daySchedule, $timeIn, $timeOut, $tz));
+    }
+
+    public function test_completed_half_day_allows_early_arrival_and_small_overshoot(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+            'grace_period_minutes' => 15,
+        ];
+
+        // 07:30 → 12:06 covers the whole morning block; the early arrival and the
+        // small overshoot into the lunch break must not demote it to undertime.
+        $this->assertTrue($this->service->isCompletedPairHalfDay(
+            '2026-08-22',
+            $daySchedule,
+            Carbon::parse('2026-08-22 07:30:00', $tz),
+            Carbon::parse('2026-08-22 12:06:00', $tz),
+            $tz,
+        ));
+
+        // Worked straight into the afternoon — genuine undertime, not half day.
+        $this->assertFalse($this->service->isCompletedPairHalfDay(
+            '2026-08-22',
+            $daySchedule,
+            Carbon::parse('2026-08-22 07:30:00', $tz),
+            Carbon::parse('2026-08-22 15:00:00', $tz),
+            $tz,
+        ));
+
+        // Full day with the same early arrival stays a full day.
+        $this->assertFalse($this->service->isCompletedPairHalfDay(
+            '2026-08-22',
+            $daySchedule,
+            Carbon::parse('2026-08-22 07:30:00', $tz),
+            Carbon::parse('2026-08-22 17:00:00', $tz),
+            $tz,
+        ));
+    }
+
+    public function test_afternoon_half_day_covers_lunch_break_arrival(): void
+    {
+        $tz = 'Asia/Manila';
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'shift_type' => 'fixed',
+        ];
+
+        // Arrives during the lunch break and completes the afternoon block.
+        $this->assertTrue($this->service->isCompletedPairHalfDay(
+            '2026-08-24',
+            $daySchedule,
+            Carbon::parse('2026-08-24 12:30:00', $tz),
+            Carbon::parse('2026-08-24 17:00:00', $tz),
+            $tz,
+        ));
+    }
+
     public function test_short_completed_shifts_are_undertime_not_half_day(): void
     {
         $tz = 'Asia/Manila';

@@ -47,7 +47,12 @@ use Throwable;
  */
 class PayslipService
 {
-    private const DRAFT_GENERATION_CHUNK_SIZE = 50;
+    /**
+     * Employees per draft-generation chunk. Kept small so the transient memory
+     * spike of the per-chunk payslip upsert stays bounded for data-heavy
+     * companies (a 50-employee chunk peaked ~576M for ACI; 10 keeps it ~250M).
+     */
+    private const DRAFT_GENERATION_CHUNK_SIZE = 10;
 
     /** @var list<string>|null */
     private static ?array $payrollBatchRunColumns = null;
@@ -4527,11 +4532,19 @@ class PayslipService
             $dayUndertimeMinutes = max(0, (int) ($day['undertime_deduction_minutes'] ?? 0));
             $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
             $tardinessLabel = (string) ($day['tardiness_label'] ?? '');
+            $completedHalfDay = ! empty($day['completed_half_day']);
             $policyLateMinutes = $this->tardinessLabelMinutes($tardinessLabel);
             $hasAttendanceRegularPay = $this->attendanceBackedRegularPayMinutes($day) > 0
                 || max(0, (int) ($day['paid_regular_minutes'] ?? 0)) > 0
                 || max(0, (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)) > 0;
-            if ($status !== 'halfday' && $tardinessStatus === 'half_day') {
+            if ($completedHalfDay && $status !== 'halfday') {
+                // Completed pair at the schedule's exact half-day unit (e.g., 08:00–12:00):
+                // the day still counts as a scheduled regular day; its missing half is
+                // carried by this Half Day row instead of an Undertime row.
+                $halfDayBaselineMinutes = (int) round($requiredMinutes / 2.0);
+                $halfDayCount++;
+                $halfDayDeductionMinutes += $halfDayBaselineMinutes;
+            } elseif ($status !== 'halfday' && $tardinessStatus === 'half_day') {
                 $paidRegularMinutes = max(0, (int) ($day['paid_regular_minutes'] ?? 0));
                 if ($paidRegularMinutes <= 0) {
                     $paidRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
@@ -4589,12 +4602,12 @@ class PayslipService
                 // policy bucket for payslip units, but never inflate past plausible tardiness.
                 $dayLateMinutes = $policyLateMinutes;
             }
-            if ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
+            if ($status !== 'halfday' && ! $completedHalfDay && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
                 $lateCount++;
                 $lateMinutes += $dayLateMinutes;
             }
 
-            if ($status !== 'halfday' && $dayUndertimeMinutes > 0) {
+            if ($status !== 'halfday' && ! $completedHalfDay && $dayUndertimeMinutes > 0) {
                 $undertimeCount++;
                 $undertimeMinutes += $dayUndertimeMinutes;
             }
@@ -8847,6 +8860,12 @@ class PayslipService
                 }
 
                 $tardinessStatus = strtolower(trim((string) ($day['tardiness_status'] ?? '')));
+                if (! empty($day['completed_half_day'])) {
+                    // Completed half-day pair: counted as a full scheduled day here; the
+                    // half-day shortfall is carried by the Half Day reduction row.
+                    $units += 1.0;
+                    continue;
+                }
                 if ($status === 'halfday' || $tardinessStatus === 'half_day') {
                     $units += 0.5;
                     continue;

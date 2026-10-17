@@ -1133,6 +1133,19 @@ class AttendanceController extends Controller
                     $status = 'undertime';
                 }
 
+                // A completed clock-in/clock-out pair at the schedule's exact half-day
+                // unit (e.g., 08:00 → 12:00) is a Half Day, not Undertime.
+                if ($firstInPunchAt && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+                    $dateKey,
+                    $daySchedule,
+                    $firstInPunchAt,
+                    $punchAt,
+                    $tzToday
+                )) {
+                    $status = 'half_day';
+                    $payload['attendance']['undertime_minutes'] = 0;
+                }
+
                 $payload['attendance']['status'] = $status;
             }
         }
@@ -1604,6 +1617,19 @@ class AttendanceController extends Controller
                     $payload['attendance']['late_label'] = $clockInResult['late_label'];
                 } elseif ($undertimeMinutes > 0) {
                     $status = 'undertime';
+                }
+
+                // A completed clock-in/clock-out pair at the schedule's exact half-day
+                // unit (e.g., 08:00 → 12:00) is a Half Day, not Undertime.
+                if ($firstInPunchAt && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+                    $dateKey,
+                    $daySchedule,
+                    $firstInPunchAt,
+                    $punchAt,
+                    $tzToday
+                )) {
+                    $status = 'half_day';
+                    $payload['attendance']['undertime_minutes'] = 0;
                 }
 
                 $payload['attendance']['status'] = $status;
@@ -2183,6 +2209,19 @@ class AttendanceController extends Controller
                     $status = 'undertime';
                 }
 
+                // A completed clock-in/clock-out pair at the schedule's exact half-day
+                // unit (e.g., 08:00 → 12:00) is a Half Day, not Undertime.
+                if ($firstInPunchAt && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+                    $dateKey,
+                    $daySchedule,
+                    $firstInPunchAt,
+                    $punchAt,
+                    $tzToday
+                )) {
+                    $status = 'half_day';
+                    $payload['attendance']['undertime_minutes'] = 0;
+                }
+
                 $payload['attendance']['status'] = $status;
             }
         }
@@ -2654,19 +2693,36 @@ class AttendanceController extends Controller
                         $inCarbon = $effectiveTimeIn instanceof Carbon
                             ? $effectiveTimeIn
                             : ($effectiveTimeIn ? Carbon::parse($effectiveTimeIn) : null);
-                        $earlyTimeout = isset($computationSchedule['early_timeout_minutes']) ? (int) $computationSchedule['early_timeout_minutes'] : null;
-                        $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
-                            $dateKey,
-                            $computationSchedule,
-                            $inCarbon,
-                            $outCarbon,
-                            $attendanceTz,
-                            $earlyTimeout
-                        );
-                        $dayUndertimeMinutes = $undertimeMinutes > 0 ? $undertimeMinutes : null;
-                        if ($undertimeMinutes > 0) {
-                            $metrics['undertime_count']++;
-                            $status = 'undertime';
+
+                        // A completed pair at the schedule's exact half-day unit (e.g., 08:00 → 12:00)
+                        // is Half Day, not Undertime.
+                        $pairHalfDay = $inCarbon && $outCarbon
+                            && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+                                $dateKey,
+                                $computationSchedule,
+                                $inCarbon,
+                                $outCarbon,
+                                $attendanceTz
+                            );
+
+                        if ($pairHalfDay) {
+                            $status = 'halfday';
+                            $dayLateLabel = 'Half Day';
+                        } else {
+                            $earlyTimeout = isset($computationSchedule['early_timeout_minutes']) ? (int) $computationSchedule['early_timeout_minutes'] : null;
+                            $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+                                $dateKey,
+                                $computationSchedule,
+                                $inCarbon,
+                                $outCarbon,
+                                $attendanceTz,
+                                $earlyTimeout
+                            );
+                            $dayUndertimeMinutes = $undertimeMinutes > 0 ? $undertimeMinutes : null;
+                            if ($undertimeMinutes > 0) {
+                                $metrics['undertime_count']++;
+                                $status = 'undertime';
+                            }
                         }
                     }
 

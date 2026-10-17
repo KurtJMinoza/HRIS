@@ -137,7 +137,48 @@ class AttendanceStatusResolverTest extends TestCase
 
         $this->assertSame(AttendanceStatusResolver::STATUS_HALFDAY, $result['status']);
         $this->assertSame(240, $result['effective_worked_minutes']);
-        $this->assertSame(240, $result['undertime_minutes']);
+        // The missing half is carried as the half-day unit itself — never overlapping
+        // undertime minutes.
+        $this->assertSame(0, $result['undertime_minutes']);
+    }
+
+    public function test_early_arrival_completed_half_day_is_half_day_not_undertime(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-08-22';
+        $nowTz = Carbon::parse('2026-08-22 18:00:00', $tz);
+
+        // 08:00–17:00 shift with a 12:00–13:00 lunch: arrives 30 minutes early,
+        // clocks out 6 minutes past the half-day boundary. Still a Half Day.
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_start' => '12:00',
+            'break_end' => '13:00',
+            'grace_minutes' => 15,
+        ];
+
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-22 07:30:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-22 12:06:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['sat' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+        );
+
+        $this->assertSame(AttendanceStatusResolver::STATUS_HALFDAY, $result['status']);
+        $this->assertSame(0, $result['undertime_minutes']);
     }
 
     public function test_short_completed_pair_is_undertime_not_half_day(): void

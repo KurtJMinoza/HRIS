@@ -112,7 +112,11 @@ module.exports = {
       '--sleep=1',
       '--tries=2',
     ]),
+    // Draft generation for data-heavy companies peaks well above PHP CLI's default
+    // 512M (measured ~576M for a 47-employee run), so give this worker headroom.
     laravelApp('queue-payroll', [
+      '-d',
+      'memory_limit=1024M',
       'artisan',
       'queue:work',
       'redis',

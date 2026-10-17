@@ -1078,6 +1078,11 @@ function SmartDTRPreview({ className }) {
                         Undertime ({summaryModal.undertimeMinutes} min)
                       </span>
                     )}
+                  {kioskSummaryIsClockOut && summaryModal.status === 'half_day' && (
+                    <span className="rounded-full bg-sky-50 px-3.5 py-1.5 text-xs font-semibold text-sky-950 ring-1 ring-sky-100 dark:bg-sky-500/12 dark:text-sky-100 dark:ring-sky-500/25">
+                      Half Day
+                    </span>
+                  )}
                   {kioskSummaryIsClockOut && summaryModal.status === 'present' && (
                     <span className="rounded-full bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-900 ring-1 ring-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200 dark:ring-emerald-500/25">
                       On time (no undertime)

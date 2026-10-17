@@ -88,8 +88,12 @@ class ScheduleComputationService
             return $result;
         }
 
-        $timeIn = $actualTimeIn->copy()->timezone($tz);
-        $timeOut = $actualTimeOut ? $actualTimeOut->copy()->timezone($tz) : null;
+        // Sub-minute precision is truncated so clock seconds never flip an exact
+        // half-day pair (e.g., 08:00:37 → 12:00:12) into undertime. Minute
+        // precision matches AttendanceDailySummaryService::resolveClockTimes
+        // and payroll shift segmentation.
+        $timeIn = $actualTimeIn->copy()->timezone($tz)->startOfMinute();
+        $timeOut = $actualTimeOut ? $actualTimeOut->copy()->timezone($tz)->startOfMinute() : null;
 
         if ($shiftType === 'flexible') {
             // Per-weekday flexible schedules reuse fixed-style times after resolution.
@@ -108,6 +112,187 @@ class ScheduleComputationService
         }
 
         return $this->computeFixed($result, $daySchedule, $dateKey, $timeIn, $timeOut, $tz);
+    }
+
+    /**
+     * True when a completed clock-in/clock-out pair is a Half Day for the
+     * employee's actual schedule. Two schedule-aware paths:
+     *
+     * 1. Exact half-day unit — the pair pays exactly the schedule's half-day
+     *    threshold (e.g., 08:00–12:00 on an 08:00–17:00 schedule with a
+     *    12:00–13:00 lunch break). Delegated to {@see compute()}.
+     * 2. Completed half block — the pair covers one whole half of the scheduled
+     *    working blocks (morning or afternoon) while not meaningfully working
+     *    the other half. Early arrival (e.g., 07:30) or a few minutes past the
+     *    boundary (e.g., 12:06) must not turn a half day into undertime.
+     *
+     * Shared by attendance classification, payroll day status, payslip rows,
+     * and kiosk clock-out so every surface agrees.
+     *
+     * @param  array|null  $daySchedule  Per-day schedule config for the date
+     */
+    public function isCompletedPairHalfDay(
+        string $dateKey,
+        ?array $daySchedule,
+        ?Carbon $timeIn,
+        ?Carbon $timeOut,
+        ?string $tz = null,
+    ): bool {
+        if ($daySchedule === null || $daySchedule === [] || $timeIn === null || $timeOut === null) {
+            return false;
+        }
+
+        $computed = $this->compute($dateKey, $daySchedule, $timeIn, $timeOut, $tz);
+        if (($computed['status'] ?? null) === 'half_day') {
+            return true;
+        }
+
+        $halfDayUnitMinutes = (int) ($computed['half_day_threshold_minutes'] ?? 0);
+        if ($halfDayUnitMinutes <= 0) {
+            return false;
+        }
+
+        return $this->completedPairCoversHalfBlock(
+            $daySchedule,
+            $timeIn,
+            $timeOut,
+            $tz,
+            $halfDayUnitMinutes,
+        );
+    }
+
+    /**
+     * Completed-pair block rule for fixed/split/overnight shifts: a pair that
+     * fully covers the morning block OR the afternoon block (within the
+     * schedule's grace tolerance) while not meaningfully working the other
+     * block is a Half Day.
+     */
+    private function completedPairCoversHalfBlock(
+        array $daySchedule,
+        Carbon $timeIn,
+        Carbon $timeOut,
+        ?string $tz,
+        int $halfDayUnitMinutes,
+    ): bool {
+        $shiftType = strtolower(trim((string) ($daySchedule['shift_type'] ?? 'fixed')));
+        if ($shiftType === 'flexible') {
+            // Flexible shifts resolve their own windows; the exact-unit rule above owns them.
+            return false;
+        }
+
+        $inRaw = $daySchedule['in'] ?? null;
+        $outRaw = $daySchedule['out'] ?? null;
+        if (! $inRaw || ! $outRaw) {
+            return false;
+        }
+
+        $tz = $tz ?: config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+        $base = Carbon::parse($timeIn->copy()->timezone($tz)->toDateString().' '.$inRaw, $tz);
+        $schedOut = Carbon::parse($base->toDateString().' '.$outRaw, $tz);
+        if ($schedOut->lessThanOrEqualTo($base)) {
+            $schedOut->addDay(); // Overnight shift.
+        }
+
+        $spanEnd = (int) $base->diffInMinutes($schedOut);
+        if ($spanEnd <= 0) {
+            return false;
+        }
+
+        $punchIn = (int) $base->diffInMinutes($timeIn->copy()->timezone($tz)->startOfMinute(), false);
+        $punchOut = (int) $base->diffInMinutes($timeOut->copy()->timezone($tz)->startOfMinute(), false);
+        if ($punchOut < $punchIn) {
+            $punchOut += 1440;
+        }
+        if ($punchOut <= $punchIn) {
+            return false;
+        }
+
+        $baseMinutes = ((int) $base->format('H') * 60) + (int) $base->format('i');
+
+        // Morning/afternoon split: longest unpaid break, explicit work blocks, else midpoint.
+        $splitStart = null;
+        $splitEnd = null;
+        $breakCandidates = [];
+        foreach ((array) ($daySchedule['breaks'] ?? []) as $break) {
+            if (! is_array($break) || empty($break['start']) || empty($break['end'])) {
+                continue;
+            }
+            if ((bool) ($break['is_paid'] ?? false)) {
+                continue;
+            }
+            $breakCandidates[] = [(string) $break['start'], (string) $break['end']];
+        }
+        if ($breakCandidates === [] && ! empty($daySchedule['break_start']) && ! empty($daySchedule['break_end'])) {
+            $breakCandidates[] = [(string) $daySchedule['break_start'], (string) $daySchedule['break_end']];
+        }
+
+        foreach ($breakCandidates as [$startRaw, $endRaw]) {
+            $startOff = $this->clockMinutesOffset($startRaw, $baseMinutes);
+            $endOff = $this->clockMinutesOffset($endRaw, $baseMinutes);
+            if ($startOff === null || $endOff === null || $endOff <= $startOff || $startOff >= $spanEnd) {
+                continue;
+            }
+            $endOff = min($endOff, $spanEnd);
+            if ($splitStart === null || ($endOff - $startOff) > ($splitEnd - $splitStart)) {
+                $splitStart = $startOff;
+                $splitEnd = $endOff;
+            }
+        }
+
+        $workBlocks = [];
+        foreach ((array) ($daySchedule['work_blocks'] ?? []) as $block) {
+            if (! is_array($block) || empty($block['start']) || empty($block['end'])) {
+                continue;
+            }
+            $startOff = $this->clockMinutesOffset((string) $block['start'], $baseMinutes);
+            $endOff = $this->clockMinutesOffset((string) $block['end'], $baseMinutes);
+            if ($startOff === null || $endOff === null || $endOff <= $startOff) {
+                continue;
+            }
+            $workBlocks[] = [$startOff, $endOff];
+        }
+        usort($workBlocks, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+        if (count($workBlocks) >= 2) {
+            $splitStart = $workBlocks[0][1];
+            $splitEnd = $workBlocks[count($workBlocks) - 1][0];
+        }
+
+        if ($splitStart === null || $splitEnd === null || $splitEnd <= 0 || $splitStart >= $spanEnd) {
+            $splitStart = intdiv($spanEnd, 2);
+            $splitEnd = $splitStart;
+        }
+
+        $grace = max(0, (int) ($daySchedule['grace_period_minutes'] ?? 0));
+        $tolerance = max(5, min($grace, 30));
+        $requiredCoverage = max(1, $halfDayUnitMinutes - $tolerance);
+
+        $overlap = static function (int $aStart, int $aEnd, int $bStart, int $bEnd): int {
+            return max(0, min($aEnd, $bEnd) - max($aStart, $bStart));
+        };
+
+        $morningOverlap = $overlap($punchIn, $punchOut, 0, $splitStart);
+        $afternoonOverlap = $overlap($punchIn, $punchOut, $splitEnd, $spanEnd);
+
+        $morningHalf = $morningOverlap >= $requiredCoverage && $afternoonOverlap <= $tolerance;
+        $afternoonHalf = $afternoonOverlap >= $requiredCoverage && $morningOverlap <= $tolerance;
+
+        return $morningHalf || $afternoonHalf;
+    }
+
+    /**
+     * Minutes from the schedule's start clock to the given clock time,
+     * normalised into [0, 1440) so overnight boundaries wrap correctly.
+     */
+    private function clockMinutesOffset(string $clock, int $baseMinutes): ?int
+    {
+        $clock = trim($clock);
+        if (! preg_match('/^(\d{1,2}):(\d{2})/', $clock, $matches)) {
+            return null;
+        }
+
+        $minutes = ((int) $matches[1] * 60) + (int) $matches[2];
+
+        return (($minutes - $baseMinutes) + 1440) % 1440;
     }
 
     /**
