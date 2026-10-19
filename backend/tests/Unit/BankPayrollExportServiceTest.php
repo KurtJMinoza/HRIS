@@ -214,6 +214,34 @@ class BankPayrollExportServiceTest extends TestCase
         $this->assertEqualsWithDelta($expectedNet, $netPay, 0.02);
     }
 
+    public function test_aub_xls_export_uses_spreadsheetml_for_legacy_upload(): void
+    {
+        $service = app(BankPayrollExportService::class);
+        $method = new \ReflectionMethod($service, 'writeAubNetPayLegacyXlsSpreadsheetMl');
+        $method->setAccessible(true);
+
+        ob_start();
+        $method->invoke($service, [
+            'title_row' => 'AUB NetPay Upload File',
+            'rows' => [[
+                'employee_no' => 'E001',
+                'name' => 'ACASO MARK DENNIS',
+                'account_number' => '934105099758',
+                'bank_code' => 'AUB',
+                'salary' => 6230.77,
+            ]],
+        ]);
+        $xml = (string) ob_get_clean();
+
+        $this->assertStringContainsString('<?xml', $xml);
+        $this->assertStringContainsString('urn:schemas-microsoft-com:office:spreadsheet', $xml);
+        $this->assertStringContainsString('AUB NetPay Upload File', $xml);
+        $this->assertStringContainsString('ACASO MARK DENNIS', $xml);
+        $this->assertStringContainsString('934105099758', $xml);
+        $this->assertStringContainsString('6230.77', $xml);
+        $this->assertStringContainsString('Employee No.', $xml);
+    }
+
     public function test_build_export_spreadsheet_uses_aub_template_columns(): void
     {
         $service = app(BankPayrollExportService::class);

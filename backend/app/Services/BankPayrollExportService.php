@@ -11,6 +11,7 @@ use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Writer\Xls;
 
@@ -424,10 +425,83 @@ class BankPayrollExportService
      */
     private function writeSpreadsheet(array $payload): void
     {
+        $bankCode = $this->normalizeBankCode((string) ($payload['bank'] ?? self::BANK_AUB));
+        if ($bankCode === self::BANK_AUB) {
+            // ponytail: PhpSpreadsheet BIFF .xls breaks Visual FoxPro (AUB NetPay). Use Excel 2003 XML
+            // Spreadsheet (.xls) instead of HTML-in-.xls so Excel and FoxPro both accept the file.
+            $this->writeAubNetPayLegacyXlsSpreadsheetMl($payload);
+
+            return;
+        }
+
         $spreadsheet = $this->buildExportSpreadsheet($payload);
 
         (new Xls($spreadsheet))->save('php://output');
         $spreadsheet->disconnectWorksheets();
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function writeAubNetPayLegacyXlsSpreadsheetMl(array $payload): void
+    {
+        $title = htmlspecialchars((string) ($payload['title_row'] ?? 'AUB NetPay Upload File'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $rows = is_array($payload['rows'] ?? null) ? $payload['rows'] : [];
+
+        echo "\xEF\xBB\xBF";
+        echo '<?xml version="1.0" encoding="UTF-8"?>'."\n";
+        echo '<?mso-application progid="Excel.Sheet"?>'."\n";
+        echo '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"';
+        echo ' xmlns:o="urn:schemas-microsoft-com:office:office"';
+        echo ' xmlns:x="urn:schemas-microsoft-com:office:excel"';
+        echo ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'."\n";
+        echo '<Styles>';
+        echo '<Style ss:ID="Title"><Font ss:FontName="Arial" ss:Size="10"/></Style>';
+        echo '<Style ss:ID="Header"><Font ss:FontName="Arial" ss:Size="10"/>';
+        echo '<Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/></Style>';
+        echo '<Style ss:ID="HeaderYellow"><Font ss:FontName="Arial" ss:Size="10"/>';
+        echo '<Interior ss:Color="#FFFF00" ss:Pattern="Solid"/></Style>';
+        echo '<Style ss:ID="HeaderSalary"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1"/>';
+        echo '<Interior ss:Color="#FFFF00" ss:Pattern="Solid"/></Style>';
+        echo '<Style ss:ID="Data"><Font ss:FontName="Courier New" ss:Size="10"/></Style>';
+        echo '<Style ss:ID="Acct"><Font ss:FontName="Courier New" ss:Size="10"/>';
+        echo '<NumberFormat ss:Format="@"/></Style>';
+        echo '<Style ss:ID="Salary"><Font ss:FontName="Courier New" ss:Size="10"/>';
+        echo '<NumberFormat ss:Format="0.00"/></Style>';
+        echo '</Styles>'."\n";
+        echo '<Worksheet ss:Name="Sheet1"><Table>'."\n";
+
+        echo '<Row><Cell ss:StyleID="Title" ss:MergeAcross="4"><Data ss:Type="String">'.$title.'</Data></Cell></Row>'."\n";
+        echo '<Row><Cell ss:MergeAcross="4"><Data ss:Type="String"></Data></Cell></Row>'."\n";
+        echo '<Row>';
+        echo '<Cell ss:StyleID="Header"><Data ss:Type="String">Employee No.</Data></Cell>';
+        echo '<Cell ss:StyleID="HeaderYellow"><Data ss:Type="String">Name</Data></Cell>';
+        echo '<Cell ss:StyleID="HeaderYellow"><Data ss:Type="String">Account No.</Data></Cell>';
+        echo '<Cell ss:StyleID="Header"><Data ss:Type="String">Bank Code</Data></Cell>';
+        echo '<Cell ss:StyleID="HeaderSalary"><Data ss:Type="String">Salary</Data></Cell>';
+        echo '</Row>'."\n";
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $name = htmlspecialchars((string) ($row['name'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $account = htmlspecialchars(
+                self::formatExportAccountNumber($row['account_number'] ?? ''),
+                ENT_QUOTES | ENT_SUBSTITUTE,
+                'UTF-8',
+            );
+            $salary = round((float) ($row['salary'] ?? 0), 2);
+            echo '<Row>';
+            echo '<Cell ss:StyleID="Data"><Data ss:Type="String"></Data></Cell>';
+            echo '<Cell ss:StyleID="Data"><Data ss:Type="String">'.$name.'</Data></Cell>';
+            echo '<Cell ss:StyleID="Acct"><Data ss:Type="String">'.$account.'</Data></Cell>';
+            echo '<Cell ss:StyleID="Data"><Data ss:Type="String"></Data></Cell>';
+            echo '<Cell ss:StyleID="Salary"><Data ss:Type="Number">'.$salary.'</Data></Cell>';
+            echo '</Row>'."\n";
+        }
+
+        echo '</Table></Worksheet></Workbook>';
     }
 
     /**
@@ -443,9 +517,12 @@ class BankPayrollExportService
 
         $sheet = $spreadsheet->getSheet(0);
         $sheet->setCellValue('A1', (string) ($payload['title_row'] ?? ''));
-        $sheet->fromArray(self::EXPORT_HEADER_ROW, null, 'A3');
+        if (trim((string) $sheet->getCell('A3')->getValue()) === '') {
+            $sheet->fromArray(self::EXPORT_HEADER_ROW, null, 'A3');
+        }
         $this->clearExportDataRows($sheet);
         $lastDataRow = $this->writeExportDataRows($sheet, $payload['rows'] ?? []);
+        $this->applyExportDataRowStyles($sheet, $lastDataRow);
         $this->trimExportDataRowsBelow($sheet, $lastDataRow);
 
         return $spreadsheet;
@@ -495,6 +572,25 @@ class BankPayrollExportService
         return $rowIndex > self::EXPORT_DATA_START_ROW ? $rowIndex - 1 : self::EXPORT_DATA_START_ROW - 1;
     }
 
+    private function applyExportDataRowStyles(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, int $lastDataRow): void
+    {
+        if ($lastDataRow < self::EXPORT_DATA_START_ROW) {
+            return;
+        }
+
+        $range = 'A'.self::EXPORT_DATA_START_ROW.':E'.$lastDataRow;
+        $sheet->getStyle($range)->getFont()->setName('Courier New')->setSize(10);
+        $sheet->getStyle('B'.self::EXPORT_DATA_START_ROW.':B'.$lastDataRow)
+            ->getAlignment()
+            ->setHorizontal(Alignment::HORIZONTAL_LEFT);
+        $sheet->getStyle('C'.self::EXPORT_DATA_START_ROW.':C'.$lastDataRow)
+            ->getAlignment()
+            ->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->getStyle('E'.self::EXPORT_DATA_START_ROW.':E'.$lastDataRow)
+            ->getAlignment()
+            ->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+    }
+
     private function clearExportDataRows(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): void
     {
         $highestRow = max(self::EXPORT_DATA_START_ROW, (int) $sheet->getHighestRow());
@@ -512,7 +608,11 @@ class BankPayrollExportService
             return;
         }
 
-        $sheet->removeRow($lastDataRow + 1, $highestRow - $lastDataRow);
+        for ($rowIndex = $lastDataRow + 1; $rowIndex <= $highestRow; $rowIndex++) {
+            foreach (['A', 'B', 'C', 'D', 'E'] as $column) {
+                $sheet->setCellValue($column.$rowIndex, '');
+            }
+        }
     }
 
     /**

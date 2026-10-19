@@ -2449,6 +2449,10 @@ export default function AdminGeneratePayslipsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Download format</Label>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  For AUB Payroll Organizer NetPay upload, use <span className="font-medium">Excel (.xls)</span> here — not the payroll register export on each batch row.
+                  Upload the file saved from this bank export section only.
+                </p>
                 <div className="grid gap-2 sm:grid-cols-3">
                   <Button
                     type="button"

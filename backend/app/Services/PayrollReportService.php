@@ -10,11 +10,34 @@ use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class PayrollReportService
 {
+    private const EXCEL_FONT_HEADER = 'Arial';
+
+    private const EXCEL_FONT_DATA = 'Courier New';
+
+    private const EXCEL_FONT_SIZE = 10;
+
+    private const EXCEL_HEADER_ROW = 3;
+
+    private const EXCEL_DATA_START_ROW = 4;
+
+    /** @var list<string> */
+    private const EXCEL_YELLOW_HEADER_KEYS = [
+        'employee_id',
+        'employee_name',
+        'gross_earnings',
+        'net_pay',
+    ];
+
     public function __construct(
         private readonly PayslipService $payslipService,
     ) {}
@@ -86,15 +109,12 @@ class PayrollReportService
     public function excelForRunCompany(PayrollBatchRun $run, Company $company, User $actor, bool $deductionOnly = false): array
     {
         $payload = $this->buildReportPayload($run, $company, $actor, $deductionOnly);
-        $columns = $payload['columns'];
-        $rows = $payload['rows'];
-        $totals = $payload['totals'];
 
-        $write = $this->excelWriteClosure($columns, $rows, $totals, $deductionOnly);
+        $write = $this->excelWriteClosure($payload);
 
         return [
             'filename' => $this->excelFilename($company, $run, $deductionOnly),
-            'employee_count' => count($rows),
+            'employee_count' => count($payload['rows']),
             'write' => $write,
         ];
     }
@@ -105,29 +125,32 @@ class PayrollReportService
     public function excelForRun(PayrollBatchRun $run, User $actor, bool $deductionOnly = false): array
     {
         $payload = $this->buildReportPayloadForRun($run, $actor, $deductionOnly);
-        $columns = $payload['columns'];
-        $rows = $payload['rows'];
-        $totals = $payload['totals'];
 
         return [
             'filename' => preg_replace('/\.pdf$/', '.xlsx', $this->runFilename($run, $deductionOnly)),
-            'employee_count' => count($rows),
-            'write' => $this->excelWriteClosure($columns, $rows, $totals, $deductionOnly),
+            'employee_count' => count($payload['rows']),
+            'write' => $this->excelWriteClosure($payload),
         ];
     }
 
     /**
-     * @param  list<array{key:string,label:string,group:string,class:string,format?:string}>  $columns
-     * @param  list<array<string, mixed>>  $rows
-     * @param  array<string, mixed>  $totals
+     * @param  array<string, mixed>  $payload
      * @return callable(): void
      */
-    private function excelWriteClosure(array $columns, array $rows, array $totals, bool $deductionOnly): callable
+    private function excelWriteClosure(array $payload): callable
     {
+        $deductionOnly = (bool) ($payload['isDeductionOnly'] ?? false);
         $reportTitle = $deductionOnly ? 'Payroll Deductions Report' : 'Payroll Report';
         $sheetTitle = $deductionOnly ? 'Deductions' : 'Payroll';
 
-        return function () use ($columns, $rows, $totals, $reportTitle, $sheetTitle): void {
+        return function () use ($payload, $reportTitle, $sheetTitle, $deductionOnly): void {
+            /** @var list<array{key:string,label:string,group:string,class:string,format?:string}> $columns */
+            $columns = $payload['columns'];
+            /** @var list<array<string, mixed>> $rows */
+            $rows = $payload['rows'];
+            /** @var array<string, mixed> $totals */
+            $totals = $payload['totals'];
+
             $spreadsheet = new Spreadsheet;
             $spreadsheet->getProperties()
                 ->setCreator((string) config('app.name', 'HR'))
@@ -135,22 +158,171 @@ class PayrollReportService
 
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle($sheetTitle);
-            $sheet->fromArray(array_map(
-                fn (array $column): string => $this->excelColumnHeading($column),
-                $columns,
-            ), null, 'A1');
+            $this->writePayrollReportExcelTitleRows($sheet, $payload, $deductionOnly);
 
-            $rowIndex = 2;
+            foreach ($columns as $columnIndex => $column) {
+                $columnLetter = Coordinate::stringFromColumnIndex($columnIndex + 1);
+                $sheet->setCellValue(
+                    $columnLetter.self::EXCEL_HEADER_ROW,
+                    $this->excelColumnHeading($column),
+                );
+            }
+            $this->stylePayrollReportExcelHeaderRow($sheet, $columns, self::EXCEL_HEADER_ROW);
+
+            $rowIndex = self::EXCEL_DATA_START_ROW;
             foreach ($rows as $row) {
-                $sheet->fromArray($this->excelRowValues($columns, $row), null, 'A'.$rowIndex);
+                $this->writePayrollReportExcelDataRow($sheet, $columns, $rowIndex, $this->excelRowValues($columns, $row), false);
                 $rowIndex++;
             }
 
-            $sheet->fromArray($this->excelTotalRowValues($columns, $totals), null, 'A'.$rowIndex);
+            $this->writePayrollReportExcelDataRow(
+                $sheet,
+                $columns,
+                $rowIndex,
+                $this->excelTotalRowValues($columns, $totals),
+                true,
+            );
+            $this->applyPayrollReportExcelColumnWidths($sheet, count($columns));
 
             (new Xlsx($spreadsheet))->save('php://output');
             $spreadsheet->disconnectWorksheets();
         };
+    }
+
+    /**
+     * AUB NetPay-style title block: Arial 10 title, pay period line, header row on row 3, data from row 4.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function writePayrollReportExcelTitleRows(Worksheet $sheet, array $payload, bool $deductionOnly): void
+    {
+        $companyName = trim((string) ($payload['reportCompanyName'] ?? 'Company'));
+        $title = $deductionOnly ? 'PAYROLL DEDUCTIONS REPORT' : 'PAYROLL REPORT';
+        $sheet->setCellValue('A1', $title.($companyName !== '' ? ' - '.$companyName : ''));
+
+        $run = $payload['run'] ?? null;
+        $period = '—';
+        if ($run instanceof PayrollBatchRun) {
+            $start = $run->pay_period_start?->format('m/d/Y');
+            $end = $run->pay_period_end?->format('m/d/Y');
+            if ($start && $end) {
+                $period = $start.' - '.$end;
+            }
+        }
+        $payDate = $payload['reportPayDate'] ?? null;
+        $payDateLabel = '—';
+        if ($payDate !== null) {
+            try {
+                $payDateLabel = \Illuminate\Support\Carbon::parse($payDate)->format('m/d/Y');
+            } catch (\Throwable) {
+                $payDateLabel = (string) $payDate;
+            }
+        }
+        $generatedAt = $payload['generatedAt'] ?? now();
+        try {
+            $generatedLabel = \Illuminate\Support\Carbon::parse($generatedAt)->format('m/d/Y g:i A');
+        } catch (\Throwable) {
+            $generatedLabel = (string) $generatedAt;
+        }
+        $sheet->setCellValue(
+            'A2',
+            'Pay Period: '.$period.'    Pay Date: '.$payDateLabel.'    Generated: '.$generatedLabel,
+        );
+
+        foreach (['A1', 'A2'] as $cell) {
+            $sheet->getStyle($cell)->getFont()
+                ->setName(self::EXCEL_FONT_HEADER)
+                ->setSize(self::EXCEL_FONT_SIZE)
+                ->setBold(false);
+        }
+    }
+
+    /**
+     * @param  list<array{key:string,label:string,group:string,class:string,format?:string}>  $columns
+     */
+    private function stylePayrollReportExcelHeaderRow(Worksheet $sheet, array $columns, int $headerRow): void
+    {
+        foreach ($columns as $columnIndex => $column) {
+            $key = (string) ($column['key'] ?? '');
+            $columnLetter = Coordinate::stringFromColumnIndex($columnIndex + 1);
+            $cell = $columnLetter.$headerRow;
+            $font = $sheet->getStyle($cell)->getFont();
+            $font->setName(self::EXCEL_FONT_HEADER)->setSize(self::EXCEL_FONT_SIZE);
+            $font->setBold($key === 'net_pay');
+            $fill = in_array($key, self::EXCEL_YELLOW_HEADER_KEYS, true) ? 'FFFF00' : 'FFFFFF';
+            $sheet->getStyle($cell)->getFill()
+                ->setFillType(Fill::FILL_SOLID)
+                ->getStartColor()
+                ->setRGB($fill);
+        }
+    }
+
+    /**
+     * @param  list<array{key:string,label:string,group:string,class:string,format?:string}>  $columns
+     * @param  list<int|float|string>  $values
+     */
+    private function writePayrollReportExcelDataRow(
+        Worksheet $sheet,
+        array $columns,
+        int $rowIndex,
+        array $values,
+        bool $isTotalRow,
+    ): void {
+        foreach ($columns as $columnIndex => $column) {
+            $key = (string) ($column['key'] ?? '');
+            $columnLetter = Coordinate::stringFromColumnIndex($columnIndex + 1);
+            $cell = $columnLetter.$rowIndex;
+            $value = $values[$columnIndex] ?? '';
+            $sheet->setCellValue($cell, $value);
+
+            $style = $sheet->getStyle($cell);
+            $style->getFont()
+                ->setName(self::EXCEL_FONT_DATA)
+                ->setSize(self::EXCEL_FONT_SIZE)
+                ->setBold($isTotalRow && ($key === 'net_pay' || $key === 'employee_id'));
+
+            if ($this->excelColumnIsNumeric($column)) {
+                $style->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+                if (is_numeric($value)) {
+                    $style->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_NUMBER_00);
+                }
+            } else {
+                $style->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
+            }
+        }
+    }
+
+    private function applyPayrollReportExcelColumnWidths(Worksheet $sheet, int $columnCount): void
+    {
+        for ($columnIndex = 1; $columnIndex <= $columnCount; $columnIndex++) {
+            $columnLetter = Coordinate::stringFromColumnIndex($columnIndex);
+            $sheet->getColumnDimension($columnLetter)->setAutoSize(false);
+            $sheet->getColumnDimension($columnLetter)->setWidth(
+                $this->excelColumnWidthForIndex($columnIndex, $columnCount),
+            );
+        }
+    }
+
+    private function excelColumnWidthForIndex(int $columnIndex, int $columnCount): float
+    {
+        return match ($columnIndex) {
+            1 => 12.0,
+            2 => 33.71,
+            default => $columnIndex === $columnCount ? 14.14 : 14.0,
+        };
+    }
+
+    /**
+     * @param  array{key?:string,label?:string,group?:string,class?:string,format?:string}  $column
+     */
+    private function excelColumnIsNumeric(array $column): bool
+    {
+        $key = (string) ($column['key'] ?? '');
+        if (($column['format'] ?? '') === 'text') {
+            return false;
+        }
+
+        return ! in_array($key, ['row_number', 'employee_id', 'employee_name', 'company_name'], true);
     }
 
     /**
