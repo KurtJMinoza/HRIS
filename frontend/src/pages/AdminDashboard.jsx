@@ -791,7 +791,7 @@ export default function AdminDashboard() {
     staleTime: 0,
     refetchInterval: 15_000,
     refetchOnMount: 'always',
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   })
 
   const payrollQuery = useQuery({

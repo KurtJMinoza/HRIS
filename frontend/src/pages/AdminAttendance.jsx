@@ -246,7 +246,7 @@ export default function AdminAttendance() {
     placeholderData: keepPreviousData,
     queryFn: ({ signal }) => getAdminAttendance({ ...attendanceParams, signal }),
     refetchInterval: 15000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   })
 
   async function load() {

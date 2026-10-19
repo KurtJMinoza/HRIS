@@ -633,7 +633,7 @@ function EmployeeCorrectionRequestsSelfService() {
     queryKey: ['employee-presence-filings'],
     queryFn: ({ signal }) => getMyPresenceFilings({ per_page: 50, signal }),
     staleTime: 30_000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
   })
 
   const items = Array.isArray(filingsQuery.data?.presence_filings) ? filingsQuery.data.presence_filings : []

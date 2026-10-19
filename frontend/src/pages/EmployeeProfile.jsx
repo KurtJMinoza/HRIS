@@ -923,7 +923,7 @@ export default function EmployeeProfile() {
     // Self-service: always treat snapshot as stale so HR edits (and server cache bust) show up on revisit/focus.
     staleTime: isReadOnly ? 20 * 60 * 1000 : 0,
     gcTime: 30 * 60 * 1000,
-    refetchOnWindowFocus: !isReadOnly,
+    refetchOnWindowFocus: false,
     queryFn: async () => {
       if (isReadOnly) {
         return getEmployeeProfileSnapshot(effectiveProfileId, {

@@ -761,14 +761,12 @@ export default function AdminGeneratePayslipsPage() {
       window.addEventListener('hr:payroll-finalized', onFinalized)
       window.addEventListener('hr:attendance-payroll-changed', onFinalized)
       window.addEventListener('storage', onStorage)
-      window.addEventListener('focus', onFinalized)
     }
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('hr:payroll-finalized', onFinalized)
         window.removeEventListener('hr:attendance-payroll-changed', onFinalized)
         window.removeEventListener('storage', onStorage)
-        window.removeEventListener('focus', onFinalized)
       }
     }
   }, [loadCompanySummary, loadBankExportCutoffs, bankExportDialogOpen])

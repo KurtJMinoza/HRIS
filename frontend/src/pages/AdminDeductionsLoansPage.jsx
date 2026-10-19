@@ -719,18 +719,8 @@ export default function AdminDeductionsLoansPage() {
   }, [loadAll])
 
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        loadAll({ silent: true })
-      }
-    }
-    const onFocus = () => loadAll({ silent: true })
     const intervalId = window.setInterval(() => loadAll({ silent: true }), 30000)
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('focus', onFocus)
     return () => {
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('focus', onFocus)
       window.clearInterval(intervalId)
     }
   }, [loadAll])
@@ -738,15 +728,6 @@ export default function AdminDeductionsLoansPage() {
   useEffect(() => {
     if (tab !== 'assign') return
     fetchAssignEmployees()
-  }, [tab, fetchAssignEmployees])
-
-  useEffect(() => {
-    if (tab !== 'assign') return
-    const onVis = () => {
-      if (document.visibilityState === 'visible') fetchAssignEmployees()
-    }
-    document.addEventListener('visibilitychange', onVis)
-    return () => document.removeEventListener('visibilitychange', onVis)
   }, [tab, fetchAssignEmployees])
 
   async function handleCreateType(e) {

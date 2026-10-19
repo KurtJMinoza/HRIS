@@ -454,16 +454,9 @@ export default function AdminFinalizePayrollPage() {
 
   useEffect(() => {
     const bumpPreview = () => setRefreshToken(String(Date.now()))
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') bumpPreview()
-    }
-    window.addEventListener('focus', bumpPreview)
     window.addEventListener('hr:attendance-payroll-changed', bumpPreview)
-    document.addEventListener('visibilitychange', onVisible)
     return () => {
-      window.removeEventListener('focus', bumpPreview)
       window.removeEventListener('hr:attendance-payroll-changed', bumpPreview)
-      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
 

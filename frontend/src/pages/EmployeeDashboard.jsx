@@ -874,13 +874,8 @@ export default function EmployeeDashboard() {
   }, [calendarYear, calendarMonth, loadAttendanceCalendar, summaryReady])
 
   useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState === 'visible') void loadDashboardSummary({ soft: true })
-    }
-    document.addEventListener('visibilitychange', onVis)
     const id = window.setInterval(() => void loadDashboardSummary({ soft: true }), 60_000)
     return () => {
-      document.removeEventListener('visibilitychange', onVis)
       window.clearInterval(id)
     }
   }, [loadDashboardSummary])

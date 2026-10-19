@@ -304,18 +304,8 @@ export default function EmployeeLoansDeductionsPage() {
   }, [load])
 
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        load({ silent: true })
-      }
-    }
-    const onFocus = () => load({ silent: true })
     const intervalId = window.setInterval(() => load({ silent: true }), 30000)
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('focus', onFocus)
     return () => {
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('focus', onFocus)
       window.clearInterval(intervalId)
     }
   }, [load])
