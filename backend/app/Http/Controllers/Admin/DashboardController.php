@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\EmploymentStatus;
+use App\Enums\HrRole;
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
@@ -53,6 +54,7 @@ class DashboardController extends Controller
         private readonly HrRoleResolver $hrRoleResolver,
         private readonly PresenceFilingService $presenceFilingService,
         private readonly LeaveApprovalService $leaveApprovalService,
+        private readonly OrgApprovalWorkflowService $workflowService,
         private readonly AttendanceDailySummaryService $attendanceDailySummaryService,
         private readonly CompanyEfficiencyService $companyEfficiencyService,
         private readonly EfficiencyPeriodResolver $efficiencyPeriodResolver,
@@ -302,15 +304,7 @@ class DashboardController extends Controller
             $this->dataScopeService->restrictEmployeeQuery($actor, $scope);
             $scopedIds = $scope->select('users.id');
 
-            $leavePending = $this->whereCurrentPendingApprovalForActor(
-                LeaveRequest::query(),
-                OrgApprovalWorkflowService::MODULE_LEAVE,
-                (int) $actor->id,
-                'leave_requests.id'
-            )
-                ->where('status', LeaveRequest::STATUS_PENDING)
-                ->where('pending_approval', true)
-                ->count();
+            $leavePending = $this->leaveRequestsAwaitingActorApproval($actor)->count();
             $overtimePending = $this->whereCurrentPendingApprovalForActor(
                 Overtime::query(),
                 OrgApprovalWorkflowService::MODULE_OVERTIME,
@@ -562,26 +556,23 @@ class DashboardController extends Controller
         ];
     }
 
-    private function whereCurrentPendingApprovalForActor(Builder $query, string $moduleType, int $actorId, string $requestColumn): Builder
-    {
-        return $query->whereExists(function ($approval) use ($moduleType, $actorId, $requestColumn): void {
-            $approval
-                ->selectRaw('1')
-                ->from('org_approval_records as current_approval')
-                ->whereColumn('current_approval.request_id', $requestColumn)
-                ->where('current_approval.module_type', $moduleType)
-                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
-                ->where('current_approval.approver_id', $actorId)
-                ->whereNotExists(function ($earlier) use ($moduleType): void {
-                    $earlier
-                        ->selectRaw('1')
-                        ->from('org_approval_records as earlier_approval')
-                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
-                        ->where('earlier_approval.module_type', $moduleType)
-                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
-                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
-                });
-        });
+    private function whereCurrentPendingApprovalForActor(
+        Builder $query,
+        string $moduleType,
+        int $actorId,
+        string $requestColumn,
+        ?User $actor = null,
+    ): Builder {
+        $actor = $actor instanceof User ? $actor : request()->user();
+        $this->workflowService->scopeRequestHasCurrentPendingForActor(
+            $query,
+            $moduleType,
+            $actorId,
+            $requestColumn,
+            $actor instanceof User ? $actor : null,
+        );
+
+        return $query;
     }
 
     /**
@@ -2706,6 +2697,63 @@ class DashboardController extends Controller
     }
 
     /**
+     * Pending leave this actor can approve (same rules as Leave list / bulk approve — OIC eligible pool included).
+     *
+     * @return \Illuminate\Support\Collection<int, LeaveRequest>
+     */
+    private function leaveRequestsAwaitingActorApproval(User $actor): \Illuminate\Support\Collection
+    {
+        $role = $this->hrRoleResolver->resolve($actor);
+        $scopedIds = $role === HrRole::AdminHr
+            ? $this->scopedEmployeeIds($actor, true)
+            : null;
+
+        $companyId = (int) ($actor->getEffectiveCompanyId() ?? $actor->company_id ?? 0);
+
+        $query = LeaveRequest::query()
+            ->where('status', LeaveRequest::STATUS_PENDING)
+            ->where('pending_approval', true)
+            ->with([
+                'user:id,name,first_name,middle_name,last_name,suffix,employee_code,department,department_id,position,profile_image',
+                'user.departmentRelation:id,name',
+                'filedBy:id,name,first_name,middle_name,last_name,suffix',
+            ]);
+
+        if ($companyId > 0) {
+            $query->where('company_id', $companyId);
+        }
+
+        if ($role === HrRole::AdminHr) {
+            $this->whereCurrentPendingApprovalForActor(
+                $query,
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+                (int) $actor->id,
+                'leave_requests.id',
+                $actor,
+            );
+            if ($scopedIds !== []) {
+                $query->whereIn('user_id', $scopedIds);
+            } else {
+                $query->whereRaw('1 = 0');
+            }
+
+            return $query
+                ->orderBy('start_date')
+                ->orderByDesc('updated_at')
+                ->limit(500)
+                ->get();
+        }
+
+        // ponytail: OIC/dept-head eligibility is in PHP via canApprove(); cap recent pending by activity not start_date
+        return $query
+            ->orderByDesc('updated_at')
+            ->limit(350)
+            ->get()
+            ->filter(fn (LeaveRequest $leave): bool => $this->leaveApprovalService->canApprove($actor, $leave))
+            ->values();
+    }
+
+    /**
      * Pending leave starting today or within the next week.
      *
      * @param  array<int, int>  $scopedActiveUserIds
@@ -2713,34 +2761,37 @@ class DashboardController extends Controller
      */
     private function todayLeaves(Carbon $today, array $scopedActiveUserIds, ?User $actor = null): array
     {
-        $dateKey = $today->toDateString();
-        $upcomingEnd = $today->copy()->addDays(7)->toDateString();
-        $query = LeaveRequest::query()
-            ->where('status', LeaveRequest::STATUS_PENDING)
-            ->where('pending_approval', true)
-            ->whereDate('start_date', '>=', $dateKey)
-            ->whereDate('start_date', '<=', $upcomingEnd);
         if ($actor instanceof User) {
-            $this->whereCurrentPendingApprovalForActor(
-                $query,
-                OrgApprovalWorkflowService::MODULE_LEAVE,
-                (int) $actor->id,
-                'leave_requests.id'
-            );
-        }
-        if ($scopedActiveUserIds !== []) {
-            $query->whereIn('user_id', $scopedActiveUserIds);
+            $rows = $this->leaveRequestsAwaitingActorApproval($actor)
+                ->sortBy([
+                    ['start_date', 'asc'],
+                    ['user_id', 'asc'],
+                ])
+                ->take(3)
+                ->values();
         } else {
-            $query->whereRaw('1 = 0');
+            $dateKey = $today->toDateString();
+            $upcomingEnd = $today->copy()->addDays(7)->toDateString();
+            $query = LeaveRequest::query()
+                ->where('status', LeaveRequest::STATUS_PENDING)
+                ->where('pending_approval', true)
+                ->whereDate('start_date', '>=', $dateKey)
+                ->whereDate('start_date', '<=', $upcomingEnd);
+            if ($scopedActiveUserIds !== []) {
+                $query->whereIn('user_id', $scopedActiveUserIds);
+            } else {
+                $query->whereRaw('1 = 0');
+            }
+            $rows = $query
+                ->with(['user' => function ($q) {
+                    $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'employee_code', 'department', 'department_id', 'position', 'profile_image')
+                        ->with(['departmentRelation:id,name']);
+                }])
+                ->orderBy('start_date')
+                ->orderBy('user_id')
+                ->limit(3)
+                ->get();
         }
-        $rows = $query
-            ->with(['user' => function ($q) {
-                $q->select('id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix', 'employee_code', 'department', 'department_id', 'position', 'profile_image')
-                    ->with(['departmentRelation:id,name']);
-            }])
-            ->orderBy('start_date')
-            ->orderBy('user_id')
-            ->get();
 
         $items = [];
         foreach ($rows as $leave) {

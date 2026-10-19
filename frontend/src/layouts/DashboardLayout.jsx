@@ -442,20 +442,27 @@ const SidebarContent = memo(function SidebarContent({
         </Link>
       </div>
       <nav ref={navRef} className="relative flex flex-1 flex-col overflow-y-auto overflow-x-hidden">
-        <SidebarExpandedNav
-          navItems={navItems}
-          pathname={pathname}
-          moduleCounts={moduleCounts}
-          onNavClick={onNavClick}
-          onNavIntent={onNavIntent}
-        />
-        <SidebarCollapsedRail
-          navItems={navItems}
-          pathname={pathname}
-          moduleCounts={moduleCounts}
-          onNavClick={onNavClick}
-          onNavIntent={onNavIntent}
-        />
+        {/*
+          Expanded vs collapsed rail is toggled via group/sidebar on desktop aside.
+          Mobile sheet has no that wrapper — render one nav only or both stacks (duplicate icons).
+        */}
+        {collapsed === true ? (
+          <SidebarCollapsedRail
+            navItems={navItems}
+            pathname={pathname}
+            moduleCounts={moduleCounts}
+            onNavClick={onNavClick}
+            onNavIntent={onNavIntent}
+          />
+        ) : (
+          <SidebarExpandedNav
+            navItems={navItems}
+            pathname={pathname}
+            moduleCounts={moduleCounts}
+            onNavClick={onNavClick}
+            onNavIntent={onNavIntent}
+          />
+        )}
       </nav>
       <div className={cn('shrink-0 border-t border-border/40 p-2', collapsed ? 'w-16 space-y-1' : 'w-full space-y-2')}>
         <div className={cn(collapsed && 'pointer-events-none invisible absolute h-0 overflow-hidden opacity-0 [content-visibility:hidden]')} aria-hidden={collapsed}>

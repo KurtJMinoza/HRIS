@@ -35,6 +35,7 @@ import { Badge } from '@/components/ui/badge'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import AttendanceCorrections from '@/pages/AttendanceCorrections'
+import { clearRequestReviewSearchParams, parseReviewRequestId } from '@/lib/leaveReviewDeepLink'
 import {
   deleteMyPresenceFiling,
   getMyPresenceFilingAttendanceDetail,
@@ -599,6 +600,10 @@ function EmployeeCorrectionRequestsSelfService() {
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const handledFileDeepLinkRef = useRef(false)
+  const handledReviewDeepLinkRef = useRef(null)
+  const reviewRequestIdFromUrl = parseReviewRequestId(
+    searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'),
+  )
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -843,6 +848,17 @@ function EmployeeCorrectionRequestsSelfService() {
       setDetailLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!reviewRequestIdFromUrl) {
+      handledReviewDeepLinkRef.current = null
+      return
+    }
+    if (handledReviewDeepLinkRef.current === reviewRequestIdFromUrl) return
+    handledReviewDeepLinkRef.current = reviewRequestIdFromUrl
+    void openDetail({ id: Number(reviewRequestIdFromUrl) })
+    clearRequestReviewSearchParams(setSearchParams)
+  }, [reviewRequestIdFromUrl, setSearchParams])
 
   function openFileDialog() {
     resetRadixModalLock()

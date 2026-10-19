@@ -1511,24 +1511,14 @@ class OvertimeController extends Controller
 
     private function whereCurrentPendingApprovalForActor($query, string $moduleType, int $actorId, string $requestColumn): void
     {
-        $query->whereExists(function ($approval) use ($moduleType, $actorId, $requestColumn): void {
-            $approval
-                ->selectRaw('1')
-                ->from('org_approval_records as current_approval')
-                ->whereColumn('current_approval.request_id', $requestColumn)
-                ->where('current_approval.module_type', $moduleType)
-                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
-                ->where('current_approval.approver_id', $actorId)
-                ->whereNotExists(function ($earlier) use ($moduleType): void {
-                    $earlier
-                        ->selectRaw('1')
-                        ->from('org_approval_records as earlier_approval')
-                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
-                        ->where('earlier_approval.module_type', $moduleType)
-                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
-                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
-                });
-        });
+        $actor = request()->user();
+        $this->approvalWorkflowService->scopeRequestHasCurrentPendingForActor(
+            $query,
+            $moduleType,
+            $actorId,
+            $requestColumn,
+            $actor instanceof User ? $actor : null,
+        );
     }
 
     private function orWhereActorHasHandledApproval($query, string $moduleType, int $actorId, string $requestColumn): void

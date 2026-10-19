@@ -26,8 +26,12 @@ class EmployeeDashboardCacheService
         return sprintf('employee_dashboard:attendance_calendar:%d:%s', $employeeId, $yearMonth);
     }
 
-    public static function recentRequestsKey(int $employeeId): string
+    public static function recentRequestsKey(int $employeeId, ?string $yearMonth = null): string
     {
+        if (is_string($yearMonth) && preg_match('/^\d{4}-\d{2}$/', $yearMonth)) {
+            return sprintf('employee_dashboard:recent_requests:%d:%s', $employeeId, $yearMonth);
+        }
+
         return sprintf('employee_dashboard:recent_requests:%d', $employeeId);
     }
 

@@ -7505,7 +7505,10 @@ export async function getEmployeeDashboardAttendanceCalendar(params = {}) {
 }
 
 export async function getEmployeeDashboardRecentRequests(params = {}) {
-  const res = await authenticatedFetch('/employee-dashboard/recent-requests', params.signal ? { signal: params.signal } : {})
+  const query = new URLSearchParams()
+  if (params.month) query.set('month', String(params.month))
+  const path = `/employee-dashboard/recent-requests${query.toString() ? `?${query.toString()}` : ''}`
+  const res = await authenticatedFetch(path, params.signal ? { signal: params.signal } : {})
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.message || 'Failed to load employee dashboard requests')
   return data

@@ -15,6 +15,7 @@ use App\Support\LeaveModuleCache;
 use App\Support\OvertimeModuleCache;
 use App\Support\ReviewRequestCache;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
@@ -1235,8 +1236,37 @@ class OrgApprovalWorkflowService
         if ($record === null) {
             return null;
         }
-        $name = $record->approver?->display_name ?? $record->approver_name;
+
+        $record->loadMissing('approver:id,name,first_name,middle_name,last_name,suffix');
+        $role = strtolower(trim((string) ($record->approver_role ?? '')));
+        $eligible = is_array($record->eligible_approver_ids) ? $record->eligible_approver_ids : [];
+
+        if ($role === HrRole::OfficerInCharge->value && $eligible !== []) {
+            $oic = User::query()->find((int) $eligible[0]);
+            if ($oic instanceof User) {
+                $formatted = trim((string) ($oic->full_name_last_first ?: $oic->display_name ?: $oic->name));
+                if ($formatted !== '') {
+                    return $formatted;
+                }
+            }
+        }
+
+        if ($record->approver instanceof User) {
+            $formatted = trim((string) ($record->approver->full_name_last_first ?: $record->approver->display_name ?: $record->approver->name));
+            if ($formatted !== '') {
+                return $formatted;
+            }
+        }
+
+        $name = $record->approver_name;
         $name = is_string($name) ? trim($name) : '';
+
+        if ($name === '' && $eligible !== []) {
+            $fallback = User::query()->find((int) $eligible[0]);
+            if ($fallback instanceof User) {
+                $name = trim((string) ($fallback->full_name_last_first ?: $fallback->display_name ?: $fallback->name));
+            }
+        }
 
         return $name !== '' ? $name : null;
     }
@@ -2005,5 +2035,49 @@ class OrgApprovalWorkflowService
         Cache::store('array')->put($cacheKey, $loaded, 3600);
 
         return $loaded;
+    }
+
+    /**
+     * Request has a pending approval step that this actor may act on (assigned approver, eligible pool, or Admin HR pool step).
+     *
+     * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
+     */
+    public function scopeRequestHasCurrentPendingForActor(
+        Builder $query,
+        string $moduleType,
+        int $actorId,
+        string $requestColumn,
+        ?User $actor = null,
+    ): void {
+        $isAdminHr = $actor instanceof User && $this->roleResolver->resolve($actor) === HrRole::AdminHr;
+
+        $query->whereExists(function ($approval) use ($moduleType, $actorId, $requestColumn, $isAdminHr): void {
+            $approval
+                ->selectRaw('1')
+                ->from('org_approval_records as current_approval')
+                ->whereColumn('current_approval.request_id', $requestColumn)
+                ->where('current_approval.module_type', $moduleType)
+                ->where('current_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                ->where(function ($actorMatch) use ($actorId, $isAdminHr): void {
+                    $actorMatch->where('current_approval.approver_id', $actorId);
+                    if (Schema::hasColumn('org_approval_records', 'eligible_approver_ids')) {
+                        $actorMatch->orWhereJsonContains('current_approval.eligible_approver_ids', $actorId);
+                        // ponytail: legacy rows may store eligible ids as JSON strings
+                        $actorMatch->orWhereJsonContains('current_approval.eligible_approver_ids', (string) $actorId);
+                    }
+                    if ($isAdminHr) {
+                        $actorMatch->orWhere('current_approval.approver_role', HrRole::AdminHr->value);
+                    }
+                })
+                ->whereNotExists(function ($earlier) use ($moduleType): void {
+                    $earlier
+                        ->selectRaw('1')
+                        ->from('org_approval_records as earlier_approval')
+                        ->whereColumn('earlier_approval.request_id', 'current_approval.request_id')
+                        ->where('earlier_approval.module_type', $moduleType)
+                        ->where('earlier_approval.approval_status', OrgApprovalRecord::STATUS_PENDING)
+                        ->whereColumn('earlier_approval.sequence_order', '<', 'current_approval.sequence_order');
+                });
+        });
     }
 }

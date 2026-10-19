@@ -6,8 +6,11 @@ use App\Models\AttendanceCorrection;
 use App\Models\AttendanceLog;
 use App\Models\EmployeeScheduleAssignment;
 use App\Models\LeaveRequest;
+use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
+use App\Models\User;
 use App\Models\WorkingSchedule;
+use App\Services\AttendanceCorrectionStatusService;
 use App\Services\AttendanceDailySummaryService;
 use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusResolver;
@@ -17,7 +20,9 @@ use App\Services\EmployeeClassificationService;
 use App\Services\EvaluationScoringService;
 use App\Services\HolidayService;
 use App\Services\HolidayEligibilityService;
+use App\Services\LeaveApprovalService;
 use App\Services\LeaveCreditService;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\MergedKpiPerformanceService;
 use App\Services\OtDetectionService;
 use App\Services\OvertimePayrollService;
@@ -57,6 +62,9 @@ class EmployeeDashboardController extends Controller
         private readonly MergedKpiPerformanceService $mergedKpiPerformanceService,
         private readonly EvaluationScoringService $evaluationScoringService,
         private readonly LeaveCreditService $leaveCreditService,
+        private readonly AttendanceCorrectionStatusService $correctionStatusService,
+        private readonly OrgApprovalWorkflowService $workflowService,
+        private readonly LeaveApprovalService $leaveApprovalService,
     ) {}
 
     /**
@@ -339,7 +347,11 @@ class EmployeeDashboardController extends Controller
 
         $cacheKey = EmployeeDashboardCacheService::calendarKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached) && ($cached['meta']['schema_version'] ?? null) === 27) {
+        if (
+            is_array($cached)
+            && (int) ($cached['meta']['schema_version'] ?? 0) >= 32
+            && array_key_exists('filings', $cached)
+        ) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
             $cachedDays = is_array($cached['days'] ?? null) ? $cached['days'] : [];
@@ -354,6 +366,9 @@ class EmployeeDashboardController extends Controller
                 'days_generated' => count($cachedDays),
                 'rest_day_count' => count(array_filter($cachedDays, fn ($d) => ! empty($d['is_rest_day']))),
             ]);
+
+            // ponytail: approver lines must reflect live workflow; day grid can stay cached
+            $cached['filings'] = $this->buildMonthFilingsForDashboard($user, $fromStr, $toStr);
 
             return response()->json($cached);
         }
@@ -386,7 +401,7 @@ class EmployeeDashboardController extends Controller
             ->groupBy(fn ($l) => $this->attendanceLogPunchInstant($l)->timezone($attendanceTz)->toDateString());
 
         $corrections = AttendanceCorrection::query()
-            ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'reason_code', 'filed_at', 'is_incomplete_record', 'issue_kind'])
+            ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'reason_code', 'filed_at', 'created_at', 'is_incomplete_record', 'issue_kind'])
             ->where('user_id', $employeeId)
             ->whereBetween('date', [$fromStr, $toStr])
             ->get()
@@ -440,7 +455,7 @@ class EmployeeDashboardController extends Controller
         $holidays = $this->loadMonthHolidays($user, $year, $month);
 
         $overtimes = Overtime::query()
-            ->select(['id', 'user_id', 'date', 'computed_hours', 'approved_ot_hours', 'actual_rendered_ot_hours', 'payable_ot_hours', 'unapproved_ot_hours', 'overtime_reduction_reason', 'expected_end_time', 'time_out', 'schedule_end', 'status', 'ph_ot_rule'])
+            ->select(['id', 'user_id', 'date', 'computed_hours', 'approved_ot_hours', 'actual_rendered_ot_hours', 'payable_ot_hours', 'unapproved_ot_hours', 'overtime_reduction_reason', 'expected_end_time', 'time_out', 'schedule_end', 'status', 'ph_ot_rule', 'created_at', 'filed_at', 'rejected_at'])
             ->where('user_id', $employeeId)
             ->whereBetween('date', [$fromStr, $toStr]);
         if (Schema::hasColumn('overtimes', 'voided_at')) {
@@ -670,6 +685,7 @@ class EmployeeDashboardController extends Controller
             'summary' => $monthSummary,
             'absent_counts' => $absentCounts,
             'holidays' => $holidays,
+            'filings' => $this->buildMonthFilingsForDashboard($user, $fromStr, $toStr, $corrections, $overtimesByDate),
             'overtime_requests' => $overtimesByDate
                 ->flatten(1)
                 ->values()
@@ -690,7 +706,7 @@ class EmployeeDashboardController extends Controller
                 ])
                 ->all(),
             'meta' => [
-                'schema_version' => 27,
+                'schema_version' => 32,
                 'performance' => [
                     'cache_hit' => false,
                     'bulk_fetch_ms' => $bulkFetchMs,
@@ -730,35 +746,70 @@ class EmployeeDashboardController extends Controller
         $user = $request->user();
         $employeeId = (int) $user->id;
 
-        $cacheKey = EmployeeDashboardCacheService::recentRequestsKey($employeeId);
+        $monthParam = $request->query('month');
+        $yearMonth = is_string($monthParam) && preg_match('/^\d{4}-\d{2}$/', $monthParam) ? $monthParam : null;
+
+        $cacheKey = EmployeeDashboardCacheService::recentRequestsKey($employeeId, $yearMonth);
         $cached = EmployeeDashboardCacheService::get($cacheKey);
-        if (is_array($cached)) {
+        if (
+            is_array($cached)
+            && (int) ($cached['meta']['schema_version'] ?? 0) >= 6
+            && array_key_exists('filings', $cached)
+        ) {
             $cached['meta']['performance']['cache_hit'] = true;
             $cached['meta']['performance']['total_ms'] = (int) round((microtime(true) - $startedAt) * 1000);
+            if ($yearMonth !== null) {
+                $tz = $this->attendanceTimezone();
+                $monthFrom = Carbon::parse($yearMonth.'-01', $tz)->startOfMonth()->toDateString();
+                $monthTo = Carbon::parse($yearMonth.'-01', $tz)->endOfMonth()->toDateString();
+                $cached['filings'] = $this->buildMonthFilingsForDashboard($user, $monthFrom, $monthTo);
+            }
 
             return response()->json($cached);
         }
 
-        $recentLeaves = LeaveRequest::query()
+        $tz = $this->attendanceTimezone();
+        $monthFrom = null;
+        $monthTo = null;
+        if ($yearMonth !== null) {
+            $monthFrom = Carbon::parse($yearMonth.'-01', $tz)->startOfMonth()->toDateString();
+            $monthTo = Carbon::parse($yearMonth.'-01', $tz)->endOfMonth()->toDateString();
+        }
+
+        $leaveQuery = LeaveRequest::query()
             ->select(['id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'created_at'])
-            ->where('user_id', $employeeId)
-            ->orderByDesc('created_at')
-            ->limit(5)
-            ->get();
+            ->where('user_id', $employeeId);
+        if ($monthFrom !== null && $monthTo !== null) {
+            $leaveQuery->where(function ($q) use ($monthFrom, $monthTo) {
+                $q->where(function ($q) use ($monthFrom, $monthTo) {
+                    $q->where('start_date', '<=', $monthTo)
+                        ->where('end_date', '>=', $monthFrom);
+                })->orWhereBetween('created_at', [$monthFrom.' 00:00:00', $monthTo.' 23:59:59']);
+            });
+        }
+        $recentLeaves = $leaveQuery->orderByDesc('created_at')->limit($yearMonth ? 20 : 5)->get();
 
-        $recentOvertimes = Overtime::query()
+        $otQuery = Overtime::query()
             ->select(['id', 'date', 'computed_hours', 'approved_ot_hours', 'actual_rendered_ot_hours', 'payable_ot_hours', 'unapproved_ot_hours', 'overtime_reduction_reason', 'status', 'created_at'])
-            ->where('user_id', $employeeId)
-            ->orderByDesc('created_at')
-            ->limit(5)
-            ->get();
+            ->where('user_id', $employeeId);
+        if ($monthFrom !== null && $monthTo !== null) {
+            $otQuery->whereBetween('date', [$monthFrom, $monthTo]);
+        }
+        if (Schema::hasColumn('overtimes', 'voided_at')) {
+            $otQuery->whereNull('voided_at');
+        }
+        if (Schema::hasColumn('overtimes', 'deleted_at')) {
+            $otQuery->whereNull('deleted_at');
+        }
+        $recentOvertimes = $otQuery->orderByDesc('created_at')->limit($yearMonth ? 20 : 5)->get();
 
-        $recentCorrections = AttendanceCorrection::query()
-            ->select(['id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'created_at'])
-            ->where('user_id', $employeeId)
-            ->orderByDesc('created_at')
-            ->limit(5)
-            ->get();
+        $correctionQuery = AttendanceCorrection::query()
+            ->select(['id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'filed_at', 'created_at', 'issue_kind'])
+            ->where('user_id', $employeeId);
+        if ($monthFrom !== null && $monthTo !== null) {
+            $correctionQuery->whereBetween('date', [$monthFrom, $monthTo]);
+        }
+        $recentCorrections = $correctionQuery->orderByDesc('filed_at')->orderByDesc('created_at')->limit($yearMonth ? 20 : 5)->get();
 
         $leaveSummary = [
             'pending' => LeaveRequest::query()->where('user_id', $employeeId)->where('status', LeaveRequest::STATUS_PENDING)->count(),
@@ -771,13 +822,19 @@ class EmployeeDashboardController extends Controller
                 ->count(),
         ];
 
+        $filings = $yearMonth !== null && $monthFrom !== null && $monthTo !== null
+            ? $this->buildMonthFilingsForDashboard($user, $monthFrom, $monthTo)
+            : $this->mergeRecentFilingsForDashboard($recentLeaves, $recentOvertimes, $recentCorrections, 5);
+
         $payload = [
             'leave_requests' => $recentLeaves,
             'overtime_requests' => $recentOvertimes,
             'corrections' => $recentCorrections,
+            'filings' => $filings,
             'leave_summary' => $leaveSummary,
+            'month' => $yearMonth,
             'meta' => [
-                'schema_version' => 5,
+                'schema_version' => 6,
                 'performance' => [
                     'cache_hit' => false,
                     'total_ms' => null,
@@ -1383,5 +1440,611 @@ class EmployeeDashboardController extends Controller
     private function buildScheduleFromWorkingSchedule(?\App\Models\WorkingSchedule $schedule): ?array
     {
         return EmployeeScheduleResolver::buildFromWorkingSchedule($schedule);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<string, \Illuminate\Support\Collection<int, AttendanceCorrection>>|null  $correctionsGrouped
+     * @param  \Illuminate\Support\Collection<string, \Illuminate\Support\Collection<int, Overtime>>|null  $overtimesByDate
+     * @return list<array<string, mixed>>
+     */
+    private function buildMonthFilingsForDashboard(
+        User $viewer,
+        string $fromStr,
+        string $toStr,
+        $correctionsGrouped = null,
+        $overtimesByDate = null,
+    ): array {
+        $employeeId = (int) $viewer->id;
+
+        if ($correctionsGrouped === null) {
+            $correctionsGrouped = AttendanceCorrection::query()
+                ->select(['id', 'user_id', 'date', 'time_in', 'time_out', 'approved', 'pending_approval', 'reason_code', 'filed_at', 'created_at', 'is_incomplete_record', 'issue_kind'])
+                ->where('user_id', $employeeId)
+                ->whereBetween('date', [$fromStr, $toStr])
+                ->get()
+                ->groupBy(fn ($c) => $c->date->toDateString());
+        }
+        if ($overtimesByDate === null) {
+            $overtimes = Overtime::query()
+                ->select(['id', 'user_id', 'date', 'computed_hours', 'status', 'created_at', 'filed_at', 'rejected_at', 'filed_by'])
+                ->where('user_id', $employeeId)
+                ->whereBetween('date', [$fromStr, $toStr]);
+            if (Schema::hasColumn('overtimes', 'voided_at')) {
+                $overtimes->whereNull('voided_at');
+            }
+            if (Schema::hasColumn('overtimes', 'deleted_at')) {
+                $overtimes->whereNull('deleted_at');
+            }
+            $overtimesByDate = $overtimes->get()->groupBy(fn ($o) => $o->date->toDateString());
+        }
+
+        $monthLeaveFilings = LeaveRequest::query()
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'created_at', 'filed_at', 'filed_by', 'pending_approval'])
+            ->where('user_id', $employeeId)
+            ->where(function ($q) use ($fromStr, $toStr) {
+                $this->applyDashboardFilingMonthScope($q, $fromStr, $toStr);
+            })
+            ->orderByDesc('created_at')
+            ->limit(20)
+            ->with(['user:id,name,first_name,middle_name,last_name,suffix', 'filedBy:id,name,first_name,middle_name,last_name,suffix'])
+            ->get();
+
+        $ownLeaveIds = $monthLeaveFilings->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $approvalQueueLeaves = $this->leaveFilingsAwaitingViewerApproval($viewer, $fromStr, $toStr, $ownLeaveIds);
+        if ($approvalQueueLeaves->isNotEmpty()) {
+            $monthLeaveFilings = $monthLeaveFilings->concat($approvalQueueLeaves)->unique('id')->values();
+        }
+
+        $monthCorrectionFilings = new \Illuminate\Database\Eloquent\Collection($correctionsGrouped->flatten(1)->all());
+        $monthOvertimeFilings = new \Illuminate\Database\Eloquent\Collection($overtimesByDate->flatten(1)->all());
+        $monthOvertimeFilings->load(['user:id,name,first_name,middle_name,last_name,suffix', 'filedBy:id,name,first_name,middle_name,last_name,suffix']);
+        $monthCorrectionFilings->load(['user:id,name,first_name,middle_name,last_name,suffix']);
+
+        return $this->mergeRecentFilingsForDashboard(
+            $monthLeaveFilings,
+            $monthOvertimeFilings,
+            $monthCorrectionFilings,
+            40,
+            $viewer,
+        );
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<LeaveRequest>  $query
+     */
+    private function applyDashboardFilingMonthScope($query, string $fromStr, string $toStr): void
+    {
+        $query->where(function ($q) use ($fromStr, $toStr) {
+            $q->where(function ($q) use ($fromStr, $toStr) {
+                $q->where('start_date', '<=', $toStr)
+                    ->where('end_date', '>=', $fromStr);
+            })->orWhereBetween('created_at', [$fromStr.' 00:00:00', $toStr.' 23:59:59']);
+        });
+    }
+
+    /**
+     * Pending leave from others in this month that the viewer can approve now.
+     *
+     * @param  list<int>  $excludeLeaveIds
+     * @return \Illuminate\Support\Collection<int, LeaveRequest>
+     */
+    private function leaveFilingsAwaitingViewerApproval(User $viewer, string $fromStr, string $toStr, array $excludeLeaveIds): \Illuminate\Support\Collection
+    {
+        $companyId = (int) ($viewer->getEffectiveCompanyId() ?? $viewer->company_id ?? 0);
+        $viewerId = (int) $viewer->id;
+
+        $query = LeaveRequest::query()
+            ->select(['id', 'user_id', 'company_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'created_at', 'filed_at', 'filed_by', 'pending_approval', 'updated_at'])
+            ->where('status', LeaveRequest::STATUS_PENDING)
+            ->where('pending_approval', true)
+            ->where('user_id', '!=', $viewerId)
+            ->where(function ($q) use ($fromStr, $toStr) {
+                $this->applyDashboardFilingMonthScope($q, $fromStr, $toStr);
+            })
+            ->with(['user:id,name,first_name,middle_name,last_name,suffix', 'filedBy:id,name,first_name,middle_name,last_name,suffix'])
+            ->orderByDesc('updated_at')
+            ->limit(120);
+
+        if ($companyId > 0) {
+            $query->where('company_id', $companyId);
+        }
+        if ($excludeLeaveIds !== []) {
+            $query->whereNotIn('id', $excludeLeaveIds);
+        }
+
+        return $query
+            ->get()
+            ->filter(fn (LeaveRequest $leave): bool => $this->leaveApprovalService->canApprove($viewer, $leave))
+            ->values();
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, LeaveRequest>  $recentLeaves
+     * @param  \Illuminate\Support\Collection<int, Overtime>  $recentOvertimes
+     * @param  \Illuminate\Support\Collection<int, AttendanceCorrection>  $recentCorrections
+     * @return list<array<string, mixed>>
+     */
+    private function mergeRecentFilingsForDashboard($recentLeaves, $recentOvertimes, $recentCorrections, int $limit, ?User $viewer = null): array
+    {
+        $viewerId = $viewer instanceof User ? (int) $viewer->id : null;
+
+        $pendingApprovers = $this->bulkPendingApproversForFilings(
+            correctionIds: $recentCorrections->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            overtimeIds: $recentOvertimes->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            leaveIds: $recentLeaves->pluck('id')->map(fn ($id) => (int) $id)->all(),
+        );
+
+        $rows = [];
+
+        foreach ($recentCorrections as $correction) {
+            $dateStr = $correction->date?->toDateString() ?? '';
+            $status = $this->correctionStatusService->resolvedStatus($correction);
+            $sortAt = $correction->filed_at ?? $correction->created_at;
+            $approver = $this->resolveFilingApproverMeta(
+                'correction',
+                OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION,
+                $correction,
+                $pendingApprovers,
+            );
+            $rows[] = $this->dashboardFilingRow(
+                kind: 'correction',
+                id: (int) $correction->id,
+                status: $status,
+                sortAt: $sortAt?->toIso8601String(),
+                title: $this->formatDashboardFilingDateTitle($dateStr),
+                detail: null,
+                approverName: $approver['name'] ?? null,
+                approverStep: $approver['step'] ?? null,
+            );
+        }
+
+        foreach ($recentOvertimes as $overtime) {
+            $dateStr = $overtime->date?->toDateString() ?? '';
+            $hours = round((float) ($overtime->computed_hours ?? 0), 1);
+            $status = $this->normalizeOvertimeFilingStatus($overtime);
+            $approver = $this->resolveFilingApproverMeta(
+                'overtime',
+                OrgApprovalWorkflowService::MODULE_OVERTIME,
+                $overtime,
+                $pendingApprovers,
+            );
+            $detail = $hours > 0 ? "{$hours}h" : null;
+            $rows[] = $this->dashboardFilingRow(
+                kind: 'overtime',
+                id: (int) $overtime->id,
+                status: $status,
+                sortAt: ($overtime->filed_at ?? $overtime->created_at)?->toIso8601String(),
+                title: $this->formatDashboardFilingDateTitle($dateStr),
+                detail: $detail,
+                approverName: $approver['name'] ?? null,
+                approverStep: $approver['step'] ?? null,
+            );
+        }
+
+        foreach ($recentLeaves as $leave) {
+            $start = $leave->start_date?->toDateString() ?? '';
+            $end = $leave->end_date?->toDateString() ?? '';
+            $status = $this->normalizeLeaveFilingStatus($leave);
+            $approver = $this->resolveFilingApproverMeta(
+                'leave',
+                OrgApprovalWorkflowService::MODULE_LEAVE,
+                $leave,
+                $pendingApprovers,
+            );
+            $detail = $this->formatLeaveFilingDateRange($start, $end);
+            $awaitingViewer = $viewerId !== null && (int) $leave->user_id !== $viewerId;
+            $subjectName = $awaitingViewer && $leave->user instanceof User
+                ? trim((string) ($leave->user->full_name_last_first ?: $leave->user->display_name ?: $leave->user->name))
+                : null;
+            $rows[] = $this->dashboardFilingRow(
+                kind: 'leave',
+                id: (int) $leave->id,
+                status: $status,
+                sortAt: ($leave->filed_at ?? $leave->created_at)?->toIso8601String(),
+                title: $this->leaveFilingTitle($leave),
+                detail: $detail,
+                approverName: $approver['name'] ?? null,
+                approverStep: $approver['step'] ?? null,
+                subjectName: $subjectName !== '' ? $subjectName : null,
+                awaitingYourApproval: $awaitingViewer && $status === 'pending',
+            );
+        }
+
+        usort($rows, static function (array $a, array $b): int {
+            $aPending = ($a['status'] ?? '') === 'pending' ? 0 : 1;
+            $bPending = ($b['status'] ?? '') === 'pending' ? 0 : 1;
+            if ($aPending !== $bPending) {
+                return $aPending <=> $bPending;
+            }
+
+            return strcmp((string) ($b['sort_at'] ?? ''), (string) ($a['sort_at'] ?? ''));
+        });
+
+        return array_slice($rows, 0, max(1, $limit));
+    }
+
+    /**
+     * @param  list<int>  $correctionIds
+     * @param  list<int>  $overtimeIds
+     * @param  list<int>  $leaveIds
+     * @return array<string, array{name: string, step: ?string}>
+     */
+    private function bulkPendingApproversForFilings(array $correctionIds, array $overtimeIds, array $leaveIds): array
+    {
+        $moduleIds = [
+            OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION => $correctionIds,
+            OrgApprovalWorkflowService::MODULE_OVERTIME => $overtimeIds,
+            OrgApprovalWorkflowService::MODULE_LEAVE => $leaveIds,
+        ];
+
+        $hasAny = false;
+        foreach ($moduleIds as $ids) {
+            if ($ids !== []) {
+                $hasAny = true;
+                break;
+            }
+        }
+        if (! $hasAny) {
+            return [];
+        }
+
+        $records = OrgApprovalRecord::query()
+            ->select([
+                'id',
+                'request_id',
+                'module_type',
+                'approval_label',
+                'approver_role',
+                'approver_id',
+                'approver_name',
+                'eligible_approver_ids',
+                'sequence_order',
+            ])
+            ->where('approval_status', OrgApprovalRecord::STATUS_PENDING)
+            ->where(function ($query) use ($moduleIds) {
+                foreach ($moduleIds as $moduleType => $ids) {
+                    if ($ids === []) {
+                        continue;
+                    }
+                    $query->orWhere(function ($inner) use ($moduleType, $ids) {
+                        $inner->where('module_type', $moduleType)->whereIn('request_id', $ids);
+                    });
+                }
+            })
+            ->with(['approver:id,name,first_name,middle_name,last_name,suffix'])
+            ->orderBy('sequence_order')
+            ->get();
+
+        $map = [];
+        foreach ($records as $record) {
+            $kind = match ($record->module_type) {
+                OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION => 'correction',
+                OrgApprovalWorkflowService::MODULE_OVERTIME => 'overtime',
+                OrgApprovalWorkflowService::MODULE_LEAVE => 'leave',
+                default => null,
+            };
+            if ($kind === null) {
+                continue;
+            }
+            $key = $this->filingApproverKey($kind, (int) $record->request_id);
+            if (isset($map[$key])) {
+                continue;
+            }
+            $approverUser = $record->approver;
+            $name = '';
+            if ($approverUser instanceof User) {
+                $name = trim((string) ($approverUser->full_name_last_first ?: $approverUser->display_name ?: $approverUser->name));
+            }
+            if ($name === '') {
+                $name = trim((string) ($record->approver_name ?? ''));
+            }
+            $stepRaw = trim((string) ($record->approval_label ?? $record->approver_role ?? ''));
+            $step = $this->normalizeApprovalStepLabel($stepRaw);
+            if ($name === '' && $step === '') {
+                continue;
+            }
+            if ($name === '' && is_array($record->eligible_approver_ids) && $record->eligible_approver_ids !== []) {
+                $name = $this->userDisplayNameLastFirst((int) $record->eligible_approver_ids[0]) ?? '';
+            }
+            $map[$key] = [
+                'name' => $name !== '' ? $name : null,
+                'step' => $step !== '' ? $step : null,
+            ];
+        }
+
+        return $map;
+    }
+
+    /**
+     * @param  array<string, array{name: ?string, step: ?string}>  $pendingApprovers
+     * @return array{name: ?string, step: ?string}
+     */
+    private function resolveFilingApproverMeta(
+        string $kind,
+        string $moduleType,
+        AttendanceCorrection|LeaveRequest|Overtime $request,
+        array $pendingApprovers,
+    ): array {
+        $key = $this->filingApproverKey($kind, (int) $request->getKey());
+        $bulk = $pendingApprovers[$key] ?? ['name' => null, 'step' => null];
+        $name = $bulk['name'] ?? null;
+        $step = $bulk['step'] ?? null;
+
+        $employee = $request->user;
+        if (! $employee instanceof User) {
+            return ['name' => $name, 'step' => $step];
+        }
+
+        $requestor = null;
+        if ($request instanceof LeaveRequest || $request instanceof Overtime) {
+            $requestor = $request->relationLoaded('filedBy') ? $request->filedBy : null;
+        }
+
+        $status = match (true) {
+            $request instanceof AttendanceCorrection => $this->correctionStatusService->resolvedStatus($request),
+            $request instanceof LeaveRequest => $this->normalizeLeaveFilingStatus($request),
+            default => $this->normalizeOvertimeFilingStatus($request),
+        };
+        if ($status !== 'pending') {
+            return ['name' => null, 'step' => null];
+        }
+
+        $pending = $this->workflowService->currentPendingRecord($request, $moduleType, $employee, $requestor);
+        if ($pending === null) {
+            return ['name' => $name, 'step' => $step];
+        }
+
+        $label = $this->workflowService->currentPendingLabel($request, $moduleType, $employee, $requestor);
+        $step = $this->normalizeApprovalStepLabel($label ?? '');
+        if ($step === '') {
+            $step = $this->normalizeApprovalStepLabel((string) ($pending->approval_label ?? $pending->approver_role ?? ''));
+        }
+        $step = $step !== '' ? $step : null;
+
+        $name = $this->approverNameFromPendingRecord($pending);
+        if ($name === null || $name === '') {
+            $fields = $this->workflowService->listApproverDisplayFields($pending);
+            $name = $fields['current_approver_name'] ?? null;
+        }
+
+        return [
+            'name' => $name,
+            'step' => $step ?? ($bulk['step'] ?? null),
+        ];
+    }
+
+    private function approverNameFromPendingRecord(OrgApprovalRecord $pending): ?string
+    {
+        $pending->loadMissing('approver:id,name,first_name,middle_name,last_name,suffix');
+        $role = strtolower(trim((string) ($pending->approver_role ?? '')));
+        $eligibleIds = is_array($pending->eligible_approver_ids) ? $pending->eligible_approver_ids : [];
+        if ($role === 'officer_in_charge' && $eligibleIds !== []) {
+            $oicName = $this->userDisplayNameLastFirst((int) $eligibleIds[0]);
+            if ($oicName !== null && $oicName !== '') {
+                return $oicName;
+            }
+        }
+
+        if ($pending->approver instanceof User) {
+            $formatted = trim((string) ($pending->approver->full_name_last_first ?: $pending->approver->display_name ?: $pending->approver->name));
+
+            return $formatted !== '' ? $formatted : null;
+        }
+
+        $stored = trim((string) ($pending->approver_name ?? ''));
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        if ($eligibleIds !== []) {
+            return $this->userDisplayNameLastFirst((int) $eligibleIds[0]);
+        }
+
+        return null;
+    }
+
+    private function userDisplayNameLastFirst(int $userId): ?string
+    {
+        if ($userId <= 0) {
+            return null;
+        }
+
+        $user = User::query()
+            ->select(['id', 'name', 'first_name', 'middle_name', 'last_name', 'suffix'])
+            ->find($userId);
+        if (! $user instanceof User) {
+            return null;
+        }
+
+        $formatted = trim((string) ($user->full_name_last_first ?: $user->display_name ?: $user->name));
+
+        return $formatted !== '' ? $formatted : null;
+    }
+
+    private function filingApproverKey(string $kind, int $id): string
+    {
+        return $kind.':'.$id;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dashboardFilingRow(
+        string $kind,
+        int $id,
+        string $status,
+        ?string $sortAt,
+        string $title,
+        ?string $detail,
+        ?string $approverName,
+        ?string $approverStep,
+        ?string $subjectName = null,
+        bool $awaitingYourApproval = false,
+    ): array {
+        $isPending = $status === 'pending';
+        $normalizedStep = $this->normalizeApprovalStepLabel($approverStep ?? '');
+        $waitingForLabel = ($isPending && $normalizedStep !== '')
+            ? 'Waiting for '.$normalizedStep
+            : null;
+        $displayStatus = $waitingForLabel ?? $this->dashboardFilingDisplayStatus($status, $approverName, $approverStep);
+        $subtitle = $this->dashboardFilingSubtitle($status, $detail, $approverName);
+
+        return [
+            'kind' => $kind,
+            'id' => $id,
+            'status' => $status,
+            'is_pending' => $isPending,
+            'display_status' => $displayStatus,
+            'waiting_for_label' => $waitingForLabel,
+            'current_approver_name' => $isPending ? ($approverName ?: null) : null,
+            'current_approver_step' => $isPending ? ($normalizedStep !== '' ? $normalizedStep : null) : null,
+            'sort_at' => $sortAt,
+            'title' => $title,
+            'subtitle' => $subtitle,
+            'subject_name' => $subjectName,
+            'awaiting_your_approval' => $awaitingYourApproval,
+        ];
+    }
+
+    private function dashboardFilingDisplayStatus(string $status, ?string $approverName, ?string $approverStep): string
+    {
+        if ($status === 'pending') {
+            return 'Pending approval';
+        }
+
+        return $this->humanizeRequestStatus($status);
+    }
+
+    private function dashboardFilingSubtitle(string $status, ?string $detail, ?string $approverName): string
+    {
+        $detail = trim((string) ($detail ?? ''));
+
+        if ($status === 'pending') {
+            return $detail;
+        }
+
+        if ($status === 'approved') {
+            return $detail !== '' ? 'Approved · '.$detail : 'Approved';
+        }
+
+        if ($detail !== '') {
+            return $this->humanizeRequestStatus($status).' · '.$detail;
+        }
+
+        return $this->humanizeRequestStatus($status);
+    }
+
+    private function normalizeApprovalStepLabel(?string $value): string
+    {
+        $raw = trim((string) ($value ?? ''));
+        if ($raw === '') {
+            return '';
+        }
+
+        if (strtolower($raw) === 'admin_hr') {
+            return 'Admin HR final';
+        }
+        if (strtolower($raw) === 'officer_in_charge') {
+            return 'Officer in Charge';
+        }
+
+        $normalized = preg_replace('/\bDepartment Head\s*\/\s*Department Manager\b/i', 'Department Head', $raw);
+        $normalized = preg_replace('/\bDivision Head\s*\/\s*Division Manager\b/i', 'Division Head', $normalized);
+        $normalized = preg_replace('/\bBranch Head\s*\/\s*Branch Manager\b/i', 'Branch Head', $normalized);
+        $normalized = preg_replace('/\bCompany Head\s*\/\s*Company Manager\b/i', 'Company Head', $normalized);
+        $normalized = preg_replace('/\bArea Head\s*\/\s*Area Manager\b/i', 'Area Head', $normalized);
+        $normalized = preg_replace('/\s+final\s+approval\b/i', ' final', $normalized);
+        $normalized = preg_replace('/\s+approval\b/i', '', $normalized);
+
+        return trim(preg_replace('/\s{2,}/', ' ', $normalized) ?? '');
+    }
+
+    private function normalizeOvertimeFilingStatus(Overtime $overtime): string
+    {
+        if ($overtime->rejected_at !== null || $overtime->status === Overtime::STATUS_REJECTED) {
+            return Overtime::STATUS_REJECTED;
+        }
+        if ($overtime->status === Overtime::STATUS_APPROVED) {
+            return Overtime::STATUS_APPROVED;
+        }
+
+        return Overtime::STATUS_PENDING;
+    }
+
+    private function normalizeLeaveFilingStatus(LeaveRequest $leave): string
+    {
+        $stored = strtolower(trim((string) ($leave->status ?? '')));
+        if (in_array($stored, [LeaveRequest::STATUS_APPROVED, LeaveRequest::STATUS_REJECTED, LeaveRequest::STATUS_PENDING], true)) {
+            return $stored;
+        }
+
+        return LeaveRequest::STATUS_PENDING;
+    }
+
+    private function formatDashboardFilingDateTitle(string $dateStr): string
+    {
+        if ($dateStr === '') {
+            return '—';
+        }
+        try {
+            return Carbon::parse($dateStr)->format('M j, Y');
+        } catch (\Throwable) {
+            return $dateStr;
+        }
+    }
+
+    private function formatLeaveFilingDateRange(string $start, string $end): string
+    {
+        if ($start === '' && $end === '') {
+            return '—';
+        }
+        if ($start !== '' && ($end === '' || $start === $end)) {
+            return $this->formatDashboardFilingDateTitle($start);
+        }
+        if ($start !== '' && $end !== '') {
+            return $this->formatDashboardFilingDateTitle($start).' – '.$this->formatDashboardFilingDateTitle($end);
+        }
+
+        return $this->formatDashboardFilingDateTitle($end);
+    }
+
+    private function leaveFilingTitle(LeaveRequest $leave): string
+    {
+        $type = trim((string) ($leave->type ?? ''));
+        if ($type === '') {
+            return 'Leave request';
+        }
+        $normalized = strtolower(str_replace(['_', '-'], ' ', $type));
+
+        return match ($normalized) {
+            'vl', 'vacation', 'vacation leave' => 'Vacation leave',
+            'sl', 'sick', 'sick leave' => 'Sick leave',
+            'el', 'emergency', 'emergency leave' => 'Emergency leave',
+            'ul', 'unpaid', 'unpaid leave' => 'Unpaid leave',
+            'undertime' => 'Undertime',
+            default => ucwords($normalized),
+        };
+    }
+
+    private function correctionFilingSubtitle(AttendanceCorrection $correction): string
+    {
+        if ($correction->pending_approval) {
+            return 'Pending approval';
+        }
+        if ($correction->approved) {
+            return 'Approved';
+        }
+
+        return 'Rejected';
+    }
+
+    private function humanizeRequestStatus(string $status): string
+    {
+        $key = strtolower(trim($status));
+        if ($key === '') {
+            return 'Pending';
+        }
+
+        return ucfirst(str_replace('_', ' ', $key));
     }
 }

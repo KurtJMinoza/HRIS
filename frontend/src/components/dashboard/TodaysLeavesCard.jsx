@@ -61,8 +61,8 @@ export function TodaysLeavesCard({
             </CardTitle>
             <CardDescription className="mt-0 min-h-8 text-[11px] font-normal leading-4 text-muted-foreground line-clamp-2">
               {hasPending
-                ? `${pendingCount} pending leave starting soon`
-                : 'Shows pending leave starting within the next 7 days.'}
+                ? `${pendingCount} leave request${Number(pendingCount) === 1 ? '' : 's'} waiting for your approval`
+                : 'Leave requests assigned to you for approval will appear here.'}
             </CardDescription>
           </div>
 
@@ -106,7 +106,7 @@ export function TodaysLeavesCard({
               <CalendarDays className="size-6" aria-hidden />
             </span>
             <p className="text-sm font-semibold leading-[1.55] text-foreground">No leave activity for today.</p>
-            <p className="mt-1 text-xs text-muted-foreground">Pending leave starting within 7 days will appear here.</p>
+            <p className="mt-1 text-xs text-muted-foreground">When a leave needs your approval, it will show here.</p>
           </div>
         ) : (
           <div className={DASHBOARD_PENDING_SCROLL_LIST_CLASS}>

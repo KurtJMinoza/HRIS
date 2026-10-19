@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
-import { Activity, ClipboardCheck, Clock, FileCheck, Target, User, ScanLine, ArrowUpRight, ArrowDownRight, ArrowUpDown, Minus, ScanFace, ChevronLeft, ChevronRight, Timer, X, ListTree, CalendarDays, Zap, Info, FileText, Search, SlidersHorizontal, MoreVertical } from 'lucide-react'
+import { Activity, ClipboardCheck, Clock, FileCheck, Target, User, ScanLine, ArrowUpRight, ArrowUpDown, ScanFace, ChevronLeft, ChevronRight, Timer, X, CalendarDays, Zap, Info, FileText, Search, SlidersHorizontal, MoreVertical } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +22,10 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { employeeSelfHref } from '@/lib/hrRoutes'
 import {
+  employeeFilingReviewHref,
+  employeeFilingReviewNavigationState,
+} from '@/lib/employeeFilingDeepLink'
+import {
   getEmployeeDashboardAttendanceCalendar,
   getEmployeeDashboardSummary,
   getEmployeeDashboardPerformanceKpi,
@@ -31,6 +35,7 @@ import {
 import { formatClockTimeDisplay, formatHHmmTo12h, formatScheduleLabel12h, toHhMm } from '@/lib/timeFormat'
 import { cn } from '@/lib/utils'
 import { formatEmployeeName } from '@/lib/employeeSort'
+import { normalizeApprovalHeadTitle } from '@/lib/approvalText'
 import {
   buildEmployeeCorrectionHref,
   calendarIncompleteBadge,
@@ -174,6 +179,72 @@ function formatYmdShort(dateStr) {
   } catch {
     return String(dateStr)
   }
+}
+
+function dashboardFilingKindMeta(kind) {
+  switch (kind) {
+    case 'correction':
+      return { kicker: 'Attendance correction', icon: FileText, href: 'correction-requests' }
+    case 'overtime':
+      return { kicker: 'Overtime', icon: Timer, href: 'overtime' }
+    case 'leave':
+      return { kicker: 'Leave', icon: CalendarDays, href: 'requests' }
+    default:
+      return { kicker: 'Request', icon: FileText, href: 'dashboard' }
+  }
+}
+
+const CALENDAR_SCHEMA_VERSION = 32
+const DASHBOARD_FILINGS_PER_PAGE = 4
+
+function filingIsPending(filing) {
+  return filing?.is_pending === true || String(filing?.status || '').toLowerCase() === 'pending'
+}
+
+function filingWaitingForLabel(filing) {
+  if (!filingIsPending(filing)) return ''
+  const preset = String(filing?.waiting_for_label || '').trim()
+  if (preset) return preset
+  const step = normalizeApprovalHeadTitle(filing?.current_approver_step || '')
+  if (step) return `Waiting for ${step}`
+  return 'Pending approval'
+}
+
+function filingApproverLine(filing) {
+  return String(filing?.current_approver_name || filing?.current_approver || '').trim()
+}
+
+function normalizeDashboardFilings(raw) {
+  return Array.isArray(raw) ? raw : []
+}
+
+function fallbackFilingsFromOvertimeRequests(requests) {
+  if (!Array.isArray(requests) || requests.length === 0) return []
+  return requests.slice(0, 8).map((o) => {
+    const hours = roundHours1(Number(o.computed_hours) || 0)
+    const status = String(o.status || 'pending')
+    return {
+      kind: 'overtime',
+      id: o.id,
+      status,
+      title: o.date ? formatYmdShort(o.date).replace(/^[A-Za-z]+,\s*/, '') : '—',
+      subtitle: hours > 0 ? `${hours}h · ${status.replace(/_/g, ' ')}` : status.replace(/_/g, ' '),
+    }
+  })
+}
+
+function dashboardFilingStatusClass(status) {
+  const key = String(status || '').toLowerCase()
+  if (key === 'approved') {
+    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+  }
+  if (key === 'pending') {
+    return 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+  }
+  if (key === 'rejected' || key === 'denied' || key === 'cancelled') {
+    return 'border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-300'
+  }
+  return 'border-border/60 bg-muted/40 text-muted-foreground'
 }
 
 function isAttendanceSummarySkipDay(day) {
@@ -704,6 +775,8 @@ export default function EmployeeDashboard() {
   const evaluationAbortRef = useRef(null)
   const evaluationWidgetRef = useRef(null)
   const calendarCacheRef = useRef(new Map())
+  const [monthFilings, setMonthFilings] = useState([])
+  const [filingPage, setFilingPage] = useState(1)
 
   const mergeSummary = useCallback((next) => {
     setSummary((current) => ({
@@ -756,7 +829,7 @@ export default function EmployeeDashboard() {
       if (calendarCacheRef.current.has(mk)) continue
       try {
         const data = await getEmployeeDashboardAttendanceCalendar({ month: mk })
-        if (data?.meta?.schema_version === 27) {
+        if (data?.meta?.schema_version === CALENDAR_SCHEMA_VERSION) {
           calendarCacheRef.current.set(mk, data)
         }
       } catch {
@@ -765,22 +838,30 @@ export default function EmployeeDashboard() {
     }
   }, [])
 
+  const applyCalendarPayload = useCallback((data, monthKey) => {
+    const otRows = Array.isArray(data.overtime_requests) ? data.overtime_requests : []
+    setDays(Array.isArray(data.days) ? data.days : [])
+    mergeSummary({
+      ...(data.summary || {}),
+      from_date: `${monthKey}-01`,
+      schedule_assigned: data.schedule_assigned,
+    })
+    setAbsentCounts(data.absent_counts || { absent: 0, leave: 0, holiday: 0 })
+    setMonthOtRequests(otRows)
+    const filings = normalizeDashboardFilings(data.filings)
+    setMonthFilings(filings.length > 0 ? filings : fallbackFilingsFromOvertimeRequests(otRows))
+    setPrevSummary(null)
+  }, [mergeSummary])
+
   const loadAttendanceCalendar = useCallback(async (year, month) => {
     const monthKey = calendarMonthSelectKey(year, month)
     calendarAbortRef.current?.abort()
+
     const cached = calendarCacheRef.current.get(monthKey)
-    const cacheValid = cached && cached?.meta?.schema_version === 27
+    const cacheValid = cached && cached?.meta?.schema_version === CALENDAR_SCHEMA_VERSION
 
     if (cacheValid) {
-      setDays(Array.isArray(cached.days) ? cached.days : [])
-      mergeSummary({
-        ...(cached.summary || {}),
-        from_date: `${monthKey}-01`,
-        schedule_assigned: cached.schedule_assigned,
-      })
-      setAbsentCounts(cached.absent_counts || { absent: 0, leave: 0, holiday: 0 })
-      setMonthOtRequests(Array.isArray(cached.overtime_requests) ? cached.overtime_requests : [])
-      setPrevSummary(null)
+      applyCalendarPayload(cached, monthKey)
       setCalendarLoading(false)
     } else {
       setCalendarLoading(true)
@@ -790,16 +871,10 @@ export default function EmployeeDashboard() {
     calendarAbortRef.current = controller
     try {
       const data = await getEmployeeDashboardAttendanceCalendar({ month: monthKey, signal: controller.signal })
-      calendarCacheRef.current.set(monthKey, data)
-      setDays(Array.isArray(data.days) ? data.days : [])
-      mergeSummary({
-        ...(data.summary || {}),
-        from_date: `${monthKey}-01`,
-        schedule_assigned: data.schedule_assigned,
-      })
-      setAbsentCounts(data.absent_counts || { absent: 0, leave: 0, holiday: 0 })
-      setMonthOtRequests(Array.isArray(data.overtime_requests) ? data.overtime_requests : [])
-      setPrevSummary(null)
+      if (data?.meta?.schema_version === CALENDAR_SCHEMA_VERSION) {
+        calendarCacheRef.current.set(monthKey, data)
+      }
+      applyCalendarPayload(data, monthKey)
       setError(null)
       void prefetchAdjacentMonths(year, month)
     } catch (e) {
@@ -808,6 +883,7 @@ export default function EmployeeDashboard() {
         setDays([])
         setAbsentCounts({ absent: 0, leave: 0, holiday: 0 })
         setMonthOtRequests([])
+        setMonthFilings([])
       }
       setError(e.message)
     } finally {
@@ -816,7 +892,7 @@ export default function EmployeeDashboard() {
         setCalendarLoading(false)
       }
     }
-  }, [mergeSummary, prefetchAdjacentMonths])
+  }, [applyCalendarPayload, prefetchAdjacentMonths])
 
   const loadEvaluationWidget = useCallback(async () => {
     evaluationAbortRef.current?.abort()
@@ -872,6 +948,27 @@ export default function EmployeeDashboard() {
       calendarAbortRef.current?.abort()
     }
   }, [calendarYear, calendarMonth, loadAttendanceCalendar, summaryReady])
+
+  useEffect(() => {
+    setFilingPage(1)
+  }, [calendarYear, calendarMonth])
+
+  const filingPageCount = useMemo(
+    () => Math.max(1, Math.ceil(monthFilings.length / DASHBOARD_FILINGS_PER_PAGE)),
+    [monthFilings.length],
+  )
+
+  const paginatedMonthFilings = useMemo(() => {
+    const safePage = Math.min(Math.max(1, filingPage), filingPageCount)
+    const start = (safePage - 1) * DASHBOARD_FILINGS_PER_PAGE
+    return monthFilings.slice(start, start + DASHBOARD_FILINGS_PER_PAGE)
+  }, [monthFilings, filingPage, filingPageCount])
+
+  useEffect(() => {
+    if (filingPage > filingPageCount) {
+      setFilingPage(filingPageCount)
+    }
+  }, [filingPage, filingPageCount])
 
   useEffect(() => {
     const id = window.setInterval(() => void loadDashboardSummary({ soft: true }), 60_000)
@@ -1566,44 +1663,25 @@ export default function EmployeeDashboard() {
     return rows
   }, [monthOtRequests, otMonthBreakdown.unfiledEntries])
 
-  const unfiledDatesLabel = useMemo(() => {
-    const entries = otMonthBreakdown.unfiledEntries
-    if (!entries.length) return ''
-    const labels = entries.slice(0, 4).map((e) => formatYmdShort(e.date))
-    const extra = entries.length > 4 ? ` +${entries.length - 4} more` : ''
-    return labels.join(' · ') + extra
-  }, [otMonthBreakdown.unfiledEntries])
+  const openRecentFiling = useCallback(
+    (filing) => {
+      const reviewPath = employeeFilingReviewHref(filing)
+      if (reviewPath) {
+        navigate(employeeSelfHref(hrBase, reviewPath), {
+          state: employeeFilingReviewNavigationState(filing),
+        })
+        return
+      }
+      const meta = dashboardFilingKindMeta(filing?.kind)
+      goSelf(meta.href)
+    },
+    [goSelf, hrBase, navigate],
+  )
 
   const otModalTotalHours = useMemo(
     () => roundHours1(otMonthBreakdown.pendingH + otMonthBreakdown.approvedH + otMonthBreakdown.unfiledH),
     [otMonthBreakdown.pendingH, otMonthBreakdown.approvedH, otMonthBreakdown.unfiledH],
   )
-
-  const monthTrend = useMemo(() => {
-    if (!summary || !prevSummary) return null
-    const current = typeof summary.total_hours === 'number' ? summary.total_hours : null
-    const prev = typeof prevSummary.total_hours === 'number' ? prevSummary.total_hours : null
-    if (current == null || prev == null) return null
-    const delta = current - prev
-    if (Math.abs(delta) < 0.01) {
-      return {
-        direction: 'flat',
-        label: 'Same total hours as last month',
-        colorClass: 'text-muted-foreground',
-      }
-    }
-    const absDelta = Math.abs(delta)
-    const direction = delta > 0 ? 'up' : 'down'
-    const hoursLabel = `${absDelta.toFixed(1)}h`
-    const good = delta > 0
-    return {
-      direction,
-      label: `${delta > 0 ? '+' : '-'}${hoursLabel} vs last month`,
-      colorClass: good
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : 'text-red-600 dark:text-red-400',
-    }
-  }, [summary, prevSummary])
 
   const scheduleAssigned = summary?.schedule_assigned !== false
   const todayTimeIn = summary?.today?.time_in
@@ -1960,13 +2038,16 @@ export default function EmployeeDashboard() {
         </Motion.div>
       )}
       <Motion.div
-        className="grid min-w-0 gap-3 @md:grid-cols-2 @lg:gap-4 @xl:grid-cols-[minmax(0,1.65fr)_minmax(240px,0.95fr)_minmax(280px,1.08fr)]"
+        className="grid min-w-0 auto-rows-min items-start gap-3 @md:grid-cols-2 @lg:gap-4 @xl:grid-cols-[minmax(0,1fr)_minmax(280px,22rem)]"
         variants={containerVariants}
         initial="hidden"
         whileInView="visible"
         viewport={scrollViewport}
         transition={scrollRevealTransition}
       >
+        {/* ponytail: xl left stack — own column so tall Recent filings does not inflate row 1 and push Performance down */}
+        <div className="md:contents @xl:col-span-1 @xl:flex @xl:min-w-0 @xl:flex-col @xl:gap-4">
+        <div className="md:contents @xl:grid @xl:grid-cols-2 @xl:gap-4">
         {/* Today — primary, elevated */}
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }}>
         <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] @sm:min-h-[11.2rem] dark:bg-card/85">
@@ -2065,166 +2146,9 @@ export default function EmployeeDashboard() {
           </CardContent>
         </Card>
         </Motion.div>
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:col-span-2 @xl:col-span-1 @xl:col-start-3 @xl:row-start-1 @xl:row-span-2">
-        <Card className="h-full overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] dark:bg-card/85">
-          <CardHeader className="space-y-3 pb-2">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 space-y-1">
-                <CardTitle className="text-sm font-extrabold uppercase tracking-wide text-muted-foreground">
-                  Monthly overview
-                </CardTitle>
-                <p className="text-xs leading-snug text-muted-foreground">
-                  {isViewingCurrentMonth
-                    ? 'Use ← to open past months (future months are hidden).'
-                    : 'Tap the month name to return to this month, or → to move forward.'}
-                </p>
-              </div>
-              <div className="shrink-0 rounded-lg bg-muted p-2">
-                <User className="size-4 text-muted-foreground" aria-hidden />
-              </div>
-            </div>
-            <div className="flex min-w-0 items-center gap-0.5 rounded-xl border border-border bg-muted/40 p-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-9 shrink-0 rounded-lg hover:bg-background/80"
-                onClick={goPrevCalendarMonth}
-                aria-label="Previous month"
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <button
-                type="button"
-                onClick={goCalendarToday}
-                className="min-w-0 flex-1 truncate rounded-md px-2 py-2 text-center text-sm font-semibold tabular-nums tracking-tight text-foreground transition-colors hover:bg-background/70 dark:hover:bg-background/10"
-              >
-                {MONTHS[calendarMonth]} {calendarYear}
-              </button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-9 shrink-0 rounded-lg hover:bg-background/80 disabled:opacity-40"
-                onClick={goNextCalendarMonth}
-                disabled={!canGoNextMonth || loading || calendarLoading}
-                aria-label="Next month"
-              >
-                <ChevronRight className="size-4" />
-              </Button>
-            </div>
-            {isViewingCurrentMonth && (
-              <Badge variant="secondary" className="w-fit border-primary/20 bg-primary/10 text-xs font-medium text-primary">
-                Current month
-              </Badge>
-            )}
-          </CardHeader>
-          <CardContent>
-            <Motion.div
-              key={`month-stats-${calendarYear}-${calendarMonth}`}
-              initial={{ opacity: 0.5, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.24, ease: [0.25, 0.1, 0.25, 1] }}
-              className="space-y-3"
-            >
-              <div className="grid grid-cols-2 gap-3 text-sm @sm:text-base">
-                <div>
-                  <div className="text-sm text-muted-foreground">Late days</div>
-                  <div className="mt-0.5 text-lg font-medium">
-                    {loading || calendarLoading ? '—' : <AnimatedNumber value={summary?.late_count ?? 0} />}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-muted-foreground">Late (min)</div>
-                  <div className="mt-0.5 text-lg font-medium">
-                    {loading || calendarLoading ? '—' : <AnimatedNumber value={summary?.late_minutes ?? 0} />}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-muted-foreground">Undertime days</div>
-                  <div className="mt-0.5 text-lg font-medium">
-                    {loading || calendarLoading ? '—' : <AnimatedNumber value={summary?.undertime_count ?? 0} />}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-muted-foreground">Total hours</div>
-                  <div className="mt-0.5 text-lg font-medium">
-                    {loading || calendarLoading ? '—' : <><AnimatedNumber value={summary?.total_hours ?? 0} duration={700} />h</>}
-                  </div>
-                </div>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-muted/20 p-3 dark:bg-muted/15">
-                <p className="mb-2.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Overtime (selected month)
-                </p>
-                <div className="grid grid-cols-1 gap-2 text-center @sm:grid-cols-3 @sm:divide-x @sm:divide-border/50">
-                  <div className="px-1">
-                    <div className="text-[11px] font-medium uppercase tracking-wide text-amber-800 dark:text-amber-300/90">
-                      Pending
-                    </div>
-                    <div className="mt-1 text-base font-semibold tabular-nums text-amber-700 dark:text-amber-400">
-                      {loading || calendarLoading ? '—' : `${otMonthBreakdown.pendingH}h`}
-                    </div>
-                  </div>
-                  <div className="px-1">
-                    <div className="text-[11px] font-medium uppercase tracking-wide text-emerald-800 dark:text-emerald-300/90">
-                      Approved
-                    </div>
-                    <div className="mt-1 text-base font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                      {loading || calendarLoading ? '—' : `${otMonthBreakdown.approvedH}h`}
-                    </div>
-                  </div>
-                  <div className="px-1">
-                    <div className="text-[11px] font-medium uppercase tracking-wide text-slate-600 dark:text-slate-400">
-                      Unfiled
-                    </div>
-                    <div className="mt-1 text-base font-semibold tabular-nums text-slate-700 dark:text-slate-300">
-                      {loading || calendarLoading ? '—' : `${otMonthBreakdown.unfiledH}h`}
-                    </div>
-                  </div>
-                </div>
-                <p className="mt-2 text-center text-[10px] text-muted-foreground">Requests sync when you change month</p>
-              </div>
-              {!loading && !calendarLoading && unfiledDatesLabel && (
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  <span className="font-medium text-foreground/80">Unfiled clock OT:</span> {unfiledDatesLabel}
-                </p>
-              )}
-              {!loading && !calendarLoading && !unfiledDatesLabel && otMonthBreakdown.unfiledH <= 0 && (
-                <p className="text-xs text-muted-foreground">No clock-detected OT without an active filing this month.</p>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-9 w-full gap-2 border-border/80 text-sm font-medium"
-                onClick={() => setOtDetailsOpen(true)}
-                disabled={loading || calendarLoading}
-              >
-                <ListTree className="size-4 shrink-0 opacity-70" aria-hidden />
-                View OT details
-              </Button>
-            </Motion.div>
-            {monthTrend && (
-              <div className="mt-3 flex flex-col gap-1 text-sm text-muted-foreground @sm:flex-row @sm:items-center @sm:justify-between">
-                <span className={`inline-flex items-center gap-1 font-medium ${monthTrend.colorClass}`}>
-                  {monthTrend.direction === 'up' ? (
-                    <ArrowUpRight className="size-3.5" />
-                  ) : monthTrend.direction === 'down' ? (
-                    <ArrowDownRight className="size-3.5" />
-                  ) : (
-                    <Minus className="size-3.5" />
-                  )}
-                  <span>{monthTrend.label}</span>
-                </span>
-                <span>vs last month</span>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-        </Motion.div>
+        </div>
         {/* Attendance Summary — beside Leave Overview, same footprint as Today's Time */}
-        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:col-span-2 @xl:col-span-2 @xl:col-start-1 @xl:row-start-2">
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:order-4 @md:col-span-2 @xl:order-none">
           <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] dark:bg-card/85">
             <CardHeader className="border-b border-border px-4 py-3">
               <div className="flex flex-col gap-3 @lg:flex-row @lg:items-center @lg:justify-between">
@@ -2271,7 +2195,7 @@ export default function EmployeeDashboard() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="grid gap-0 @xl:grid-cols-[1.04fr_0.96fr]">
+              <div className="grid items-start gap-0 @xl:grid-cols-[1.04fr_0.96fr]">
                 <section className="px-4 py-3">
                   <div className="hidden items-start gap-4">
                     <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-orange-100/70 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300">
@@ -2346,7 +2270,7 @@ export default function EmployeeDashboard() {
                     </>
                   )}
                 </section>
-                <section className="border-t border-border bg-muted/15 px-4 py-3 @xl:border-l-0 @xl:border-t-0 dark:bg-muted/10">
+                <section className="border-t border-border bg-muted/15 px-4 py-3 @xl:border-l @xl:border-t-0 dark:bg-muted/10">
                   <div className="hidden items-start gap-4">
                     <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-violet-100/80 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300">
                       <Activity className="size-5" strokeWidth={2.25} aria-hidden />
@@ -2359,7 +2283,7 @@ export default function EmployeeDashboard() {
                   {evaluationLoading ? (
                     <div className="flex h-28 items-center justify-center text-sm text-slate-500">Loading performance...</div>
                   ) : (
-                    <button type="button" className="grid w-full gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 @md:grid-cols-2 @xl:grid-cols-1" onClick={() => setEvaluationDetailsOpen(true)} aria-label="View performance details">
+                    <button type="button" className="grid w-full items-start gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 @md:grid-cols-2 @xl:grid-cols-1" onClick={() => setEvaluationDetailsOpen(true)} aria-label="View performance details">
                       <div className="rounded-xl bg-card p-3 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.75)] transition-colors hover:bg-muted/20 dark:bg-card/70 dark:hover:bg-card/80">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
@@ -2403,6 +2327,194 @@ export default function EmployeeDashboard() {
               </div>
             </CardContent>
           </Card>
+        </Motion.div>
+        </div>
+        <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="@md:order-3 @md:col-span-2 @xl:order-none @xl:col-start-2 @xl:row-start-1 @xl:h-fit @xl:w-full @xl:max-w-[22rem] @xl:justify-self-end @xl:self-start">
+        <Card className="h-auto w-full overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.7)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.8)] dark:bg-card/85">
+          <CardHeader className="border-b border-border px-4 py-3 @md:px-5">
+            <div className="flex flex-col gap-3 @md:flex-row @md:items-center @md:justify-between @xl:flex-col @xl:items-stretch">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="hidden size-10 shrink-0 items-center justify-center rounded-lg bg-orange-100/70 text-orange-600 @sm:flex dark:bg-orange-500/10 dark:text-orange-300">
+                  <ClipboardCheck className="size-5" strokeWidth={2.25} aria-hidden />
+                </span>
+                <div className="min-w-0 space-y-1">
+                  <CardTitle className="text-base font-black text-slate-950 @md:text-lg dark:text-slate-50">
+                    Recent filings
+                  </CardTitle>
+                  <CardDescription className="text-xs leading-snug text-muted-foreground">
+                    {isViewingCurrentMonth
+                      ? 'This month’s requests and who approves pending items.'
+                      : 'Requests for the selected month (pending first).'}
+                  </CardDescription>
+                </div>
+              </div>
+              <div className="flex w-full min-w-0 items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-sm @md:max-w-[13rem] @md:shrink-0 @xl:max-w-none dark:bg-card/85">
+                <button
+                  type="button"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-950 hover:bg-orange-50 hover:text-orange-600 dark:text-slate-100 dark:hover:bg-orange-500/10 dark:hover:text-orange-300"
+                  onClick={goPrevCalendarMonth}
+                  aria-label="Previous month"
+                >
+                  <ChevronLeft className="size-4" strokeWidth={2.7} />
+                </button>
+                <button
+                  type="button"
+                  onClick={goCalendarToday}
+                  className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-center text-sm font-black tabular-nums text-slate-950 hover:bg-orange-50 dark:text-slate-50 dark:hover:bg-orange-500/10"
+                >
+                  {MONTHS[calendarMonth]} {calendarYear}
+                  {isViewingCurrentMonth ? (
+                    <span className="ml-1 hidden text-xs font-semibold text-slate-500 @md:inline dark:text-slate-400">Current</span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-950 hover:bg-orange-50 hover:text-orange-600 disabled:opacity-40 dark:text-slate-100 dark:hover:bg-orange-500/10 dark:hover:text-orange-300"
+                  onClick={goNextCalendarMonth}
+                  disabled={!canGoNextMonth || loading || calendarLoading}
+                  aria-label="Next month"
+                >
+                  <ChevronRight className="size-4" strokeWidth={2.7} />
+                </button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="px-4 py-3 @md:px-5 @xl:max-h-[min(28rem,calc(100dvh-10rem))] @xl:overflow-y-auto">
+            <Motion.div
+              key={`month-filing-${calendarYear}-${calendarMonth}`}
+              initial={{ opacity: 0.5, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: [0.25, 0.1, 0.25, 1] }}
+              className="flex min-h-0 min-w-0 flex-col gap-2"
+            >
+              {loading || calendarLoading ? (
+                Array.from({ length: 2 }).map((_, index) => (
+                  <div
+                    key={`filing-skel-${index}`}
+                    className="h-14 animate-pulse rounded-lg border border-border/60 bg-muted/30"
+                  />
+                ))
+              ) : monthFilings.length > 0 ? (
+                <div className="min-w-0 space-y-2">
+                  {paginatedMonthFilings.map((filing) => {
+                    const meta = dashboardFilingKindMeta(filing.kind)
+                    const Icon = meta.icon
+                    const isPending = filingIsPending(filing)
+                    const waitingLabel = filingWaitingForLabel(filing)
+                    const approverName = filingApproverLine(filing)
+                    const badgeLabel =
+                      filing.display_status
+                      || String(filing.status || 'pending').replace(/_/g, ' ')
+                    const detailLine = String(filing.subtitle || '').trim()
+                    const subjectName = String(filing?.subject_name || '').trim()
+                    return (
+                      <button
+                        key={`${filing.kind}-${filing.id}${subjectName ? `-for-${subjectName}` : ''}`}
+                        type="button"
+                        onClick={() => openRecentFiling(filing)}
+                        className={cn(
+                          'group flex w-full items-start gap-3 rounded-lg border border-border/80 bg-background px-3 py-2.5 text-left transition-colors hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                          isPending && 'border-l-[3px] border-l-amber-500 pl-[calc(0.75rem-2px)]',
+                        )}
+                      >
+                        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/80 text-muted-foreground group-hover:bg-muted">
+                          <Icon className="size-4" aria-hidden />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span className="text-[11px] font-medium uppercase text-muted-foreground">{meta.kicker}</span>
+                            {detailLine ? (
+                              <span className="text-[11px] text-muted-foreground/90">{detailLine}</span>
+                            ) : null}
+                          </span>
+                          <span className="mt-0.5 block text-sm font-semibold text-foreground">{filing.title || '—'}</span>
+                          {subjectName ? (
+                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                              {filing.awaiting_your_approval ? 'Awaiting your approval · ' : 'For '}
+                              <span className="font-medium text-foreground/90">{subjectName}</span>
+                            </span>
+                          ) : null}
+                          {isPending ? (
+                            <span className="mt-1 block text-xs leading-snug text-muted-foreground">
+                              <span className="text-foreground/90">{waitingLabel}</span>
+                              {approverName ? (
+                                <>
+                                  {' · '}
+                                  <span className="font-medium text-foreground">{approverName}</span>
+                                </>
+                              ) : null}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
+                          <Badge
+                            variant="secondary"
+                            className={cn(
+                              'h-5 px-1.5 text-[10px] font-medium capitalize',
+                              dashboardFilingStatusClass(filing.status),
+                            )}
+                          >
+                            {isPending ? 'Pending' : badgeLabel}
+                          </Badge>
+                          <ChevronRight className="size-3.5 text-muted-foreground/70" aria-hidden />
+                        </span>
+                      </button>
+                    )
+                  })}
+                  {(filingPageCount > 1 || monthFilings.length > 0) ? (
+                    <div className="flex flex-col gap-2 border-t border-border/50 pt-2 @sm:flex-row @sm:items-center @sm:justify-between">
+                      <p className="text-center text-[10px] text-muted-foreground @sm:text-left">
+                        {filingPageCount > 1 ? (
+                          <>
+                            Page {Math.min(filingPage, filingPageCount)} of {filingPageCount}
+                            {' · '}
+                          </>
+                        ) : null}
+                        {monthFilings.length} filing{monthFilings.length === 1 ? '' : 's'}
+                      </p>
+                      {filingPageCount > 1 ? (
+                        <div className="grid grid-cols-2 gap-2 @sm:flex @sm:shrink-0">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            disabled={filingPage <= 1}
+                            onClick={() => setFilingPage((page) => Math.max(1, page - 1))}
+                          >
+                            Previous
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs"
+                            disabled={filingPage >= filingPageCount}
+                            onClick={() => setFilingPage((page) => Math.min(filingPageCount, page + 1))}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 px-3 py-4 text-center">
+                  <p className="text-sm font-medium text-foreground">No filings this month</p>
+                  <p className="mx-auto mt-1 max-w-[16rem] text-xs leading-relaxed text-muted-foreground">
+                    Leave, overtime, and attendance corrections for this month appear here.
+                  </p>
+                </div>
+              )}
+              <p className="shrink-0 pt-1 text-center text-[10px] leading-snug text-muted-foreground">
+                {monthFilings.length > 0 && !loading && !calendarLoading
+                  ? 'Tap a row to open that request. Use the month control above to browse other periods.'
+                  : 'Use the month control above to browse other periods.'}
+              </p>
+            </Motion.div>
+          </CardContent>
+        </Card>
         </Motion.div>
         <Motion.div variants={itemVariants} whileHover={{ y: -2, transition: { duration: 0.15 } }} className="hidden @xl:col-start-1 @xl:row-start-2">
         <Card className="min-h-40 overflow-hidden rounded-xl border-border bg-card shadow-[0_12px_30px_-22px_rgba(15,23,42,0.65)] transition-all duration-200 hover:shadow-[0_18px_36px_-24px_rgba(15,23,42,0.75)] @sm:min-h-[11.2rem] dark:bg-card/85">

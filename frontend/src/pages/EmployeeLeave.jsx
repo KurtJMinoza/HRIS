@@ -1,4 +1,5 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { motion as Motion } from 'framer-motion'
 import {
   Calendar,
@@ -105,7 +106,14 @@ import {
   getMyOrganizationAssignments,
   profileImageUrl,
   validateMyLeaveDateRange,
+  fetchLeaveRequestReview,
 } from '@/api'
+import {
+  clearRequestReviewSearchParams,
+  extractLeaveRequestFromReviewPayload,
+  leaveReviewSeedFromDashboardRow,
+  parseLeaveReviewRequestId,
+} from '@/lib/leaveReviewDeepLink'
 import {
   ADMIN_FORM_DIALOG_BODY_CLASS,
   ADMIN_FORM_DIALOG_DESC_CLASS,
@@ -310,6 +318,14 @@ function LeaveModalCalendarArt() {
 function EmployeeLeaveSelfService() {
   const { toast } = useToast()
   const { user } = useAuth()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const reviewRequestIdFromUrl = parseLeaveReviewRequestId(
+    searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'),
+  )
+  const handledLeaveDeepLinkRef = useRef(null)
+  const leaveDetailAbortRef = useRef(null)
 
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -339,6 +355,7 @@ function EmployeeLeaveSelfService() {
   const [addOpen, setAddOpen] = useState(false)
   const [leaveDetailOpen, setLeaveDetailOpen] = useState(false)
   const [leaveDetailRow, setLeaveDetailRow] = useState(null)
+  const [leaveDetailLoading, setLeaveDetailLoading] = useState(false)
   const [deleteDialog, setDeleteDialog] = useState({ open: false, leave: null })
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
   const [addForm, setAddForm] = useState({
@@ -790,6 +807,51 @@ function EmployeeLeaveSelfService() {
     setLeaveDetailRow(leave)
     setLeaveDetailOpen(true)
   }
+
+  const loadLeaveDetailForReview = useCallback(
+    async (requestId) => {
+      const id = parseLeaveReviewRequestId(requestId)
+      if (!id) return
+      leaveDetailAbortRef.current?.abort()
+      const controller = new AbortController()
+      leaveDetailAbortRef.current = controller
+      setLeaveDetailOpen(true)
+      setLeaveDetailLoading(true)
+      const seed = leaveReviewSeedFromDashboardRow(location.state?.leaveReviewSeed, id)
+      if (seed) {
+        setLeaveDetailRow(seed)
+      } else {
+        setLeaveDetailRow({ id: Number(id) })
+      }
+      try {
+        const data = await fetchLeaveRequestReview(id, { signal: controller.signal })
+        if (controller.signal.aborted) return
+        const next = extractLeaveRequestFromReviewPayload(data)
+        if (next) setLeaveDetailRow(next)
+      } catch (e) {
+        if (e?.name === 'AbortError' || controller.signal.aborted) return
+        toast({
+          title: 'Failed to load leave details',
+          description: e.message || 'Please try again.',
+          variant: 'error',
+        })
+      } finally {
+        if (!controller.signal.aborted) setLeaveDetailLoading(false)
+      }
+    },
+    [location.state?.leaveReviewSeed, toast],
+  )
+
+  useEffect(() => {
+    if (!reviewRequestIdFromUrl) {
+      handledLeaveDeepLinkRef.current = null
+      return
+    }
+    if (handledLeaveDeepLinkRef.current === reviewRequestIdFromUrl) return
+    handledLeaveDeepLinkRef.current = reviewRequestIdFromUrl
+    void loadLeaveDetailForReview(reviewRequestIdFromUrl)
+    clearRequestReviewSearchParams(setSearchParams)
+  }, [reviewRequestIdFromUrl, loadLeaveDetailForReview, setSearchParams])
 
   async function handleDeleteLeave() {
     if (!deleteDialog.leave) return
@@ -2144,9 +2206,13 @@ function EmployeeLeaveSelfService() {
         open={leaveDetailOpen}
         onOpenChange={(open) => {
           setLeaveDetailOpen(open)
-          if (!open) setLeaveDetailRow(null)
+          if (!open) {
+            setLeaveDetailRow(null)
+            setLeaveDetailLoading(false)
+          }
         }}
         leave={leaveDetailRow}
+        loading={leaveDetailLoading}
         resolveDocUrl={profileImageUrl}
         onDelete={
           leaveDetailRow?.actor_can_delete

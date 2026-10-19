@@ -17,6 +17,7 @@ use App\Models\EmployeeEmergencyContact;
 use App\Models\EmployeeGovernmentId;
 use App\Models\Holiday;
 use App\Models\LeaveRequest;
+use App\Models\OrgApprovalRecord;
 use App\Models\Overtime;
 use App\Models\PayrollBatchRun;
 use App\Models\PayrollEmployee;
@@ -35,6 +36,7 @@ use App\Services\HolidayScopeResolver;
 use App\Services\HolidayService;
 use App\Services\HolidayPolicyCache;
 use App\Services\LeaveCreditService;
+use App\Services\OrgApprovalWorkflowService;
 use App\Services\LegacyOrganizationMirrorService;
 use App\Services\PayrollFreezeService;
 use App\Support\AdminDashboardCache;
@@ -213,10 +215,30 @@ class AppServiceProvider extends ServiceProvider
             if (! $leave->user_id) {
                 return;
             }
-            if ($leave->wasChanged('status') || $leave->status === LeaveRequest::STATUS_APPROVED) {
+            if ($leave->wasChanged('status') || $leave->wasChanged('pending_approval') || $leave->status === LeaveRequest::STATUS_APPROVED) {
                 AttendanceCacheService::invalidate((int) $leave->user_id);
                 EmployeeDashboardCacheService::invalidate((int) $leave->user_id);
                 PayrollCacheInvalidator::clear('leave_changed', ['user_id' => (int) $leave->user_id]);
+            }
+        });
+
+        OrgApprovalRecord::saved(function (OrgApprovalRecord $record): void {
+            $employeeUserId = match ($record->module_type) {
+                OrgApprovalWorkflowService::MODULE_LEAVE => (int) (LeaveRequest::query()->whereKey($record->request_id)->value('user_id') ?? 0),
+                OrgApprovalWorkflowService::MODULE_OVERTIME => (int) (Overtime::query()->whereKey($record->request_id)->value('user_id') ?? 0),
+                OrgApprovalWorkflowService::MODULE_ATTENDANCE_CORRECTION => (int) (AttendanceCorrection::query()->whereKey($record->request_id)->value('user_id') ?? 0),
+                default => 0,
+            };
+            $companyId = null;
+            if ($employeeUserId > 0) {
+                EmployeeDashboardCacheService::invalidate($employeeUserId);
+                $companyId = User::query()->whereKey($employeeUserId)->value('company_id');
+            }
+            if ($companyId === null && $record->approver_id) {
+                $companyId = User::query()->whereKey((int) $record->approver_id)->value('company_id');
+            }
+            if ($companyId !== null) {
+                AdminDashboardCache::invalidateForUserCompany((int) $companyId, ['requests', 'summary']);
             }
         });
         LeaveRequest::deleted(function (LeaveRequest $leave): void {
