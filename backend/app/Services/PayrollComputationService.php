@@ -3341,6 +3341,32 @@ class PayrollComputationService implements PayrollBulkComputation
     }
 
     /**
+     * True when present-day units are at least 90% of scheduled regular days.
+     * That branch pays the fixed semi-monthly gross, so an unworked half has to be an explicit row.
+     *
+     * @param  list<array<string, mixed>>  $days
+     */
+    private function fixedRegularNearFullCutoff(array $days): bool
+    {
+        $scheduledDays = 0;
+        foreach ($days as $day) {
+            if (! is_array($day)) {
+                continue;
+            }
+            $requiredMinutes = max(0, (int) ($day['required_minutes'] ?? 0));
+            if ($requiredMinutes <= 0 || (bool) ($day['is_rest_day'] ?? false)) {
+                continue;
+            }
+            $scheduledDays++;
+        }
+        if ($scheduledDays <= 0) {
+            return false;
+        }
+
+        return ($this->countFixedRegularPresentDayUnits($days) / $scheduledDays) >= 0.90;
+    }
+
+    /**
      * Attendance reductions applied against fixed semi-monthly basic pay for regular employees.
      *
      * @param  list<array<string, mixed>>  $days
@@ -3363,6 +3389,10 @@ class PayrollComputationService implements PayrollBulkComputation
         $unpaidLeaveMinutes = 0;
         $lateAmountRunning = 0.0;
         $undertimeAmountRunning = 0.0;
+        // At or above 90% present, basic stays the fixed semi-monthly gross and only
+        // these rows reduce it. Below that, present-day units already omit an unworked
+        // half, so charging it here would deduct the same half twice.
+        $nearFullFixedRegularCutoff = $this->fixedRegularNearFullCutoff($days);
 
         foreach ($days as $day) {
             if (! is_array($day)) {
@@ -3422,6 +3452,28 @@ class PayrollComputationService implements PayrollBulkComputation
                 }
                 $halfDayCount++;
                 $halfDayReferenceMinutes += $leaveHalfMinutes;
+
+                if ($nearFullFixedRegularCutoff) {
+                    $paidLeaveUnits = $this->fixedRegularPaidLeaveDayUnitsFromDay($day);
+                    $attendanceRegularMinutes = 0;
+                    foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+                        if (! is_array($entry)) {
+                            continue;
+                        }
+                        if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                            continue;
+                        }
+                        $attendanceRegularMinutes += max(0, (int) ($entry['minutes'] ?? 0));
+                    }
+                    // Paid half-day leave covers one half. The other half was not worked,
+                    // and the fixed gross still includes it until this row deducts it.
+                    if ($paidLeaveUnits > 0.0001 && $paidLeaveUnits + 0.0001 < 1.0 && $attendanceRegularMinutes <= 0) {
+                        $unworkedFraction = min(0.5, max(0.0, 1.0 - $paidLeaveUnits));
+                        $halfDayDeductionMinutes += (int) round($requiredMinutes * $unworkedFraction);
+
+                        continue;
+                    }
+                }
             }
 
             // Completed pair at the schedule's exact half-day unit (e.g., 08:00–12:00):

@@ -100,6 +100,144 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         );
     }
 
+    public function test_near_full_cutoff_deducts_unworked_half_of_paid_half_day_leave(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = new \ReflectionMethod($service, 'computeFixedRegularAttendanceDeductions');
+        $method->setAccessible(true);
+
+        $dailyRate = 961.54;
+        $halfPay = round($dailyRate / 2, 2);
+        $days = [];
+        for ($i = 0; $i < 11; $i++) {
+            $days[] = [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'regular_pay' => $dailyRate,
+                'breakdown' => [
+                    ['component' => 'regular_pay', 'minutes' => 480, 'amount' => $dailyRate],
+                ],
+            ];
+        }
+        $days[] = [
+            'status' => 'halfday',
+            'required_minutes' => 480,
+            'is_rest_day' => false,
+            'regular_pay' => $halfPay,
+            'worked_minutes' => 240,
+            'regular_day_minutes' => 240,
+            'breakdown' => [[
+                'component' => 'paid_leave',
+                'minutes' => 240,
+                'amount' => $halfPay,
+                'leave_type' => 'half_day',
+                'day_fraction' => 0.5,
+            ]],
+        ];
+
+        $breakdown = $method->invoke($service, $days, $dailyRate);
+        $halfDay = collect($breakdown['rows'] ?? [])->keyBy('key')['half_day'] ?? [];
+
+        $this->assertSame(1, (int) ($halfDay['count'] ?? 0));
+        $this->assertSame(240, (int) ($halfDay['deduction_minutes'] ?? 0));
+        $this->assertSame(240, (int) ($halfDay['minutes'] ?? 0));
+        $this->assertEqualsWithDelta($halfPay, (float) ($halfDay['deduction_amount'] ?? 0), 0.02);
+        $this->assertEqualsWithDelta($halfPay, (float) ($breakdown['total_deduction'] ?? 0), 0.02);
+    }
+
+    public function test_below_near_full_cutoff_does_not_deduct_paid_half_day_leave_again(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = new \ReflectionMethod($service, 'computeFixedRegularAttendanceDeductions');
+        $method->setAccessible(true);
+
+        $dailyRate = 961.54;
+        $halfPay = round($dailyRate / 2, 2);
+        $days = [];
+        for ($i = 0; $i < 5; $i++) {
+            $days[] = [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'breakdown' => [
+                    ['component' => 'regular_pay', 'minutes' => 480, 'amount' => $dailyRate],
+                ],
+            ];
+        }
+        for ($i = 0; $i < 3; $i++) {
+            $days[] = [
+                'status' => 'absent',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'breakdown' => [],
+            ];
+        }
+        $days[] = [
+            'status' => 'halfday',
+            'required_minutes' => 480,
+            'is_rest_day' => false,
+            'regular_pay' => $halfPay,
+            'breakdown' => [[
+                'component' => 'paid_leave',
+                'minutes' => 240,
+                'amount' => $halfPay,
+                'leave_type' => 'half_day',
+                'day_fraction' => 0.5,
+            ]],
+        ];
+
+        $breakdown = $method->invoke($service, $days, $dailyRate);
+        $halfDay = collect($breakdown['rows'] ?? [])->keyBy('key')['half_day'] ?? [];
+
+        $this->assertSame(0, (int) ($halfDay['deduction_minutes'] ?? 0));
+        $this->assertEqualsWithDelta(0.0, (float) ($halfDay['deduction_amount'] ?? 0), 0.02);
+        $this->assertSame(240, (int) ($halfDay['minutes'] ?? 0));
+    }
+
+    public function test_worked_half_with_paid_leave_stays_informational_on_near_full_cutoff(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $method = new \ReflectionMethod($service, 'computeFixedRegularAttendanceDeductions');
+        $method->setAccessible(true);
+
+        $dailyRate = 961.54;
+        $halfPay = round($dailyRate / 2, 2);
+        $days = [];
+        for ($i = 0; $i < 11; $i++) {
+            $days[] = [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'breakdown' => [
+                    ['component' => 'regular_pay', 'minutes' => 480, 'amount' => $dailyRate],
+                ],
+            ];
+        }
+        $days[] = [
+            'status' => 'halfday',
+            'required_minutes' => 480,
+            'is_rest_day' => false,
+            'breakdown' => [
+                ['component' => 'regular_pay', 'minutes' => 240, 'amount' => $halfPay],
+                [
+                    'component' => 'paid_leave',
+                    'minutes' => 240,
+                    'amount' => $halfPay,
+                    'leave_type' => 'half_day',
+                    'day_fraction' => 0.5,
+                ],
+            ],
+        ];
+
+        $breakdown = $method->invoke($service, $days, $dailyRate);
+        $halfDay = collect($breakdown['rows'] ?? [])->keyBy('key')['half_day'] ?? [];
+
+        $this->assertSame(0, (int) ($halfDay['deduction_minutes'] ?? 0));
+        $this->assertEqualsWithDelta(0.0, (float) ($halfDay['deduction_amount'] ?? 0), 0.02);
+        $this->assertSame(240, (int) ($halfDay['minutes'] ?? 0));
+    }
+
     public function test_fixed_attendance_routes_late_status_shortfall_to_undertime_when_only_undertime_minutes_apply(): void
     {
         $service = app(PayrollComputationService::class);
