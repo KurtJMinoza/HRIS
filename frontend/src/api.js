@@ -5948,10 +5948,19 @@ export async function fetchLeaveRequestReview(requestId, options = {}) {
   }
 
   const id = encodeURIComponent(raw)
-  const paths = [
-    `/leave-requests/${id}/review-lite`,
-    `/admin/leave/${id}/review-lite`,
-  ]
+  // Employee-scoped path first for self-service pages; plain employees are blocked from the
+  // hr.panel routes by EnsureHrPanelAccess, so the own-request endpoint must be reachable.
+  const paths = options.employeeScoped
+    ? [
+        `/leave/my/${id}/review-lite`,
+        `/leave-requests/${id}/review-lite`,
+        `/admin/leave/${id}/review-lite`,
+      ]
+    : [
+        `/leave-requests/${id}/review-lite`,
+        `/leave/my/${id}/review-lite`,
+        `/admin/leave/${id}/review-lite`,
+      ]
   let lastErr = null
   for (const path of paths) {
     try {
@@ -5959,7 +5968,8 @@ export async function fetchLeaveRequestReview(requestId, options = {}) {
     } catch (err) {
       lastErr = err
     }
-    if (lastErr?.status !== 404) {
+    // 403 = wrong surface (e.g. hr.panel for a plain employee), 404 = unknown route/id.
+    if (lastErr?.status !== 404 && lastErr?.status !== 403) {
       break
     }
   }

@@ -174,6 +174,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/employee/presence-filings/{id}', [PresenceFilingController::class, 'showMine'])->whereNumber('id');
     Route::delete('/employee/presence-filings/{id}', [PresenceFilingController::class, 'destroy']);
     Route::get('/leave/my', [EmployeeLeaveController::class, 'my']);
+    /** Employee-scoped review payload (own request) — dashboard deep-links must not need hr.panel. */
+    Route::get('/leave/my/{id}/review-lite', [EmployeeLeaveController::class, 'myReviewLite'])->whereNumber('id');
     Route::get('/leave/halfday-availability', [EmployeeLeaveController::class, 'halfdayAvailability']);
     Route::get('/leave/halfday-preview', [EmployeeLeaveController::class, 'halfdayPreview']);
     Route::get('/leave/undertime-preview', [EmployeeLeaveController::class, 'undertimePreview']);

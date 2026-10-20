@@ -1595,6 +1595,8 @@ class EmployeeDashboardController extends Controller
                 detail: null,
                 approverName: $approver['name'] ?? null,
                 approverStep: $approver['step'] ?? null,
+                period: $this->formatDashboardFilingDateTitle($dateStr),
+                descriptor: $this->correctionFilingDescriptor($correction),
             );
         }
 
@@ -1618,6 +1620,8 @@ class EmployeeDashboardController extends Controller
                 detail: $detail,
                 approverName: $approver['name'] ?? null,
                 approverStep: $approver['step'] ?? null,
+                period: $this->formatDashboardFilingDateTitle($dateStr),
+                descriptor: $detail,
             );
         }
 
@@ -1647,6 +1651,8 @@ class EmployeeDashboardController extends Controller
                 approverStep: $approver['step'] ?? null,
                 subjectName: $subjectName !== '' ? $subjectName : null,
                 awaitingYourApproval: $awaitingViewer && $status === 'pending',
+                period: $detail,
+                descriptor: $this->leaveFilingTitle($leave),
             );
         }
 
@@ -1867,6 +1873,8 @@ class EmployeeDashboardController extends Controller
     }
 
     /**
+     * @param  string|null  $period  Primary label (the filing period/date) shown as the row headline.
+     * @param  string|null  $descriptor  Secondary label (leave type, overtime hours, correction issue).
      * @return array<string, mixed>
      */
     private function dashboardFilingRow(
@@ -1880,6 +1888,8 @@ class EmployeeDashboardController extends Controller
         ?string $approverStep,
         ?string $subjectName = null,
         bool $awaitingYourApproval = false,
+        ?string $period = null,
+        ?string $descriptor = null,
     ): array {
         $isPending = $status === 'pending';
         $normalizedStep = $this->normalizeApprovalStepLabel($approverStep ?? '');
@@ -1901,6 +1911,8 @@ class EmployeeDashboardController extends Controller
             'sort_at' => $sortAt,
             'title' => $title,
             'subtitle' => $subtitle,
+            'period' => $period !== null && $period !== '' ? $period : $title,
+            'descriptor' => $descriptor !== null && $descriptor !== '' ? $descriptor : $detail,
             'subject_name' => $subjectName,
             'awaiting_your_approval' => $awaitingYourApproval,
         ];
@@ -2036,6 +2048,21 @@ class EmployeeDashboardController extends Controller
         }
 
         return 'Rejected';
+    }
+
+    /**
+     * Short label for what the attendance correction is about (missing punch, etc.).
+     */
+    private function correctionFilingDescriptor(AttendanceCorrection $correction): ?string
+    {
+        $kind = strtolower(trim((string) ($correction->issue_kind ?? '')));
+
+        return match ($kind) {
+            'missing_in' => 'Missing Clock In',
+            'missing_out' => 'Missing Clock Out',
+            'both' => 'Missing Clock In and Out',
+            default => null,
+        };
     }
 
     private function humanizeRequestStatus(string $status): string

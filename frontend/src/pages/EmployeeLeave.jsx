@@ -112,6 +112,7 @@ import {
   clearRequestReviewSearchParams,
   extractLeaveRequestFromReviewPayload,
   leaveReviewSeedFromDashboardRow,
+  mapLeaveReviewFetchError,
   parseLeaveReviewRequestId,
 } from '@/lib/leaveReviewDeepLink'
 import {
@@ -356,6 +357,7 @@ function EmployeeLeaveSelfService() {
   const [leaveDetailOpen, setLeaveDetailOpen] = useState(false)
   const [leaveDetailRow, setLeaveDetailRow] = useState(null)
   const [leaveDetailLoading, setLeaveDetailLoading] = useState(false)
+  const [leaveDetailError, setLeaveDetailError] = useState(null)
   const [deleteDialog, setDeleteDialog] = useState({ open: false, leave: null })
   const [deleteSubmitting, setDeleteSubmitting] = useState(false)
   const [addForm, setAddForm] = useState({
@@ -817,6 +819,7 @@ function EmployeeLeaveSelfService() {
       leaveDetailAbortRef.current = controller
       setLeaveDetailOpen(true)
       setLeaveDetailLoading(true)
+      setLeaveDetailError(null)
       const seed = leaveReviewSeedFromDashboardRow(location.state?.leaveReviewSeed, id)
       if (seed) {
         setLeaveDetailRow(seed)
@@ -824,12 +827,22 @@ function EmployeeLeaveSelfService() {
         setLeaveDetailRow({ id: Number(id) })
       }
       try {
-        const data = await fetchLeaveRequestReview(id, { signal: controller.signal })
+        // employeeScoped: plain employees are not on the HR panel surface, so the own-request
+        // endpoint must be tried first (admin routes answer 403 for them).
+        const data = await fetchLeaveRequestReview(id, { signal: controller.signal, employeeScoped: true })
         if (controller.signal.aborted) return
         const next = extractLeaveRequestFromReviewPayload(data)
-        if (next) setLeaveDetailRow(next)
+        if (next) {
+          setLeaveDetailRow(next)
+          setLeaveDetailError(null)
+        } else {
+          setLeaveDetailRow(null)
+          setLeaveDetailError('not_found')
+        }
       } catch (e) {
         if (e?.name === 'AbortError' || controller.signal.aborted) return
+        setLeaveDetailRow(null)
+        setLeaveDetailError(mapLeaveReviewFetchError(e))
         toast({
           title: 'Failed to load leave details',
           description: e.message || 'Please try again.',
@@ -2209,10 +2222,17 @@ function EmployeeLeaveSelfService() {
           if (!open) {
             setLeaveDetailRow(null)
             setLeaveDetailLoading(false)
+            setLeaveDetailError(null)
           }
         }}
         leave={leaveDetailRow}
         loading={leaveDetailLoading}
+        error={leaveDetailError}
+        onRetry={
+          leaveDetailError && reviewRequestIdFromUrl
+            ? () => void loadLeaveDetailForReview(reviewRequestIdFromUrl)
+            : undefined
+        }
         resolveDocUrl={profileImageUrl}
         onDelete={
           leaveDetailRow?.actor_can_delete

@@ -935,6 +935,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const canApproveOvertime = perms.has('overtime.approve')
   const isAdminHr = user?.hr_role === 'admin_hr'
   const canUseApprovalQueue = canSeeAllTab && (isHr || canApproveOvertime)
+  /**
+   * Employee variant without the approval queue: dashboard "Recent filings" deep-links point at
+   * the employee's own overtime request, which the admin review API cannot serve.
+   */
+  const employeeScopedDeepLink = !isHr && !canUseApprovalQueue
   const allOvertimeTabLabel = isAdminHr ? 'All Filings' : 'For My Approval'
 
   const [monthYear, setMonthYear] = useState(() => new Date().getFullYear())
@@ -1026,7 +1031,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setSearchParams(next, { replace: true })
   }, [isHr, dateFromUrl, segmentsFromUrl, searchParams, setSearchParams])
 
-  const deepLinkedOtRequestId = canUseApprovalQueue
+  const deepLinkedOtRequestId = canUseApprovalQueue || employeeScopedDeepLink
     ? parseReviewRequestId(
         searchParams.get('review_id') || searchParams.get('reviewRequestId') || searchParams.get('request_id'),
       )
@@ -1332,7 +1337,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   }, [tab, canSeeAllTab, loadAll])
 
   useEffect(() => {
-    if (!deepLinkedOtRequestId || !canUseApprovalQueue) {
+    if (!deepLinkedOtRequestId) {
       handledOtDeepLinkRef.current = null
       return
     }
@@ -1341,7 +1346,8 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     if (!Number.isFinite(idNum) || idNum <= 0) return
 
     handledOtDeepLinkRef.current = deepLinkedOtRequestId
-    setTab('all')
+    const useApprovalQueue = canUseApprovalQueue
+    setTab(useApprovalQueue ? 'all' : 'mine')
     const seed = location.state?.overtimeReviewSeed
     const seedId = Number(seed?.id ?? seed?.request_id ?? seed?.overtime_request_id ?? 0)
     const hasSeed = seed && seedId === idNum && Object.keys(seed).some((key) => key !== 'id')
@@ -1353,12 +1359,14 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     const controller = new AbortController()
     detailAbortRef.current = controller
 
-    getAdminOvertimeDetail(idNum, { signal: controller.signal })
+    const fetcher = useApprovalQueue ? getAdminOvertimeDetail : getMyOvertimeDetail
+    fetcher(idNum, { signal: controller.signal })
       .then((res) => {
         if (controller.signal.aborted) return
         const ot = res?.overtime ?? res?.request ?? res?.data?.overtime ?? res?.data?.request
         if (ot && typeof ot === 'object') {
           setDetail(ot)
+          mergeOvertimeDetailIntoRows(ot)
         } else {
           toast({
             title: 'Could not load full details',

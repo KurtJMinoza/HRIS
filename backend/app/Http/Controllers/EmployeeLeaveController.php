@@ -475,19 +475,7 @@ class EmployeeLeaveController extends Controller
                 ];
             }
 
-            $undertimeMinutes = null;
-            if ($l->type === 'undertime' && $l->undertime_time) {
-                $dateKey = $l->start_date->toDateString();
-                $date = Carbon::parse($dateKey, $tz);
-                $daySchedule = $this->getDayScheduleForDate($userForSchedule, $date);
-                if ($daySchedule) {
-                    $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
-                    if ($scheduledEnd) {
-                        $earlyOut = Carbon::parse($dateKey.' '.substr((string) $l->undertime_time, 0, 5), $tz);
-                        $undertimeMinutes = AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $earlyOut, null);
-                    }
-                }
-            }
+            $undertimeMinutes = $this->undertimeMinutesForLeave($l, $userForSchedule, $tz);
 
             $base = $this->mapEmployeeLeaveRow($l);
             $base['undertime_minutes'] = $undertimeMinutes;
@@ -525,6 +513,66 @@ class EmployeeLeaveController extends Controller
                 'last_page' => $paginator->lastPage(),
             ],
         ]);
+    }
+
+    /**
+     * Employee-scoped review payload for the signed-in employee's own leave request.
+     *
+     * Mirrors the admin review-lite surface (same field names the modal reads) but is restricted to
+     * requests the employee owns or filed — dashboard deep-links must work without HR panel access.
+     */
+    public function myReviewLite(Request $request, int $id): JsonResponse
+    {
+        $user = $request->user();
+        $leave = LeaveRequest::query()
+            ->where('id', $id)
+            ->where(function ($query) use ($user) {
+                $query->where('user_id', $user->id)
+                    ->orWhere('filed_by', $user->id);
+            })
+            ->firstOrFail();
+
+        $tz = $this->attendanceTimezone();
+        $undertimeMinutes = $this->undertimeMinutesForLeave($leave, $this->refreshUserForScheduleCheck($user), $tz);
+
+        $payload = $this->mapEmployeeLeaveRow($leave);
+        $payload['undertime_minutes'] = $undertimeMinutes;
+        $payload['undertime_hours'] = $undertimeMinutes !== null ? round($undertimeMinutes / 60, 2) : null;
+        $payload['employee_name'] = $leave->user?->display_name;
+        $payload['reviewed_at'] = $leave->reviewed_at?->toIso8601String();
+        // Employees never approve from the self-service modal.
+        $payload['can_approve'] = false;
+        $payload['can_reject'] = false;
+        $payload['actor_can_approve'] = false;
+        $payload['actor_can_reject'] = false;
+
+        return response()->json(['leave_request' => $payload]);
+    }
+
+    /**
+     * Scheduled early-out minutes for an undertime leave row.
+     */
+    private function undertimeMinutesForLeave(LeaveRequest $leave, User $userForSchedule, string $tz): ?int
+    {
+        if ($leave->type !== 'undertime' || ! $leave->undertime_time) {
+            return null;
+        }
+
+        $dateKey = $leave->start_date->toDateString();
+        $date = Carbon::parse($dateKey, $tz);
+        $daySchedule = $this->getDayScheduleForDate($userForSchedule, $date);
+        if (! $daySchedule) {
+            return null;
+        }
+
+        $scheduledEnd = AttendanceStatusService::getScheduledEndForDate($dateKey, $daySchedule, $tz);
+        if (! $scheduledEnd) {
+            return null;
+        }
+
+        $earlyOut = Carbon::parse($dateKey.' '.substr((string) $leave->undertime_time, 0, 5), $tz);
+
+        return AttendanceStatusService::getUndertimeMinutes($scheduledEnd, $earlyOut, null);
     }
 
     /**

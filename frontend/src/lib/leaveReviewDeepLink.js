@@ -120,6 +120,19 @@ export function leaveReviewErrorMessage(code) {
 }
 
 /**
+ * Map a leave review fetch failure to a {@see leaveReviewErrorMessage} code.
+ * @param {{ code?: string, status?: number } | null | undefined} error
+ * @returns {string}
+ */
+export function mapLeaveReviewFetchError(error) {
+  if (error?.code === 'invalid_id') return 'invalid_id'
+  if (error?.code === 'forbidden' || error?.status === 403) return 'forbidden'
+  if (error?.code === 'not_found' || error?.status === 404) return 'not_found'
+  if (error?.code === 'server_error' || (error?.status != null && error.status >= 500)) return 'server_error'
+  return 'generic'
+}
+
+/**
  * @param {string} context
  * @param {{ reviewRequestId?: string | null, url?: string, status?: number, body?: unknown, error?: unknown, user?: object | null, search?: string }} detail
  */

@@ -108,6 +108,7 @@ import {
   extractLeaveRequestFromReviewPayload,
   leaveReviewSeedFromDashboardRow,
   logLeaveReviewFetchFailure,
+  mapLeaveReviewFetchError,
   parseLeaveReviewRequestId,
 } from '@/lib/leaveReviewDeepLink'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
@@ -1015,14 +1016,6 @@ export default function AdminLeave() {
     }
   }
 
-  const mapReviewFetchError = useCallback((e) => {
-    if (e?.code === 'invalid_id') return 'invalid_id'
-    if (e?.code === 'forbidden' || e?.status === 403) return 'forbidden'
-    if (e?.code === 'not_found' || e?.status === 404) return 'not_found'
-    if (e?.code === 'server_error' || (e?.status != null && e.status >= 500)) return 'server_error'
-    return 'generic'
-  }, [])
-
   const loadReviewDetail = useCallback(
     async (requestId, { isRetry = false, signal: externalSignal } = {}) => {
       const id = parseLeaveReviewRequestId(requestId)
@@ -1074,7 +1067,7 @@ export default function AdminLeave() {
       } catch (e) {
         if (signal.aborted || fetchId !== detailFetchIdRef.current) return
         if (e?.name === 'AbortError') return
-        const code = mapReviewFetchError(e)
+        const code = mapLeaveReviewFetchError(e)
         logLeaveReviewFetchFailure('loadReviewDetail', {
           reviewRequestId: id,
           url: e?.url,
@@ -1093,7 +1086,7 @@ export default function AdminLeave() {
         }
       }
     },
-    [mapReviewFetchError, mergeLeaveDetailIntoRows, searchParams, user],
+    [mergeLeaveDetailIntoRows, searchParams, user],
   )
 
   function openDetailDialog(leave) {

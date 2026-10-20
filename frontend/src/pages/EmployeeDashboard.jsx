@@ -184,13 +184,33 @@ function formatYmdShort(dateStr) {
 function dashboardFilingKindMeta(kind) {
   switch (kind) {
     case 'correction':
-      return { kicker: 'Attendance correction', icon: FileText, href: 'correction-requests' }
+      return {
+        kicker: 'Attendance correction',
+        icon: FileText,
+        href: 'correction-requests',
+        iconClass: 'bg-violet-100/70 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300',
+      }
     case 'overtime':
-      return { kicker: 'Overtime', icon: Timer, href: 'overtime' }
+      return {
+        kicker: 'Overtime',
+        icon: Timer,
+        href: 'overtime',
+        iconClass: 'bg-orange-100/70 text-orange-600 dark:bg-orange-500/10 dark:text-orange-300',
+      }
     case 'leave':
-      return { kicker: 'Leave', icon: CalendarDays, href: 'requests' }
+      return {
+        kicker: 'Leave',
+        icon: CalendarDays,
+        href: 'requests',
+        iconClass: 'bg-sky-100/70 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300',
+      }
     default:
-      return { kicker: 'Request', icon: FileText, href: 'dashboard' }
+      return {
+        kicker: 'Request',
+        icon: FileText,
+        href: 'dashboard',
+        iconClass: 'bg-muted/80 text-muted-foreground',
+      }
   }
 }
 
@@ -223,12 +243,15 @@ function fallbackFilingsFromOvertimeRequests(requests) {
   return requests.slice(0, 8).map((o) => {
     const hours = roundHours1(Number(o.computed_hours) || 0)
     const status = String(o.status || 'pending')
+    const period = o.date ? formatYmdShort(o.date).replace(/^[A-Za-z]+,\s*/, '') : '—'
     return {
       kind: 'overtime',
       id: o.id,
       status,
-      title: o.date ? formatYmdShort(o.date).replace(/^[A-Za-z]+,\s*/, '') : '—',
+      title: period,
       subtitle: hours > 0 ? `${hours}h · ${status.replace(/_/g, ' ')}` : status.replace(/_/g, ' '),
+      period,
+      descriptor: hours > 0 ? `${hours}h` : null,
     }
   })
 }
@@ -236,15 +259,15 @@ function fallbackFilingsFromOvertimeRequests(requests) {
 function dashboardFilingStatusClass(status) {
   const key = String(status || '').toLowerCase()
   if (key === 'approved') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+    return 'border-emerald-500/35 bg-emerald-500/12 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-200'
   }
   if (key === 'pending') {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+    return 'border-amber-500/45 bg-amber-500/15 text-amber-950 dark:bg-amber-500/20 dark:text-amber-100'
   }
   if (key === 'rejected' || key === 'denied' || key === 'cancelled') {
-    return 'border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-300'
+    return 'border-red-500/35 bg-red-500/12 text-red-900 dark:bg-red-500/15 dark:text-red-200'
   }
-  return 'border-border/60 bg-muted/40 text-muted-foreground'
+  return 'border-border/60 bg-muted/50 text-muted-foreground'
 }
 
 function isAttendanceSummarySkipDay(day) {
@@ -2170,20 +2193,22 @@ export default function EmployeeDashboard() {
                     <ChevronLeft className="size-4" strokeWidth={2.7} />
                   </button>
                   <Select value={attendanceMonthValue} onValueChange={handleAttendanceMonthSelect}>
-                    <SelectTrigger className="h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-transparent px-2 text-sm font-black text-slate-950 shadow-none ring-0 hover:bg-orange-50 focus:ring-0 focus-visible:ring-0 @lg:w-52 dark:text-slate-50 dark:hover:bg-orange-500/10">
+                    <SelectTrigger className="h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-transparent px-2 text-sm font-black text-slate-950 shadow-none ring-0 hover:bg-orange-50 focus:ring-0 focus-visible:ring-0 @lg:w-56 dark:text-slate-50 dark:hover:bg-orange-500/10">
                       <CalendarDays className="size-4 shrink-0 text-orange-600 dark:text-orange-300" aria-hidden />
+                      {/* No "Current" chip here — Radix renders the selected item's own children
+                          (which already carry the marker), so a second one duplicates it and
+                          squeezes the month label out of the trigger. */}
                       <SelectValue placeholder="Select month" />
-                      {isViewingCurrentMonth ? (
-                        <span className="ml-1 hidden rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 @md:inline-flex dark:bg-slate-800 dark:text-slate-200">
-                          Current
-                        </span>
-                      ) : null}
                     </SelectTrigger>
                     <SelectContent position="popper" className="max-h-64 min-w-[var(--radix-select-trigger-width)] rounded-xl border-border p-1.5 shadow-xl">
                       {attendanceMonthOptions.map((option) => (
                         <SelectItem key={option.value} value={option.value} className="cursor-pointer rounded-lg py-2.5 pl-3 pr-8 text-sm font-semibold focus:bg-orange-50 focus:text-orange-700 dark:focus:bg-orange-500/10 dark:focus:text-orange-300">
                           {option.label}
-                          {option.isCurrent ? <span className="ml-1.5 text-xs font-normal text-slate-500">Current</span> : null}
+                          {option.isCurrent ? (
+                            <span className="ml-1.5 shrink-0 rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                              Current
+                            </span>
+                          ) : null}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2348,7 +2373,7 @@ export default function EmployeeDashboard() {
                   </CardDescription>
                 </div>
               </div>
-              <div className="flex w-full min-w-0 items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-sm @md:max-w-[13rem] @md:shrink-0 @xl:max-w-none dark:bg-card/85">
+              <div className="flex w-full min-w-0 items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-sm @md:max-w-[15rem] @md:shrink-0 @xl:max-w-none dark:bg-card/85">
                 <button
                   type="button"
                   className="flex size-8 shrink-0 items-center justify-center rounded-md text-slate-950 hover:bg-orange-50 hover:text-orange-600 dark:text-slate-100 dark:hover:bg-orange-500/10 dark:hover:text-orange-300"
@@ -2360,11 +2385,12 @@ export default function EmployeeDashboard() {
                 <button
                   type="button"
                   onClick={goCalendarToday}
-                  className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-center text-sm font-black tabular-nums text-slate-950 hover:bg-orange-50 dark:text-slate-50 dark:hover:bg-orange-500/10"
+                  className="flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-sm font-black tabular-nums text-slate-950 hover:bg-orange-50 dark:text-slate-50 dark:hover:bg-orange-500/10"
                 >
-                  {MONTHS[calendarMonth]} {calendarYear}
+                  {/* Month label truncates on its own so the "Current" marker is never clipped. */}
+                  <span className="min-w-0 truncate">{MONTHS[calendarMonth]} {calendarYear}</span>
                   {isViewingCurrentMonth ? (
-                    <span className="ml-1 hidden text-xs font-semibold text-slate-500 @md:inline dark:text-slate-400">Current</span>
+                    <span className="shrink-0 text-xs font-semibold text-slate-500 dark:text-slate-400">Current</span>
                   ) : null}
                 </button>
                 <button
@@ -2379,23 +2405,23 @@ export default function EmployeeDashboard() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="px-4 py-3 @md:px-5 @xl:max-h-[min(28rem,calc(100dvh-10rem))] @xl:overflow-y-auto">
+          <CardContent className="flex min-h-0 flex-col gap-2 px-4 py-3 @md:px-5 @xl:max-h-[min(28rem,calc(100dvh-10rem))]">
             <Motion.div
               key={`month-filing-${calendarYear}-${calendarMonth}`}
               initial={{ opacity: 0.5, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.24, ease: [0.25, 0.1, 0.25, 1] }}
-              className="flex min-h-0 min-w-0 flex-col gap-2"
+              className="@container flex min-w-0 flex-col gap-2 @xl:min-h-0 @xl:flex-1 @xl:overflow-y-auto @xl:pr-1"
             >
               {loading || calendarLoading ? (
-                Array.from({ length: 2 }).map((_, index) => (
+                Array.from({ length: DASHBOARD_FILINGS_PER_PAGE }).map((_, index) => (
                   <div
                     key={`filing-skel-${index}`}
-                    className="h-14 animate-pulse rounded-lg border border-border/60 bg-muted/30"
+                    className="h-[3.25rem] animate-pulse rounded-xl border border-border/60 bg-muted/30"
                   />
                 ))
               ) : monthFilings.length > 0 ? (
-                <div className="min-w-0 space-y-2">
+                <div className="min-w-0 space-y-1.5">
                   {paginatedMonthFilings.map((filing) => {
                     const meta = dashboardFilingKindMeta(filing.kind)
                     const Icon = meta.icon
@@ -2405,114 +2431,133 @@ export default function EmployeeDashboard() {
                     const badgeLabel =
                       filing.display_status
                       || String(filing.status || 'pending').replace(/_/g, ' ')
-                    const detailLine = String(filing.subtitle || '').trim()
+                    const period = String(filing.period || filing.title || '').trim()
+                    const descriptor = String(filing.descriptor || '').trim()
                     const subjectName = String(filing?.subject_name || '').trim()
                     return (
                       <button
                         key={`${filing.kind}-${filing.id}${subjectName ? `-for-${subjectName}` : ''}`}
                         type="button"
                         onClick={() => openRecentFiling(filing)}
+                        title={`${meta.kicker} · ${period}${isPending ? ` · ${waitingLabel}${approverName ? ` · ${approverName}` : ''}` : ''}`}
                         className={cn(
-                          'group flex w-full items-start gap-3 rounded-lg border border-border/80 bg-background px-3 py-2.5 text-left transition-colors hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-                          isPending && 'border-l-[3px] border-l-amber-500 pl-[calc(0.75rem-2px)]',
+                          'group flex w-full items-start gap-2.5 rounded-xl border px-2.5 py-2 text-left',
+                          'transition-[color,background-color,border-color,box-shadow] duration-200',
+                          'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                          isPending
+                            ? 'border-amber-500/35 bg-amber-500/[0.05] shadow-[0_6px_16px_-18px_rgba(15,23,42,0.75)] hover:border-amber-500/50 dark:border-amber-500/25 dark:bg-amber-500/[0.07]'
+                            : 'border-border/70 bg-card shadow-[0_6px_16px_-18px_rgba(15,23,42,0.7)] hover:bg-muted/20 dark:bg-card/70 dark:hover:bg-card/80',
                         )}
                       >
-                        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/80 text-muted-foreground group-hover:bg-muted">
-                          <Icon className="size-4" aria-hidden />
+                        <span
+                          className={cn(
+                            'flex size-8 shrink-0 items-center justify-center rounded-lg',
+                            meta.iconClass,
+                          )}
+                        >
+                          <Icon className="size-4" strokeWidth={2.25} aria-hidden />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                            <span className="text-[11px] font-medium uppercase text-muted-foreground">{meta.kicker}</span>
-                            {detailLine ? (
-                              <span className="text-[11px] text-muted-foreground/90">{detailLine}</span>
+                          <span className="flex min-w-0 items-baseline gap-1.5">
+                            <span className="shrink-0 truncate text-sm font-black leading-tight text-slate-950 dark:text-slate-50">
+                              {period}
+                            </span>
+                            {descriptor ? (
+                              <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+                                {descriptor}
+                              </span>
                             ) : null}
                           </span>
-                          <span className="mt-0.5 block text-sm font-semibold text-foreground">{filing.title || '—'}</span>
-                          {subjectName ? (
-                            <span className="mt-0.5 block text-xs text-muted-foreground">
-                              {filing.awaiting_your_approval ? 'Awaiting your approval · ' : 'For '}
-                              <span className="font-medium text-foreground/90">{subjectName}</span>
-                            </span>
-                          ) : null}
                           {isPending ? (
-                            <span className="mt-1 block text-xs leading-snug text-muted-foreground">
-                              <span className="text-foreground/90">{waitingLabel}</span>
+                            <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                              <span className="inline-flex min-w-0 shrink items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-px text-[10px] font-bold text-amber-900 dark:bg-amber-500/20 dark:text-amber-100">
+                                <Clock className="size-2.5 shrink-0" aria-hidden />
+                                <span className="hidden min-w-0 truncate @sm:inline">{waitingLabel}</span>
+                              </span>
                               {approverName ? (
-                                <>
-                                  {' · '}
-                                  <span className="font-medium text-foreground">{approverName}</span>
-                                </>
+                                <span className="min-w-0 truncate text-[11px] font-semibold text-foreground">
+                                  {approverName}
+                                </span>
                               ) : null}
                             </span>
                           ) : null}
+                          {subjectName ? (
+                            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                              {filing.awaiting_your_approval ? 'Awaiting your approval · ' : 'For '}
+                              <span className="font-semibold text-foreground/90">{subjectName}</span>
+                            </span>
+                          ) : null}
                         </span>
-                        <span className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
+                        <span className="flex shrink-0 items-center gap-1 pt-0.5">
                           <Badge
                             variant="secondary"
                             className={cn(
-                              'h-5 px-1.5 text-[10px] font-medium capitalize',
+                              'h-5 rounded-full px-2 text-[10px] font-bold capitalize',
                               dashboardFilingStatusClass(filing.status),
                             )}
                           >
                             {isPending ? 'Pending' : badgeLabel}
                           </Badge>
-                          <ChevronRight className="size-3.5 text-muted-foreground/70" aria-hidden />
+                          <ChevronRight
+                            className="size-3.5 text-muted-foreground/60 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-foreground"
+                            aria-hidden
+                          />
                         </span>
                       </button>
                     )
                   })}
-                  {(filingPageCount > 1 || monthFilings.length > 0) ? (
-                    <div className="flex flex-col gap-2 border-t border-border/50 pt-2 @sm:flex-row @sm:items-center @sm:justify-between">
-                      <p className="text-center text-[10px] text-muted-foreground @sm:text-left">
-                        {filingPageCount > 1 ? (
-                          <>
-                            Page {Math.min(filingPage, filingPageCount)} of {filingPageCount}
-                            {' · '}
-                          </>
-                        ) : null}
-                        {monthFilings.length} filing{monthFilings.length === 1 ? '' : 's'}
-                      </p>
-                      {filingPageCount > 1 ? (
-                        <div className="grid grid-cols-2 gap-2 @sm:flex @sm:shrink-0">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-xs"
-                            disabled={filingPage <= 1}
-                            onClick={() => setFilingPage((page) => Math.max(1, page - 1))}
-                          >
-                            Previous
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-xs"
-                            disabled={filingPage >= filingPageCount}
-                            onClick={() => setFilingPage((page) => Math.min(filingPageCount, page + 1))}
-                          >
-                            Next
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
                 </div>
               ) : (
-                <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 px-3 py-4 text-center">
+                <div className="flex min-h-[13.25rem] flex-col items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-3 py-4 text-center">
                   <p className="text-sm font-medium text-foreground">No filings this month</p>
                   <p className="mx-auto mt-1 max-w-[16rem] text-xs leading-relaxed text-muted-foreground">
                     Leave, overtime, and attendance corrections for this month appear here.
                   </p>
                 </div>
               )}
-              <p className="shrink-0 pt-1 text-center text-[10px] leading-snug text-muted-foreground">
-                {monthFilings.length > 0 && !loading && !calendarLoading
-                  ? 'Tap a row to open that request. Use the month control above to browse other periods.'
-                  : 'Use the month control above to browse other periods.'}
-              </p>
             </Motion.div>
+            {(filingPageCount > 1 || monthFilings.length > 0) ? (
+              <div className="flex shrink-0 flex-col gap-2 border-t border-border/50 pt-2 @sm:flex-row @sm:items-center @sm:justify-between">
+                <p className="text-center text-[10px] text-muted-foreground @sm:text-left">
+                  {filingPageCount > 1 ? (
+                    <>
+                      Page {Math.min(filingPage, filingPageCount)} of {filingPageCount}
+                      {' · '}
+                    </>
+                  ) : null}
+                  {monthFilings.length} filing{monthFilings.length === 1 ? '' : 's'}
+                </p>
+                {filingPageCount > 1 ? (
+                  <div className="grid grid-cols-2 gap-2 @sm:flex @sm:shrink-0">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled={filingPage <= 1}
+                      onClick={() => setFilingPage((page) => Math.max(1, page - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled={filingPage >= filingPageCount}
+                      onClick={() => setFilingPage((page) => Math.min(filingPageCount, page + 1))}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <p className="shrink-0 pt-1 text-center text-[10px] leading-snug text-muted-foreground">
+              {monthFilings.length > 0 && !loading && !calendarLoading
+                ? 'Tap a row to open that request. Use the month control above to browse other periods.'
+                : 'Use the month control above to browse other periods.'}
+            </p>
           </CardContent>
         </Card>
         </Motion.div>
@@ -2540,7 +2585,11 @@ export default function EmployeeDashboard() {
                   {attendanceMonthOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value} className="cursor-pointer rounded-lg py-2.5 pl-8 pr-3 text-sm font-medium focus:bg-orange-500/10 focus:text-orange-800 dark:focus:text-orange-300 data-[state=checked]:bg-orange-500/12 data-[state=checked]:font-semibold data-[state=checked]:text-orange-800 dark:data-[state=checked]:text-orange-300">
                       {option.label}
-                      {option.isCurrent ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">· Current</span> : null}
+                      {option.isCurrent ? (
+                        <span className="ml-1.5 shrink-0 rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          Current
+                        </span>
+                      ) : null}
                     </SelectItem>
                   ))}
                 </SelectContent>
