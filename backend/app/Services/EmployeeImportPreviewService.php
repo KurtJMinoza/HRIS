@@ -10,6 +10,7 @@ use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
+use ZipArchive;
 
 /**
  * Builds a full-sheet preview payload using PhpSpreadsheet (same engine as Laravel Excel import),
@@ -30,6 +31,25 @@ final class EmployeeImportPreviewService
         }
 
         return self::buildFromSpreadsheet($path);
+    }
+
+    /**
+     * XLSX/XLSM files are ZIP containers, so PhpSpreadsheet needs PHP's zip extension (ZipArchive).
+     * Without it the import dies with a raw "Class ZipArchive not found"; surface a clear hint.
+     */
+    public static function missingSpreadsheetExtensionMessage(string $extension): ?string
+    {
+        $ext = strtolower(trim($extension));
+        if (! in_array($ext, ['xlsx', 'xlsm', 'xltx', 'xltm'], true)) {
+            return null;
+        }
+
+        if (class_exists(ZipArchive::class)) {
+            return null;
+        }
+
+        return 'Reading '.$ext.' files requires the PHP "zip" extension (ZipArchive). '
+            .'Enable "extension=zip" in php.ini and restart the PHP worker, or upload a CSV instead.';
     }
 
     /**

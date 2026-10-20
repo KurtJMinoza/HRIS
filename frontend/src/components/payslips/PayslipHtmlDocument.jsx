@@ -241,6 +241,9 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
   }, [data, summary])
 
   const isConsultantPayroll = useMemo(() => {
+    // "No work, no pay" consultants are paid from real attendance like a regular employee:
+    // they keep the regular earnings breakdown, not the flat consultant Basic Pay.
+    if (summary?.consultant_no_work_no_pay) return false
     if (summary?.consultant_fixed_payroll) return true
     const statusValue = String(
       summary?.employment_status ||
@@ -252,7 +255,13 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
         data?.employee?.employment_type ||
         '',
     ).toLowerCase().replace(/[-\s]+/g, '_')
-    return statusValue === 'consultant' || typeValue === 'consultant'
+    if (statusValue === 'consultant' || typeValue === 'consultant') {
+      return !(
+        summary?.consultant_no_work_no_pay ||
+        data?.snapshot?.summary?.consultant_no_work_no_pay
+      )
+    }
+    return false
   }, [data, summary])
 
   const earnings = useMemo(() => {

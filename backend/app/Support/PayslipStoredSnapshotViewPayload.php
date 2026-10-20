@@ -39,6 +39,10 @@ final class PayslipStoredSnapshotViewPayload
         $isConsultant = ! empty($summary['consultant_fixed_payroll'])
             || strtolower(trim(str_replace(['-', ' '], '_', (string) ($summary['employment_status'] ?? $employee->employment_status ?? '')))) === 'consultant'
             || strtolower(trim(str_replace(['-', ' '], '_', (string) ($summary['employment_type'] ?? $employee->employment_type ?? '')))) === 'consultant';
+        // "No work, no pay" consultants are attendance-driven (regular employee layout).
+        if (! empty($summary['consultant_no_work_no_pay'])) {
+            $isConsultant = false;
+        }
         $dailyEarningLines = is_array($summary['daily_computation_earning_lines'] ?? null)
             ? array_values($summary['daily_computation_earning_lines'])
             : [];

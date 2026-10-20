@@ -24,7 +24,8 @@ class EmploymentPayrollPolicyResolver
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool
+     *     allow_holiday_pay: bool,
+     *     no_work_no_pay: bool
      * }
      */
     public function resolveForEmployee(User $employee, ?int $companyId = null): array
@@ -43,7 +44,8 @@ class EmploymentPayrollPolicyResolver
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool
+     *     allow_holiday_pay: bool,
+     *     no_work_no_pay: bool
      * }
      */
     public function resolve(?int $companyId, string $employmentType): array
@@ -69,7 +71,8 @@ class EmploymentPayrollPolicyResolver
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool
+     *     allow_holiday_pay: bool,
+     *     no_work_no_pay: bool
      * }>
      */
     public function resolveAllForCompany(?int $companyId = null): array
@@ -160,7 +163,8 @@ class EmploymentPayrollPolicyResolver
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool
+     *     allow_holiday_pay: bool,
+     *     no_work_no_pay: bool
      * }
      */
     private function loadPolicy(?int $companyId, string $employmentType): array

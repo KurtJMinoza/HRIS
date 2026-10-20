@@ -82,6 +82,12 @@
   $isConsultantPayroll = ! empty($summary['consultant_fixed_payroll'])
     || $employmentStatus === 'consultant'
     || $employmentType === 'consultant';
+  // "No work, no pay" consultants are paid from real attendance, so the payslip renders the
+  // regular attendance-driven layout instead of the fixed consultant Basic Pay.
+  $consultantNoWorkNoPay = ! empty($summary['consultant_no_work_no_pay']);
+  if ($consultantNoWorkNoPay) {
+    $isConsultantPayroll = false;
+  }
   $attendanceBreakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
     ? $summary['attendance_pay_breakdown']
     : [];

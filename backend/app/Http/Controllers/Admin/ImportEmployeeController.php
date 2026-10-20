@@ -29,6 +29,13 @@ class ImportEmployeeController extends Controller
             return response()->json(['message' => 'No import file was uploaded.'], 422);
         }
 
+        $extensionError = EmployeeImportPreviewService::missingSpreadsheetExtensionMessage(
+            (string) $file->getClientOriginalExtension()
+        );
+        if ($extensionError !== null) {
+            return response()->json(['message' => $extensionError], 422);
+        }
+
         return response()->json(EmployeeImportPreviewService::build($file));
     }
 
@@ -37,6 +44,13 @@ class ImportEmployeeController extends Controller
         $file = $request->file('file');
         if (! $file) {
             return response()->json(['message' => 'No import file was uploaded.'], 422);
+        }
+
+        $extensionError = EmployeeImportPreviewService::missingSpreadsheetExtensionMessage(
+            (string) $file->getClientOriginalExtension()
+        );
+        if ($extensionError !== null) {
+            return response()->json(['message' => $extensionError], 422);
         }
 
         $batchId = (string) Str::uuid();

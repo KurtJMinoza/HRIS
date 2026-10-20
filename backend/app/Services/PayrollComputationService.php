@@ -1863,6 +1863,16 @@ class PayrollComputationService implements PayrollBulkComputation
         $consultantPolicy = is_array($employmentPolicy) ? $employmentPolicy : EmploymentPayrollSetting::defaults('consultant');
         $consultantAttendanceEarnings = $isConsultant
             && EmploymentPayrollPolicyApplicator::consultantAttendanceEarningsEnabled($consultantPolicy);
+        // "No work, no pay" for consultants: attendance drives basic pay exactly like a regular
+        // employee instead of the default fixed/auto-present consultant payroll.
+        $consultantNoWorkNoPay = $isConsultant
+            && EmploymentPayrollPolicyApplicator::consultantNoWorkNoPayEnabled($consultantPolicy);
+        // Consultants are auto-present (paid for the whole period without time in/out) unless the
+        // policy asks for real attendance earnings or switches them to no-work-no-pay.
+        $consultantAutoPresent = $isConsultant
+            && EmploymentPayrollPolicyApplicator::consultantUsesAutoPresentPayroll($consultantPolicy);
+        // True while the consultant still gets the flat/fixed payroll presentation.
+        $consultantFixedPaySummary = $isConsultant && ! $consultantNoWorkNoPay;
         $consultantPolicyApplicator = $this->employmentPayrollPolicyApplicator
             ?? (function_exists('app') ? app(EmploymentPayrollPolicyApplicator::class) : null);
         $precomputedCompensationSummary = null;
@@ -1957,14 +1967,14 @@ class PayrollComputationService implements PayrollBulkComputation
 
         // ponytail: gov deduction roster only needs schedule-aligned amounts, not per-day attendance engine.
         $runFullDailyComputation = ! $deductionRosterMode
-            || ($isConsultant && $consultantAttendanceEarnings);
+            || ($isConsultant && ($consultantAttendanceEarnings || $consultantNoWorkNoPay));
 
         if ($runFullDailyComputation) {
             $this->ensureApprovedOvertimeLoadedForPeriod($user, $from, $to);
         }
 
         $days = [];
-        if ($isConsultant && ! $consultantAttendanceEarnings) {
+        if ($consultantAutoPresent) {
             $days = $this->consultantAutoPresentDays($from, $to);
         } elseif ($runFullDailyComputation) {
             $cursor = $from->copy();
@@ -2108,10 +2118,10 @@ class PayrollComputationService implements PayrollBulkComputation
         // Needed before daily earning lines so "Regular pay" units match regular-rate attendance days
         // (premium holidays excluded — same filter as buildAttendanceDisplaySummary()).
         $attendanceDisplaySummary = $runFullDailyComputation
-            ? ($isConsultant
+            ? ($consultantAutoPresent
                 ? $this->consultantAttendanceDisplaySummary($days)
                 : $this->buildAttendanceDisplaySummary($days, $effectiveSchedule, $tz))
-            : ($isConsultant
+            : ($consultantAutoPresent
                 ? $this->consultantAttendanceDisplaySummary($days)
                 : []);
 
@@ -2251,14 +2261,14 @@ class PayrollComputationService implements PayrollBulkComputation
         }
 
         $attendanceProration = $runFullDailyComputation
-            ? ($isConsultant
+            ? ($consultantAutoPresent
                 ? $this->consultantAttendanceProration(count($days))
                 : $this->computeScheduleAttendanceProrationForPeriod(
                     $days,
                     $dailyRateDivisorDays,
                     $scheduledDailyHours > 0.0 ? $scheduledDailyHours : 8.0
                 ))
-            : ($isConsultant
+            : ($consultantAutoPresent
                 ? $this->consultantAttendanceProration(count($days))
                 : [
                     'factor' => 1.0,
@@ -2417,7 +2427,7 @@ class PayrollComputationService implements PayrollBulkComputation
             );
         }
 
-        if ($isConsultant) {
+        if ($isConsultant && ! $consultantNoWorkNoPay) {
             $consultantPeriodBasic = $this->resolveConsultantPeriodBasicPay(
                 $user,
                 $compensationSummary,
@@ -2773,7 +2783,8 @@ class PayrollComputationService implements PayrollBulkComputation
                 'basic_pay_this_period' => round($basicPayThisPeriod, 2),
                 'employment_type' => (string) ($user->employment_type ?? ''),
                 'employment_status' => $isConsultant ? 'consultant' : (string) ($user->employment_status ?? ''),
-                'consultant_fixed_payroll' => $isConsultant,
+                'consultant_fixed_payroll' => $isConsultant && ! $consultantNoWorkNoPay,
+                'consultant_no_work_no_pay' => $consultantNoWorkNoPay,
                 'regular_fixed_semi_monthly_payroll' => $regularFixedSemiMonthlyPayroll,
                 'fixed_semi_monthly_basic_gross' => $regularFixedSemiMonthlyPayroll
                     ? round($regularFixedSemiMonthlyGross, 2)
@@ -2810,17 +2821,17 @@ class PayrollComputationService implements PayrollBulkComputation
                     : null,
                 'attendance_deduction' => $regularFixedSemiMonthlyPayroll
                     ? round($regularFixedAttendanceDeduction, 2)
-                    : ($isConsultant ? 0.0 : null),
+                    : ($consultantFixedPaySummary ? 0.0 : null),
                 'attendance_pay_breakdown' => $regularFixedSemiMonthlyPayroll
                     ? $regularFixedAttendanceBreakdown
                     : null,
                 'consultant_salary_basis' => $isConsultant ? (string) ($consultantSalarySources['salary_source_used'] ?? '') : null,
                 'consultant_fixed_salary' => $isConsultant ? round((float) ($consultantSalarySources['resolved_monthly'] ?? 0), 2) : null,
-                'attendance_status' => $isConsultant ? 'Auto Present' : null,
-                'absent_days' => $isConsultant ? 0 : null,
-                'late_minutes' => $isConsultant ? 0 : null,
-                'undertime_minutes' => $isConsultant ? 0 : null,
-                'leave_deduction' => $isConsultant ? 0.0 : null,
+                'attendance_status' => $consultantFixedPaySummary ? 'Auto Present' : null,
+                'absent_days' => $consultantFixedPaySummary ? 0 : null,
+                'late_minutes' => $consultantFixedPaySummary ? 0 : null,
+                'undertime_minutes' => $consultantFixedPaySummary ? 0 : null,
+                'leave_deduction' => $consultantFixedPaySummary ? 0.0 : null,
                 'basic_salary_schedule_type' => $basicScheduleType,
                 'basic_salary_schedule_factor' => round($basicFactor, 4),
                 'attendance_premium_pay_this_period' => round($attendancePremiumPayThisPeriod, 2),

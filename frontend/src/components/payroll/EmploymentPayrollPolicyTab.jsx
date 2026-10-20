@@ -18,25 +18,38 @@ const EMPLOYMENT_TYPES = [
 /** Probationary / project-based staff do not receive paid leave. */
 const UNPAID_LEAVE_TYPES = new Set(['probationary', 'project_based'])
 
+/**
+ * Employment classes that can be switched to "no work, no pay".
+ * Consultants normally get fixed pay without time in/time out; enabling this makes them
+ * follow the regular employee rule — no attendance means no pay.
+ */
+const NO_WORK_NO_PAY_TYPES = new Set(['consultant'])
+
 const DEFAULT_SETTINGS = {
   apply_custom_deductions: true,
   apply_allowances: true,
   allow_paid_leave: true,
   allow_overtime: false,
   allow_holiday_pay: false,
+  no_work_no_pay: false,
 }
 
 function defaultsForType(employmentType) {
   return {
     ...DEFAULT_SETTINGS,
     allow_paid_leave: !UNPAID_LEAVE_TYPES.has(employmentType),
+    no_work_no_pay: NO_WORK_NO_PAY_TYPES.has(employmentType)
+      ? Boolean(DEFAULT_SETTINGS.no_work_no_pay)
+      : false,
   }
 }
 
 function settingsKeysForType(employmentType) {
-  return SETTINGS_ORDER.filter(
-    (key) => key !== 'allow_paid_leave' || !UNPAID_LEAVE_TYPES.has(employmentType)
-  )
+  return SETTINGS_ORDER.filter((key) => {
+    if (key === 'allow_paid_leave' && UNPAID_LEAVE_TYPES.has(employmentType)) return false
+    if (key === 'no_work_no_pay' && !NO_WORK_NO_PAY_TYPES.has(employmentType)) return false
+    return true
+  })
 }
 
 const SETTINGS_META = {
@@ -62,6 +75,11 @@ const SETTINGS_META = {
     description:
       'Include Holiday Module pay components (worked/unworked) only when the holiday covers the employee (scope/coverage), using Policy Settings multipliers. Staff match by their regular employment class (e.g. Regular / Full-time), not a separate EXECOM type.',
   },
+  no_work_no_pay: {
+    label: 'No work, no pay',
+    description:
+      'Pay from actual attendance instead of fixed pay. Time in / time out becomes required for basic pay — days without work are not paid, exactly like a regular employee. Leave this off to keep fixed pay without time in / time out.',
+  },
 }
 
 const SETTINGS_ORDER = Object.keys(DEFAULT_SETTINGS)
@@ -85,6 +103,9 @@ function normalizeTypeSettings(employmentType, row = {}) {
   if (UNPAID_LEAVE_TYPES.has(employmentType)) {
     next.allow_paid_leave = false
   }
+  if (!NO_WORK_NO_PAY_TYPES.has(employmentType)) {
+    next.no_work_no_pay = false
+  }
   return next
 }
 
@@ -103,6 +124,13 @@ function behaviorPreviewLines(settings, employmentType) {
     `Overtime: ${settings.allow_overtime ? 'Included' : 'Not included'}`,
     `Holiday pay: ${settings.allow_holiday_pay ? 'Included when in Holiday Module scope' : 'Not included'}`,
   )
+  if (NO_WORK_NO_PAY_TYPES.has(employmentType)) {
+    lines.push(
+      settings.no_work_no_pay
+        ? 'Basic pay: Attendance-driven — no time in / time out means no pay (regular employee rule)'
+        : 'Basic pay: Fixed pay — paid for the period without time in / time out',
+    )
+  }
   return lines
 }
 
@@ -155,6 +183,9 @@ export function EmploymentPayrollPolicyTab({ companies = [], companyFilter = '' 
 
   const toggleSetting = (key, checked) => {
     if (key === 'allow_paid_leave' && UNPAID_LEAVE_TYPES.has(activeType)) {
+      return
+    }
+    if (key === 'no_work_no_pay' && !NO_WORK_NO_PAY_TYPES.has(activeType)) {
       return
     }
     setSettingsByType((prev) => ({

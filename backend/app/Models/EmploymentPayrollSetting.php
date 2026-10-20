@@ -21,6 +21,16 @@ class EmploymentPayrollSetting extends Model
         'project_based',
     ];
 
+    /**
+     * Employment classes that may be switched to "no work, no pay".
+     *
+     * Consultants normally receive fixed pay without time in/out. When this flag is on, the
+     * class follows the regular-employee attendance rule: no attendance means no pay.
+     */
+    public const NO_WORK_NO_PAY_EMPLOYMENT_TYPES = [
+        'consultant',
+    ];
+
     protected $fillable = [
         'company_id',
         'employment_type',
@@ -29,6 +39,7 @@ class EmploymentPayrollSetting extends Model
         'allow_paid_leave',
         'allow_overtime',
         'allow_holiday_pay',
+        'no_work_no_pay',
         'updated_by',
     ];
 
@@ -40,6 +51,7 @@ class EmploymentPayrollSetting extends Model
             'allow_paid_leave' => 'boolean',
             'allow_overtime' => 'boolean',
             'allow_holiday_pay' => 'boolean',
+            'no_work_no_pay' => 'boolean',
         ];
     }
 
@@ -54,7 +66,8 @@ class EmploymentPayrollSetting extends Model
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool
+     *     allow_holiday_pay: bool,
+     *     no_work_no_pay: bool
      * }
      */
     public static function defaults(?string $employmentType = null): array
@@ -69,12 +82,21 @@ class EmploymentPayrollSetting extends Model
             'allow_paid_leave' => ! self::isUnpaidLeaveEmploymentType($employmentType ?? ''),
             'allow_overtime' => false,
             'allow_holiday_pay' => false,
+            'no_work_no_pay' => false,
         ];
     }
 
     public static function isUnpaidLeaveEmploymentType(string $employmentType): bool
     {
         return in_array(self::normalizeEmploymentType($employmentType), self::UNPAID_LEAVE_EMPLOYMENT_TYPES, true);
+    }
+
+    /**
+     * Whether the employment class may be switched to "no work, no pay" attendance payroll.
+     */
+    public static function supportsNoWorkNoPay(string $employmentType): bool
+    {
+        return in_array(self::normalizeEmploymentType($employmentType), self::NO_WORK_NO_PAY_EMPLOYMENT_TYPES, true);
     }
 
     public static function normalizeEmploymentType(string $employmentType): string
@@ -121,7 +143,8 @@ class EmploymentPayrollSetting extends Model
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool
+     *     allow_holiday_pay: bool,
+     *     no_work_no_pay: bool
      * }
      */
     public function toPolicyArray(): array
@@ -130,6 +153,9 @@ class EmploymentPayrollSetting extends Model
         $allowPaidLeave = self::isUnpaidLeaveEmploymentType($employmentType)
             ? false
             : (bool) ($this->allow_paid_leave ?? true);
+        $noWorkNoPay = self::supportsNoWorkNoPay($employmentType)
+            ? (bool) ($this->no_work_no_pay ?? false)
+            : false;
 
         return [
             'employment_type' => $employmentType,
@@ -138,6 +164,7 @@ class EmploymentPayrollSetting extends Model
             'allow_paid_leave' => $allowPaidLeave,
             'allow_overtime' => (bool) $this->allow_overtime,
             'allow_holiday_pay' => (bool) $this->allow_holiday_pay,
+            'no_work_no_pay' => $noWorkNoPay,
         ];
     }
 }

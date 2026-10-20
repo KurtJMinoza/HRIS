@@ -20,6 +20,7 @@ class EmploymentPayrollSettingsController extends Controller
         'allow_paid_leave',
         'allow_overtime',
         'allow_holiday_pay',
+        'no_work_no_pay',
     ];
 
     public function __construct(
@@ -65,6 +66,9 @@ class EmploymentPayrollSettingsController extends Controller
                 }
                 if (EmploymentPayrollSetting::isUnpaidLeaveEmploymentType($employmentType)) {
                     $booleans['allow_paid_leave'] = false;
+                }
+                if (! EmploymentPayrollSetting::supportsNoWorkNoPay($employmentType)) {
+                    $booleans['no_work_no_pay'] = false;
                 }
 
                 EmploymentPayrollSetting::query()->updateOrCreate(

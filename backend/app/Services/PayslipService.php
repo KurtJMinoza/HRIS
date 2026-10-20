@@ -836,7 +836,7 @@ class PayslipService
             ? array_values($summary['daily_computation_earning_lines'])
             : [];
         $isExecomPreview = $this->isExecomSnapshot($snapshot, $summary);
-        $isConsultantPreview = $this->isConsultantSnapshot($snapshot, $summary);
+        $isConsultantPreview = $this->usesConsultantFixedPayslipLayout($snapshot, $summary);
         if ($isExecomPreview) {
             $dailyEarningLines = [];
         } elseif ($isConsultantPreview) {
@@ -926,8 +926,33 @@ class PayslipService
                 'ytd_deductions' => (float) ($attrs['ytd_deductions'] ?? 0),
                 'ytd_tax' => (float) ($attrs['ytd_tax'] ?? 0),
             ],
-            'summary' => [
-                'basic_pay' => (float) ($summary['basic_pay_this_period'] ?? ($summary['total_pay'] ?? 0)),
+            'summary' => $this->payslipDisplaySummary($summary, $snapshot, $employee, $dailyEarningLines),
+            'snapshot' => $snapshot,
+        ];
+    }
+
+    /**
+     * Display summary consumed by the payslip view/preview (and the PDF render).
+     *
+     * Must expose the consultant payroll flags: the frontend decides between the flat
+     * consultant Basic Pay layout and the regular attendance-driven earnings breakdown.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $snapshot
+     * @param  list<array<string, mixed>>  $dailyEarningLines
+     * @return array<string, mixed>
+     */
+    private function payslipDisplaySummary(
+        array $summary,
+        array $snapshot,
+        User $employee,
+        array $dailyEarningLines
+    ): array {
+        return [
+                'consultant_fixed_payroll' => (bool) ($summary['consultant_fixed_payroll'] ?? false),
+                'consultant_no_work_no_pay' => (bool) ($summary['consultant_no_work_no_pay'] ?? false),
+                'employment_status' => (string) ($summary['employment_status'] ?? ($employee->employment_status ?? '')),
+                'employment_type' => (string) ($summary['employment_type'] ?? ($employee->employment_type ?? '')),
                 'attendance_premium_pay_this_period' => (float) ($summary['attendance_premium_pay_this_period'] ?? 0),
                 'non_basic_earnings_this_period' => (float) ($summary['non_basic_earnings_this_period'] ?? 0),
                 'withholding_tax_this_period_estimate' => (float) ($summary['withholding_tax_this_period_estimate'] ?? 0),
@@ -968,9 +993,7 @@ class PayslipService
                 'payslip_deduction_lines' => is_array($summary['payslip_deduction_lines'] ?? null) ? $summary['payslip_deduction_lines'] : [],
                 'payslip_custom_deduction_lines' => is_array($summary['payslip_custom_deduction_lines'] ?? null) ? $summary['payslip_custom_deduction_lines'] : [],
                 'statutory_breakdown' => is_array($summary['statutory_breakdown'] ?? null) ? $summary['statutory_breakdown'] : [],
-            ],
-            'snapshot' => $snapshot,
-        ];
+            ];
     }
 
     /**
@@ -1310,7 +1333,9 @@ class PayslipService
         }
 
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
-        $summary['consultant_fixed_payroll'] = true;
+        if (! $this->isConsultantNoWorkNoPaySnapshot($snapshot, $summary)) {
+            $summary['consultant_fixed_payroll'] = true;
+        }
         if (trim((string) ($summary['employment_status'] ?? '')) === '') {
             $summary['employment_status'] = (string) ($employee->employment_status ?? 'consultant');
         }
@@ -1767,7 +1792,10 @@ class PayslipService
                 if ($employee instanceof User) {
                     $snapshotRaw = $payslip->snapshot ?? [];
                     $summary = is_array($snapshotRaw['summary'] ?? null) ? $snapshotRaw['summary'] : [];
-                    if ($this->isConsultantSnapshot(is_array($snapshotRaw) ? $snapshotRaw : [], $summary)) {
+                    if ($this->usesConsultantFixedPayslipLayout(
+                        is_array($snapshotRaw) ? $snapshotRaw : [],
+                        $summary
+                    )) {
                         $payslip = $this->refreshConsultantDraftPayslipSnapshot($payslip, $employee);
                     } else {
                         $payslip = $this->refreshDraftPayslipFromLiveComputation($payslip, $employee);
@@ -2828,11 +2856,15 @@ class PayslipService
         $summary = $this->stripRefundsExcludedFromDisplayGross($summary);
         if ($this->isExecomSnapshot($out, $summary)) {
             $summary = $this->sanitizeExecomPayslipSummary($summary);
-        } elseif ($this->isConsultantSnapshot($out, $summary)) {
+        } elseif ($this->usesConsultantFixedPayslipLayout($out, $summary)) {
             $summary = $this->sanitizeConsultantPayslipSummary($summary, $out);
             $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
+        } elseif ($this->isConsultantNoWorkNoPaySnapshot($out, $summary)) {
+            // Attendance-driven consultant: keep the regular layout, but still honour the
+            // consultant employment policy (overtime / holiday pay / paid leave toggles).
+            $summary = $this->applyEmploymentPayrollPolicyToSummary($summary, $out);
         }
-        if (! $immutable && $this->isConsultantSnapshot($out, $summary) && $payslip instanceof Payslip) {
+        if (! $immutable && $this->usesConsultantFixedPayslipLayout($out, $summary) && $payslip instanceof Payslip) {
             $employee = $payslip->relationLoaded('user') ? $payslip->user : User::query()->find($payslip->user_id);
             if ($employee instanceof User) {
                 $summary = $this->alignConsultantPayslipDailyRate(
@@ -2855,15 +2887,15 @@ class PayslipService
         $dailyComputationDays = $this->cleanDailyComputationDays($out['daily_computation_days'] ?? null);
         $dailyRate = (float) ($summary['daily_rate'] ?? ($out['daily_rate'] ?? 0));
         $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
-        if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
+        if (! $this->isExecomSnapshot($out, $summary) && ! $this->usesConsultantFixedPayslipLayout($out, $summary)) {
             $summary = $this->repairMissingUnworkedHolidayEarningLines($summary, $dailyComputationDays);
         }
-        if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
+        if (! $this->isExecomSnapshot($out, $summary) && ! $this->usesConsultantFixedPayslipLayout($out, $summary)) {
             $summary = $this->repairFixedSemiMonthlyPayslipDisplay($summary, $dailyComputationDays, $dailyRate);
         }
         $summary = $this->precomputeWorkedHolidayDisplayMetadata($summary, $dailyRate);
         $regularPayPresentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyComputationDays);
-        if (! $this->isExecomSnapshot($out, $summary) && ! $this->isConsultantSnapshot($out, $summary)) {
+        if (! $this->isExecomSnapshot($out, $summary) && ! $this->usesConsultantFixedPayslipLayout($out, $summary)) {
             $summary = $this->normalizeFrozenRegularPayLines(
                 $summary,
                 $dailyComputationDays,
@@ -2894,7 +2926,7 @@ class PayslipService
             $summary['unworked_holiday_present_day_units'] = $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
         }
         $summary = $this->applyWorkedHolidayDisplaySplit($summary, $dailyRate);
-        $isConsultantSnapshot = $this->isConsultantSnapshot($out, $summary);
+        $isConsultantSnapshot = $this->usesConsultantFixedPayslipLayout($out, $summary);
         $isExecomSnapshot = $this->isExecomSnapshot($out, $summary);
         if (! $isConsultantSnapshot && ! $isExecomSnapshot) {
             $summary = $this->attachRegularPayAfterReductionsDisplay($summary, $dailyComputationDays);
@@ -2950,7 +2982,7 @@ class PayslipService
         );
         $summary['display_gross_pay'] = round((float) ($summary['display_gross_pay'] ?? $payslip->gross_pay ?? 0), 2);
         $summary['display_net_pay'] = round((float) ($summary['display_net_pay'] ?? $payslip->net_pay ?? 0), 2);
-        if (! $this->isConsultantSnapshot($out, $summary) && ! $this->isExecomSnapshot($out, $summary)) {
+        if (! $this->usesConsultantFixedPayslipLayout($out, $summary) && ! $this->isExecomSnapshot($out, $summary)) {
             $summary['attendance_refund'] = $this->attendanceRefundIncludedInBasicPayAmount($summary);
             $summary['leave_with_pay'] = $this->leaveWithPayReportBreakdownAmount($summary);
             $summary['leave_with_pay_day_units'] = $this->leaveWithPayDayUnitsForDisplay($summary);
@@ -3229,7 +3261,7 @@ class PayslipService
 
         $isExecom = (string) ($payslip->payroll_module ?? '') === PayrollBatchRun::MODULE_EXECOM
             || $this->isExecomSnapshot($snapshot, $summary);
-        $isConsultant = $this->isConsultantSnapshot($snapshot, $summary);
+        $isConsultant = $this->usesConsultantFixedPayslipLayout($snapshot, $summary);
         if ($isExecom) {
             $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
         } elseif ($isConsultant) {
@@ -3487,7 +3519,7 @@ class PayslipService
     {
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $isExecom = $this->isExecomSnapshot($snapshot, $summary);
-        $isConsultant = $this->isConsultantSnapshot($snapshot, $summary);
+        $isConsultant = $this->usesConsultantFixedPayslipLayout($snapshot, $summary);
         if ($isExecom) {
             $summary = $this->sanitizeExecomPayslipSummary($summary, $snapshot);
         } elseif ($isConsultant) {
@@ -4159,7 +4191,7 @@ class PayslipService
         $out = $snapshot;
         $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
         $isExecomSnapshot = $this->isExecomSnapshot($snapshot, $summary);
-        $isConsultantSnapshot = $this->isConsultantSnapshot($snapshot, $summary);
+        $isConsultantSnapshot = $this->usesConsultantFixedPayslipLayout($snapshot, $summary);
 
         $dailyRate = (float) ($summary['daily_rate'] ?? ($snapshot['daily_rate'] ?? 0));
         $regularHourlyRate = $dailyRate > 0 ? ($dailyRate / 8.0) : null;
@@ -7744,6 +7776,12 @@ class PayslipService
             ?? (function_exists('app') ? app(EmploymentPayrollPolicyApplicator::class) : null);
         $attendanceEarningsEnabled = EmploymentPayrollPolicyApplicator::consultantAttendanceEarningsEnabled($policy);
 
+        // "No work, no pay" consultants are paid from real attendance like regular employees:
+        // keep the attendance-driven earning lines instead of collapsing them into a fixed Basic Pay.
+        if (EmploymentPayrollPolicyApplicator::consultantNoWorkNoPayEnabled($policy)) {
+            return $summary;
+        }
+
         $lines = [];
         $basicAmount = $this->resolveConsultantBasicPayDisplayAmount($summary, $snapshot);
         $attendancePremium = 0.0;
@@ -8079,6 +8117,63 @@ class PayslipService
         }
 
         return false;
+    }
+
+    /**
+     * "No work, no pay" consultants are paid from real attendance like a regular employee.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @param  array<string, mixed>  $summary
+     */
+    public function isConsultantNoWorkNoPaySnapshot(array $snapshot, array $summary): bool
+    {
+        if (! $this->isConsultantSnapshot($snapshot, $summary)) {
+            return false;
+        }
+
+        if (! empty($summary['consultant_no_work_no_pay'])) {
+            return true;
+        }
+
+        // Snapshots taken before the flag existed have no marker — fall back to the live policy.
+        try {
+            $policy = $this->resolveConsultantEmploymentPolicy($summary, $snapshot);
+
+            return EmploymentPayrollPolicyApplicator::consultantNoWorkNoPayEnabled($policy);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether the payslip keeps the flat consultant Basic Pay layout. "No work, no pay"
+     * consultants use the regular attendance-driven layout instead.
+     *
+     * @param  array<string, mixed>  $snapshot
+     * @param  array<string, mixed>  $summary
+     */
+    public function usesConsultantFixedPayslipLayout(array $snapshot, array $summary): bool
+    {
+        return $this->isConsultantSnapshot($snapshot, $summary)
+            && ! $this->isConsultantNoWorkNoPaySnapshot($snapshot, $summary);
+    }
+
+    /**
+     * Draft payslip variant: a "no work, no pay" consultant must be recomputed from live
+     * attendance (like a regular employee) instead of only repairing the stored snapshot.
+     */
+    public function consultantPayslipUsesFixedPayLayout(Payslip $payslip): bool
+    {
+        $snapshotRaw = $payslip->snapshot;
+        $snapshot = is_array($snapshotRaw)
+            ? $snapshotRaw
+            : (is_string($snapshotRaw) ? json_decode($snapshotRaw, true) : []);
+        if (! is_array($snapshot)) {
+            $snapshot = [];
+        }
+        $summary = is_array($snapshot['summary'] ?? null) ? $snapshot['summary'] : [];
+
+        return $this->usesConsultantFixedPayslipLayout($snapshot, $summary);
     }
 
     /**

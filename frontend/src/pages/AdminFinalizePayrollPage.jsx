@@ -1611,9 +1611,11 @@ export default function AdminFinalizePayrollPage() {
                         const payslipIdNum = Number(row.payslip_id ?? 0)
                         const canSendRow = periodFinalized && payslipIdNum > 0 && isSendablePayslipStatus(row.status)
                         const rowIsSent = Boolean(row.is_sent || row.delivered_at)
-                        const isConsultantRow = Boolean(row?.consultant_fixed_payroll)
+                        const isConsultantRow = !row?.consultant_no_work_no_pay && (
+                          Boolean(row?.consultant_fixed_payroll)
                           || String(row?.employment_status || '').toLowerCase().replace(/[-\s]+/g, '_') === 'consultant'
                           || String(row?.employment_type || '').toLowerCase().replace(/[-\s]+/g, '_') === 'consultant'
+                        )
                         const employmentStatusLabel = payrollEmployeeStatusLabel(row, isAdmin)
 
                         return (

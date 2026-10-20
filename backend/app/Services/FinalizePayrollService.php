@@ -47,6 +47,7 @@ class FinalizePayrollService
         private readonly DataScopeService $dataScopeService,
         private readonly PayrollPeriodMutationGuard $payrollPeriodMutationGuard,
         private readonly PayrollEmployeeEligibilityService $payrollEligibility,
+        private readonly EmploymentPayrollPolicyResolver $employmentPayrollPolicyResolver,
     ) {}
 
     /**
@@ -1776,7 +1777,9 @@ class FinalizePayrollService
                 throw new \RuntimeException('Draft payslip snapshot is missing summary data for user_id='.$employeeUserId);
             }
 
-            if ($this->isConsultantEmployee($employee)) {
+            if ($this->isConsultantEmployee($employee)
+                && $this->payslipService->consultantPayslipUsesFixedPayLayout($draftPayslip)
+            ) {
                 $draftPayslip = $this->payslipService->refreshConsultantDraftPayslipSnapshot($draftPayslip, $employee);
             } else {
                 $draftPayslip = $this->payslipService->refreshDraftPayslipFromLiveComputation($draftPayslip, $employee);
@@ -3013,7 +3016,9 @@ class FinalizePayrollService
      */
     private function totalAttendanceLabelForSummary(array $summary, array $viewSummary = [], array $viewSnapshot = []): ?string
     {
-        if ($this->summaryLooksLikeConsultant($summary, $viewSummary)) {
+        if ($this->summaryLooksLikeConsultant($summary, $viewSummary)
+            && ! ($summary['consultant_no_work_no_pay'] ?? $viewSummary['consultant_no_work_no_pay'] ?? false)
+        ) {
             return null;
         }
         $merged = $summary;
@@ -3033,6 +3038,8 @@ class FinalizePayrollService
 
     private function employeePreviewIdentityFields(User $employee): array
     {
+        $consultantNoWorkNoPay = $this->consultantNoWorkNoPay($employee);
+
         return [
             'name' => (string) $employee->display_name,
             'formatted_name' => (string) $employee->formatted_name,
@@ -3043,7 +3050,8 @@ class FinalizePayrollService
             'employment_type' => $employee->employment_type,
             'employment_status' => $employee->employment_status,
             'employment_status_label' => $this->isConsultantEmployee($employee) ? 'Consultant' : null,
-            'consultant_fixed_payroll' => $this->isConsultantEmployee($employee),
+            'consultant_fixed_payroll' => $this->isConsultantEmployee($employee) && ! $consultantNoWorkNoPay,
+            'consultant_no_work_no_pay' => $consultantNoWorkNoPay,
             'employee_sort_key' => $employee->employeeListingSortKey(),
         ];
     }
@@ -3081,6 +3089,24 @@ class FinalizePayrollService
         $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($user->employment_type ?? ''))));
 
         return $status === 'consultant' || $type === 'consultant';
+    }
+
+    /**
+     * Whether the consultant employment class is switched to "no work, no pay" (attendance-driven).
+     */
+    private function consultantNoWorkNoPay(User $employee): bool
+    {
+        if (! $this->isConsultantEmployee($employee)) {
+            return false;
+        }
+
+        try {
+            $policy = $this->employmentPayrollPolicyResolver->resolveForEmployee($employee);
+
+            return EmploymentPayrollPolicyApplicator::consultantNoWorkNoPayEnabled($policy);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**

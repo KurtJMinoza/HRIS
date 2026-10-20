@@ -38,6 +38,34 @@ class EmploymentPayrollPolicyApplicator
     }
 
     /**
+     * "No work, no pay" for consultants: attendance drives basic pay exactly like a regular
+     * employee instead of the default fixed/auto-present consultant payroll.
+     *
+     * @param  array<string, mixed>  $policy
+     */
+    public static function consultantNoWorkNoPayEnabled(array $policy): bool
+    {
+        return (bool) ($policy['no_work_no_pay'] ?? false);
+    }
+
+    /**
+     * Whether a consultant is paid for the whole period without time in/time out (auto present).
+     *
+     * Auto present applies only when the policy asks for neither attendance-driven earnings
+     * (overtime / holiday pay / paid leave) nor "no work, no pay".
+     *
+     * @param  array<string, mixed>  $policy
+     */
+    public static function consultantUsesAutoPresentPayroll(array $policy): bool
+    {
+        if (self::consultantAttendanceEarningsEnabled($policy)) {
+            return false;
+        }
+
+        return ! self::consultantNoWorkNoPayEnabled($policy);
+    }
+
+    /**
      * Gate consultant fixed-pay sanitization: suppress attendance lines only when policy disables them.
      *
      * @param  array<string, mixed>  $line
@@ -123,7 +151,8 @@ class EmploymentPayrollPolicyApplicator
      *     apply_allowances: bool,
      *     allow_paid_leave: bool,
      *     allow_overtime: bool,
-     *     allow_holiday_pay: bool
+     *     allow_holiday_pay: bool,
+     *     no_work_no_pay: bool
      * }
      */
     private function policyFields(array $policy): array
@@ -135,6 +164,7 @@ class EmploymentPayrollPolicyApplicator
             'allow_paid_leave' => (bool) $policy['allow_paid_leave'],
             'allow_overtime' => (bool) $policy['allow_overtime'],
             'allow_holiday_pay' => (bool) $policy['allow_holiday_pay'],
+            'no_work_no_pay' => (bool) ($policy['no_work_no_pay'] ?? false),
         ];
     }
 
