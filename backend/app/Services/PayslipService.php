@@ -4815,6 +4815,18 @@ class PayslipService
                     $nonAbsenceDeduction = $this->sumFixedRegularNonAbsenceAttendanceDeduction($attendanceBreakdown);
                     $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
                     $nearFullCutoff = $this->isNearFullFixedRegularCutoff($summary);
+                    $paidLeaveSplitCapDisplay = $paidLeavePremiumAmount > 0.0001
+                        && ($presentDayCapApplied || ! empty($summary['regular_fixed_present_day_cap_applied']));
+                    $accountsAllScheduledDays = $this->fixedRegularAccountsForAllScheduledDays($summary, $attendanceBreakdown)
+                        && ! $paidLeaveSplitCapDisplay;
+                    if ($accountsAllScheduledDays && $fixedGross > 0.0001) {
+                        $lines[$idx]['display_amount'] = $fixedGross;
+                        $lines[$idx]['computed_amount'] = $netAmount;
+                        $updated = true;
+                        $displayApplied = true;
+
+                        continue;
+                    }
                     if (
                         $nearFullCutoff
                         && $presentDayBasePay !== null
@@ -5294,9 +5306,17 @@ class PayslipService
             }
         }
         $nearFullCutoff = $this->isNearFullFixedRegularCutoff($summary);
+        $paidLeaveSplitCapDisplay = $paidLeavePremiumAmount > 0.0001
+            && ($presentDayCapApplied || ! empty($summary['regular_fixed_present_day_cap_applied']));
+        $accountsAllScheduledDays = $this->fixedRegularAccountsForAllScheduledDays($summary, $breakdown)
+            && ! $paidLeaveSplitCapDisplay;
+        $usesFullFixedBasicDisplay = $nearFullCutoff || $accountsAllScheduledDays;
+        if ($accountsAllScheduledDays && ! $nearFullCutoff && $fixedGross > 0.0001 && $rowBasedDeduction > 0.0001) {
+            $netAmount = round(max(0.0, $fixedGross - $rowBasedDeduction), 2);
+        }
 
         if (
-            ! $nearFullCutoff
+            ! $usesFullFixedBasicDisplay
             && ($regularPayHeadlineBase !== null || $presentDayBasePay !== null)
             && ($presentDayCapApplied || ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross))
         ) {
@@ -5306,7 +5326,7 @@ class PayslipService
             $netAmount = round(max(0.0, ($baseForNet ?? 0.0) - $nonAbsenceDeduction), 2);
         }
 
-        if ($nearFullCutoff) {
+        if ($usesFullFixedBasicDisplay) {
             // Present-day base only replaces the fixed gross for daily-rate rounding (a few centavos).
             // Cutoffs with fewer scheduled days than divisor / 2, or worked days with no paid minutes,
             // still pay the fixed semi-monthly basic minus attendance rows (basic_pay_this_period).
@@ -5332,12 +5352,12 @@ class PayslipService
                     ? round(max(0.0, $fixedGross - (float) $paidLeavePremiumAmount), 2)
                     : ($fixedGross > 0.0001 ? $fixedGross : (float) $netAmount);
             }
-        } elseif ($presentDayCapApplied) {
+        } elseif ($presentDayCapApplied && ! $accountsAllScheduledDays) {
             $totalDeduction = $nonAbsenceDeduction;
             $headlineDisplayAmount = ($paidLeavePremiumAmount > 0.0001 && $regularPayHeadlineBase !== null)
                 ? (float) $regularPayHeadlineBase
                 : (float) ($presentDayBasePay ?? $netAmount);
-        } elseif ($nonAbsenceDeduction > 0.0001 && $presentDayBasePay !== null) {
+        } elseif ($nonAbsenceDeduction > 0.0001 && $presentDayBasePay !== null && ! $accountsAllScheduledDays) {
             $totalDeduction = $nonAbsenceDeduction;
             $headlineDisplayAmount = $presentDayBasePay;
         } elseif ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross) {
@@ -5391,7 +5411,7 @@ class PayslipService
         $breakdown['total_deduction'] = round($totalDeduction, 2);
         $breakdown['total_deduction_units_label'] = '—';
         $storedNetGapDeduction = round(max(0.0, $fixedGross - $netAmount), 2);
-        if ($presentDayCapApplied) {
+        if ($presentDayCapApplied && ! $accountsAllScheduledDays) {
             if ($paidLeavePremiumAmount > 0.0001 && $absenceDeduction <= 0.0001) {
                 $regularPayAfterReductions = round(
                     max(0.0, $headlineDisplayAmount - $nonAbsenceDeduction),
@@ -5480,6 +5500,22 @@ class PayslipService
         }
 
         return ($presentUnits / $scheduledDays) >= 0.90;
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $breakdown
+     */
+    private function fixedRegularAccountsForAllScheduledDays(array $summary, array $breakdown): bool
+    {
+        $presentUnits = $this->resolveFixedRegularPresentDayUnits($summary);
+        $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
+
+        return app(PayrollComputationService::class)->fixedRegularAccountsForAllScheduledDays(
+            $presentUnits,
+            $scheduledDays,
+            $breakdown
+        );
     }
 
     private function resolveFixedRegularPresentDayUnits(array $summary): float

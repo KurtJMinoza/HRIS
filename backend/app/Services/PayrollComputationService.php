@@ -2542,21 +2542,42 @@ class PayrollComputationService implements PayrollBulkComputation
                 2
             );
 
-            if ($nearFullFixedRegularCutoff) {
+            $payFullSemiMonthlyGross = $this->shouldPayFixedRegularFullSemiMonthlyGross(
+                $regularPayPresentDayUnits,
+                $scheduledRegularDays,
+                $regularFixedAttendanceBreakdown,
+                $nearFullFixedRegularCutoff,
+                $paidLeavePremiumAmount <= 0.0001
+            );
+
+            if ($payFullSemiMonthlyGross) {
                 $baseRegularPay = $regularFixedSemiMonthlyGross;
                 $basicPayThisPeriod = round(
                     max(0.0, $baseRegularPay - $regularFixedFullAttendanceDeduction),
                     2
                 );
                 $regularFixedAttendanceDeduction = $regularFixedFullAttendanceDeduction;
-                if ($regularFixedPresentDayBasePay + 0.005 < $regularFixedSemiMonthlyGross) {
+                $accountsAllScheduledDays = $this->fixedRegularAccountsForAllScheduledDays(
+                    $regularPayPresentDayUnits,
+                    $scheduledRegularDays,
+                    $regularFixedAttendanceBreakdown
+                );
+                $onlyRoundingBelowGross = $regularFixedPresentDayBasePay + 0.005 < $regularFixedSemiMonthlyGross
+                    && $regularFixedSemiMonthlyGross - $regularFixedPresentDayBasePay <= 0.50;
+                if ($accountsAllScheduledDays) {
+                    // ponytail: cutoff may have fewer calendar days than the monthly divisor (e.g. 12 vs 13);
+                    // fixed basic is still the full semi-monthly gross — absences deduct on their own rows.
+                    $regularFixedPresentDayCapApplied = false;
+                    $regularPayDisplayAmount = $regularFixedSemiMonthlyGross;
+                } elseif ($onlyRoundingBelowGross) {
+                    $regularFixedPresentDayCapApplied = true;
+                    $regularPayDisplayAmount = $regularFixedPresentDayBasePay;
+                } elseif ($regularFixedPresentDayBasePay + 0.005 < $regularFixedSemiMonthlyGross) {
                     $regularFixedPresentDayCapApplied = true;
                     $regularPayDisplayAmount = $regularFixedPresentDayBasePay;
                 } else {
                     $regularFixedPresentDayCapApplied = false;
-                    $regularPayDisplayAmount = $regularFixedFullAttendanceDeduction > 0.0001
-                        ? $basicPayThisPeriod
-                        : $regularFixedSemiMonthlyGross;
+                    $regularPayDisplayAmount = $regularFixedSemiMonthlyGross;
                 }
             } else {
                 $baseRegularPay = round(
@@ -3375,6 +3396,87 @@ class PayrollComputationService implements PayrollBulkComputation
         }
 
         return ($this->countFixedRegularPresentDayUnits($days) / $scheduledDays) >= 0.90;
+    }
+
+    /**
+     * Fixed semi-monthly basic uses the full schedule factor when every scheduled day in the
+     * cutoff is accounted for as present, absence, or unpaid leave — even below the 90% present ratio.
+     *
+     * @param  array<string, mixed>  $breakdown
+     */
+    public function fixedRegularAccountsForAllScheduledDays(
+        float $presentDayUnits,
+        int $scheduledDays,
+        array $breakdown
+    ): bool {
+        if ($scheduledDays <= 0 || $presentDayUnits <= 0.0001) {
+            return false;
+        }
+
+        $accounted = $presentDayUnits
+            + $this->fixedRegularAbsenceDayUnitsFromBreakdown($breakdown)
+            + $this->fixedRegularUnpaidLeaveDayUnitsFromBreakdown($breakdown);
+
+        return $accounted + 0.01 >= (float) $scheduledDays;
+    }
+
+    /**
+     * @param  array<string, mixed>  $breakdown
+     */
+    public function shouldPayFixedRegularFullSemiMonthlyGross(
+        float $presentDayUnits,
+        int $scheduledDays,
+        array $breakdown,
+        bool $nearFullCutoff,
+        bool $includeAccountsAllScheduledPath = true
+    ): bool {
+        if ($nearFullCutoff) {
+            return true;
+        }
+
+        if (! $includeAccountsAllScheduledPath) {
+            return false;
+        }
+
+        return $this->fixedRegularAccountsForAllScheduledDays($presentDayUnits, $scheduledDays, $breakdown);
+    }
+
+    /**
+     * @param  array<string, mixed>  $breakdown
+     */
+    private function fixedRegularAbsenceDayUnitsFromBreakdown(array $breakdown): float
+    {
+        foreach (is_array($breakdown['rows'] ?? null) ? $breakdown['rows'] : [] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($row['key'] ?? ''))) !== 'absence') {
+                continue;
+            }
+
+            return max(0.0, (float) ($row['count'] ?? 0));
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $breakdown
+     */
+    private function fixedRegularUnpaidLeaveDayUnitsFromBreakdown(array $breakdown): float
+    {
+        foreach (is_array($breakdown['rows'] ?? null) ? $breakdown['rows'] : [] as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($row['key'] ?? ''))) !== 'unpaid_leave') {
+                continue;
+            }
+
+            return max(0.0, (float) ($row['count'] ?? 0));
+        }
+
+        return 0.0;
     }
 
     /**
