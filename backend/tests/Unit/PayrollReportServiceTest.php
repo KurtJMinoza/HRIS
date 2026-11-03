@@ -1129,6 +1129,27 @@ class PayrollReportServiceTest extends TestCase
         $this->assertSame('13 days', $label);
     }
 
+    public function test_fixed_semi_monthly_attendance_label_does_not_double_count_unworked_holiday(): void
+    {
+        // 13 worked days + Nov 2 unworked holiday = 14 present units (holiday already included).
+        $summary = [
+            'regular_fixed_semi_monthly_payroll' => true,
+            'regular_pay_present_day_units' => 14,
+            'regular_pay_headline_day_units' => 14,
+            'unworked_holiday_present_day_units' => 1,
+            'daily_computation_earning_lines' => [[
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => 7852.07,
+                'display_amount' => 7890,
+                'units' => '14 days',
+                'metadata' => ['regular_fixed_semi_monthly_payroll' => true],
+            ]],
+        ];
+
+        $this->assertSame('14 days', app(\App\Services\PayslipService::class)->regularPayAttendanceLabel($summary));
+    }
+
     public function test_double_normalization_preserves_unworked_holiday_regular_pay(): void
     {
         $snapshot = [

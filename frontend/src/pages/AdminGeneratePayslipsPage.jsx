@@ -1855,9 +1855,7 @@ export default function AdminGeneratePayslipsPage() {
                             ? 'Only Consultant – Regular employees will be included. Regular employee payroll rules apply (fixed semi-monthly pay with attendance deductions).'
                             : consultantType === 'consultant_probationary'
                               ? 'Only Consultant – Probationary employees will be included. Probationary payroll rules apply (attendance-based daily pay).'
-                              : consultantType === 'consultant'
-                                ? 'Only fixed-pay Consultant employees will be included. Consultant fixed-pay and employment payroll policies apply.'
-                                : `${consultantTypeLabel}: Consultant, Consultant – Regular, and Consultant – Probationary employees will be included, each with its own payroll rules.`}
+                              : `${consultantTypeLabel}: Consultant – Regular and Consultant – Probationary employees will be included, each with its own payroll rules.`}
                         </p>
                       </div>
                     ) : scopeReady ? (

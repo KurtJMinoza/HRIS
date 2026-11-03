@@ -565,7 +565,6 @@ class EmployeeStatusService
             EmploymentStatus::Probationary->value,
             EmploymentStatus::Regular->value,
             EmploymentStatus::ProjectBased->value,
-            EmploymentStatus::Consultant->value,
             EmploymentStatus::ConsultantRegular->value,
             EmploymentStatus::ConsultantProbationary->value,
         ]);

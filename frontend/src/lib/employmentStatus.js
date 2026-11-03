@@ -32,7 +32,6 @@ const ALIAS_TO_KEY = {
 /** Consultant Payroll type options (value '' = all consultant types). */
 export const CONSULTANT_PAYROLL_TYPE_OPTIONS = [
   { value: '', label: 'All consultant types' },
-  { value: 'consultant', label: 'Consultant (fixed pay)' },
   { value: 'consultant_regular', label: 'Consultant – Regular' },
   { value: 'consultant_probationary', label: 'Consultant – Probationary' },
 ]

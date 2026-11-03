@@ -12,7 +12,6 @@ return [
         'probationary',
         'regular',
         'project_based',
-        'consultant',
         'consultant_regular',
         'consultant_probationary',
     ],

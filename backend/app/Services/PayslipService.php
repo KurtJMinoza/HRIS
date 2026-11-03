@@ -8919,6 +8919,20 @@ class PayslipService
      */
     public function regularPayAttendanceLabel(array $summary): ?string
     {
+        // Fixed semi-monthly: the normalized payslip's own Regular pay line is the number HR sees, so
+        // Finalize Payroll and reports must show it verbatim (worked holidays included, no double holidays).
+        if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            foreach (is_array($summary['daily_computation_earning_lines'] ?? null) ? $summary['daily_computation_earning_lines'] : [] as $line) {
+                if (! is_array($line) || ! $this->isRegularPayLine($line)) {
+                    continue;
+                }
+                if (preg_match('/^(\d+(?:\.\d+)?)\s*days?$/i', trim((string) ($line['units'] ?? '')), $matches) === 1 && (float) $matches[1] > 0.0001) {
+                    return $this->formatRegularPayPresentDaysUnits((float) $matches[1]);
+                }
+                break;
+            }
+        }
+
         $dailyDays = $this->cleanDailyComputationDays($summary['daily_computation_days'] ?? null);
         $presentDays = $this->resolveRegularPayPresentDaysCount($summary, $dailyDays);
         if ($presentDays !== null && $presentDays > 0) {
@@ -9145,10 +9159,10 @@ class PayslipService
     private function resolveRegularPayPresentDaysCount(array $summary, array $dailyDays = []): ?float
     {
         if (! empty($summary['regular_fixed_semi_monthly_payroll'])) {
+            // Fixed semi-monthly present/scheduled units already count unworked holidays as present
+            // days (same number as the payslip Regular pay line); adding them again shows 15 of 14.
             $headlineUnits = $this->resolveFixedRegularPayHeadlineDayUnitsFromSummary($summary);
             if ($headlineUnits !== null && $headlineUnits > 0.0001) {
-                $headlineUnits += $this->resolveUnworkedHolidayPresentDayUnitsFromSummary($summary);
-
                 return round($headlineUnits, 4);
             }
         }

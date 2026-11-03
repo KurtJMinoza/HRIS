@@ -5323,10 +5323,12 @@ export default function AdminEmployeeProfile() {
                       <SelectItem value="probationary">Probationary</SelectItem>
                       <SelectItem value="regular">Regular</SelectItem>
                       <SelectItem value="project_based">Project-based</SelectItem>
-                      <SelectItem value="consultant">Consultant</SelectItem>
                       <SelectItem value="consultant_regular">Consultant – Regular</SelectItem>
                       <SelectItem value="consultant_probationary">Consultant – Probationary</SelectItem>
                       {/* Legacy values still on record — keep selectable until changed */}
+                      {form.employment_status === 'consultant' ? (
+                        <SelectItem value="consultant">Consultant (legacy)</SelectItem>
+                      ) : null}
                       {form.employment_status === 'contractual' ? (
                         <SelectItem value="contractual">Contractual (legacy)</SelectItem>
                       ) : null}
