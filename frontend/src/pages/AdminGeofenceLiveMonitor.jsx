@@ -45,7 +45,8 @@ const DEVICE_ICONS = {
 }
 
 function todayString() {
-  return new Date().toISOString().slice(0, 10)
+  // en-CA formats as YYYY-MM-DD; toISOString() is UTC and lags Manila by a day before 08:00.
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' })
 }
 
 function normalizeEvent(event) {

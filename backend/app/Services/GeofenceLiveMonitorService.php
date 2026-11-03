@@ -102,7 +102,7 @@ class GeofenceLiveMonitorService
             $query = AttendanceGeofenceEvent::query()
                 ->whereNotNull('latitude')
                 ->whereNotNull('longitude')
-                ->whereDate('created_at', $date);
+                ->whereBetween('created_at', $this->dayBounds($date));
             if ($scopedBranchIds !== null) {
                 if ($scopedBranchIds === []) {
                     return [
@@ -330,7 +330,7 @@ class GeofenceLiveMonitorService
                 ],
             );
 
-            $this->invalidateForDate($event->created_at?->toDateString() ?? now()->toDateString());
+            $this->invalidateForDate(($event->created_at ?? now())->copy()->timezone($this->attendanceTimezone())->toDateString());
             if ($broadcast) {
                 $this->broadcastEventAfterCommit($event);
             }
@@ -376,7 +376,7 @@ class GeofenceLiveMonitorService
         $employee = $event->employee;
         $branch = $event->branch;
         $company = $event->company ?? $branch?->company ?? $employee?->company;
-        $time = ($event->created_at ?? now())->copy()->timezone(config('attendance.timezone', config('app.timezone', 'Asia/Manila')));
+        $time = ($event->created_at ?? now())->copy()->timezone($this->attendanceTimezone());
 
         $attendanceLog = $event->relationLoaded('attendanceLog') ? $event->attendanceLog : null;
         $authenticationMethod = $attendanceLog?->authentication_method;
@@ -588,10 +588,32 @@ class GeofenceLiveMonitorService
     private function normalizeDate(mixed $value): string
     {
         if ($value === null || trim((string) $value) === '') {
-            return now(config('attendance.timezone', config('app.timezone', 'Asia/Manila')))->toDateString();
+            return now($this->attendanceTimezone())->toDateString();
         }
 
         return Carbon::parse($value)->toDateString();
+    }
+
+    private function attendanceTimezone(): string
+    {
+        return (string) config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
+    }
+
+    /**
+     * created_at is stored in the app timezone (UTC); the monitor date is an attendance-timezone
+     * calendar day. whereDate() would drop punches before 08:00 Manila (still the previous UTC day).
+     *
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    public function dayBounds(string $date): array
+    {
+        $appTz = (string) config('app.timezone', 'UTC');
+        $day = Carbon::parse($date, $this->attendanceTimezone());
+
+        return [
+            $day->copy()->startOfDay()->timezone($appTz),
+            $day->copy()->endOfDay()->timezone($appTz),
+        ];
     }
 
     private function blankToNull(mixed $value): ?string
@@ -642,7 +664,7 @@ class GeofenceLiveMonitorService
             ])
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
-            ->whereDate('created_at', $date);
+            ->whereBetween('created_at', $this->dayBounds($date));
 
         if ($scopedBranchIds !== null) {
             if ($scopedBranchIds === []) {
@@ -721,15 +743,16 @@ class GeofenceLiveMonitorService
             return;
         }
 
+        $bounds = $this->dayBounds($date);
         $existingValidationIds = AttendanceGeofenceEvent::query()
-            ->whereDate('created_at', $date)
+            ->whereBetween('created_at', $bounds)
             ->whereNotNull('geofence_validation_log_id')
             ->pluck('geofence_validation_log_id')
             ->map(fn ($id): int => (int) $id)
             ->all();
 
         $query = GeofenceValidationLog::query()
-            ->whereDate('created_at', $date)
+            ->whereBetween('created_at', $bounds)
             ->whereNotNull('employee_id')
             ->whereNotNull('latitude')
             ->whereNotNull('longitude');
