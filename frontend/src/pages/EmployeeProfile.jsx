@@ -3349,7 +3349,7 @@ export default function EmployeeProfile() {
                 </>
               ) : null}
             </div>
-            {displayUser?.employment_status === 'probationary' && displayUser?.probation_milestones ? (
+            {['probationary', 'consultant_probationary'].includes(displayUser?.employment_status) && displayUser?.probation_milestones ? (
               <div className="mt-6 space-y-3 rounded-xl border border-border/60 bg-muted/15 p-4 dark:bg-white/5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-medium text-foreground">Probation milestones</p>

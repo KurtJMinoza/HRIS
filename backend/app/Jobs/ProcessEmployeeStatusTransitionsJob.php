@@ -51,7 +51,7 @@ class ProcessEmployeeStatusTransitionsJob implements ShouldQueue
     {
         $probationaryEmployees = User::query()
             ->activeRoster()
-            ->where('employment_status', EmploymentStatus::Probationary->value)
+            ->whereIn('employment_status', EmploymentStatus::regularizableValues())
             ->whereNotNull('hire_date')
             ->get();
 
@@ -98,7 +98,7 @@ class ProcessEmployeeStatusTransitionsJob implements ShouldQueue
     ): bool {
         $employee->refresh();
 
-        if ($employee->employment_status !== EmploymentStatus::Probationary->value) {
+        if (! in_array($employee->employment_status, EmploymentStatus::regularizableValues(), true)) {
             return false;
         }
 
@@ -152,7 +152,7 @@ class ProcessEmployeeStatusTransitionsJob implements ShouldQueue
 
         $employees = User::query()
             ->activeRoster()
-            ->where('employment_status', EmploymentStatus::Probationary->value)
+            ->whereIn('employment_status', EmploymentStatus::regularizableValues())
             ->whereNotNull('hire_date')
             ->get();
 
@@ -226,7 +226,7 @@ class ProcessEmployeeStatusTransitionsJob implements ShouldQueue
             ->whereNotNull('contract_end_date')
             ->get();
 
-        foreach ($users as $user) {
+        foreach ($users as $user) { 
             $end = Carbon::parse($user->contract_end_date)->startOfDay();
             $daysToEnd = $asOf->diffInDays($end, false);
 

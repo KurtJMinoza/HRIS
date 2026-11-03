@@ -13,6 +13,8 @@ return [
         'regular',
         'project_based',
         'consultant',
+        'consultant_regular',
+        'consultant_probationary',
     ],
 
     'regularization' => [

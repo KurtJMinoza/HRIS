@@ -622,6 +622,8 @@ function EmployeeExemptionsTab({ canManage }) {
           <option value="regular">Regular</option>
           <option value="probationary">Probationary</option>
           <option value="consultant">Consultant</option>
+          <option value="consultant_regular">Consultant – Regular</option>
+          <option value="consultant_probationary">Consultant – Probationary</option>
           <option value="contractual">Contractual</option>
           <option value="project_based">Project based</option>
         </select>

@@ -28,6 +28,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/components/ui/use-toast'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { saveBulkPayslipZipBlob } from '@/lib/bulkPayslipDownload'
+import { CONSULTANT_PAYROLL_TYPE_OPTIONS } from '@/lib/employmentStatus'
 import { cn } from '@/lib/utils'
 import {
   ArrowLeft,
@@ -750,7 +751,10 @@ export default function AdminConsultantFinalizePayrollPage() {
             <p className="text-sm font-semibold text-muted-foreground">Consultant batch</p>
             <div className="h-11 w-full rounded-xl border border-border/80 bg-background px-3 text-sm font-semibold text-foreground shadow-sm dark:bg-input/35 flex items-center">
               {selectedId
-                ? `#${selectedId} · Consultant · ${formatDate(selectedBatch?.pay_period_start)} - ${formatDate(selectedBatch?.pay_period_end)}`
+                ? `#${selectedId} · ${
+                  CONSULTANT_PAYROLL_TYPE_OPTIONS.find((option) => option.value && option.value === selectedBatch?.employee_status_filter)?.label
+                  || 'All consultant types'
+                } · ${formatDate(selectedBatch?.pay_period_start)} - ${formatDate(selectedBatch?.pay_period_end)}`
                 : 'No Consultant batch selected'}
             </div>
           </div>

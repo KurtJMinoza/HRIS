@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\EmploymentStatus;
 use App\Models\AttendanceCorrection;
 use App\Models\EmployeeOrganizationAssignment;
 use App\Models\ExecomEmployeeProfile;
@@ -343,9 +344,11 @@ class PayrollEmployeeEligibilityService
 
     private function excludeConsultantsFromRegularQuery(Builder $query): void
     {
-        $query->where(function (Builder $scope): void {
-            $scope->where(function (Builder $inner): void {
-                $inner->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) != 'consultant'")
+        $moduleStatuses = EmploymentStatus::consultantPayrollModuleValues();
+        $placeholders = implode(',', array_fill(0, count($moduleStatuses), '?'));
+        $query->where(function (Builder $scope) use ($moduleStatuses, $placeholders): void {
+            $scope->where(function (Builder $inner) use ($moduleStatuses, $placeholders): void {
+                $inner->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) NOT IN ({$placeholders})", $moduleStatuses)
                     ->orWhereNull('users.employment_status');
             })->where(function (Builder $inner): void {
                 $inner->whereRaw("LOWER(TRIM(COALESCE(users.employment_type, ''))) != 'consultant'")
@@ -393,8 +396,10 @@ class PayrollEmployeeEligibilityService
     private function applyConsultantScope(Builder $query, bool $mustBeConsultant): void
     {
         if ($mustBeConsultant) {
-            $query->where(function (Builder $scope): void {
-                $scope->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) = 'consultant'")
+            $moduleStatuses = EmploymentStatus::consultantPayrollModuleValues();
+            $placeholders = implode(',', array_fill(0, count($moduleStatuses), '?'));
+            $query->where(function (Builder $scope) use ($moduleStatuses, $placeholders): void {
+                $scope->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) IN ({$placeholders})", $moduleStatuses)
                     ->orWhereRaw("LOWER(TRIM(COALESCE(users.employment_type, ''))) = 'consultant'");
             });
 
@@ -404,12 +409,43 @@ class PayrollEmployeeEligibilityService
         $this->excludeConsultantsFromRegularQuery($query);
     }
 
+    /**
+     * Consultant Payroll type filter: consultant (fixed pay), consultant_regular, or consultant_probationary.
+     * Legacy rows with employment_type = consultant and no consultant status count as plain consultant.
+     */
+    public function applyConsultantStatusFilter(Builder $query, ?string $consultantStatus): void
+    {
+        $status = EmploymentStatus::tryFromStored($consultantStatus);
+        if ($status === null || ! $status->isConsultantPayrollModule()) {
+            return;
+        }
+
+        if ($status !== EmploymentStatus::Consultant) {
+            $query->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) = ?", [$status->value]);
+
+            return;
+        }
+
+        $query->where(function (Builder $scope): void {
+            $scope->whereRaw("LOWER(TRIM(COALESCE(users.employment_status, ''))) = 'consultant'")
+                ->orWhere(function (Builder $legacy): void {
+                    $legacy->whereRaw("LOWER(TRIM(COALESCE(users.employment_type, ''))) = 'consultant'")
+                        ->whereRaw(
+                            "LOWER(TRIM(COALESCE(users.employment_status, ''))) NOT IN (?, ?)",
+                            [EmploymentStatus::ConsultantRegular->value, EmploymentStatus::ConsultantProbationary->value]
+                        );
+                });
+        });
+    }
+
     private function isConsultantEmployee(User $employee): bool
     {
-        $status = strtolower(trim(str_replace(['-', ' '], '_', (string) ($employee->employment_status ?? ''))));
+        if (EmploymentStatus::tryFromStored((string) ($employee->employment_status ?? ''))?->isConsultantPayrollModule()) {
+            return true;
+        }
         $type = strtolower(trim(str_replace(['-', ' '], '_', (string) ($employee->employment_type ?? ''))));
 
-        return $status === 'consultant' || $type === 'consultant';
+        return $type === 'consultant';
     }
 
     private function applyActiveExecomProfileScope(

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\EmploymentStatus;
 use App\Http\Controllers\Controller;
 use App\Jobs\GeneratePayrollBatchJob;
 use App\Models\Company;
@@ -40,6 +41,7 @@ class ConsultantPayrollController extends Controller
         $branchId = isset($validated['branch_id']) ? (int) $validated['branch_id'] : null;
         $departmentId = isset($validated['department_id']) ? (int) $validated['department_id'] : null;
         $employeeIds = ! empty($validated['employee_id']) ? [(int) $validated['employee_id']] : null;
+        $statusFilter = EmploymentStatus::tryFromStored($validated['consultant_status'] ?? null)?->value;
 
         $eligible = $this->payrollEligibility->query(
             $companyId,
@@ -54,10 +56,18 @@ class ConsultantPayrollController extends Controller
         if ($employeeIds !== null) {
             $eligible->whereIn('users.id', $employeeIds);
         }
+        $this->payrollEligibility->applyConsultantStatusFilter($eligible, $statusFilter);
         $employeeCount = (int) (clone $eligible)->distinct('users.id')->count('users.id');
-        abort_if($employeeCount < 1, 422, 'No active Consultant employees in the selected scope.');
+        abort_if(
+            $employeeCount < 1,
+            422,
+            $statusFilter !== null
+                ? 'No active '.EmploymentStatus::from($statusFilter)->label().' employees in the selected scope.'
+                : 'No active Consultant employees in the selected scope.'
+        );
 
-        $batchKey = 'consultant_'.$this->makeBatchKey($companyId, $branchId, $departmentId, $employeeIds[0] ?? null, $from, $to, $validated['pay_cycle_id'] ?? null);
+        $batchKey = 'consultant_'.$this->makeBatchKey($companyId, $branchId, $departmentId, $employeeIds[0] ?? null, $from, $to, $validated['pay_cycle_id'] ?? null)
+            .($statusFilter !== null ? '_'.$statusFilter : '');
         $scopeBatchKey = PayrollBatchRun::buildScopeBatchKey(
             PayrollBatchRun::MODULE_CONSULTANT,
             $companyId,
@@ -66,7 +76,8 @@ class ConsultantPayrollController extends Controller
             $employeeIds[0] ?? null,
             $from,
             $to,
-            $validated['pay_cycle_id'] ?? null
+            $validated['pay_cycle_id'] ?? null,
+            $statusFilter
         );
         $legacyScopeBatchKey = PayrollBatchRun::buildLegacyScopeBatchKey(
             $companyId,
@@ -85,7 +96,8 @@ class ConsultantPayrollController extends Controller
             $departmentId,
             $employeeIds[0] ?? null,
             $from,
-            $to
+            $to,
+            $statusFilter
         );
         if ($conflictingFinalized instanceof PayrollBatchRun) {
             abort(
@@ -130,6 +142,7 @@ class ConsultantPayrollController extends Controller
                 'branch_id' => $branchId,
                 'department_id' => $departmentId,
                 'employee_id' => $employeeIds[0] ?? null,
+                'employee_status_filter' => $statusFilter,
                 'pay_period_start' => $from->toDateString(),
                 'pay_period_end' => $to->toDateString(),
                 'pay_cycle_id' => $validated['pay_cycle_id'] ?? null,
@@ -364,6 +377,7 @@ class ConsultantPayrollController extends Controller
                 'payroll_batch_run_id' => (int) $run->id,
                 'payroll_module' => PayrollBatchRun::MODULE_CONSULTANT,
                 'module_label' => 'Consultant Payroll',
+                'employee_status_filter_label' => EmploymentStatus::tryFromStored($run->employee_status_filter)?->label() ?? 'All consultant types',
                 'company_name' => $run->company?->name,
                 'payslip_count' => (int) $aggregate['payslip_count'],
                 'finalized_count' => (int) $aggregate['finalized_count'],
@@ -553,6 +567,7 @@ class ConsultantPayrollController extends Controller
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'department_id' => ['nullable', 'integer', 'exists:departments,id'],
             'employee_id' => ['nullable', 'integer', 'exists:users,id'],
+            'consultant_status' => ['nullable', 'string', 'in:all,consultant,consultant_regular,consultant_probationary'],
             'from_date' => ['required', 'date'],
             'to_date' => ['required', 'date', 'after_or_equal:from_date'],
             'pay_cycle_id' => ['nullable', 'integer', 'exists:pay_cycles,id'],

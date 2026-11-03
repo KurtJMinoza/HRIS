@@ -250,7 +250,7 @@ class LeaveCreditService
      */
     public function isRegularEmployment(User $user): bool
     {
-        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::Regular;
+        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? ''))?->payrollBasis() === EmploymentStatus::Regular;
     }
 
     public function isConsultantEmployment(User $user): bool
@@ -316,7 +316,7 @@ class LeaveCreditService
 
     public function isProbationaryEmployment(User $user): bool
     {
-        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::Probationary;
+        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? ''))?->payrollBasis() === EmploymentStatus::Probationary;
     }
 
     public function isProjectBasedEmployment(User $user): bool

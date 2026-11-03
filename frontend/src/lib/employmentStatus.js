@@ -8,6 +8,8 @@ const CANONICAL_BY_KEY = {
   contractual: 'Contractual',
   project_based: 'Project-based',
   consultant: 'Consultant',
+  consultant_regular: 'Consultant – Regular',
+  consultant_probationary: 'Consultant – Probationary',
   separated: 'Separated',
 }
 
@@ -19,18 +21,30 @@ const ALIAS_TO_KEY = {
   project: 'project_based',
   projectbased: 'project_based',
   consultancy: 'consultant',
+  regular_consultant: 'consultant_regular',
+  consultant_probation: 'consultant_probationary',
+  probationary_consultant: 'consultant_probationary',
   inactive: 'separated',
   resigned: 'separated',
   terminated: 'separated',
 }
 
+/** Consultant Payroll type options (value '' = all consultant types). */
+export const CONSULTANT_PAYROLL_TYPE_OPTIONS = [
+  { value: '', label: 'All consultant types' },
+  { value: 'consultant', label: 'Consultant (fixed pay)' },
+  { value: 'consultant_regular', label: 'Consultant – Regular' },
+  { value: 'consultant_probationary', label: 'Consultant – Probationary' },
+]
+
 function normalizeEmploymentKey(raw) {
   if (raw == null || raw === '') return null
+  // Mirrors backend tryFromStored(): any run of non-alphanumerics (spaces, dashes, en dashes) → "_".
   return String(raw)
     .trim()
     .toLowerCase()
-    .replace(/-/g, '_')
-    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
 }
 
 /**
@@ -71,7 +85,10 @@ export function employmentStatusBadgeClassName(raw) {
     'inline-flex max-w-full items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold tracking-wide whitespace-nowrap'
   switch (canonical) {
     case 'probationary':
+    case 'consultant_probationary':
       return `${base} border-amber-500/45 bg-amber-500/12 text-amber-900 dark:border-amber-500/35 dark:bg-amber-500/14 dark:text-amber-200`
+    case 'consultant_regular':
+      return `${base} border-teal-500/40 bg-teal-500/12 text-teal-900 dark:border-teal-500/35 dark:bg-teal-500/14 dark:text-teal-200`
     case 'regular':
       return `${base} border-emerald-500/40 bg-emerald-500/12 text-emerald-900 dark:border-emerald-500/35 dark:bg-emerald-500/14 dark:text-emerald-200`
     case 'contractual':

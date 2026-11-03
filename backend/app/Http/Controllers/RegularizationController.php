@@ -65,7 +65,7 @@ class RegularizationController extends Controller
 
             // This endpoint powers the "Submit recommendation" modal. Include the employee only when
             // there's a meaningful HR action available for their current status.
-            $isProbationary = $canonical === EmploymentStatus::Probationary->label();
+            $isProbationary = EmploymentStatus::tryFromStored($employee->employment_status)?->canBeRegularized() ?? false;
             $isContractual = $canonical === EmploymentStatus::Contractual->label();
             $isProjectBased = $canonical === EmploymentStatus::ProjectBased->label();
 

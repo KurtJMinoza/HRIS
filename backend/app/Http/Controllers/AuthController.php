@@ -940,7 +940,7 @@ class AuthController extends Controller
         $statusEnum = EmploymentStatus::tryFrom((string) ($user->employment_status ?? ''));
         $payload['employment_status_label'] = $statusEnum?->label() ?? ($user->employment_status ? ucfirst(str_replace('_', ' ', (string) $user->employment_status)) : null);
 
-        if (! $lite && $user->hire_date && $statusEnum === EmploymentStatus::Probationary) {
+        if (! $lite && $user->hire_date && ($statusEnum?->canBeRegularized() ?? false)) {
             $es = app(EmployeeStatusService::class);
             $payload['probation_milestones'] = $es->getMilestoneDates($user);
             $payload['probation_review_phase'] = $es->getProbationReviewPhase($user);

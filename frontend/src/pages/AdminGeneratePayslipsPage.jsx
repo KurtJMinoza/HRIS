@@ -60,6 +60,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
+import { CONSULTANT_PAYROLL_TYPE_OPTIONS } from '@/lib/employmentStatus'
 import {
   AlertTriangle,
   Building2,
@@ -422,6 +423,7 @@ export default function AdminGeneratePayslipsPage() {
   const [passwordProtect, setPasswordProtect] = useState(false)
   const [includeThirteenthMonth, setIncludeThirteenthMonth] = useState(false)
   const [employeeId, setEmployeeId] = useState('')
+  const [consultantType, setConsultantType] = useState('')
 
   const [preview, setPreview] = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -625,7 +627,11 @@ export default function AdminGeneratePayslipsPage() {
     [fromDate, toDate, payCycleId, referenceDate, passwordProtect, includeThirteenthMonth, companyId, branchId, departmentId, employeeId],
   )
 
-  const consultantBulkPayload = execomBulkPayload
+  const consultantBulkPayload = useMemo(
+    () => ({ ...execomBulkPayload, consultant_status: consultantType || null }),
+    [execomBulkPayload, consultantType],
+  )
+  const consultantTypeLabel = CONSULTANT_PAYROLL_TYPE_OPTIONS.find((option) => option.value === consultantType)?.label
 
   const setPayrollModule = useCallback(
     (module) => {
@@ -1830,9 +1836,30 @@ export default function AdminGeneratePayslipsPage() {
                         All active EXECOM profiles will be included. Fixed Basic Pay is used for EXECOM payroll.
                       </p>
                     ) : isConsultantModule ? (
-                      <p className="text-sm font-normal text-muted-foreground">
-                        All active consultant employees will be included. Consultant fixed-pay and employment payroll policies apply.
-                      </p>
+                      <div className="space-y-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <Label className="shrink-0 text-sm font-normal text-muted-foreground">Consultant type</Label>
+                          <Select value={consultantType || 'all'} onValueChange={(value) => setConsultantType(value === 'all' ? '' : value)}>
+                            <SelectTrigger className="h-10 w-full rounded-lg border-border/80 bg-background sm:w-72 dark:bg-input/45" aria-label="Consultant type">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent position="popper">
+                              {CONSULTANT_PAYROLL_TYPE_OPTIONS.map((option) => (
+                                <SelectItem key={option.value || 'all'} value={option.value || 'all'}>{option.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <p className="text-sm font-normal text-muted-foreground">
+                          {consultantType === 'consultant_regular'
+                            ? 'Only Consultant – Regular employees will be included. Regular employee payroll rules apply (fixed semi-monthly pay with attendance deductions).'
+                            : consultantType === 'consultant_probationary'
+                              ? 'Only Consultant – Probationary employees will be included. Probationary payroll rules apply (attendance-based daily pay).'
+                              : consultantType === 'consultant'
+                                ? 'Only fixed-pay Consultant employees will be included. Consultant fixed-pay and employment payroll policies apply.'
+                                : `${consultantTypeLabel}: Consultant, Consultant – Regular, and Consultant – Probationary employees will be included, each with its own payroll rules.`}
+                        </p>
+                      </div>
                     ) : scopeReady ? (
                       recentListNetTotal != null && companyRows.length > 0 ? (
                         <p className="text-sm font-normal leading-relaxed text-muted-foreground">

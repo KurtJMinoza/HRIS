@@ -260,9 +260,14 @@ function deriveDerivedSalaryFieldsFromBasic(monthlyStr, scheduleRateMeta) {
 }
 
 function normalizeEmploymentStatusValue(raw) {
-  const value = String(raw || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+  const value = String(raw || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   if (!value) return ''
   const aliases = {
+    consultant_regular: 'consultant_regular',
+    regular_consultant: 'consultant_regular',
+    consultant_probationary: 'consultant_probationary',
+    consultant_probation: 'consultant_probationary',
+    probationary_consultant: 'consultant_probationary',
     probation: 'probationary',
     probational: 'probationary',
     probationary: 'probationary',
@@ -2114,7 +2119,7 @@ export default function AdminEmployeeProfile() {
   }, [employee?.id, form.branch_id, form.company_id, form.department_id, form.position, reportingManagerManualOverride, reportingManagerSuggestion])
 
   const probationMilestones = useMemo(() => {
-    if (form.employment_status !== 'probationary' || !hasText(form.hire_date)) return null
+    if (!['probationary', 'consultant_probationary'].includes(form.employment_status) || !hasText(form.hire_date)) return null
     const h = String(form.hire_date).trim()
     return {
       three: hireDatePlusMonths(h, 3),
@@ -2125,7 +2130,8 @@ export default function AdminEmployeeProfile() {
 
   const completedRegularizationEntry = useMemo(() => {
     if (!Array.isArray(employeeStatusHistory) || employeeStatusHistory.length === 0) return null
-    if (String(form.employment_status || '').trim().toLowerCase() !== 'regular') return null
+    const currentStatus = String(form.employment_status || '').trim().toLowerCase()
+    if (currentStatus !== 'regular' && currentStatus !== 'consultant_regular') return null
     const currentEffectiveDate = String(form.employment_status_effective_date || '').trim()
     if (!currentEffectiveDate) return null
     return (
@@ -2133,7 +2139,7 @@ export default function AdminEmployeeProfile() {
         const next = String(row?.new_status || '').trim().toLowerCase()
         const trigger = String(row?.trigger_type || '').trim().toLowerCase()
         const effectiveDate = String(row?.effective_date || '').trim()
-        return next === 'regular'
+        return next === currentStatus
           && effectiveDate === currentEffectiveDate
           && ['hr_approval', 'head_recommendation', 'system_automation'].includes(trigger)
       }) || null
@@ -2161,7 +2167,7 @@ export default function AdminEmployeeProfile() {
     const today = new Date()
     const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate())
     const hireDate = parseIsoDateOnly(form.hire_date)
-    const isRegular = String(form.employment_status || '').trim().toLowerCase() === 'regular'
+    const isRegular = ['regular', 'consultant_regular'].includes(String(form.employment_status || '').trim().toLowerCase())
     const serviceAnchorDate = hireDate
     const serviceAnchorDateLabel = formatDateOnlyForPayload(serviceAnchorDate)
     const eligibilityDate = serviceAnchorDate ? addYearsDateOnly(serviceAnchorDate, 1) : null
@@ -5318,6 +5324,8 @@ export default function AdminEmployeeProfile() {
                       <SelectItem value="regular">Regular</SelectItem>
                       <SelectItem value="project_based">Project-based</SelectItem>
                       <SelectItem value="consultant">Consultant</SelectItem>
+                      <SelectItem value="consultant_regular">Consultant – Regular</SelectItem>
+                      <SelectItem value="consultant_probationary">Consultant – Probationary</SelectItem>
                       {/* Legacy values still on record — keep selectable until changed */}
                       {form.employment_status === 'contractual' ? (
                         <SelectItem value="contractual">Contractual (legacy)</SelectItem>
@@ -5331,6 +5339,14 @@ export default function AdminEmployeeProfile() {
                     <div className="flex flex-wrap gap-2 pt-1">
                       <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">Consultant</Badge>
                       <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">Fixed Salary Payroll</Badge>
+                    </div>
+                  ) : null}
+                  {form.employment_status === 'consultant_regular' || form.employment_status === 'consultant_probationary' ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">Consultant Payroll</Badge>
+                      <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">
+                        {form.employment_status === 'consultant_regular' ? 'Regular payroll rules' : 'Probationary payroll rules'}
+                      </Badge>
                     </div>
                   ) : null}
                   {form.employment_status === 'project_based' ? (

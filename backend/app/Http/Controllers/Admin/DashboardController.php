@@ -1372,13 +1372,9 @@ class DashboardController extends Controller
                 return null;
             }
 
-            // Do not rely on exact DB spellings; normalize to canonical label.
-            $canonicalEmploymentLabel = EmploymentStatus::normalizeToCanonicalLabel($employee->employment_status);
-            // Backward-compatible: treat missing status as probationary (default) for legacy rows.
-            if ($canonicalEmploymentLabel === null) {
-                $canonicalEmploymentLabel = EmploymentStatus::Probationary->label();
-            }
-            if ($canonicalEmploymentLabel !== EmploymentStatus::Probationary->label()) {
+            // Do not rely on exact DB spellings; missing status is treated as probationary (legacy rows).
+            $employmentStatus = EmploymentStatus::tryFromStored($employee->employment_status) ?? EmploymentStatus::Probationary;
+            if (! $employmentStatus->canBeRegularized()) {
                 return null;
             }
 

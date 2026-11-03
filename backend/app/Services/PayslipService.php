@@ -2275,6 +2275,9 @@ class PayslipService
         if (is_array($employeeIds) && count($employeeIds) > 0) {
             $q->whereIn('id', $employeeIds);
         }
+        if ($progressRun instanceof PayrollBatchRun) {
+            $this->payrollEligibility->applyConsultantStatusFilter($q, $progressRun->employee_status_filter);
+        }
 
         $orderedIds = (clone $q)->orderByLastName()->pluck('id')->map(fn ($id) => (int) $id)->all();
         $employeeCount = count($orderedIds);
@@ -4636,12 +4639,26 @@ class PayslipService
                 && $policyLateMinutes !== null
                 && $dayLateMinutes > 0
                 && $policyLateMinutes > $dayLateMinutes
-                && $policyLateMinutes <= 120
             ) {
-                // Segmentation can under-report lateness vs the attendance tardiness bucket
-                // (for example 16 ledger minutes vs a 30-minute policy label). Prefer the
-                // policy bucket for payslip units, but never inflate past plausible tardiness.
-                $dayLateMinutes = $policyLateMinutes;
+                // Segmentation under-reports lateness vs the attendance tardiness bucket (19 ledger
+                // minutes on a "3 Hours Late" day). The Late row must match what the bucket cut from
+                // Regular pay: required minutes minus paid regular minutes. Fall back to the bucket
+                // only when it is plausible (a "9 hours 30 minutes late" label is not).
+                $paidRegularMinutes = $this->attendanceBackedRegularPayMinutes($day);
+                if ($paidRegularMinutes <= 0) {
+                    $paidRegularMinutes = max(0, (int) ($day['paid_regular_minutes'] ?? 0));
+                }
+                if ($paidRegularMinutes <= 0) {
+                    $paidRegularMinutes = max(0, (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0));
+                }
+                $paidShortfallMinutes = $paidRegularMinutes > 0
+                    ? max(0, min($requiredMinutes, 480) - $paidRegularMinutes)
+                    : 0;
+                if ($paidShortfallMinutes > $dayLateMinutes) {
+                    $dayLateMinutes = $paidShortfallMinutes;
+                } elseif ($policyLateMinutes <= 120) {
+                    $dayLateMinutes = $policyLateMinutes;
+                }
             }
             if ($status !== 'halfday' && ! $completedHalfDay && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
                 $lateCount++;
@@ -5497,11 +5514,16 @@ class PayslipService
     {
         $presentUnits = $this->resolveFixedRegularPresentDayUnits($summary);
         $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
+        // Only snapshots computed on the present-day basis get the present-day floor, so
+        // finalized payslips paid as "gross minus absences" keep displaying what was paid.
+        $usePresentDayFloor = ! empty($summary['regular_fixed_present_day_cap_applied']);
 
         return app(PayrollComputationService::class)->fixedRegularAccountsForAllScheduledDays(
             $presentUnits,
             $scheduledDays,
-            $breakdown
+            $breakdown,
+            $usePresentDayFloor ? round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2) : 0.0,
+            $usePresentDayFloor ? round((float) ($summary['daily_rate'] ?? 0), 2) : 0.0
         );
     }
 
@@ -9830,6 +9852,7 @@ class PayslipService
         if ($run->employee_id) {
             $q->where('users.id', (int) $run->employee_id);
         }
+        $this->payrollEligibility->applyConsultantStatusFilter($q, $run->employee_status_filter);
 
         return $q->orderByLastName()->pluck('users.id')->map(fn ($id) => (int) $id)->all();
     }

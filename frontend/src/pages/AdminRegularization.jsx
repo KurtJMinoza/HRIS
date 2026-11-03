@@ -1846,7 +1846,7 @@ export default function AdminRegularization() {
                     {(() => {
                       const emp = eligibleEmployees.find((e) => String(e.id) === String(submitUserId))
                       const status = normalizeEmploymentStatus(emp?.employment_status)
-                      if (status === 'regular' || status === 'separated') {
+                      if (status === 'regular' || status === 'consultant_regular' || status === 'separated') {
                         return [{ value: 'no_action', label: 'No Action Required' }]
                       }
                       if (status === 'contractual') {

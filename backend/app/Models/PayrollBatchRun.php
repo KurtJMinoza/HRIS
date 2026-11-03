@@ -37,6 +37,7 @@ class PayrollBatchRun extends Model
         'branch_id',
         'department_id',
         'employee_id',
+        'employee_status_filter',
         'pay_period_start',
         'pay_period_end',
         'pay_cycle_id',
@@ -111,6 +112,7 @@ class PayrollBatchRun extends Model
         \Carbon\Carbon|string $payPeriodStart,
         \Carbon\Carbon|string $payPeriodEnd,
         mixed $payCycleId = null,
+        ?string $employeeStatusFilter = null,
     ): string {
         $start = $payPeriodStart instanceof \Carbon\Carbon
             ? $payPeriodStart->toDateString()
@@ -119,7 +121,7 @@ class PayrollBatchRun extends Model
             ? $payPeriodEnd->toDateString()
             : \Carbon\Carbon::parse((string) $payPeriodEnd)->toDateString();
 
-        return hash('sha256', implode('|', [
+        $parts = [
             strtolower(trim($payrollModule)),
             (string) ($companyId ?? 'x'),
             (string) ($branchId ?? 'x'),
@@ -128,7 +130,13 @@ class PayrollBatchRun extends Model
             $start,
             $end,
             (string) ($payCycleId ?? 'x'),
-        ]));
+        ];
+        // Appended only when set so existing unfiltered batch keys keep the same hash.
+        if ($employeeStatusFilter !== null && $employeeStatusFilter !== '') {
+            $parts[] = 'status:'.$employeeStatusFilter;
+        }
+
+        return hash('sha256', implode('|', $parts));
     }
 
     /**
@@ -169,6 +177,7 @@ class PayrollBatchRun extends Model
         ?int $employeeId,
         \Carbon\Carbon|string $payPeriodStart,
         \Carbon\Carbon|string $payPeriodEnd,
+        ?string $employeeStatusFilter = null,
     ): ?self {
         $query = static::query()
             ->where('payroll_module', strtolower(trim($payrollModule)))
@@ -180,6 +189,15 @@ class PayrollBatchRun extends Model
         static::applyNullableScopeColumn($query, 'branch_id', $branchId);
         static::applyNullableScopeColumn($query, 'department_id', $departmentId);
         static::applyNullableScopeColumn($query, 'employee_id', $employeeId);
+
+        // A type-filtered batch only overlaps finalized "all types" batches or the same type;
+        // an unfiltered batch overlaps every finalized batch in scope (no double pay either way).
+        if ($employeeStatusFilter !== null && $employeeStatusFilter !== ''
+            && \Illuminate\Support\Facades\Schema::hasColumn('payroll_batch_runs', 'employee_status_filter')) {
+            $query->where(function (\Illuminate\Database\Eloquent\Builder $scope) use ($employeeStatusFilter): void {
+                $scope->whereNull('employee_status_filter')->orWhere('employee_status_filter', $employeeStatusFilter);
+            });
+        }
 
         return $query->orderByDesc('id')->first();
     }

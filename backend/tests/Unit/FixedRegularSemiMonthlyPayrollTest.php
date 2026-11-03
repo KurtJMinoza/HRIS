@@ -1131,6 +1131,71 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertSame(2500.01, (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0));
     }
 
+    public function test_late_row_matches_regular_pay_cut_by_policy_buckets_over_two_hours(): void
+    {
+        $hourly = 769.23 / 8;
+        $lateDay = static fn (string $date, int $ledger, int $paid, string $label): array => [
+            'date' => $date,
+            'status' => 'worked',
+            'is_rest_day' => false,
+            'required_minutes' => 480,
+            'regular_day_minutes' => $paid,
+            'regular_night_minutes' => 0,
+            'regular_pay' => round($paid / 60 * $hourly, 2),
+            'late_deduction_minutes' => $ledger,
+            'undertime_deduction_minutes' => 0,
+            'tardiness_status' => 'late',
+            'tardiness_label' => $label,
+            'breakdown' => [['component' => 'regular_pay', 'minutes' => $paid, 'amount' => round($paid / 60 * $hourly, 2)]],
+        ];
+        $snapshot = [
+            'daily_rate' => 769.23,
+            'summary' => [
+                'daily_rate' => 769.23,
+                'employment_status' => 'consultant_probationary',
+                'daily_computation_earning_lines' => [['key' => 'daily:regular_pay', 'label' => 'Regular pay', 'amount' => 1730.77]],
+            ],
+            'daily_computation_days' => [
+                $lateDay('2026-10-26', 19, 360, '2 Hours Late'),
+                $lateDay('2026-10-29', 8, 420, '1 Hour Late'),
+                $lateDay('2026-10-30', 19, 300, '3 Hours Late'),
+            ],
+        ];
+
+        $rows = collect(app(\App\Services\PayslipService::class)->normalizeSnapshotForPayslipView($snapshot)['summary']['attendance_pay_breakdown']['rows'] ?? [])->keyBy('key');
+
+        // 120 + 60 + 180 minutes actually cut from Regular pay (the 3-hour bucket used to show 19).
+        $this->assertSame(360, (int) ($rows['late']['minutes'] ?? 0));
+        $this->assertEqualsWithDelta(576.92, (float) ($rows['late']['deduction_amount'] ?? 0), 0.02);
+    }
+
+    public function test_fixed_regular_uses_present_days_when_cutoff_has_more_scheduled_days_than_gross_covers(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $dailyRate = 1538.46;
+        $gross = 20000.0;
+        // 14 scheduled: 2 worked + completed half day + unworked holiday (4 present units), 10 absent.
+        $breakdown = ['rows' => [
+            ['key' => 'absence', 'count' => 10.0, 'deduction_amount' => 15384.60],
+            ['key' => 'half_day', 'deduction_amount' => 769.23],
+        ]];
+
+        // 20,000 − 10 absences − half day = 3,846.17 (2.5 days) < 4 × 1,538.46 − half day = 5,384.61.
+        $this->assertFalse($service->shouldPayFixedRegularFullSemiMonthlyGross(4.0, 14, $breakdown, false, true, $gross, $dailyRate));
+        $this->assertSame(5384.61, round(min($gross, 4.0 * $dailyRate) - 769.23, 2));
+
+        // 12 scheduled (fewer than the 13 the gross covers): full gross minus absences still wins.
+        $this->assertTrue($service->shouldPayFixedRegularFullSemiMonthlyGross(
+            10.0,
+            12,
+            ['rows' => [['key' => 'absence', 'count' => 2.0, 'deduction_amount' => 1384.62]]],
+            false,
+            true,
+            9000.0,
+            692.31
+        ));
+    }
+
     public function test_fixed_regular_below_ninety_percent_with_absences_uses_full_semi_monthly_basic(): void
     {
         $service = app(PayrollComputationService::class);

@@ -186,9 +186,10 @@ class EmployeeStatusService
 
         return DB::transaction(function () use ($employee, $triggerType, $actor, $remarks, $effectiveDate) {
             $previousStatus = $employee->employment_status;
+            $newStatus = ($this->parseStatus($previousStatus) ?? EmploymentStatus::Probationary)->regularizedStatus();
 
-            // Update employee status
-            $employee->employment_status = EmploymentStatus::Regular->value;
+            // Update employee status (Consultant – Probationary → Consultant – Regular)
+            $employee->employment_status = $newStatus->value;
             $employee->employment_status_effective_date = $effectiveDate;
             $employee->save();
 
@@ -196,7 +197,7 @@ class EmployeeStatusService
             $history = EmployeeStatusHistory::create([
                 'user_id' => $employee->id,
                 'previous_status' => $previousStatus,
-                'new_status' => EmploymentStatus::Regular->value,
+                'new_status' => $newStatus->value,
                 'effective_date' => $effectiveDate,
                 'trigger_type' => $triggerType,
                 'actor_id' => $actor?->id,
@@ -258,8 +259,8 @@ class EmployeeStatusService
             $employee->save();
 
             // Moving an employee back into probationary should reopen confirmation requirements.
-            if ($newStatus === EmploymentStatus::Probationary
-                && $previousStatusEnum !== EmploymentStatus::Probationary) {
+            if ($newStatus->canBeRegularized()
+                && ! ($previousStatusEnum?->canBeRegularized() ?? false)) {
                 $this->resetRegularizationRequirementsForProbation($employee, $actor);
             }
 
@@ -565,6 +566,8 @@ class EmployeeStatusService
             EmploymentStatus::Regular->value,
             EmploymentStatus::ProjectBased->value,
             EmploymentStatus::Consultant->value,
+            EmploymentStatus::ConsultantRegular->value,
+            EmploymentStatus::ConsultantProbationary->value,
         ]);
         $db = EmploymentStatusSetting::getValue('status_options');
         if (! is_string($db) || trim($db) === '') {

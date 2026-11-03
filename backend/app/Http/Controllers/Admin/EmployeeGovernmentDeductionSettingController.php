@@ -59,7 +59,7 @@ class EmployeeGovernmentDeductionSettingController extends Controller
             'company_id' => ['nullable', 'integer'],
             'department_id' => ['nullable', 'integer'],
             'payroll_type' => ['nullable', 'string', 'in:regular,execom'],
-            'employee_type' => ['nullable', 'string', 'in:regular,probationary,consultant,contractual,project_based'],
+            'employee_type' => ['nullable', 'string', 'in:regular,probationary,consultant,consultant_regular,consultant_probationary,contractual,project_based'],
             'execom' => ['nullable', 'boolean'],
             'consultant' => ['nullable', 'boolean'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -102,7 +102,7 @@ class EmployeeGovernmentDeductionSettingController extends Controller
         }
         if ($request->boolean('consultant')) {
             $query->where(function ($q) {
-                $q->whereRaw("LOWER(COALESCE(employment_status, '')) = 'consultant'")
+                $q->whereIn(\DB::raw("LOWER(COALESCE(employment_status, ''))"), \App\Enums\EmploymentStatus::consultantPayrollModuleValues())
                     ->orWhereRaw("LOWER(COALESCE(employment_type, '')) = 'consultant'");
             });
         } elseif (! empty($validated['employee_type'])) {

@@ -2547,7 +2547,9 @@ class PayrollComputationService implements PayrollBulkComputation
                 $scheduledRegularDays,
                 $regularFixedAttendanceBreakdown,
                 $nearFullFixedRegularCutoff,
-                $paidLeavePremiumAmount <= 0.0001
+                $paidLeavePremiumAmount <= 0.0001,
+                $regularFixedSemiMonthlyGross,
+                $dailyRate
             );
 
             if ($payFullSemiMonthlyGross) {
@@ -3369,7 +3371,7 @@ class PayrollComputationService implements PayrollBulkComputation
             return false;
         }
 
-        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? '')) === EmploymentStatus::Regular;
+        return EmploymentStatus::tryFromStored((string) ($user->employment_status ?? ''))?->payrollBasis() === EmploymentStatus::Regular;
     }
 
     /**
@@ -3407,7 +3409,9 @@ class PayrollComputationService implements PayrollBulkComputation
     public function fixedRegularAccountsForAllScheduledDays(
         float $presentDayUnits,
         int $scheduledDays,
-        array $breakdown
+        array $breakdown,
+        float $fixedGross = 0.0,
+        float $dailyRate = 0.0
     ): bool {
         if ($scheduledDays <= 0 || $presentDayUnits <= 0.0001) {
             return false;
@@ -3417,7 +3421,41 @@ class PayrollComputationService implements PayrollBulkComputation
             + $this->fixedRegularAbsenceDayUnitsFromBreakdown($breakdown)
             + $this->fixedRegularUnpaidLeaveDayUnitsFromBreakdown($breakdown);
 
-        return $accounted + 0.01 >= (float) $scheduledDays;
+        if ($accounted + 0.01 < (float) $scheduledDays) {
+            return false;
+        }
+
+        // A cutoff can have more scheduled days than the fixed gross covers (14 vs 26/2 = 13).
+        // Then "gross minus every absent day" pays less than the days actually present (an
+        // unworked holiday silently drops out), so the present-day basis must be used instead.
+        if ($fixedGross > 0.0001 && $dailyRate > 0.0001) {
+            $fullGrossNet = $fixedGross - $this->sumFixedRegularAttendanceRowDeductions(
+                $breakdown,
+                ['late', 'undertime', 'half_day', 'absence', 'unpaid_leave']
+            );
+            $presentDayNet = min($fixedGross, $presentDayUnits * $dailyRate)
+                - $this->sumFixedRegularAttendanceRowDeductions($breakdown, ['late', 'undertime', 'half_day']);
+
+            return $fullGrossNet + 0.005 >= $presentDayNet;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  array<string, mixed>  $breakdown
+     * @param  list<string>  $keys
+     */
+    private function sumFixedRegularAttendanceRowDeductions(array $breakdown, array $keys): float
+    {
+        $total = 0.0;
+        foreach (is_array($breakdown['rows'] ?? null) ? $breakdown['rows'] : [] as $row) {
+            if (is_array($row) && in_array(strtolower(trim((string) ($row['key'] ?? ''))), $keys, true)) {
+                $total += max(0.0, (float) ($row['deduction_amount'] ?? 0));
+            }
+        }
+
+        return round($total, 2);
     }
 
     /**
@@ -3428,7 +3466,9 @@ class PayrollComputationService implements PayrollBulkComputation
         int $scheduledDays,
         array $breakdown,
         bool $nearFullCutoff,
-        bool $includeAccountsAllScheduledPath = true
+        bool $includeAccountsAllScheduledPath = true,
+        float $fixedGross = 0.0,
+        float $dailyRate = 0.0
     ): bool {
         if ($nearFullCutoff) {
             return true;
@@ -3438,7 +3478,7 @@ class PayrollComputationService implements PayrollBulkComputation
             return false;
         }
 
-        return $this->fixedRegularAccountsForAllScheduledDays($presentDayUnits, $scheduledDays, $breakdown);
+        return $this->fixedRegularAccountsForAllScheduledDays($presentDayUnits, $scheduledDays, $breakdown, $fixedGross, $dailyRate);
     }
 
     /**
@@ -4048,7 +4088,7 @@ class PayrollComputationService implements PayrollBulkComputation
 
     public function usesSeparateRestDayWorkedPayDisplayForEmploymentStatus(?string $employmentStatus): bool
     {
-        $status = EmploymentStatus::tryFromStored((string) ($employmentStatus ?? ''));
+        $status = EmploymentStatus::tryFromStored((string) ($employmentStatus ?? ''))?->payrollBasis();
 
         return $status === EmploymentStatus::Probationary
             || $status === EmploymentStatus::ProjectBased;
