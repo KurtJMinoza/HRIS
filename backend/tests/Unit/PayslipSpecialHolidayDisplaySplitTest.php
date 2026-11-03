@@ -165,6 +165,46 @@ class PayslipSpecialHolidayDisplaySplitTest extends TestCase
         $this->assertTrue((bool) ($line['metadata']['display_split_applied'] ?? false));
     }
 
+    public function test_partial_worked_special_holiday_does_not_fractionalize_regular_pay_headline_units(): void
+    {
+        $service = $this->service();
+        $dailyRate = 567.08;
+        $snapshot = [
+            'daily_rate' => $dailyRate,
+            'summary' => [
+                'daily_rate' => $dailyRate,
+                'regular_fixed_semi_monthly_payroll' => true,
+                'fixed_semi_monthly_basic_gross' => 7372.0,
+                'semi_monthly_basic_salary' => 7372.0,
+                'regular_pay_present_day_units' => 7.0,
+                'regular_fixed_present_day_cap_applied' => false,
+                'worked_holiday_present_day_units' => 0.875,
+                'worked_holiday_base_pay_total' => 496.19,
+                'attendance_pay_breakdown' => [
+                    'available' => true,
+                    'scheduled_days_count' => 14,
+                    'total_deduction' => 35.44,
+                    'rows' => [],
+                ],
+                'daily_computation_earning_lines' => [[
+                    'key' => 'daily:regular_pay',
+                    'label' => 'Regular pay',
+                    'amount' => 7336.56,
+                    'display_amount' => 7372.0,
+                    'units' => '7.88 days',
+                    'metadata' => ['regular_fixed_semi_monthly_payroll' => true],
+                ]],
+            ],
+            'daily_computation_days' => [],
+        ];
+
+        $normalized = $service->normalizeSnapshotForPayslipView($snapshot);
+        $regularLine = $normalized['summary']['daily_computation_earning_lines'][0] ?? null;
+
+        $this->assertIsArray($regularLine);
+        $this->assertSame('7 days', $regularLine['units'] ?? null);
+    }
+
     public function test_full_semi_monthly_basic_headline_does_not_add_worked_holiday_base_twice(): void
     {
         $service = $this->service();

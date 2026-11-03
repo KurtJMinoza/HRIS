@@ -1307,7 +1307,11 @@ class PayrollReportServiceTest extends TestCase
         $legacyColumns = $reportColumns->invoke($service, [], false, false);
         $refundColumn = collect($legacyColumns)->firstWhere('key', 'attendance_refund');
         $leaveColumn = collect($legacyColumns)->firstWhere('key', 'leave_with_pay');
+        $attendanceColumn = collect($legacyColumns)->firstWhere('key', 'total_attendance');
 
+        $this->assertNotNull($attendanceColumn);
+        $this->assertSame('Total Attendance', $attendanceColumn['label'] ?? null);
+        $this->assertSame('text', $attendanceColumn['format'] ?? null);
         $this->assertSame('', $refundColumn['subtitle'] ?? null);
         $this->assertSame('', $leaveColumn['subtitle'] ?? null);
         $this->assertSame('Attendance Refund', $excelHeading->invoke($service, $refundColumn));

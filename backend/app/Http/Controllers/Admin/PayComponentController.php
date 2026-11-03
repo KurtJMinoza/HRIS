@@ -8,6 +8,7 @@ use App\Models\PayComponent;
 use App\Services\PayComponentAssignmentService;
 use App\Services\PayComponentService;
 use App\Services\PayrollCalculatorService;
+use App\Support\PayComponentEffectiveCutoff;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -205,9 +206,16 @@ class PayComponentController extends Controller
             'component_type' => ['sometimes', 'string', Rule::in(PayComponent::COMPONENT_TYPES)],
             'is_system_protected' => ['sometimes', 'boolean'],
             'effective_from' => ['nullable', 'date'],
-            'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'],
+            'effective_to' => ['nullable', 'date'],
             'is_active' => ['sometimes', 'boolean'],
             'metadata' => ['nullable', 'array'],
+            'metadata.effective_until_cutoff' => ['nullable', 'array'],
+            'metadata.effective_until_cutoff.pay_cycle_id' => ['nullable', 'integer', 'exists:pay_cycles,id'],
+            'metadata.effective_until_cutoff.pay_cycle_name' => ['nullable', 'string', 'max:255'],
+            'metadata.effective_until_cutoff.cut_off_start_date' => ['nullable', 'date'],
+            'metadata.effective_until_cutoff.cut_off_end_date' => ['nullable', 'date'],
+            'metadata.effective_until_cutoff.pay_date' => ['nullable', 'date'],
+            'metadata.effective_until_cutoff.cycle_label' => ['nullable', 'string', 'max:255'],
             'metadata.allowance_proration_include_paid_leave' => ['nullable', 'boolean'],
             'metadata.allowance_proration_include_unpaid_leave' => ['nullable', 'boolean'],
             'metadata.default_hourly_rate' => ['nullable', 'numeric', 'min:0'],
@@ -323,6 +331,22 @@ class PayComponentController extends Controller
 
         $validated['default_value'] = isset($validated['default_value']) ? (float) $validated['default_value'] : 0.0;
 
+        if (array_key_exists('metadata', $validated)) {
+            $cutoffRaw = is_array($validated['metadata']['effective_until_cutoff'] ?? null)
+                ? $validated['metadata']['effective_until_cutoff']
+                : null;
+            if ($cutoffRaw !== null
+                && trim((string) ($cutoffRaw['cut_off_start_date'] ?? '')) !== ''
+                && trim((string) ($cutoffRaw['cut_off_end_date'] ?? '')) !== ''
+                && ($cutoffRaw['cut_off_end_date'] ?? '') < ($cutoffRaw['cut_off_start_date'] ?? '')) {
+                throw ValidationException::withMessages([
+                    'metadata.effective_until_cutoff.cut_off_end_date' => ['Cutoff end must be on or after cutoff start.'],
+                ]);
+            }
+
+            PayComponentEffectiveCutoff::applyEffectiveDates($validated);
+        }
+
         return $validated;
     }
 
@@ -358,6 +382,13 @@ class PayComponentController extends Controller
                 : false,
             'effective_from' => $component->effective_from?->toDateString(),
             'effective_to' => $component->effective_to?->toDateString(),
+            'effective_until_cutoff' => PayComponentEffectiveCutoff::fromMetadata(
+                is_array($component->metadata) ? $component->metadata : null
+            ),
+            'effective_until_cutoff_label' => PayComponentEffectiveCutoff::displayLabel(
+                PayComponentEffectiveCutoff::fromMetadata(is_array($component->metadata) ? $component->metadata : null),
+                $component->effective_to?->toDateString()
+            ),
             'is_active' => (bool) $component->is_active,
             'is_loan' => Schema::hasColumn('pay_components', 'is_loan') ? (bool) $component->is_loan : false,
             'is_amortized' => Schema::hasColumn('pay_components', 'is_amortized') ? (bool) $component->is_amortized : false,

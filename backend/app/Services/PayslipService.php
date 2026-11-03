@@ -4542,7 +4542,7 @@ class PayslipService
             // regular holiday does have a regular-pay component, so its tardiness
             // must remain in this display breakdown.
             $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
-            if ($holidayPremiumPay > 0.0001 && $this->attendanceBackedRegularPayMinutes($day) <= 0) {
+            if ($holidayPremiumPay > 0.0001 && $this->attendanceBackedRegularPayAmount($day) <= 0.0001) {
                 continue;
             }
             $status = strtolower(trim((string) ($day['status'] ?? '')));
@@ -4577,9 +4577,7 @@ class PayslipService
             $tardinessLabel = (string) ($day['tardiness_label'] ?? '');
             $completedHalfDay = ! empty($day['completed_half_day']);
             $policyLateMinutes = $this->tardinessLabelMinutes($tardinessLabel);
-            $hasAttendanceRegularPay = $this->attendanceBackedRegularPayMinutes($day) > 0
-                || max(0, (int) ($day['paid_regular_minutes'] ?? 0)) > 0
-                || max(0, (int) ($day['regular_day_minutes'] ?? 0) + (int) ($day['regular_night_minutes'] ?? 0)) > 0;
+            $hasAttendanceRegularPay = $this->attendanceBackedRegularPayAmount($day) > 0.0001;
             if ($completedHalfDay && $status !== 'halfday') {
                 // Completed pair at the schedule's exact half-day unit (e.g., 08:00–12:00):
                 // the day still counts as a scheduled regular day; its missing half is
@@ -5229,31 +5227,20 @@ class PayslipService
             return $presentUnits > 0.0001 ? round($presentUnits, 4) : null;
         }
 
-        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
-            ? $summary['attendance_pay_breakdown']
-            : [];
-        $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
-        $fixedGross = round((float) ($summary['fixed_semi_monthly_basic_gross'] ?? $summary['semi_monthly_basic_salary'] ?? 0), 2);
-        $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
-        $headlineBeforeHolidayAdd = $presentDayBasePay ?? 0.0;
-        if (
-            $this->resolveFixedSemiMonthlyWorkedHolidayBaseForRegularPayHeadline(
-                $summary,
-                $breakdown,
-                $fixedGross,
-                $presentDayBasePay,
-                $presentDayCapApplied,
-                $this->fixedSemiMonthlyPaidLeavePremiumAmount($summary),
-                $headlineBeforeHolidayAdd
-            ) <= 0.0001
-        ) {
-            return $presentUnits > 0.0001 ? round($presentUnits, 4) : null;
-        }
-
         if ($presentUnits <= 0.0001) {
             return round($workedHolidayUnits, 4);
         }
 
+        // Partial special-holiday minutes (e.g. 420/480) roll 1× base into Regular pay, but
+        // present-day units already count that workday as a full day — do not show 7.88 days.
+        if ($workedHolidayUnits + 0.0001 < 1.0 && abs($presentUnits - round($presentUnits)) < 0.0001) {
+            return round($presentUnits, 4);
+        }
+
+        $breakdown = is_array($summary['attendance_pay_breakdown'] ?? null)
+            ? $summary['attendance_pay_breakdown']
+            : [];
+        $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
         $withHolidayWork = round($presentUnits + $workedHolidayUnits, 4);
         if ($scheduledDays <= 0 || $withHolidayWork <= $scheduledDays + 0.0001) {
             return $withHolidayWork;
@@ -9310,6 +9297,25 @@ class PayslipService
         }
 
         return $minutes;
+    }
+
+    /**
+     * @param  array<string, mixed>  $day
+     */
+    private function attendanceBackedRegularPayAmount(array $day): float
+    {
+        $amount = max(0.0, (float) ($day['regular_pay'] ?? 0));
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) !== 'regular_pay') {
+                continue;
+            }
+            $amount = max($amount, max(0.0, (float) ($entry['amount'] ?? 0)));
+        }
+
+        return round($amount, 2);
     }
 
     private function formatRegularPayPresentDaysUnits(?float $days): ?string

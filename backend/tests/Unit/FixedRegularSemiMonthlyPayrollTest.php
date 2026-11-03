@@ -415,6 +415,22 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
                     ['component' => 'holiday_premium', 'minutes' => 480, 'amount' => 727.0],
                 ],
             ],
+            [
+                'status' => 'worked',
+                'required_minutes' => 480,
+                'is_rest_day' => false,
+                'regular_pay' => 0,
+                'holiday_premium_pay' => 645.06,
+                'late_deduction_minutes' => 16,
+                'undertime_deduction_minutes' => 0,
+                'tardiness_status' => 'late',
+                'tardiness_label' => '1 Hour Late',
+                'regular_day_minutes' => 420,
+                'breakdown' => [
+                    ['component' => 'regular_pay', 'minutes' => 420, 'amount' => 0],
+                    ['component' => 'holiday_premium', 'minutes' => 420, 'amount' => 645.06],
+                ],
+            ],
         ];
 
         $breakdown = $method->invoke($service, $days, $dailyRate);

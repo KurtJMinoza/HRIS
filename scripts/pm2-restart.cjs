@@ -11,7 +11,8 @@ try {
   // best-effort
 }
 
-execSync('node ./node_modules/pm2/bin/pm2 restart ecosystem.config.cjs --update-env', {
+execSync('node ./scripts/ensure-redis-windows.cjs', { cwd: root, stdio: 'inherit' })
+execSync('node ./scripts/pm2.cjs restart ecosystem.config.cjs --update-env', {
   cwd: root,
   stdio: 'inherit',
 })

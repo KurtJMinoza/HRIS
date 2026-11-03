@@ -365,6 +365,13 @@ class PayrollReportService
         if ($includeCompanyColumn) {
             $columns[] = ['key' => 'company_name', 'label' => 'Company', 'group' => 'Employee', 'class' => 'employee', 'format' => 'text'];
         }
+        $columns[] = [
+            'key' => 'total_attendance',
+            'label' => 'Total Attendance',
+            'group' => 'Employee',
+            'class' => 'employee',
+            'format' => 'text',
+        ];
         $breakdownSubtitle = $rollupBreakdownIntoBasicPay ? 'Included in Basic Pay' : '';
         $columns[] = [
             'key' => 'attendance_refund',

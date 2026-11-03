@@ -3,16 +3,16 @@ param(
   $arguments
 )
 
-$pm2 = Join-Path $PSScriptRoot "node_modules\pm2\bin\pm2"
+$pm2Script = Join-Path $PSScriptRoot "scripts\pm2.cjs"
 $node = "node"
-$allArgs = @($pm2) + $arguments
+$allArgs = @($pm2Script) + $arguments
 
 if ($arguments.Count -eq 0) {
   Write-Host "USAGE: .\pm2.ps1 <pm2 command> [args]"
   Write-Host ""
   Write-Host "Examples:"
   Write-Host "  .\pm2.ps1 start ecosystem.config.cjs --update-env"
-  Write-Host "  .\pm2.ps1 restart all"
+  Write-Host "  .\pm2.ps1 restart all   # HR stack only (octane, vite, face services, queues)"
   Write-Host "  .\pm2.ps1 status"
   Write-Host "  .\pm2.ps1 stop all"
   Write-Host "  .\pm2.ps1 logs"

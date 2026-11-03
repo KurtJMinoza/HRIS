@@ -3520,12 +3520,11 @@ class PayrollComputationService implements PayrollBulkComputation
             $scheduledDays++;
             $status = strtolower(trim((string) ($day['status'] ?? '')));
             $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
-            $hasRegularPayMinutes = collect((array) ($day['breakdown'] ?? []))
-                ->contains(fn ($entry) => is_array($entry)
-                    && strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay'
-                    && max(0, (int) ($entry['minutes'] ?? 0)) > 0);
+            $ordinaryRegularPayAmount = $this->fixedRegularOrdinaryRegularPayAmount($day);
 
-            if ($holidayPremiumPay > 0.0001 && ! $hasRegularPayMinutes) {
+            // Worked special holiday paid only on holiday_premium (regular_pay amount = 0) is not
+            // an ordinary-day Regular pay reduction; tardiness there must not inflate the Late row.
+            if ($holidayPremiumPay > 0.0001 && $ordinaryRegularPayAmount <= 0.0001) {
                 continue;
             }
 
@@ -3662,19 +3661,11 @@ class PayrollComputationService implements PayrollBulkComputation
                         }
                     } elseif ($tardinessStatus === 'late' || $dayLateMinutes > 0) {
                         $lateCount++;
-                        $policyLateMinutes = $this->tardinessLabelMinutes((string) ($day['tardiness_label'] ?? ''));
-                        if ($dayLateMinutes > 0) {
-                            $lateMinutes += $policyLateMinutes !== null
-                                ? max($dayLateMinutes, $policyLateMinutes)
-                                : $dayLateMinutes;
-                        } else {
-                            $lateMinutes += $shortfallMinutes;
-                        }
+                        $lateMinutes += $shortfallMinutes > 0
+                            ? $shortfallMinutes
+                            : $dayLateMinutes;
                         $lateAmountRunning += $dayRegularPayShortfall;
                     }
-                } elseif ($status !== 'halfday' && $tardinessStatus !== 'half_day' && $dayLateMinutes > 0) {
-                    $lateCount++;
-                    $lateMinutes += $dayLateMinutes;
                 } elseif ($status !== 'halfday' && $dayUndertimeMinutes > 0) {
                     $undertimeCount++;
                     $undertimeMinutes += $dayUndertimeMinutes;
@@ -3821,6 +3812,24 @@ class PayrollComputationService implements PayrollBulkComputation
         ];
     }
 
+    /**
+     * @param  array<string, mixed>  $day
+     */
+    private function fixedRegularOrdinaryRegularPayAmount(array $day): float
+    {
+        $amount = max(0.0, (float) ($day['regular_pay'] ?? 0));
+        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
+            if (! is_array($entry)) {
+                continue;
+            }
+            if (strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay') {
+                $amount = max($amount, max(0.0, (float) ($entry['amount'] ?? 0)));
+            }
+        }
+
+        return round($amount, 2);
+    }
+
     private function resolveFixedRegularDayRegularPayShortfall(array $day, float $dailyRate): float
     {
         $requiredMinutes = max(0, (int) ($day['required_minutes'] ?? 0));
@@ -3843,25 +3852,7 @@ class PayrollComputationService implements PayrollBulkComputation
         }
 
         $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
-        $hasRegularPayMinutes = collect((array) ($day['breakdown'] ?? []))
-            ->contains(fn ($entry) => is_array($entry)
-                && strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay'
-                && max(0, (int) ($entry['minutes'] ?? 0)) > 0);
-        if ($holidayPremiumPay > 0.0001 && ! $hasRegularPayMinutes) {
-            return 0.0;
-        }
-
-        $actualRegularPay = max(0.0, (float) ($day['regular_pay'] ?? 0));
-        foreach ((array) ($day['breakdown'] ?? []) as $entry) {
-            if (! is_array($entry)) {
-                continue;
-            }
-            if (strtolower(trim((string) ($entry['component'] ?? ''))) === 'regular_pay') {
-                $actualRegularPay = max($actualRegularPay, max(0.0, (float) ($entry['amount'] ?? 0)));
-            }
-        }
-
-        $holidayPremiumPay = max(0.0, (float) ($day['holiday_premium_pay'] ?? 0));
+        $actualRegularPay = $this->fixedRegularOrdinaryRegularPayAmount($day);
         if ($holidayPremiumPay > 0.0001 && $actualRegularPay <= 0.0001) {
             // Worked holiday pay replaces the separate regular-pay line; do not treat it as tardiness.
             return 0.0;

@@ -38,7 +38,12 @@ import {
 } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/components/ui/use-toast'
-import { createPayComponent, deletePayComponent, getPayComponents, updatePayComponent } from '@/api'
+import { createPayComponent, deletePayComponent, getPayComponents, getPayCycles, previewPayCycle, updatePayComponent } from '@/api'
+import {
+  buildEffectiveUntilCutoffMetadata,
+  payComponentPeriodKey,
+  readEffectiveUntilCutoffFromItem,
+} from '@/lib/payComponentEffectiveCutoff'
 import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { cn } from '@/lib/utils'
 import {
@@ -74,8 +79,9 @@ const EMPTY_FORM = {
   apply_to_all: false,
   component_type: 'user',
   is_system_protected: false,
-  effective_from: '',
-  effective_to: '',
+  until_cutoff_enabled: false,
+  until_cutoff_pay_cycle_id: '',
+  until_cutoff_period_key: '',
   is_active: true,
   is_loan: false,
   is_amortized: false,
@@ -214,7 +220,16 @@ export default function AdminPayComponentsPage() {
   const [deleteAssignmentCount, setDeleteAssignmentCount] = useState(0)
   const [deleting, setDeleting] = useState(false)
   const [duplicateWarnings, setDuplicateWarnings] = useState([])
+  const [payCycles, setPayCycles] = useState([])
+  const [payCyclesLoading, setPayCyclesLoading] = useState(false)
+  const [untilCutoffPeriods, setUntilCutoffPeriods] = useState([])
+  const [untilCutoffPeriodsLoading, setUntilCutoffPeriodsLoading] = useState(false)
   const dialogBodyRef = useRef(null)
+
+  const selectedUntilCutoffCycle = useMemo(
+    () => payCycles.find((cycle) => String(cycle.id) === String(form.until_cutoff_pay_cycle_id)) || null,
+    [payCycles, form.until_cutoff_pay_cycle_id],
+  )
 
   const loadComponents = useCallback(async () => {
     setLoading(true)
@@ -244,6 +259,62 @@ export default function AdminPayComponentsPage() {
     })
     return () => window.cancelAnimationFrame(id)
   }, [dialogOpen, editingId])
+
+  useEffect(() => {
+    if (!dialogOpen) {
+      setPayCycles([])
+      setUntilCutoffPeriods([])
+      return undefined
+    }
+    let cancelled = false
+    ;(async () => {
+      setPayCyclesLoading(true)
+      try {
+        const res = await getPayCycles()
+        if (!cancelled) setPayCycles(Array.isArray(res?.data) ? res.data : [])
+      } catch {
+        if (!cancelled) setPayCycles([])
+      } finally {
+        if (!cancelled) setPayCyclesLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [dialogOpen])
+
+  useEffect(() => {
+    if (!dialogOpen || !selectedUntilCutoffCycle) {
+      setUntilCutoffPeriods([])
+      return undefined
+    }
+    let cancelled = false
+    const cycleSnapshot = {
+      code: selectedUntilCutoffCycle.code,
+      name: selectedUntilCutoffCycle.name,
+      cut_off_type: selectedUntilCutoffCycle.cut_off_type,
+      cut_off_value: selectedUntilCutoffCycle.cut_off_value,
+      pay_day_type: selectedUntilCutoffCycle.pay_day_type,
+      pay_day_value: selectedUntilCutoffCycle.pay_day_value,
+      pay_day_offset: selectedUntilCutoffCycle.pay_day_offset,
+      pro_ration_type: selectedUntilCutoffCycle.pro_ration_type,
+      metadata: selectedUntilCutoffCycle.metadata,
+      lookback_periods: 2,
+      forward_periods: 8,
+    }
+    ;(async () => {
+      setUntilCutoffPeriodsLoading(true)
+      try {
+        const res = await previewPayCycle(cycleSnapshot)
+        if (!cancelled) {
+          setUntilCutoffPeriods(Array.isArray(res?.data?.preview_periods) ? res.data.preview_periods : [])
+        }
+      } catch {
+        if (!cancelled) setUntilCutoffPeriods([])
+      } finally {
+        if (!cancelled) setUntilCutoffPeriodsLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [dialogOpen, selectedUntilCutoffCycle])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase() 
@@ -313,6 +384,7 @@ export default function AdminPayComponentsPage() {
     setEditingId(item.id)
     const meta = item.metadata && typeof item.metadata === 'object' ? item.metadata : {}
     const calc = item.calculation_type || 'fixed_amount'
+    const untilCutoff = readEffectiveUntilCutoffFromItem(item)
     setForm({
       name: item.name || '',
       code: item.code || '',
@@ -340,8 +412,7 @@ export default function AdminPayComponentsPage() {
       apply_to_all: Boolean(item.apply_to_all),
       component_type: item.component_type || 'user',
       is_system_protected: Boolean(item.is_system_protected),
-      effective_from: item.effective_from || '',
-      effective_to: item.effective_to || '',
+      ...untilCutoff,
       is_active: Boolean(item.is_active),
       is_loan: Boolean(item.is_loan),
       is_amortized: Boolean(item.is_amortized),
@@ -440,6 +511,24 @@ export default function AdminPayComponentsPage() {
 
   async function onSubmit(e) {
     e.preventDefault()
+    if (form.until_cutoff_enabled) {
+      if (!form.until_cutoff_pay_cycle_id) {
+        toast({
+          title: 'Pay components',
+          description: 'Select a pay cycle for the last active cutoff.',
+          variant: 'destructive',
+        })
+        return
+      }
+      if (!form.until_cutoff_period_key || String(form.until_cutoff_period_key).startsWith('legacy|')) {
+        toast({
+          title: 'Pay components',
+          description: 'Select the payroll cutoff when this component should stop applying.',
+          variant: 'destructive',
+        })
+        return
+      }
+    }
     setSaving(true)
     try {
       const calc = form.calculation_type
@@ -474,6 +563,21 @@ export default function AdminPayComponentsPage() {
       metadata.allowance_proration_include_paid_leave = Boolean(form.allowance_proration_include_paid_leave)
       metadata.allowance_proration_include_unpaid_leave = Boolean(form.allowance_proration_include_unpaid_leave)
 
+      const untilPeriod = untilCutoffPeriods.find(
+        (period) => payComponentPeriodKey(period) === form.until_cutoff_period_key,
+      ) || null
+      const untilCutoffMeta = buildEffectiveUntilCutoffMetadata({
+        enabled: Boolean(form.until_cutoff_enabled),
+        payCycleId: form.until_cutoff_pay_cycle_id,
+        payCycleName: selectedUntilCutoffCycle?.name,
+        period: untilPeriod,
+      })
+      if (untilCutoffMeta) {
+        metadata.effective_until_cutoff = untilCutoffMeta
+      } else {
+        delete metadata.effective_until_cutoff
+      }
+
       const isLoanComp = form.type === 'deduction' && Boolean(form.is_loan)
       const termMonthsRaw = String(form.default_term_months || '').trim()
       const termMonthsOut = isLoanComp && termMonthsRaw !== '' ? Number(termMonthsRaw) : null
@@ -483,8 +587,8 @@ export default function AdminPayComponentsPage() {
         code: form.code.trim().toUpperCase(),
         default_value: defaultValueOut,
         formula: form.formula || null,
-        effective_from: form.effective_from || null,
-        effective_to: form.effective_to || null,
+        effective_from: null,
+        effective_to: null,
         is_loan: isLoanComp,
         is_amortized: isLoanComp && termMonthsOut !== null && termMonthsOut > 0,
         default_term_months: termMonthsOut,
@@ -496,6 +600,9 @@ export default function AdminPayComponentsPage() {
       delete payload.default_percent
       delete payload.allowance_proration_include_paid_leave
       delete payload.allowance_proration_include_unpaid_leave
+      delete payload.until_cutoff_enabled
+      delete payload.until_cutoff_pay_cycle_id
+      delete payload.until_cutoff_period_key
 
       const response = editingId
         ? await updatePayComponent(editingId, payload)
@@ -592,8 +699,8 @@ export default function AdminPayComponentsPage() {
         contributes_pagibig: Boolean(item.contributes_pagibig),
         is_proratable: Boolean(item.is_proratable),
         apply_to_all: false,
-        effective_from: item.effective_from || null,
-        effective_to: item.effective_to || null,
+        effective_from: null,
+        effective_to: null,
         is_active: Boolean(item.is_active),
         is_loan: Boolean(item.is_loan),
         is_amortized: Boolean(item.is_amortized),
@@ -630,8 +737,6 @@ export default function AdminPayComponentsPage() {
         contributes_pagibig: Boolean(item.contributes_pagibig),
         is_proratable: Boolean(item.is_proratable),
         apply_to_all: Boolean(item.apply_to_all),
-        effective_from: item.effective_from || null,
-        effective_to: item.effective_to || null,
         is_active: false,
         is_loan: Boolean(item.is_loan),
         is_amortized: Boolean(item.is_amortized),
@@ -764,27 +869,59 @@ export default function AdminPayComponentsPage() {
               ))}
             </div>
 
-            <div className="mt-6 overflow-x-auto rounded-xl border border-border/60 bg-card">
+            <div className="mt-6 min-w-0 rounded-xl border border-border/60 bg-card">
               <TooltipProvider>
-                <Table className="min-w-[1240px]">
+                <div className="lg:hidden">
+                  {loading ? (
+                    <div className="divide-y divide-border/60">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <div key={`card-skeleton-${index}`} className="space-y-3 p-4">
+                          <div className="h-5 w-2/3 animate-pulse rounded bg-muted" />
+                          <div className="h-4 w-full animate-pulse rounded bg-muted" />
+                          <div className="h-4 w-5/6 animate-pulse rounded bg-muted" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : filtered.length === 0 ? (
+                    <p className="px-4 py-16 text-center text-sm text-muted-foreground">
+                      No pay components matched your filters.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-border/60">
+                      {paginated.map((item) => (
+                        <article key={item.id} className="space-y-4 p-4 sm:p-5">
+                          <PayComponentSummaryBlock item={item} hrBase={hrBase} />
+                          <PayComponentDetailsGrid item={item} />
+                          <PayComponentActionsRow
+                            item={item}
+                            onEdit={() => openEditDialog(item)}
+                            onDuplicate={() => onDuplicate(item)}
+                            onArchive={() => onArchive(item)}
+                            onDelete={() => requestDelete(item)}
+                          />
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <Table className="hidden w-full table-fixed lg:table">
                   <TableHeader className="[&_tr]:border-b-0">
                     <TableRow className="bg-muted/35 hover:bg-muted/35">
-                      <TableHead className="min-w-[300px] px-5 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Component</TableHead>
-                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Code</TableHead>
-                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Type</TableHead>
-                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Calculation</TableHead>
-                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Standard</TableHead>
-                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Taxability</TableHead>
-                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Contributory</TableHead>
-                      <TableHead className="px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Status</TableHead>
-                      <TableHead className="px-5 py-4 text-right text-xs font-bold uppercase tracking-wide text-muted-foreground">Actions</TableHead>
+                      <TableHead className="w-[34%] px-4 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground xl:px-5">Component</TableHead>
+                      <TableHead className="hidden w-[11%] px-3 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground xl:table-cell">Code</TableHead>
+                      <TableHead className="w-[10%] px-3 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Type</TableHead>
+                      <TableHead className="w-[18%] px-3 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Calculation</TableHead>
+                      <TableHead className="hidden w-[14%] px-3 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground 2xl:table-cell">Tax &amp; contrib.</TableHead>
+                      <TableHead className="w-[10%] px-3 py-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">Status</TableHead>
+                      <TableHead className="w-[13%] px-4 py-4 text-right text-xs font-bold uppercase tracking-wide text-muted-foreground xl:px-5">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loading ? (
                       Array.from({ length: 6 }).map((_, index) => (
                         <TableRow key={`skeleton-${index}`} className="border-b border-border/60">
-                          {Array.from({ length: 9 }).map((__, cellIndex) => (
+                          {Array.from({ length: 7 }).map((__, cellIndex) => (
                             <TableCell key={cellIndex} className="px-4 py-5">
                               <div className="h-4 animate-pulse rounded bg-muted" />
                             </TableCell>
@@ -793,106 +930,59 @@ export default function AdminPayComponentsPage() {
                       ))
                     ) : filtered.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="px-5 py-16 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={7} className="px-5 py-16 text-center text-sm text-muted-foreground">
                           No pay components matched your filters.
                         </TableCell>
                       </TableRow>
                     ) : (
                       paginated.map((item) => (
                         <TableRow key={item.id} className="border-b border-border/60 transition hover:bg-muted/35">
-                          <TableCell className="px-5 py-5">
-                            <div className="flex items-start gap-4">
-                              <div className="mt-0.5 flex size-12 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand">
-                                <WalletCards className="size-5" aria-hidden />
+                          <TableCell className="px-4 py-5 align-top xl:px-5">
+                            <PayComponentSummaryBlock item={item} hrBase={hrBase} compact />
+                            <code className="mt-2 inline-flex max-w-full truncate rounded-md bg-muted px-2 py-1 text-[11px] font-semibold text-foreground xl:hidden">
+                              {item.code}
+                            </code>
+                          </TableCell>
+                          <TableCell className="hidden px-3 py-5 align-top xl:table-cell">
+                            <code className="inline-block max-w-full truncate rounded-md bg-muted px-2.5 py-1.5 text-xs font-semibold text-foreground">
+                              {item.code}
+                            </code>
+                          </TableCell>
+                          <TableCell className="px-3 py-5 align-top">
+                            <PayComponentTypeBadge item={item} />
+                          </TableCell>
+                          <TableCell className="px-3 py-5 align-top">
+                            <div className="min-w-0 text-sm text-foreground">
+                              <div className="flex items-start gap-2">
+                                <Calculator className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                                <span className="break-words">{formatCalculationType(item.calculation_type)}</span>
                               </div>
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-semibold text-foreground">{item.name}</span>
-                                  {item.type === 'deduction' && (item.is_loan || String(item.category || '').toLowerCase() === 'loan') ? (
-                                    <Badge className="h-5 bg-amber-100 text-amber-900 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-200">Loan</Badge>
-                                  ) : null}
-                                  {(item.component_type || 'user') === 'system' || item.is_system_protected ? (
-                                    <Badge className="h-5 rounded-md bg-brand/10 px-1.5 text-[10px] font-bold uppercase tracking-wide text-brand hover:bg-brand/10">
-                                      System
-                                    </Badge>
-                                  ) : null}
-                                  {isCoreBasicSalaryComponent(item) ? (
-                                    <Badge className="h-5 rounded-md bg-foreground px-1.5 text-[10px] font-bold uppercase tracking-wide text-background hover:bg-foreground">
-                                      Core payroll
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                                <p className="mt-2 text-sm text-muted-foreground">{item.category || 'Uncategorized'}</p>
-                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                  {(item.component_type || 'user') === 'system' || item.is_system_protected
-                                    ? 'Integrated with payroll; code is fixed.'
-                                    : 'User-defined component'}
-                                </p>
-                                <Link
-                                  to={
-                                    item.type === 'earning'
-                                      ? `${hrBase}/compensation/deduction-schedule-settings#earnings`
-                                      : `${hrBase}/compensation/deduction-schedule-settings`
-                                  }
-                                  className="mt-2 inline-flex text-xs font-medium text-muted-foreground underline-offset-2 hover:text-brand hover:underline"
-                                >
-                                  {item.type === 'earning' ? 'Earnings pay schedule' : 'Deduction pay schedule'}
-                                </Link>
-                              </div>
+                              <p className="mt-1 break-words text-xs text-muted-foreground">
+                                {formatCalculationStandard(item.calculation_standard)}
+                              </p>
+                              <p className="mt-1 break-words text-xs text-muted-foreground 2xl:hidden">
+                                {item.is_taxable ? 'Taxable' : 'Non-taxable'}
+                                {' · '}
+                                {describeContributions(item)}
+                              </p>
                             </div>
                           </TableCell>
-                          <TableCell className="px-4 py-5">
-                            <code className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-semibold text-foreground">{item.code}</code>
+                          <TableCell className="hidden px-3 py-5 align-top text-sm text-foreground 2xl:table-cell">
+                            <p>{item.is_taxable ? 'Taxable' : 'Non-taxable'}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{describeContributions(item)}</p>
                           </TableCell>
-                          <TableCell className="px-4 py-5">
-                            <Badge className={cn(
-                              'rounded-md font-semibold',
-                              item.type === 'deduction'
-                                ? 'bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-200'
-                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200',
-                            )}>
-                              {item.type === 'deduction' ? 'Deduction' : 'Earning'}
-                            </Badge>
+                          <TableCell className="px-3 py-5 align-top">
+                            <PayComponentStatusBadge active={item.is_active} />
                           </TableCell>
-                          <TableCell className="px-4 py-5">
-                            <div className="flex items-center gap-2 text-sm text-foreground">
-                              <Calculator className="size-4 text-muted-foreground" aria-hidden />
-                              <span>{formatCalculationType(item.calculation_type)}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4 py-5 text-sm text-foreground">{formatCalculationStandard(item.calculation_standard)}</TableCell>
-                          <TableCell className="px-4 py-5 text-sm text-foreground">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</TableCell>
-                          <TableCell className="px-4 py-5 text-sm text-foreground">{describeContributions(item)}</TableCell>
-                          <TableCell className="px-4 py-5">
-                            <span className="inline-flex items-center gap-2 text-sm text-foreground">
-                              <span className={cn('size-2 rounded-full', item.is_active ? 'bg-emerald-500' : 'bg-muted-foreground')} aria-hidden />
-                              {item.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                          </TableCell>
-                          <TableCell className="px-5 py-5 text-right">
-                            <div className="flex justify-end gap-2">
-                              <IconAction label="Edit" onClick={() => openEditDialog(item)}>
-                                <Pencil className="size-4" aria-hidden />
-                              </IconAction>
-                              <IconAction
-                                label={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be duplicated' : 'Duplicate'}
-                                onClick={() => onDuplicate(item)}
-                                disabled={isCoreBasicSalaryComponent(item)}
-                              >
-                                <Copy className="size-4" aria-hidden />
-                              </IconAction>
-                              <IconAction label="Archive" onClick={() => onArchive(item)} disabled={!item.is_active}>
-                                <Archive className="size-4" aria-hidden />
-                              </IconAction>
-                              <IconAction
-                                label={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be deleted' : 'Delete'}
-                                onClick={() => requestDelete(item)}
-                                disabled={isCoreBasicSalaryComponent(item)}
-                                destructive
-                              >
-                                <Trash2 className="size-4" aria-hidden />
-                              </IconAction>
-                            </div>
+                          <TableCell className="px-4 py-5 align-top xl:px-5">
+                            <PayComponentActionsRow
+                              item={item}
+                              onEdit={() => openEditDialog(item)}
+                              onDuplicate={() => onDuplicate(item)}
+                              onArchive={() => onArchive(item)}
+                              onDelete={() => requestDelete(item)}
+                              compact
+                            />
                           </TableCell>
                         </TableRow>
                       ))
@@ -1255,24 +1345,69 @@ export default function AdminPayComponentsPage() {
               </div>
             ) : null}
 
-            <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
-              <Field label="Effective from" hint="Blank = available immediately.">
-                <input
-                  type="date"
-                  value={form.effective_from}
-                  onChange={(e) => updateForm({ effective_from: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Effective to" hint="Optional end date.">
-                <input
-                  type="date"
-                  value={form.effective_to}
-                  onChange={(e) => updateForm({ effective_to: e.target.value })}
-                  className={inputClass}
-                />
-              </Field>
+            <div className="space-y-3 rounded-lg border border-border/60 bg-muted/20 p-4">
+              <ToggleCard
+                title="Active until cutoff"
+                description="Optional. Component applies immediately and stops after the selected payroll cutoff (inclusive)."
+                checked={Boolean(form.until_cutoff_enabled)}
+                onChange={(checked) => updateForm({
+                  until_cutoff_enabled: checked,
+                  until_cutoff_pay_cycle_id: checked ? form.until_cutoff_pay_cycle_id : '',
+                  until_cutoff_period_key: checked ? form.until_cutoff_period_key : '',
+                })}
+              />
+              {form.until_cutoff_enabled ? (
+                <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+                  <Field label="Pay cycle" hint="Template used to list cutoff periods.">
+                    <select
+                      value={form.until_cutoff_pay_cycle_id}
+                      onChange={(e) => updateForm({
+                        until_cutoff_pay_cycle_id: e.target.value,
+                        until_cutoff_period_key: '',
+                      })}
+                      className={inputClass}
+                      disabled={payCyclesLoading}
+                    >
+                      <option value="">{payCyclesLoading ? 'Loading pay cycles…' : 'Select pay cycle…'}</option>
+                      {payCycles.map((cycle) => (
+                        <option key={cycle.id} value={String(cycle.id)}>
+                          {cycle.name}{cycle.code ? ` · ${cycle.code}` : ''}{cycle.is_default ? ' (default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Last active cutoff" hint="Component is included through this cutoff; later cutoffs exclude it.">
+                    <select
+                      value={form.until_cutoff_period_key}
+                      onChange={(e) => updateForm({ until_cutoff_period_key: e.target.value })}
+                      className={inputClass}
+                      disabled={!form.until_cutoff_pay_cycle_id || untilCutoffPeriodsLoading}
+                    >
+                      <option value="">
+                        {untilCutoffPeriodsLoading
+                          ? 'Loading cutoffs…'
+                          : !form.until_cutoff_pay_cycle_id
+                            ? 'Select a pay cycle first…'
+                            : 'Select cutoff period…'}
+                      </option>
+                      {untilCutoffPeriods.map((period) => {
+                        const key = payComponentPeriodKey(period)
+                        return (
+                          <option key={key} value={key}>
+                            {period.preview_line
+                              || `${period.cut_off_start_date} → ${period.cut_off_end_date}${period.pay_date ? ` · Pay ${period.pay_date}` : ''}`}
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </Field>
+                </div>
+              ) : null}
+              {form.until_cutoff_enabled && String(form.until_cutoff_period_key).startsWith('legacy|') ? (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  This component still uses a legacy calendar end date. Pick a cutoff above to migrate.
+                </p>
+              ) : null}
             </div>
           </div>
         </section>
@@ -1457,6 +1592,145 @@ function Field({ label, hint, required = false, children }) {
       {children}
       {hint ? <span className="mt-1.5 block text-xs font-normal text-muted-foreground">{hint}</span> : null}
     </label>
+  )
+}
+
+function PayComponentTypeBadge({ item }) {
+  return (
+    <Badge className={cn(
+      'rounded-md font-semibold',
+      item.type === 'deduction'
+        ? 'bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-500/15 dark:text-rose-200'
+        : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-200',
+    )}>
+      {item.type === 'deduction' ? 'Deduction' : 'Earning'}
+    </Badge>
+  )
+}
+
+function PayComponentStatusBadge({ active }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-sm text-foreground">
+      <span className={cn('size-2 rounded-full', active ? 'bg-emerald-500' : 'bg-muted-foreground')} aria-hidden />
+      {active ? 'Active' : 'Inactive'}
+    </span>
+  )
+}
+
+function PayComponentSummaryBlock({ item, hrBase, compact = false }) {
+  return (
+    <div className={cn('flex items-start gap-3 sm:gap-4', compact && 'gap-3')}>
+      <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand sm:size-12">
+        <WalletCards className="size-5" aria-hidden />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-foreground">{item.name}</span>
+          {item.type === 'deduction' && (item.is_loan || String(item.category || '').toLowerCase() === 'loan') ? (
+            <Badge className="h-5 bg-amber-100 text-amber-900 hover:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-200">Loan</Badge>
+          ) : null}
+          {(item.component_type || 'user') === 'system' || item.is_system_protected ? (
+            <Badge className="h-5 rounded-md bg-brand/10 px-1.5 text-[10px] font-bold uppercase tracking-wide text-brand hover:bg-brand/10">
+              System
+            </Badge>
+          ) : null}
+          {isCoreBasicSalaryComponent(item) ? (
+            <Badge className="h-5 rounded-md bg-foreground px-1.5 text-[10px] font-bold uppercase tracking-wide text-background hover:bg-foreground">
+              Core payroll
+            </Badge>
+          ) : null}
+        </div>
+        <p className="mt-1.5 text-sm text-muted-foreground">{item.category || 'Uncategorized'}</p>
+        {!compact ? (
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {(item.component_type || 'user') === 'system' || item.is_system_protected
+              ? 'Integrated with payroll; code is fixed.'
+              : 'User-defined component'}
+          </p>
+        ) : null}
+        <Link
+          to={
+            item.type === 'earning'
+              ? `${hrBase}/compensation/deduction-schedule-settings#earnings`
+              : `${hrBase}/compensation/deduction-schedule-settings`
+          }
+          className="mt-2 inline-flex max-w-full truncate text-xs font-medium text-muted-foreground underline-offset-2 hover:text-brand hover:underline"
+        >
+          {item.type === 'earning' ? 'Earnings pay schedule' : 'Deduction pay schedule'}
+        </Link>
+        {item.effective_until_cutoff_label ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Active until: {item.effective_until_cutoff_label}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function PayComponentDetailsGrid({ item }) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+      <div className="min-w-0">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Code</dt>
+        <dd className="mt-1 truncate">
+          <code className="rounded-md bg-muted px-2 py-1 text-xs font-semibold text-foreground">{item.code}</code>
+        </dd>
+      </div>
+      <div className="min-w-0">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Type</dt>
+        <dd className="mt-1">
+          <PayComponentTypeBadge item={item} />
+        </dd>
+      </div>
+      <div className="min-w-0">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</dt>
+        <dd className="mt-1">
+          <PayComponentStatusBadge active={item.is_active} />
+        </dd>
+      </div>
+      <div className="min-w-0 sm:col-span-2">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Calculation</dt>
+        <dd className="mt-1 break-words text-foreground">{formatCalculationType(item.calculation_type)}</dd>
+        <dd className="mt-0.5 text-xs text-muted-foreground">{formatCalculationStandard(item.calculation_standard)}</dd>
+      </div>
+      <div className="min-w-0">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Taxability</dt>
+        <dd className="mt-1 text-foreground">{item.is_taxable ? 'Taxable' : 'Non-taxable'}</dd>
+      </div>
+      <div className="min-w-0 sm:col-span-2">
+        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contributory</dt>
+        <dd className="mt-1 break-words text-foreground">{describeContributions(item)}</dd>
+      </div>
+    </dl>
+  )
+}
+
+function PayComponentActionsRow({ item, onEdit, onDuplicate, onArchive, onDelete, compact = false }) {
+  return (
+    <div className={cn('flex flex-wrap gap-2', compact ? 'justify-end' : 'justify-start sm:justify-end')}>
+      <IconAction label="Edit" onClick={onEdit}>
+        <Pencil className="size-4" aria-hidden />
+      </IconAction>
+      <IconAction
+        label={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be duplicated' : 'Duplicate'}
+        onClick={onDuplicate}
+        disabled={isCoreBasicSalaryComponent(item)}
+      >
+        <Copy className="size-4" aria-hidden />
+      </IconAction>
+      <IconAction label="Archive" onClick={onArchive} disabled={!item.is_active}>
+        <Archive className="size-4" aria-hidden />
+      </IconAction>
+      <IconAction
+        label={isCoreBasicSalaryComponent(item) ? 'Basic Salary cannot be deleted' : 'Delete'}
+        onClick={onDelete}
+        disabled={isCoreBasicSalaryComponent(item)}
+        destructive
+      >
+        <Trash2 className="size-4" aria-hidden />
+      </IconAction>
+    </div>
   )
 }
 
