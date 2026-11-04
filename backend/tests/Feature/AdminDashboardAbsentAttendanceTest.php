@@ -63,6 +63,12 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             'is_active' => true,
             'schedule' => array_replace($schedule, ['fri' => null]),
         ]);
+        User::factory()->create([
+            'name' => 'Deactivated Employee',
+            'role' => User::ROLE_EMPLOYEE,
+            'is_active' => false,
+            'schedule' => $schedule,
+        ]);
 
         AttendanceLog::create([
             'user_id' => $present->id,
@@ -88,6 +94,7 @@ class AdminDashboardAbsentAttendanceTest extends TestCase
             $response->assertOk();
             $rowsById = collect($response->json('today_logs'))->keyBy('id');
 
+            $this->assertSame(5, $response->json('stats.total_employees'));
             $this->assertSame(1, $response->json('stats.absent_today'));
             $this->assertTrue((bool) $rowsById->get($absent->id)['is_absent']);
             $this->assertSame('Absent', $rowsById->get($absent->id)['absent_label']);

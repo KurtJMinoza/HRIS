@@ -239,7 +239,6 @@ class DashboardController extends Controller
             $today = $now->copy()->startOfDay();
             $yesterday = $today->copy()->subDay();
             $activeScopeIds = $this->scopedEmployeeIds($actor, true);
-            $allScopeIds = $this->scopedEmployeeIds($actor, false);
             $activeEmployees = $activeScopeIds === []
                 ? collect()
                 : User::query()
@@ -269,8 +268,9 @@ class DashboardController extends Controller
                 $yesterday->copy()->endOfDay(),
                 false
             );
-            $statsToday['total_employees'] = count($allScopeIds);
-            $statsYesterday['total_employees'] = count($allScopeIds);
+            // Active only, so present + absent + on leave reconcile with the total.
+            $statsToday['total_employees'] = count($activeScopeIds);
+            $statsYesterday['total_employees'] = count($activeScopeIds);
 
             $birthdays = $this->birthdays($actor);
 
@@ -1693,8 +1693,8 @@ class DashboardController extends Controller
         $leaveUserIds = LeaveRequest::query()
             ->whereIn('user_id', $activeEmployeeIds)
             ->where('status', LeaveRequest::STATUS_APPROVED)
-            ->where('start_date', '<=', $dateKey)
-            ->where('end_date', '>=', $dateKey)
+            ->whereDate('start_date', '<=', $dateKey)
+            ->whereDate('end_date', '>=', $dateKey)
             ->pluck('user_id')
             ->unique();
         $leaveSet = array_fill_keys($leaveUserIds->all(), true);
@@ -1766,6 +1766,8 @@ class DashboardController extends Controller
                 ->orderByRaw($this->attendanceLogEffectivePunchColumnSql())
                 ->get()
                 ->groupBy('user_id');
+        // Any punch (incl. clock-out only) means not absent, matching todayAttendanceLogs().
+        $punchedSet = (clone $logsByDayQuery)->distinct()->pluck('user_id')->flip();
 
         $underTimeCount = 0;
         foreach ($activeEmployees as $user) {
@@ -1804,7 +1806,7 @@ class DashboardController extends Controller
                 continue;
             }
 
-            if ($logsByUserForDay->has($user->id) || $firstClockIn->has($user->id)) {
+            if ($punchedSet->has($user->id) || $firstClockIn->has($user->id)) {
                 continue;
             }
 
