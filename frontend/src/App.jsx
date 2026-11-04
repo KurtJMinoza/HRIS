@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useNavigate, useLocation } from
 /** Matches Vite `base` (e.g. `/HR/` -> `/HR`) so routes work when deployed under a subpath */
 const routerBasename = import.meta.env.BASE_URL.replace(/\/$/, '') || undefined
 import { Toaster, toast } from 'sonner'
-import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, CheckCircle2, Home, Eye, EyeOff, ClipboardList, User, LockKeyhole, Sun, Moon, MapPin, Monitor, Smartphone, Tablet, Laptop } from 'lucide-react'
+import { LogIn, LogOut, Scan, ScanFace, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, CheckCircle2, Home, Eye, EyeOff, ClipboardList, User, LockKeyhole, Sun, Moon, MapPin, Monitor, Smartphone, Tablet, Laptop } from 'lucide-react'
 import {
   login,
   getStoredUser,
@@ -238,7 +238,8 @@ function SmartDTRPreview({ className }) {
   const [error, setError] = useState(null)
   const [scanResult, setScanResult] = useState(null) // inline success feedback
   const [recentLogs, setRecentLogs] = useState([])
-  const [recentExpanded, setRecentExpanded] = useState(false)
+  const [recentPage, setRecentPage] = useState(1)
+  const [recentLastPage, setRecentLastPage] = useState(1)
   const [kioskAttemptMeta, setKioskAttemptMeta] = useState(null)
   const [summaryModal, setSummaryModal] = useState({
     open: false,
@@ -270,19 +271,16 @@ function SmartDTRPreview({ className }) {
   const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0)
   const lastScanRef = useRef({ text: null, at: 0 })
 
-  const RECENT_VISIBLE_COUNT = 5
-  const visibleLogs = recentExpanded ? recentLogs : recentLogs.slice(0, RECENT_VISIBLE_COUNT)
-  const hasMore = recentLogs.length > RECENT_VISIBLE_COUNT
-
-
   const fetchRecent = useCallback(async () => {
     try {
-      const data = await getKioskRecentAttendance()
+      const data = await getKioskRecentAttendance({ page: recentPage, perPage: 5 })
       setRecentLogs(data.attendance || [])
+      setRecentLastPage(data.meta?.last_page || 1)
+      if (data.meta?.current_page && data.meta.current_page !== recentPage) setRecentPage(data.meta.current_page)
     } catch {
       setRecentLogs([])
     }
-  }, [])
+  }, [recentPage])
 
   const goFileAttendanceCorrectionPortal = useCallback(() => {
     navigate('/login', {
@@ -310,8 +308,11 @@ function SmartDTRPreview({ className }) {
   )
 
   useEffect(() => {
-    fetchRecent()
     getAttendanceGeofenceModuleStatus().then((s) => setGeofenceModuleEnabled(s.enabled)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchRecent()
     const t = setInterval(fetchRecent, 30000)
     return () => clearInterval(t)
   }, [fetchRecent])
@@ -772,27 +773,7 @@ function SmartDTRPreview({ className }) {
 
           {/* -- Recent Activity feed - social proof, higher priority -- */}
           <div className="space-y-3 pt-0">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold uppercase tracking-wider text-[#5d6472] dark:text-muted-foreground">Recent Activity</p>
-              {hasMore && !recentExpanded && (
-                <button
-                  type="button"
-                  onClick={() => setRecentExpanded(true)}
-                  className="text-sm font-semibold text-[#ff4f0b] transition-colors hover:text-[#db3f04] dark:text-[#fb923c] dark:hover:text-orange-300"
-                >
-                  View More {'\u2192'}
-                </button>
-              )}
-              {recentExpanded && (
-                <button
-                  type="button"
-                  onClick={() => setRecentExpanded(false)}
-                  className="text-[11px] font-medium text-[#6b7280] transition-colors hover:text-[#111827] dark:text-muted-foreground dark:hover:text-foreground"
-                >
-                  Collapse
-                </button>
-              )}
-            </div>
+            <p className="text-xs font-bold uppercase tracking-wider text-[#5d6472] dark:text-muted-foreground">Recent Activity</p>
 
             {recentLogs.length === 0 ? (
               <p className="rounded-xl border border-[#e1e4ea] bg-white py-6 text-center text-xs text-[#6b7280] shadow-sm dark:border-border dark:bg-card dark:text-muted-foreground">
@@ -800,7 +781,7 @@ function SmartDTRPreview({ className }) {
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {visibleLogs.map((log) => {
+                {recentLogs.map((log) => {
                   const initials = (log.employee_name || '?').trim().split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2)
                   const isLate = log.status === 'late'
                   const StatusIcon = log.type === 'clock_in' ? LogIn : LogOut
@@ -908,6 +889,32 @@ function SmartDTRPreview({ className }) {
                   )
                 })}
               </ul>
+            )}
+
+            {recentLogs.length > 0 && (
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  aria-label="Previous page"
+                  disabled={recentPage <= 1}
+                  onClick={() => setRecentPage((p) => Math.max(1, p - 1))}
+                  className="rounded-lg border border-[#e1e4ea] bg-white p-1 text-[#6b7280] shadow-sm transition-colors hover:border-[#ffb28a] hover:text-[#111827] disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:text-foreground"
+                >
+                  <ChevronLeft className="size-4" />
+                </button>
+                <span className="text-[11px] font-medium tabular-nums text-[#6b7280] dark:text-muted-foreground">
+                  Page {recentPage} of {recentLastPage}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Next page"
+                  disabled={recentPage >= recentLastPage}
+                  onClick={() => setRecentPage((p) => Math.min(recentLastPage, p + 1))}
+                  className="rounded-lg border border-[#e1e4ea] bg-white p-1 text-[#6b7280] shadow-sm transition-colors hover:border-[#ffb28a] hover:text-[#111827] disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-card dark:text-muted-foreground dark:hover:text-foreground"
+                >
+                  <ChevronRight className="size-4" />
+                </button>
+              </div>
             )}
           </div>
 

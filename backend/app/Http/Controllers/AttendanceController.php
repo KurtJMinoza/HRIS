@@ -3487,14 +3487,29 @@ class AttendanceController extends Controller
     public function recentKiosk(Request $request): JsonResponse
     {
         $tz = $this->attendanceTimezone();
+        $perPage = max(1, min((int) $request->query('per_page', 5), 25));
 
-        $logEntries = AttendanceLog::query()
+        // ponytail: dedupe + paginate in memory over the latest 500 punches; older ones fall off the feed.
+        // Move the dedupe into SQL if the kiosk ever needs full history.
+        $deduped = AttendanceLog::query()
             ->where(function ($q) {
                 // Kiosk feed is live punches only — hide synthetic correction / admin manual rows.
                 $q->whereNull('authentication_method')
                     ->orWhereNotIn('authentication_method', AttendanceLog::nonKioskRecentAuthMethods());
             })
-            ->with([
+            ->orderByRaw('COALESCE(verified_at, created_at) DESC')
+            ->limit(500)
+            ->get()
+            ->sortByDesc(fn (AttendanceLog $log) => $this->attendanceLogPunchInstant($log)->timestamp)
+            ->unique(fn (AttendanceLog $log) => ((int) $log->user_id).'|'.$this->attendanceLogPunchInstant($log)->copy()->timezone($tz)->toDateString().'|'.$log->type)
+            ->values();
+
+        $total = $deduped->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min(max(1, (int) $request->query('page', 1)), $lastPage);
+
+        $merged = $deduped->forPage($page, $perPage)->values()
+            ->load([
                 'user:id,name,first_name,middle_name,last_name,suffix,schedule,working_schedule_id,profile_image,department_id,company_id,branch_id',
                 'user.workingSchedule:id,time_in,time_out,break_start,break_end,grace_period_minutes,early_timein_minutes,late_allowance_minutes,early_timeout_minutes,overtime_buffer_minutes,rest_days',
                 'user.companyHeadships:id,name,logo,company_head_id',
@@ -3508,10 +3523,7 @@ class AttendanceController extends Controller
                 'geofenceValidation.branch:id,name,company_id',
                 'geofenceValidation.matchedGeofence:id,name,type,radius_meters',
             ])
-            ->orderByRaw('COALESCE(verified_at, created_at) DESC')
-            ->limit(80)
-            ->get()
-            ->map(function (AttendanceLog $log) use ($tz) {
+            ->map(function (AttendanceLog $log) {
                 $punchAt = $this->attendanceLogPunchInstant($log);
                 $info = $this->kioskLogStatus($log);
                 $user = $log->user;
@@ -3554,24 +3566,19 @@ class AttendanceController extends Controller
                     'status' => $info['status'] ?? null,
                     'late_minutes' => $info['late_minutes'] ?? null,
                     'late_label' => $info['late_label'] ?? null,
-                    '_ts' => $punchAt->timestamp,
-                    '_dedup_key' => ((int) ($user?->id ?? 0)).'|'.$punchAt->copy()->timezone($tz)->toDateString().'|'.$log->type,
                 ];
-            });
-
-        // Dedup same calendar-day repeats; keep the list short for kiosk performance.
-        $merged = $logEntries
-            ->sortByDesc('_ts')
-            ->unique('_dedup_key')
-            ->take(25)
-            ->map(function (array $e) {
-                unset($e['_ts'], $e['_dedup_key']);
-
-                return $e;
             })
             ->values();
 
-        return response()->json(['attendance' => $merged]);
+        return response()->json([
+            'attendance' => $merged,
+            'meta' => [
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => $perPage,
+                'total' => $total,
+            ],
+        ]);
     }
 
     private function publicMediaUrl(string $rawPath): string

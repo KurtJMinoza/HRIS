@@ -8104,9 +8104,9 @@ export async function recordAttendanceFace(type, payload) {
 /**
  * Get recent attendance logs for kiosk display (no auth).
  */
-export async function getKioskRecentAttendance() {
+export async function getKioskRecentAttendance({ page = 1, perPage = 5 } = {}) {
   const base = String(API_BASE || '').replace(/\/$/, '')
-  const path = `${base}/attendance/kiosk/recent`
+  const path = `${base}/attendance/kiosk/recent?page=${page}&per_page=${perPage}`
   const res = await wrapNetworkError(
     fetchWithTimeout(path, { headers: { Accept: 'application/json' } })
   )
