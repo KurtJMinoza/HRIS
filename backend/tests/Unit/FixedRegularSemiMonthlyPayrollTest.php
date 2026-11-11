@@ -1169,7 +1169,7 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertEqualsWithDelta(576.92, (float) ($rows['late']['deduction_amount'] ?? 0), 0.02);
     }
 
-    public function test_fixed_regular_uses_present_days_when_cutoff_has_more_scheduled_days_than_gross_covers(): void
+    public function test_fixed_regular_deducts_absences_from_fixed_gross_when_cutoff_has_more_scheduled_days(): void
     {
         $service = app(PayrollComputationService::class);
         $dailyRate = 1538.46;
@@ -1180,20 +1180,74 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
             ['key' => 'half_day', 'deduction_amount' => 769.23],
         ]];
 
-        // 20,000 − 10 absences − half day = 3,846.17 (2.5 days) < 4 × 1,538.46 − half day = 5,384.61.
+        $this->assertTrue($service->shouldPayFixedRegularFullSemiMonthlyGross(4.0, 14, $breakdown, false, true));
+        $this->assertSame(3846.17, round($gross - 15384.60 - 769.23, 2));
+
+        // Cap-applied snapshots keep their present-day paid basis.
         $this->assertFalse($service->shouldPayFixedRegularFullSemiMonthlyGross(4.0, 14, $breakdown, false, true, $gross, $dailyRate));
         $this->assertSame(5384.61, round(min($gross, 4.0 * $dailyRate) - 769.23, 2));
 
-        // 12 scheduled (fewer than the 13 the gross covers): full gross minus absences still wins.
+        // 12 scheduled: full gross minus absences still applies.
         $this->assertTrue($service->shouldPayFixedRegularFullSemiMonthlyGross(
             10.0,
             12,
             ['rows' => [['key' => 'absence', 'count' => 2.0, 'deduction_amount' => 1384.62]]],
             false,
-            true,
-            9000.0,
-            692.31
+            true
         ));
+    }
+
+    public function test_fixed_regular_fourteen_day_cutoff_deducts_absences_from_regular_pay(): void
+    {
+        $service = app(PayrollComputationService::class);
+        $fixedGross = 7767.0;
+        $lateDeduction = 485.42;
+        $absenceDeduction = 1194.92;
+        $breakdown = [
+            'scheduled_days_count' => 14,
+            'rows' => [
+                ['key' => 'late', 'deduction_amount' => $lateDeduction],
+                ['key' => 'absence', 'count' => 2.0, 'deduction_amount' => $absenceDeduction],
+            ],
+            'total_deduction' => round($lateDeduction + $absenceDeduction, 2),
+        ];
+
+        $this->assertTrue($service->fixedRegularAccountsForAllScheduledDays(12.0, 14, $breakdown));
+        $this->assertTrue($service->shouldPayFixedRegularFullSemiMonthlyGross(12.0, 14, $breakdown, false, true));
+        $this->assertSame(6086.66, round($fixedGross - $lateDeduction - $absenceDeduction, 2));
+
+        $payslipService = app(\App\Services\PayslipService::class);
+        $method = new \ReflectionMethod($payslipService, 'attachFixedSemiMonthlyRegularPayAfterReductionsDisplay');
+        $method->setAccessible(true);
+
+        $summary = [
+            'regular_fixed_semi_monthly_payroll' => true,
+            'fixed_semi_monthly_basic_gross' => $fixedGross,
+            'semi_monthly_basic_salary' => $fixedGross,
+            'regular_pay_present_day_units' => 12.0,
+            'regular_fixed_present_day_base_pay' => 7169.52,
+            'daily_rate' => 597.46,
+            'basic_pay_this_period' => 6086.66,
+            'attendance_deduction' => round($lateDeduction + $absenceDeduction, 2),
+            'daily_computation_earning_lines' => [[
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => 6086.66,
+                'display_amount' => $fixedGross,
+                'units' => '12 days',
+                'metadata' => ['regular_fixed_semi_monthly_payroll' => true],
+            ]],
+        ];
+
+        $updated = $method->invoke($payslipService, $summary, $breakdown, $summary['daily_computation_earning_lines'][0]);
+        $line = $updated['daily_computation_earning_lines'][0];
+
+        $this->assertSame($fixedGross, (float) ($line['display_amount'] ?? 0));
+        $this->assertSame(
+            round($lateDeduction + $absenceDeduction, 2),
+            (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0)
+        );
+        $this->assertSame(6086.66, (float) ($updated['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0));
     }
 
     public function test_fixed_regular_below_ninety_percent_with_absences_uses_full_semi_monthly_basic(): void

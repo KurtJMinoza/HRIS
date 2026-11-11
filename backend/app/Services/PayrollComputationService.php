@@ -2547,9 +2547,7 @@ class PayrollComputationService implements PayrollBulkComputation
                 $scheduledRegularDays,
                 $regularFixedAttendanceBreakdown,
                 $nearFullFixedRegularCutoff,
-                $paidLeavePremiumAmount <= 0.0001,
-                $regularFixedSemiMonthlyGross,
-                $dailyRate
+                $paidLeavePremiumAmount <= 0.0001
             );
 
             if ($payFullSemiMonthlyGross) {
@@ -3402,7 +3400,12 @@ class PayrollComputationService implements PayrollBulkComputation
 
     /**
      * Fixed semi-monthly basic uses the full schedule factor when every scheduled day in the
-     * cutoff is accounted for as present, absence, or unpaid leave — even below the 90% present ratio.
+     * cutoff is accounted for as present, absence, or unpaid leave — even below the 90% present
+     * ratio. Absences and unpaid leave stay on their own rows and deduct from the fixed gross,
+     * even when the cutoff has more scheduled days than the semi-monthly divisor covers.
+     *
+     * A nonzero gross/rate keeps historical present-day snapshots on their paid basis: when
+     * "gross minus absences" would pay less than the days actually present, this returns false.
      *
      * @param  array<string, mixed>  $breakdown
      */
@@ -3425,9 +3428,6 @@ class PayrollComputationService implements PayrollBulkComputation
             return false;
         }
 
-        // A cutoff can have more scheduled days than the fixed gross covers (14 vs 26/2 = 13).
-        // Then "gross minus every absent day" pays less than the days actually present (an
-        // unworked holiday silently drops out), so the present-day basis must be used instead.
         if ($fixedGross > 0.0001 && $dailyRate > 0.0001) {
             $fullGrossNet = $fixedGross - $this->sumFixedRegularAttendanceRowDeductions(
                 $breakdown,

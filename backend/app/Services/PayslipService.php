@@ -5445,9 +5445,10 @@ class PayslipService
         }
         $breakdown['regular_pay_after_reductions'] = $regularPayAfterReductions;
         $breakdown['fixed_basic_pay_after_reductions'] = round(max(0.0, $totalNetBasic), 2);
-        $breakdown['note'] = $presentDayCapApplied || ($presentDayBasePay !== null && $presentDayBasePay + 0.005 < $fixedGross)
-            ? 'Present-day Regular pay uses the attendance day count shown above. Absences and unpaid leave are reflected in the day count; late, undertime, and half-day rows show applicable attendance adjustments only.'
-            : 'Fixed semi-monthly basic pay minus applicable late, undertime, absence, and unpaid leave adjustments. Approved paid leave is shown on Leave adjustments and is included in the fixed semi-monthly basic cap.';
+        $usesFixedBasicNote = $accountsAllScheduledDays || ($usesFullFixedBasicDisplay && ! $presentDayCapApplied);
+        $breakdown['note'] = $usesFixedBasicNote
+            ? 'Fixed semi-monthly basic pay minus applicable late, undertime, absence, and unpaid leave adjustments. Approved paid leave is shown on Leave adjustments and is included in the fixed semi-monthly basic cap.'
+            : 'Present-day Regular pay uses the attendance day count shown above. Absences and unpaid leave are reflected in the day count; late, undertime, and half-day rows show applicable attendance adjustments only.';
         $summary['attendance_pay_breakdown'] = $breakdown;
         $summary = $this->updateRegularPayLineDisplayAmount($summary, $headlineDisplayAmount);
 
@@ -5514,8 +5515,8 @@ class PayslipService
     {
         $presentUnits = $this->resolveFixedRegularPresentDayUnits($summary);
         $scheduledDays = max(0, (int) ($breakdown['scheduled_days_count'] ?? 0));
-        // Only snapshots computed on the present-day basis get the present-day floor, so
-        // finalized payslips paid as "gross minus absences" keep displaying what was paid.
+        // New computations pay fixed gross minus absences; cap-applied snapshots keep their
+        // present-day paid basis so finalized payslips display what was actually paid.
         $usePresentDayFloor = ! empty($summary['regular_fixed_present_day_cap_applied']);
 
         return app(PayrollComputationService::class)->fixedRegularAccountsForAllScheduledDays(
