@@ -1250,6 +1250,55 @@ class FixedRegularSemiMonthlyPayrollTest extends TestCase
         $this->assertSame(6086.66, (float) ($updated['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0));
     }
 
+    public function test_fixed_regular_fourteen_day_cutoff_deducts_unpaid_leave_from_regular_pay(): void
+    {
+        $payslipService = app(\App\Services\PayslipService::class);
+        $method = new \ReflectionMethod($payslipService, 'attachFixedSemiMonthlyRegularPayAfterReductionsDisplay');
+        $method->setAccessible(true);
+
+        $fixedGross = 7750.0;
+        $halfDayDeduction = 298.08;
+        $absenceDeduction = 596.15;
+        $unpaidLeaveDeduction = 1192.30;
+        $totalDeduction = round($halfDayDeduction + $absenceDeduction + $unpaidLeaveDeduction, 2);
+        $basicPay = round($fixedGross - $totalDeduction, 2);
+
+        $summary = [
+            'regular_fixed_semi_monthly_payroll' => true,
+            'fixed_semi_monthly_basic_gross' => $fixedGross,
+            'semi_monthly_basic_salary' => $fixedGross,
+            'regular_pay_present_day_units' => 11.0,
+            'regular_fixed_present_day_base_pay' => 6557.65,
+            'daily_rate' => 596.15,
+            'basic_pay_this_period' => $basicPay,
+            'attendance_deduction' => $totalDeduction,
+            'daily_computation_earning_lines' => [[
+                'key' => 'daily:regular_pay',
+                'label' => 'Regular pay',
+                'amount' => $basicPay,
+                'display_amount' => $fixedGross,
+                'units' => '11 days',
+                'metadata' => ['regular_fixed_semi_monthly_payroll' => true],
+            ]],
+        ];
+        $breakdown = [
+            'scheduled_days_count' => 14,
+            'rows' => [
+                ['key' => 'half_day', 'count' => 1.0, 'deduction_amount' => $halfDayDeduction],
+                ['key' => 'absence', 'count' => 1.0, 'deduction_amount' => $absenceDeduction],
+                ['key' => 'unpaid_leave', 'count' => 2.0, 'deduction_amount' => $unpaidLeaveDeduction],
+            ],
+            'total_deduction' => round($halfDayDeduction + $absenceDeduction, 2),
+        ];
+
+        $updated = $method->invoke($payslipService, $summary, $breakdown, $summary['daily_computation_earning_lines'][0]);
+        $line = $updated['daily_computation_earning_lines'][0];
+
+        $this->assertSame($fixedGross, (float) ($line['display_amount'] ?? 0));
+        $this->assertSame($totalDeduction, (float) ($updated['attendance_pay_breakdown']['total_deduction'] ?? 0));
+        $this->assertSame($basicPay, (float) ($updated['attendance_pay_breakdown']['regular_pay_after_reductions'] ?? 0));
+    }
+
     public function test_fixed_regular_below_ninety_percent_with_absences_uses_full_semi_monthly_basic(): void
     {
         $service = app(PayrollComputationService::class);

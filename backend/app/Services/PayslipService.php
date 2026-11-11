@@ -5298,6 +5298,7 @@ class PayslipService
         $nonAbsenceDeduction = $this->sumFixedRegularNonAbsenceAttendanceDeduction($breakdown);
         $absenceDeduction = $this->sumFixedRegularAbsenceAttendanceDeduction($breakdown);
         $rowBasedDeduction = round($nonAbsenceDeduction + $absenceDeduction, 2);
+        $explicitDeduction = $this->sumFixedRegularExplicitAttendanceDeduction($breakdown);
         $presentDayBasePay = $this->resolveFixedRegularPresentDayBasePay($summary);
         $regularPayHeadlineBase = $presentDayBasePay;
         if ($presentDayCapApplied && $paidLeavePremiumAmount > 0.0001 && $regularPayHeadlineBase !== null) {
@@ -5315,8 +5316,11 @@ class PayslipService
         $accountsAllScheduledDays = $this->fixedRegularAccountsForAllScheduledDays($summary, $breakdown)
             && ! $paidLeaveSplitCapDisplay;
         $usesFullFixedBasicDisplay = $nearFullCutoff || $accountsAllScheduledDays;
-        if ($accountsAllScheduledDays && ! $nearFullCutoff && $fixedGross > 0.0001 && $rowBasedDeduction > 0.0001) {
-            $netAmount = round(max(0.0, $fixedGross - $rowBasedDeduction), 2);
+        $displayedAttendanceDeduction = $accountsAllScheduledDays
+            ? round($explicitDeduction, 2)
+            : $rowBasedDeduction;
+        if ($accountsAllScheduledDays && ! $nearFullCutoff && $fixedGross > 0.0001 && $displayedAttendanceDeduction > 0.0001) {
+            $netAmount = round(max(0.0, $fixedGross - $displayedAttendanceDeduction), 2);
         }
 
         if (
@@ -5338,13 +5342,13 @@ class PayslipService
                 && $presentDayBasePay + 0.005 < $fixedGross
                 && $fixedGross - $presentDayBasePay <= 0.50;
             if ($presentDayIsRoundingOfFixed) {
-                $totalDeduction = $rowBasedDeduction > 0.0001
-                    ? $rowBasedDeduction
+                $totalDeduction = $displayedAttendanceDeduction > 0.0001
+                    ? $displayedAttendanceDeduction
                     : round((float) ($breakdown['total_deduction'] ?? max(0.0, $fixedGross - $netAmount)), 2);
                 $headlineDisplayAmount = $presentDayBasePay;
             } else {
-                $totalDeduction = $rowBasedDeduction > 0.0001
-                    ? $rowBasedDeduction
+                $totalDeduction = $displayedAttendanceDeduction > 0.0001
+                    ? $displayedAttendanceDeduction
                     : round(max(0.0, $fixedGross - $netAmount), 2);
                 if ($totalDeduction <= 0.0001) {
                     $storedDeduction = round((float) ($breakdown['total_deduction'] ?? 0), 2);
@@ -5380,7 +5384,7 @@ class PayslipService
             && $paidLeavePremiumAmount > 0.0001
             && ($absenceDeduction > 0.0001 || $nonAbsenceDeduction > 0.0001)
         ) {
-            $totalDeduction = round($nonAbsenceDeduction + $absenceDeduction, 2);
+            $totalDeduction = round($displayedAttendanceDeduction, 2);
         }
 
         $splitRegularHeadline = $this->resolveFixedSemiMonthlyRegularPaySplitHeadlineDisplay($summary);
@@ -5426,18 +5430,18 @@ class PayslipService
             }
         } elseif ($paidLeavePremiumAmount > 0.0001) {
             $regularPayAfterReductions = round(
-                max(0.0, $headlineDisplayAmount - $nonAbsenceDeduction - $absenceDeduction),
+                max(0.0, $headlineDisplayAmount - $displayedAttendanceDeduction),
                 2
             );
         } elseif (
-            $rowBasedDeduction > 0.0001
+            $displayedAttendanceDeduction > 0.0001
             && $absenceDeduction <= 0.0001
-            && abs($rowBasedDeduction - $storedNetGapDeduction) > 0.015
+            && abs($displayedAttendanceDeduction - $storedNetGapDeduction) > 0.015
         ) {
-            $regularPayAfterReductions = round(max(0.0, $headlineDisplayAmount - $rowBasedDeduction), 2);
-        } elseif ($workedHolidayBaseInRegular > 0.0001 && $rowBasedDeduction > 0.0001) {
+            $regularPayAfterReductions = round(max(0.0, $headlineDisplayAmount - $displayedAttendanceDeduction), 2);
+        } elseif ($workedHolidayBaseInRegular > 0.0001 && $displayedAttendanceDeduction > 0.0001) {
             $regularPayAfterReductions = round(
-                max(0.0, $headlineDisplayAmount - $nonAbsenceDeduction - $absenceDeduction),
+                max(0.0, $headlineDisplayAmount - $displayedAttendanceDeduction),
                 2
             );
         } else {
