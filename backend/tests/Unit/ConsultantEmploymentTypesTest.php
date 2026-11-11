@@ -59,4 +59,30 @@ class ConsultantEmploymentTypesTest extends TestCase
         $this->assertTrue($isConsultant->invoke($payroll, $plainConsultant));
         $this->assertSame('consultant', $resolver->resolveLaborEmploymentType($plainConsultant));
     }
+
+    public function test_consultant_regular_deducts_absences_from_fixed_gross_like_regular(): void
+    {
+        $payroll = app(PayrollComputationService::class);
+        $fixedSemiMonthly = new \ReflectionMethod($payroll, 'isFixedSemiMonthlySalaryEmployee');
+        $fixedSemiMonthly->setAccessible(true);
+
+        $consultantRegular = new User([
+            'employment_status' => 'consultant_regular',
+            'employment_type' => 'full_time',
+        ]);
+
+        $this->assertTrue($fixedSemiMonthly->invoke($payroll, $consultantRegular, false));
+
+        $breakdown = [
+            'scheduled_days_count' => 14,
+            'rows' => [
+                ['key' => 'late', 'deduction_amount' => 485.42],
+                ['key' => 'absence', 'count' => 2.0, 'deduction_amount' => 1194.92],
+            ],
+            'total_deduction' => 1680.34,
+        ];
+
+        $this->assertTrue($payroll->shouldPayFixedRegularFullSemiMonthlyGross(12.0, 14, $breakdown, false, true));
+        $this->assertSame(6086.66, round(7767.0 - 485.42 - 1194.92, 2));
+    }
 }
