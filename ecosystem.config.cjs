@@ -10,8 +10,10 @@ const php = resolveBinary('PHP_BIN', isWin ? 'C:\\xampp\\php\\php.exe' : 'php', 
 const python = resolveBinary('FACE_SERVICE_PYTHON', isWin ? 'python' : 'python3', ['python', 'python3']);
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const octaneHost = process.env.OCTANE_HOST || '127.0.0.1';
-const octanePort = process.env.OCTANE_PORT || '8000';
+const octanePort = process.env.OCTANE_PORT || '8200';
 const frontendVite = path.join(root, 'frontend', 'node_modules', 'vite', 'bin', 'vite.js');
+const frontendDevPort = process.env.FRONTEND_DEV_PORT || '5100';
+const payrollQueueMemoryLimit = process.env.PAYROLL_QUEUE_MEMORY_LIMIT || '1536M';
 const backendDir = path.join(root, 'backend');
 const faceServiceDir = path.join(root, 'face_service');
 
@@ -30,12 +32,17 @@ const pm2Defaults = {
   vizion: false,
 };
 
-function laravelApp(name, args) {
+function laravelApp(name, args, options = {}) {
+  const phpArgs = [];
+  if (options.memoryLimit) {
+    phpArgs.push('-d', `memory_limit=${options.memoryLimit}`);
+  }
+
   return {
     name,
     cwd: backendDir,
     script: php,
-    args,
+    args: [...phpArgs, ...args],
     interpreter: 'none',
     ...pm2Defaults,
   };
@@ -43,11 +50,18 @@ function laravelApp(name, args) {
 
 function octaneApp() {
   if (isWin) {
-    return laravelApp('laravel-octane', [
-      'octane-start-windows.php',
-      `--host=${octaneHost}`,
-      `--port=${octanePort}`,
-    ]);
+    return {
+      name: 'laravel-octane',
+      cwd: root,
+      script: node,
+      args: [
+        path.join(root, 'scripts', 'octane-start-windows.cjs'),
+        `--host=${octaneHost}`,
+        `--port=${octanePort}`,
+      ],
+      interpreter: 'none',
+      ...pm2Defaults,
+    };
   }
 
   return laravelApp('laravel-octane', [
@@ -95,13 +109,31 @@ function faceServiceApp(port) {
 module.exports = {
   apps: [
     octaneApp(),
-    {
-      name: 'frontend-dev',
-      cwd: path.join(root, 'frontend'),
-      script: frontendVite,
-      interpreter: node,
-      ...pm2Defaults,
-    },
+    isWin
+      ? {
+          name: 'frontend-dev',
+          cwd: root,
+          script: node,
+          args: [path.join(root, 'scripts', 'vite-start-windows.cjs')],
+          interpreter: 'none',
+          env: {
+            FRONTEND_DEV_PORT: frontendDevPort,
+            // hris.agctek.co → Vite dev: HMR/full-reload through Cloudflare breaks on 2nd reload.
+            FRONTEND_DEV_DISABLE_HMR: '1',
+          },
+          ...pm2Defaults,
+        }
+      : {
+          name: 'frontend-dev',
+          cwd: path.join(root, 'frontend'),
+          script: frontendVite,
+          interpreter: node,
+          env: {
+            FRONTEND_DEV_PORT: frontendDevPort,
+            FRONTEND_DEV_DISABLE_HMR: '1',
+          },
+          ...pm2Defaults,
+        },
     ...faceServicePorts.map(faceServiceApp),
     laravelApp('queue-face-registration', [
       'artisan',
@@ -112,20 +144,20 @@ module.exports = {
       '--sleep=1',
       '--tries=2',
     ]),
-    // Draft generation for data-heavy companies peaks well above PHP CLI's default
-    // 512M (measured ~576M for a 47-employee run), so give this worker headroom.
-    laravelApp('queue-payroll', [
-      '-d',
-      'memory_limit=1024M',
-      'artisan',
-      'queue:work',
-      'redis',
-      '--queue=payroll',
-      '--timeout=300',
-      '--sleep=1',
-      '--tries=1',
-      '--max-jobs=100',
-    ]),
+    laravelApp(
+      'queue-payroll',
+      [
+        'artisan',
+        'queue:work',
+        'redis',
+        '--queue=payroll',
+        '--timeout=300',
+        '--sleep=1',
+        '--tries=1',
+        '--max-jobs=100',
+      ],
+      { memoryLimit: payrollQueueMemoryLimit },
+    ),
     // Bulk attendance-correction follow-up (log sync + daily payroll). Without this, approved
     // corrections stay unsynced forever — AttendanceCorrectionBulkFollowUpJob uses this queue.
     laravelApp('queue-attendance-corrections', [

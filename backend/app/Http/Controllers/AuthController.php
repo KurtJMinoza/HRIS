@@ -14,6 +14,7 @@ use App\Services\EmployeeStatusService;
 use App\Services\FaceAttemptThrottleService;
 use App\Services\FaceAuthService;
 use App\Services\FaceRecognitionAuditService;
+use App\Services\CooWelcomeLetterService;
 use App\Services\FaceVerificationService;
 use App\Services\HrRoleResolver;
 use App\Services\LeaveCreditService;
@@ -211,6 +212,36 @@ class AuthController extends Controller
         $this->clearSessionAuthState($request);
 
         return response()->json(['message' => 'Logged out successfully']);
+    }
+
+    /**
+     * Check whether the authenticated user should see the one-time COO welcome letter.
+     */
+    public function cooWelcomeLetterStatus(Request $request, CooWelcomeLetterService $service): JsonResponse
+    {
+        $user = $request->user();
+
+        return response()->json([
+            'show_coo_welcome_letter' => $user ? $service->shouldShow($user) : false,
+        ]);
+    }
+
+    /**
+     * Dismiss the one-time COO welcome letter for the authenticated target user.
+     */
+    public function dismissCooWelcomeLetter(Request $request, CooWelcomeLetterService $service): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user || ! $service->isTargetUser($user)) {
+            return response()->json(['message' => 'Not applicable.'], 404);
+        }
+
+        $service->dismiss($user);
+
+        return response()->json([
+            'dismissed' => true,
+            'show_coo_welcome_letter' => false,
+        ]);
     }
 
     /**
@@ -589,6 +620,7 @@ class AuthController extends Controller
             'profile_image_url' => $this->publicMediaUrl($user->profile_image),
             'permissions' => [],
             'auth_payload' => 'basic',
+            'show_coo_welcome_letter' => app(CooWelcomeLetterService::class)->shouldShow($user),
         ];
     }
 
@@ -959,6 +991,8 @@ class AuthController extends Controller
             $payload['contract_days_until_end'] = null;
             $payload['contract_expiring_within_30_days'] = false;
         }
+
+        $payload['show_coo_welcome_letter'] = app(CooWelcomeLetterService::class)->shouldShow($user);
 
         Log::info('Auth userResponse timing end', [
             'endpoint' => 'Auth.userResponse',

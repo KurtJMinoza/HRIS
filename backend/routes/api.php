@@ -107,6 +107,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/activity/track', [EmployeeActivityTrackController::class, 'store']);
     Route::get('/user', [AuthController::class, 'user']);
+    Route::get('/auth/coo-welcome-letter/status', [AuthController::class, 'cooWelcomeLetterStatus']);
+    Route::post('/auth/coo-welcome-letter/dismiss', [AuthController::class, 'dismissCooWelcomeLetter']);
     Route::post('/auth/verify-qr', [AuthController::class, 'verifyQr']);
 
     Route::get('/notifications', [NotificationController::class, 'index']);

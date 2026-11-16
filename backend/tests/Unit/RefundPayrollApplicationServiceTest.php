@@ -53,6 +53,25 @@ class RefundPayrollApplicationServiceTest extends TestCase
         $this->assertSame('Payroll Recovery — Payroll Computation Error', $lines[0]['label']);
     }
 
+    public function test_other_reason_regular_pay_uses_payroll_adjustment_label(): void
+    {
+        $refund = new RefundRequest([
+            'direction' => RefundRequest::DIRECTION_UNDERPAYMENT,
+            'reason' => RefundRequest::REASON_OTHER,
+            'refund_amount' => 440,
+            'calculation' => [
+                'components' => [
+                    'regular_pay' => ['label' => 'Basic Pay', 'paid' => 0, 'expected' => 440, 'difference' => 440],
+                ],
+            ],
+        ]);
+
+        $lines = app(RefundPayrollApplicationService::class)->componentLines($refund);
+
+        $this->assertCount(1, $lines);
+        $this->assertSame('Payroll Adjustment — Other', $lines[0]['label']);
+    }
+
     public function test_manual_amount_line_uses_component_and_reason_as_payslip_label(): void
     {
         $refund = new RefundRequest([

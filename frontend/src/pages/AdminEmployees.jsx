@@ -110,6 +110,16 @@ const EMPLOYEE_LEVEL_OPTIONS = [
   { value: '6', label: 'Level 6 Admin' },
 ]
 
+const EMPLOYEE_TYPE_OPTIONS = [
+  { value: '', label: 'All Types' },
+  { value: 'probationary', label: 'Probationary' },
+  { value: 'regular', label: 'Regular' },
+  { value: 'contractual', label: 'Contractual' },
+  { value: 'project_based', label: 'Project-based' },
+  { value: 'consultant_regular', label: 'Consultant – Regular' },
+  { value: 'consultant_probationary', label: 'Consultant – Probationary' },
+]
+
 const BUSINESS_CARD_BUILDINGS_BG = '/business-card-assets/buildings-header.png'
 const BUSINESS_CARD_DEFAULT_THEME = {
   primary: '#003da5',
@@ -501,6 +511,7 @@ export default function AdminEmployees() {
   const [filterLevel, setFilterLevel] = useState('')
   const [filterSchedule, setFilterSchedule] = useState('')
   const [filterFace, setFilterFace] = useState('')
+  const [filterEmployeeType, setFilterEmployeeType] = useState('')
   const [sortBy, setSortBy] = useState('')
   const [sortDir, setSortDir] = useState('asc')
   const [density, setDensity] = useState('comfortable') // 'compact' | 'comfortable'
@@ -695,7 +706,7 @@ export default function AdminEmployees() {
 
   useEffect(() => {
     setPage(1)
-  }, [filterStatus, filterCompany, filterBranch, filterLevel, filterSchedule, filterFace])
+  }, [filterStatus, filterCompany, filterBranch, filterLevel, filterSchedule, filterFace, filterEmployeeType])
 
   useEffect(() => {
     if (location.pathname === hrPanelPath(hrBase, 'employees/add')) {
@@ -714,6 +725,7 @@ export default function AdminEmployees() {
       employeeLevel: filterLevel,
       scheduleFilter: filterSchedule,
       faceFilter: filterFace,
+      employeeType: filterEmployeeType,
     }],
     queryFn: () =>
       getEmployees({
@@ -727,6 +739,7 @@ export default function AdminEmployees() {
         employee_level: filterLevel || undefined,
         schedule_filter: filterSchedule || undefined,
         face_filter: filterFace || undefined,
+        employee_type: filterEmployeeType || undefined,
       }),
     staleTime: 60 * 1000,
     gcTime: 2 * 60 * 1000,
@@ -1343,6 +1356,7 @@ export default function AdminEmployees() {
       if (filterSchedule === 'unscheduled' && hasSchedule) return false
       if (filterFace === 'registered' && !emp.has_face) return false
       if (filterFace === 'unregistered' && emp.has_face) return false
+      if (filterEmployeeType && String(emp.employment_status ?? '') !== String(filterEmployeeType)) return false
       return true
     })
     if (!sortBy) return list
@@ -1390,7 +1404,7 @@ export default function AdminEmployees() {
           return 0
       }
     })
-  }, [employees, normalizedSearchQuery, filterStatus, filterLevel, filterSchedule, filterFace, sortBy, sortDir])
+  }, [employees, normalizedSearchQuery, filterStatus, filterLevel, filterSchedule, filterFace, filterEmployeeType, sortBy, sortDir])
 
   const hasListFilters = useMemo(
     () =>
@@ -1400,10 +1414,11 @@ export default function AdminEmployees() {
         filterLevel ||
         filterSchedule ||
         filterFace ||
+        filterEmployeeType ||
         debouncedSearchQuery ||
         (filterStatus && filterStatus !== 'active'),
       ),
-    [filterCompany, filterBranch, filterLevel, filterSchedule, filterFace, debouncedSearchQuery, filterStatus],
+    [filterCompany, filterBranch, filterLevel, filterSchedule, filterFace, filterEmployeeType, debouncedSearchQuery, filterStatus],
   )
 
   const toggleSort = (column) => {
@@ -2522,8 +2537,25 @@ export default function AdminEmployees() {
                       </button>
                     ))}
 
+                    {/* Employee type dropdown */}
+                    <label className="inline-flex items-center gap-2">
+                      <span className="sr-only">Employee Type</span>
+                      <select
+                        value={filterEmployeeType}
+                        onChange={(event) => setFilterEmployeeType(event.target.value)}
+                        className={`${FIELD_SELECT_CLASS} h-10 min-w-[13rem] rounded-md text-sm`}
+                        aria-label="Filter employees by employee type"
+                      >
+                        {EMPLOYEE_TYPE_OPTIONS.map(({ value, label }) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
                     {/* Clear all active filters */}
-                    {(filterCompany || filterBranch || filterLevel || filterStatus || filterSchedule || filterFace) && (
+                    {(filterCompany || filterBranch || filterLevel || filterStatus || filterSchedule || filterFace || filterEmployeeType) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -2533,6 +2565,7 @@ export default function AdminEmployees() {
                           setFilterStatus('')
                           setFilterSchedule('')
                           setFilterFace('')
+                          setFilterEmployeeType('')
                         }}
                         className="ml-auto inline-flex h-10 items-center gap-1 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                       >

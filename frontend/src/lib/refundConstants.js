@@ -53,10 +53,54 @@ export const REFUND_COMPONENT_META = {
   rest_day_worked_pay: { label: 'Rest Day Pay', payslipLine: 'Rest Day Pay Adjustment', reportColumn: 'Holiday' },
 }
 
-export function refundComponentPayslipLine(componentKey, reasonLabel = '') {
-  const meta = REFUND_COMPONENT_META[componentKey]
-  const base = meta?.payslipLine || 'Payroll Adjustment'
+export function regularPayRefundPayslipComponentLabel(reasonSlug = '') {
+  const slug = String(reasonSlug || '').trim().toLowerCase()
+  if (ATTENDANCE_REFUND_INCLUDED_IN_BASIC_PAY_REASONS.has(slug)) {
+    return 'Attendance Refund'
+  }
+  return 'Payroll Adjustment'
+}
+
+export function refundReasonSlugFromPayslipLine(line) {
+  const metadata = line?.metadata && typeof line.metadata === 'object' ? line.metadata : {}
+  const raw = String(metadata.reason ?? line?.reason ?? '').trim().toLowerCase()
+  if (raw && raw !== 'null') return raw
+
+  const label = String(line?.label || line?.name || '').trim()
+  const separator = ' — '
+  const idx = label.indexOf(separator)
+  if (idx >= 0) {
+    const reasonLabel = label.slice(idx + separator.length).trim()
+    const match = REFUND_REASONS.find((r) => r.label.toLowerCase() === reasonLabel.toLowerCase())
+    if (match) return match.value
+  }
+
+  const direct = REFUND_REASONS.find((r) => r.label.toLowerCase() === label.toLowerCase())
+  return direct?.value ?? ''
+}
+
+export function isRefundBasicPayComponentLine(line) {
+  const source = String(line?.source || line?.category || '').trim().toLowerCase()
+  const component = String(line?.component_code || line?.key || '').trim().toLowerCase()
+  return source === 'basic_pay' || component === 'refund_basic_pay'
+}
+
+/** Mirrors PayslipService::attendanceRefundIncludedInBasicPayAmount — only missing punch reasons roll under Basic Pay. */
+export function isAttendanceRefundIncludedInBasicPayLine(line) {
+  if (!isRefundBasicPayComponentLine(line)) return false
+  const reason = refundReasonSlugFromPayslipLine(line)
+  if (reason) {
+    return ATTENDANCE_REFUND_INCLUDED_IN_BASIC_PAY_REASONS.has(reason)
+  }
+  return true
+}
+
+export function refundComponentPayslipLine(componentKey, reasonLabel = '', reasonSlug = '') {
+  const slug = String(reasonSlug || '').trim().toLowerCase()
   const reason = String(reasonLabel || '').trim()
+  const base = componentKey === 'regular_pay'
+    ? regularPayRefundPayslipComponentLabel(slug || (reason.toLowerCase() === 'other' ? 'other' : ''))
+    : (REFUND_COMPONENT_META[componentKey]?.payslipLine || 'Payroll Adjustment')
   if (!reason || reason.toLowerCase() === base.toLowerCase()) return base
   return `${base} — ${reason}`
 }

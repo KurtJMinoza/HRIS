@@ -37,6 +37,24 @@ export function registerChunkReloadHandler(appVersion) {
     return
   }
 
+  // Vite dev pre-bundles deps on first import and may full-reload clients. A second
+  // manual reload (especially via hris.agctek.co) during optimize leaves a blank page.
+  if (import.meta.env.DEV) {
+    window.addEventListener('vite:preloadError', (event) => {
+      event.preventDefault()
+    })
+    if (import.meta.hot) {
+      import.meta.hot.on('vite:beforeFullReload', () => {
+        try {
+          sessionStorage.setItem('hris_vite_full_reload', String(Date.now()))
+        } catch {
+          // ignore
+        }
+      })
+    }
+    return
+  }
+
   window.addEventListener('vite:preloadError', (event) => {
     event.preventDefault()
     reloadForStaleChunks(appVersion)

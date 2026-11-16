@@ -4493,6 +4493,7 @@ export async function getEmployees(params = {}) {
   if (params.schedule_filter) query.set('schedule_filter', String(params.schedule_filter))
   if (params.face_filter) query.set('face_filter', String(params.face_filter))
   if (params.salary_filter) query.set('salary_filter', String(params.salary_filter))
+  if (params.employee_type) query.set('employee_type', String(params.employee_type))
   if (params.q) query.set('q', String(params.q))
   if (params.company_id != null && params.company_id !== '') query.set('company_id', String(params.company_id))
   if (params.branch_id != null && params.branch_id !== '') query.set('branch_id', String(params.branch_id))

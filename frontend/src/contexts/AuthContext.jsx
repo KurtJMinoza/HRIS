@@ -17,6 +17,7 @@ function isSameAuthUser(a, b) {
     && String(a.employee_id ?? '') === String(b.employee_id ?? '')
     && String(a.employee_name ?? '') === String(b.employee_name ?? '')
     && String(a.profile_image_url ?? a.profile_image ?? '') === String(b.profile_image_url ?? b.profile_image ?? '')
+    && Boolean(a.show_coo_welcome_letter) === Boolean(b.show_coo_welcome_letter)
 }
 
 function shouldClearAuthFromError(err) {
@@ -153,11 +154,19 @@ export function AuthProvider({ children }) {
       }
       if (next && typeof next === 'object') {
         applyUserState(next)
-        setLoading(false)
+        setLoading(true)
+        loadAuthenticatedUser({ force: true })
+          .then((u) => applyUserState(u ?? next))
+          .catch((err) => {
+            if (shouldClearAuthFromError(err)) {
+              applyUserState(null)
+            }
+          })
+          .finally(() => setLoading(false))
         return
       }
       setLoading(true)
-      loadAuthenticatedUser()
+      loadAuthenticatedUser({ force: true })
         .then((u) => applyUserState(u ?? null))
         .catch((err) => {
           if (shouldClearAuthFromError(err)) {

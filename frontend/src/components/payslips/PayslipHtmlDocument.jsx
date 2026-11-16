@@ -2,6 +2,10 @@ import { Fragment, useMemo } from 'react'
 import { companyLogoUrl } from '@/api'
 import { displayCompanyAddress, displayCompanyTin } from '@/lib/payslipCompanyDisplay'
 import { HIDDEN_PAYSLIP_AMOUNT } from '@/lib/payslipAmountPrivacy'
+import {
+  isAttendanceRefundIncludedInBasicPayLine,
+  isRefundBasicPayComponentLine,
+} from '@/lib/refundConstants'
 import { cn } from '@/lib/utils'
 
 function peso(v) {
@@ -115,10 +119,7 @@ function isPayrollAdjustmentRefundLine(line) {
 }
 
 function isRefundBasicPayLine(line) {
-  if (!isPayrollAdjustmentRefundLine(line)) return false
-  const source = String(line?.source || line?.category || '').trim().toLowerCase()
-  const component = String(line?.component_code || line?.key || '').trim().toLowerCase()
-  return source === 'basic_pay' || component === 'refund_basic_pay'
+  return isPayrollAdjustmentRefundLine(line) && isRefundBasicPayComponentLine(line)
 }
 
 function isPaidLeaveBreakdownLine(line) {
@@ -304,7 +305,11 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
       const coreEarnings = []
       merged.forEach((line) => {
         if (isRefundBasicPayLine(line)) {
-          basicPayRefunds.push(line)
+          if (isAttendanceRefundIncludedInBasicPayLine(line)) {
+            basicPayRefunds.push(line)
+          } else {
+            otherPayrollAdjustments.push(line)
+          }
           return
         }
         if (isPaidLeaveBreakdownLine(line)) {
@@ -337,8 +342,8 @@ export function PayslipHtmlDocument({ data, isPreviewMode = false, hideAmounts =
 
   const attendanceRefundTotal = useMemo(() => {
     const fromSummary = Number(summary?.attendance_refund ?? NaN)
-    if (Number.isFinite(fromSummary) && fromSummary > 0) {
-      return fromSummary
+    if (Number.isFinite(fromSummary)) {
+      return Math.max(0, fromSummary)
     }
     return displayEarnings.basicPayRefunds.reduce(
       (sum, line) => sum + Number(line?.amount || 0),

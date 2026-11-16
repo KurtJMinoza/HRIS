@@ -171,6 +171,11 @@ class EmployeeController extends Controller
         if (! in_array($salaryFilter, ['with_salary', 'without_salary'], true)) {
             $salaryFilter = '';
         }
+        $employeeTypeFilter = strtolower(trim((string) $request->query('employee_type', '')));
+        $validEmployeeTypeValues = array_column(EmploymentStatus::cases(), 'value');
+        if (! in_array($employeeTypeFilter, $validEmployeeTypeValues, true)) {
+            $employeeTypeFilter = '';
+        }
         $assignmentBranchId = $request->filled('assignment_branch_id') ? (int) $request->query('assignment_branch_id') : null;
         $employeeScopeOptions = [];
         if ($forDepartmentAssignment && $assignmentBranchId !== null) {
@@ -453,6 +458,7 @@ class EmployeeController extends Controller
             $this->applyScheduleFilter($query, $scheduleFilter);
             $this->applyFaceFilter($query, $faceFilter);
             $this->applySalaryFilter($query, $salaryFilter);
+            $this->applyEmployeeTypeFilter($query, $employeeTypeFilter);
             if (! $forLeadershipAssignment) {
                 $this->dataScopeService->restrictEmployeeQuery($request->user(), $query, $employeeScopeOptions);
             }
@@ -506,6 +512,7 @@ class EmployeeController extends Controller
                     'total' => $users->count(),
                     'last_page' => 1,
                     'employee_level_options' => app(EmployeeLevelResolver::class)->levelOptions(),
+                    'employee_type_options' => collect(EmploymentStatus::cases())->map(fn ($c) => ['value' => $c->value, 'label' => $c->label()])->values()->all(),
                 ],
             ]);
         }
@@ -527,6 +534,7 @@ class EmployeeController extends Controller
         $this->applyScheduleFilter($query, $scheduleFilter);
         $this->applyFaceFilter($query, $faceFilter);
         $this->applySalaryFilter($query, $salaryFilter);
+        $this->applyEmployeeTypeFilter($query, $employeeTypeFilter);
         if (! $lite) {
             $query->with($fullEagerLoads);
         }
@@ -3541,6 +3549,18 @@ class EmployeeController extends Controller
         }
 
         $query->whereDoesntHave('compensationComponents', $hasBasicSalary);
+    }
+
+    /**
+     * Filter roster by employment status / employee type (e.g. probationary, regular, contractual).
+     */
+    private function applyEmployeeTypeFilter($query, string $employeeTypeFilter): void
+    {
+        if ($employeeTypeFilter === '') {
+            return;
+        }
+
+        $query->where('employment_status', $employeeTypeFilter);
     }
 
     /**

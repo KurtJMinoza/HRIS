@@ -242,7 +242,11 @@ function CalculationPanel({ preview, compact = false }) {
                     {c.difference > 0 ? '+' : ''}{formatPeso(c.difference)}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {refundComponentPayslipLine(c.key, preview.reason_label || preview.reasonLabel || '')}
+                    {refundComponentPayslipLine(
+                      c.key,
+                      preview.reason_label || preview.reasonLabel || '',
+                      preview.reason || '',
+                    )}
                   </TableCell>
                   <TableCell className="text-sm font-medium text-foreground">
                     {refundComponentReportColumn(c.key, preview.reason || '')}

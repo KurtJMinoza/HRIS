@@ -31,6 +31,7 @@ import { sidebarCollapseStore, useSidebarCollapsed } from '@/lib/sidebarCollapse
 import { useSidebarNavRescue } from '@/hooks/useSidebarNavRescue'
 import { useEmployeeActivityTracking } from '@/hooks/useEmployeeActivityTracking'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+import { CooWelcomeLetterModal } from '@/components/CooWelcomeLetterModal'
 import { UserAccountMenuContent } from '@/components/layout/UserAccountMenuContent'
 import { AtSign, Bell, CalendarClock, Banknote, CheckCheck, ChevronDown, ChevronRight, Clock, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeft, Search, Settings, User, Loader2, Sun, Moon } from 'lucide-react'
 
@@ -895,6 +896,7 @@ export function DashboardLayout({ navItems, role, hrBasePath = '/admin' }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-white dark:bg-background">
+      <CooWelcomeLetterModal />
       <DesktopSidebar
         navItems={navItems}
         homePath={homePath}

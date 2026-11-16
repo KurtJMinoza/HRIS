@@ -71,6 +71,7 @@ class GeneratePayrollBatchJob implements ShouldQueue
             @set_time_limit(0);
         }
         @ini_set('max_execution_time', '0');
+        @ini_set('memory_limit', env('PAYROLL_QUEUE_MEMORY_LIMIT', '1536M'));
 
         $payrollComputation->flushRuntimeCaches();
 
@@ -139,6 +140,8 @@ class GeneratePayrollBatchJob implements ShouldQueue
             'total_employees' => $expectedTotal,
             'error_message' => null,
         ]));
+
+        $this->registerFatalFailureGuard((int) $run->id, $expectedTotal);
 
         $actor = $this->actorUserId ? User::query()->find($this->actorUserId) : null;
 
@@ -242,6 +245,52 @@ class GeneratePayrollBatchJob implements ShouldQueue
 
             throw $e;
         }
+    }
+
+    public function failed(?Throwable $e): void
+    {
+        $run = PayrollBatchRun::query()->find($this->batchRunId);
+        if (! $run || ! in_array((string) $run->status, [PayrollBatchRun::STATUS_PROCESSING, PayrollBatchRun::STATUS_QUEUED], true)) {
+            return;
+        }
+
+        $expectedTotal = max((int) ($run->total_employees ?? 0), (int) ($run->employee_count ?? 0));
+        PayrollBatchRun::query()->whereKey($this->batchRunId)->update($this->filterBatchRunPayload([
+            'status' => PayrollBatchRun::STATUS_FAILED,
+            'failed_employees' => max(1, $expectedTotal),
+            'error_message' => Str::limit($e?->getMessage() ?? 'Payroll generation failed.', 1000, '...'),
+            'completed_at' => now(),
+        ]));
+    }
+
+    private function registerFatalFailureGuard(int $batchRunId, int $expectedTotal): void
+    {
+        register_shutdown_function(function () use ($batchRunId, $expectedTotal): void {
+            $error = error_get_last();
+            if (! is_array($error)) {
+                return;
+            }
+            if (! in_array($error['type'], [E_ERROR, E_CORE_ERROR, E_COMPILE_ERROR, E_PARSE], true)) {
+                return;
+            }
+            if (! str_contains(strtolower((string) ($error['message'] ?? '')), 'allowed memory size')) {
+                return;
+            }
+
+            try {
+                PayrollBatchRun::query()
+                    ->whereKey($batchRunId)
+                    ->whereIn('status', [PayrollBatchRun::STATUS_PROCESSING, PayrollBatchRun::STATUS_QUEUED])
+                    ->update([
+                        'status' => PayrollBatchRun::STATUS_FAILED,
+                        'failed_employees' => max(1, $expectedTotal),
+                        'error_message' => 'Payroll generation ran out of memory while loading payroll data. Retry the run or contact IT to raise the queue memory limit.',
+                        'completed_at' => now(),
+                    ]);
+            } catch (Throwable) {
+                // best effort
+            }
+        });
     }
 
     /**

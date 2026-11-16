@@ -35,13 +35,98 @@ export default defineConfig(({ mode }) => {
   // Also set BrowserRouter basename in App.jsx via import.meta.env.BASE_URL.
   const base = env.VITE_BASE || '/'
 
+  const envFlag = (name) => {
+    const value = process.env[name] ?? env[name]
+    return value === '1' || value === 'true'
+  }
+
+  const stablePublicDev =
+    envFlag('FRONTEND_DEV_DISABLE_HMR') || envFlag('VITE_DISABLE_HMR')
+
+  const devOptimizeDepsInclude = [
+    '@mediapipe/tasks-vision',
+    'react',
+    'react-dom',
+    'react-dom/client',
+    'react-router-dom',
+    '@tanstack/react-query',
+    'framer-motion',
+    'lucide-react',
+    'recharts',
+    'laravel-echo',
+    'pusher-js',
+    'axios',
+    'date-fns',
+    'sonner',
+    'exceljs',
+    'maplibre-gl',
+    'survey-core',
+    'survey-react-ui',
+  ]
+
+  /** Retry when Octane is still booting or a worker is restarting (Windows). */
+  function devApiProxy() {
+    const proxyOptions = { target: proxyTarget, changeOrigin: true }
+    const maxRetries = 4
+    const retryDelayMs = 600
+
+    return {
+      ...proxyOptions,
+      configure: (proxy) => {
+        proxy.on('error', (err, req, res) => {
+          const retryable = err?.code === 'ECONNREFUSED' || err?.code === 'ECONNRESET'
+          const attempt = Number(req?._hrisOctaneProxyRetryCount || 0)
+          if (retryable && req && res && !res.headersSent && attempt < maxRetries) {
+            req._hrisOctaneProxyRetryCount = attempt + 1
+            setTimeout(() => {
+              proxy.web(req, res, proxyOptions)
+            }, retryDelayMs * (attempt + 1))
+            return
+          }
+          console.error('[vite] http proxy error:', req?.url ?? '', err?.message ?? err)
+        })
+      },
+    }
+  }
+
+  function devWarmupPlugin() {
+    if (mode !== 'development') {
+      return { name: 'hris-dev-warmup' }
+    }
+
+    const warmUrls = [
+      '/src/main.jsx',
+      '/src/App.jsx',
+      '/src/pages/AdminDashboard.jsx',
+      '/src/pages/EmployeeDashboard.jsx',
+    ]
+
+    return {
+      name: 'hris-dev-warmup',
+      configureServer(server) {
+        server.httpServer?.once('listening', () => {
+          void (async () => {
+            for (const url of warmUrls) {
+              try {
+                await server.warmupRequest(url)
+              } catch {
+                // best-effort
+              }
+            }
+          })()
+        })
+      },
+    }
+  }
+
   return {
     base,
     define: {
       __HRIS_APP_VERSION__: JSON.stringify(appVersion),
     },
     plugins: [
-      react(),
+      react({ fastRefresh: !stablePublicDev }),
+      devWarmupPlugin(),
       {
         name: 'hris-inject-app-version',
         transformIndexHtml(html) {
@@ -56,7 +141,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     optimizeDeps: {
-      include: ['@mediapipe/tasks-vision'],
+      include: devOptimizeDepsInclude,
+      holdUntilCrawlEnd: true,
     },
     build: {
       rollupOptions: {
@@ -80,30 +166,30 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 5173,
+      port: Number(env.FRONTEND_DEV_PORT || 5100),
       host: true,
       strictPort: true,
+      // Cloudflare → Apache → Vite: HMR + "optimized deps changed" full reload breaks 2nd refresh.
+      hmr: stablePublicDev ? false : undefined,
       headers: {
         'Cache-Control': 'no-store, must-revalidate',
       },
       allowedHosts: mode === 'development' ? true : ['localhost', '127.0.0.1', 'hris.agctek.co'],
       warmup: {
         clientFiles: [
+          './src/main.jsx',
+          './src/App.jsx',
+          './src/pages/AdminDashboard.jsx',
+          './src/pages/EmployeeDashboard.jsx',
           './src/pages/AdminGeofencing.jsx',
           './src/pages/AdminEvaluation.jsx',
         ],
       },
       // Same-origin /api in dev → no CORS issues. Set VITE_API_URL=/api in .env (see .env.example).
       proxy: {
-        '/api': {
-          target: proxyTarget,
-          changeOrigin: true,
-        },
+        '/api': devApiProxy(),
         // Sanctum CSRF cookie (SPA must GET this before POST; same-origin in dev via Vite)
-        '/sanctum': {
-          target: proxyTarget,
-          changeOrigin: true,
-        },
+        '/sanctum': devApiProxy(),
       },
     },
   }

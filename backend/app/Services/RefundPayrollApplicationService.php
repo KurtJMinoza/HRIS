@@ -81,10 +81,11 @@ class RefundPayrollApplicationService
                 continue;
             }
             $map = self::LINE_MAP[$key];
+            $componentLabel = $this->componentPayslipLabel($refund, $key, $map['label']);
             if ($diff > 0) {
                 $lines[] = [
                     'component_code' => $map['code'],
-                    'label' => $this->payslipLineLabel($map['label'], $reasonLabel),
+                    'label' => $this->payslipLineLabel($componentLabel, $reasonLabel),
                     'amount' => $diff,
                     'source' => $map['source'],
                     'line_type' => 'earning',
@@ -102,12 +103,13 @@ class RefundPayrollApplicationService
 
         if ($lines === [] && (float) $refund->refund_amount > 0.004) {
             $map = self::LINE_MAP['regular_pay'];
+            $componentLabel = $this->componentPayslipLabel($refund, 'regular_pay', $map['label']);
             $amount = round((float) $refund->refund_amount, 2);
             $lines[] = [
                 'component_code' => $map['code'],
                 'label' => $isOverpayment
                     ? 'Payroll Recovery — '.$reasonLabel
-                    : $this->payslipLineLabel($map['label'], $reasonLabel),
+                    : $this->payslipLineLabel($componentLabel, $reasonLabel),
                 'amount' => $amount,
                 'source' => $map['source'],
                 'line_type' => $isOverpayment ? 'deduction' : 'earning',
@@ -122,6 +124,17 @@ class RefundPayrollApplicationService
         $label = trim((string) $refund->reasonLabel());
 
         return $label !== '' ? $label : 'Payroll Adjustment';
+    }
+
+    private function componentPayslipLabel(RefundRequest $refund, string $componentKey, string $defaultLabel): string
+    {
+        if ($componentKey === 'regular_pay') {
+            return RefundRequest::attendanceRefundIncludedInBasicPayReason($refund->reason)
+                ? $defaultLabel
+                : 'Payroll Adjustment';
+        }
+
+        return $defaultLabel;
     }
 
     private function payslipLineLabel(string $componentLabel, string $reasonLabel): string
