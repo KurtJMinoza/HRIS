@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AttendanceLog;
 use App\Models\Overtime;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -432,6 +433,70 @@ class AttendanceStatusService
         $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
 
         return Carbon::parse($dateKey.' '.substr(trim((string) $in), 0, 5), $tz);
+    }
+
+    /**
+     * Resolve the day's display punch pair from raw logs.
+     *
+     * Uses the first clock-in and the last clock-out that occurs after it.
+     * Orphan outs before the first clock-in (typical: previous morning session closed
+     * the next calendar day) are ignored so they do not invent an inverted pair /
+     * Invalid Shift. Orphan out with no clock-in still surfaces as time-out only.
+     *
+     * @param  iterable<int, AttendanceLog|array{type?: mixed, verified_at?: mixed, created_at?: mixed}|object>  $dayLogs
+     * @return array{0: ?Carbon, 1: ?Carbon, 2: ?int} [timeIn, timeOut, workedMinutes]
+     */
+    public static function resolveDayPunchPair(iterable $dayLogs, ?string $tz = null): array
+    {
+        $tz = $tz ?? config('attendance.timezone', config('app.timezone', 'UTC'));
+        $timeIn = null;
+        $timeOut = null;
+        $orphanOut = null;
+        $openIn = null;
+        $total = 0;
+
+        foreach ($dayLogs as $log) {
+            $type = $log instanceof AttendanceLog
+                ? $log->type
+                : (is_array($log) ? ($log['type'] ?? '') : ($log->type ?? ''));
+            $rawStamp = $log instanceof AttendanceLog
+                ? ($log->verified_at ?? $log->created_at)
+                : (is_array($log)
+                    ? ($log['verified_at'] ?? $log['created_at'] ?? null)
+                    : ($log->verified_at ?? $log->created_at ?? null));
+            if ($rawStamp === null || $rawStamp === '') {
+                continue;
+            }
+
+            $stamp = $rawStamp instanceof Carbon
+                ? $rawStamp->copy()->timezone($tz)
+                : Carbon::parse($rawStamp, $tz)->timezone($tz);
+
+            if ($type === AttendanceLog::TYPE_CLOCK_IN) {
+                if ($timeIn === null) {
+                    $timeIn = $stamp->copy();
+                }
+                $openIn = $stamp->copy();
+            } elseif ($type === AttendanceLog::TYPE_CLOCK_OUT) {
+                if ($openIn instanceof Carbon && $stamp->greaterThan($openIn)) {
+                    $timeOut = $stamp->copy();
+                    $total += (int) $openIn->diffInMinutes($stamp);
+                    $openIn = null;
+                } elseif ($timeIn === null) {
+                    $orphanOut = $stamp->copy();
+                }
+            }
+        }
+
+        if ($timeIn === null && $orphanOut instanceof Carbon) {
+            $timeOut = $orphanOut;
+        }
+
+        $workedMinutes = ($timeIn instanceof Carbon && $timeOut instanceof Carbon && $openIn === null)
+            ? $total
+            : null;
+
+        return [$timeIn, $timeOut, $workedMinutes];
     }
 
     /**

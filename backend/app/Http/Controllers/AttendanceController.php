@@ -15,6 +15,7 @@ use App\Services\AttendanceCacheService;
 use App\Services\AttendancePresenceDisplayService;
 use App\Services\AttendanceRollupService;
 use App\Services\AttendanceStatusService;
+use App\Support\LeaveScheduleSupport;
 use App\Services\FaceAttemptThrottleService;
 use App\Services\FaceAuthService;
 use App\Services\FaceRecognitionAuditService;
@@ -1086,68 +1087,7 @@ class AttendanceController extends Controller
         }
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
-            $schedule = $user->schedule;
-            $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-            $dateKey = $punchAt->toDateString();
-            if ($daySchedule && ! empty($daySchedule['out'])) {
-                $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-
-                // Derive final status from the day's first clock-in classification,
-                // not only from undertime. This prevents "On time" when the day started late.
-                $status = 'present';
-                $tzToday = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-                $todayStartTz = Carbon::now($tzToday)->startOfDay();
-                $startUtc = $todayStartTz->copy()->setTimezone('UTC');
-                $endUtc = $todayStartTz->copy()->endOfDay()->setTimezone('UTC');
-                $firstIn = AttendanceLog::query()
-                    ->where('user_id', $user->id)
-                    ->whereRaw('COALESCE(verified_at, created_at) BETWEEN ? AND ?', [$startUtc, $endUtc])
-                    ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                    ->orderByRaw('COALESCE(verified_at, created_at)')
-                    ->first();
-                $firstInPunchAt = $firstIn ? $this->attendanceLogPunchInstant($firstIn) : null;
-
-                $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
-                    $dateKey,
-                    $daySchedule,
-                    $firstInPunchAt,
-                    $punchAt,
-                    $tzToday,
-                    $earlyTimeout
-                );
-                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
-
-                if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
-                    $tz = $this->attendanceTimezone();
-                    $firstInDateKey = $firstInPunchAt->copy()->timezone($tz)->toDateString();
-                    $clockInResult = AttendanceStatusService::getClockInStatus(
-                        $daySchedule,
-                        $firstInDateKey,
-                        $firstInPunchAt
-                    );
-                    $status = $clockInResult['status'];
-                    $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
-                    $payload['attendance']['late_label'] = $clockInResult['late_label'];
-                } elseif ($undertimeMinutes > 0) {
-                    $status = 'undertime';
-                }
-
-                // A completed clock-in/clock-out pair at the schedule's exact half-day
-                // unit (e.g., 08:00 → 12:00) is a Half Day, not Undertime.
-                if ($firstInPunchAt && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
-                    $dateKey,
-                    $daySchedule,
-                    $firstInPunchAt,
-                    $punchAt,
-                    $tzToday
-                )) {
-                    $status = 'half_day';
-                    $payload['attendance']['undertime_minutes'] = 0;
-                }
-
-                $payload['attendance']['status'] = $status;
-            }
+            $this->applyKioskClockOutDisplayStatus($payload, $user, $punchAt);
         }
 
         if ($suggestCorrectionAfterClockOut) {
@@ -1574,66 +1514,7 @@ class AttendanceController extends Controller
         }
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
-            $schedule = $user->schedule;
-            $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-            $dateKey = $punchAt->toDateString();
-            if ($daySchedule && ! empty($daySchedule['out'])) {
-                $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-
-                $status = 'present';
-                $tzToday = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-                $todayStartTz = Carbon::now($tzToday)->startOfDay();
-                $startUtc = $todayStartTz->copy()->setTimezone('UTC');
-                $endUtc = $todayStartTz->copy()->endOfDay()->setTimezone('UTC');
-                $firstIn = AttendanceLog::query()
-                    ->where('user_id', $user->id)
-                    ->whereRaw('COALESCE(verified_at, created_at) BETWEEN ? AND ?', [$startUtc, $endUtc])
-                    ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                    ->orderByRaw('COALESCE(verified_at, created_at)')
-                    ->first();
-                $firstInPunchAt = $firstIn ? $this->attendanceLogPunchInstant($firstIn) : null;
-
-                $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
-                    $dateKey,
-                    $daySchedule,
-                    $firstInPunchAt,
-                    $punchAt,
-                    $tzToday,
-                    $earlyTimeout
-                );
-                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
-
-                if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
-                    $tz = $this->attendanceTimezone();
-                    $firstInDateKey = $firstInPunchAt->copy()->timezone($tz)->toDateString();
-                    $clockInResult = AttendanceStatusService::getClockInStatus(
-                        $daySchedule,
-                        $firstInDateKey,
-                        $firstInPunchAt
-                    );
-                    $status = $clockInResult['status'];
-                    $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
-                    $payload['attendance']['late_label'] = $clockInResult['late_label'];
-                } elseif ($undertimeMinutes > 0) {
-                    $status = 'undertime';
-                }
-
-                // A completed clock-in/clock-out pair at the schedule's exact half-day
-                // unit (e.g., 08:00 → 12:00) is a Half Day, not Undertime.
-                if ($firstInPunchAt && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
-                    $dateKey,
-                    $daySchedule,
-                    $firstInPunchAt,
-                    $punchAt,
-                    $tzToday
-                )) {
-                    $status = 'half_day';
-                    $payload['attendance']['undertime_minutes'] = 0;
-                }
-
-                $payload['attendance']['status'] = $status;
-            }
+            $this->applyKioskClockOutDisplayStatus($payload, $user, $punchAt);
         }
 
         if ($suggestCorrectionAfterClockOut) {
@@ -2164,66 +2045,7 @@ class AttendanceController extends Controller
         }
 
         if ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-            $dayKey = self::DAY_KEYS[(int) $punchAt->format('w')];
-            $schedule = $user->schedule;
-            $daySchedule = is_array($schedule) && isset($schedule[$dayKey]) ? $schedule[$dayKey] : null;
-            $dateKey = $punchAt->toDateString();
-            if ($daySchedule && ! empty($daySchedule['out'])) {
-                $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
-
-                $status = 'present';
-                $tzToday = config('attendance.timezone', config('app.timezone', 'Asia/Manila'));
-                $todayStartTz = Carbon::now($tzToday)->startOfDay();
-                $startUtc = $todayStartTz->copy()->setTimezone('UTC');
-                $endUtc = $todayStartTz->copy()->endOfDay()->setTimezone('UTC');
-                $firstIn = AttendanceLog::query()
-                    ->where('user_id', $user->id)
-                    ->whereRaw('COALESCE(verified_at, created_at) BETWEEN ? AND ?', [$startUtc, $endUtc])
-                    ->where('type', AttendanceLog::TYPE_CLOCK_IN)
-                    ->orderByRaw('COALESCE(verified_at, created_at)')
-                    ->first();
-                $firstInPunchAt = $firstIn ? $this->attendanceLogPunchInstant($firstIn) : null;
-
-                $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
-                    $dateKey,
-                    $daySchedule,
-                    $firstInPunchAt,
-                    $punchAt,
-                    $tzToday,
-                    $earlyTimeout
-                );
-                $payload['attendance']['undertime_minutes'] = $undertimeMinutes > 0 ? $undertimeMinutes : 0;
-
-                if ($firstIn && $daySchedule && ! empty($daySchedule['in'])) {
-                    $tz = $this->attendanceTimezone();
-                    $firstInDateKey = $firstInPunchAt->copy()->timezone($tz)->toDateString();
-                    $clockInResult = AttendanceStatusService::getClockInStatus(
-                        $daySchedule,
-                        $firstInDateKey,
-                        $firstInPunchAt
-                    );
-                    $status = $clockInResult['status'];
-                    $payload['attendance']['late_minutes'] = $clockInResult['late_minutes'];
-                    $payload['attendance']['late_label'] = $clockInResult['late_label'];
-                } elseif ($undertimeMinutes > 0) {
-                    $status = 'undertime';
-                }
-
-                // A completed clock-in/clock-out pair at the schedule's exact half-day
-                // unit (e.g., 08:00 → 12:00) is a Half Day, not Undertime.
-                if ($firstInPunchAt && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
-                    $dateKey,
-                    $daySchedule,
-                    $firstInPunchAt,
-                    $punchAt,
-                    $tzToday
-                )) {
-                    $status = 'half_day';
-                    $payload['attendance']['undertime_minutes'] = 0;
-                }
-
-                $payload['attendance']['status'] = $status;
-            }
+            $this->applyKioskClockOutDisplayStatus($payload, $user, $punchAt);
         }
 
         if ($suggestCorrectionAfterClockOut) {
@@ -2439,6 +2261,7 @@ class AttendanceController extends Controller
                 'status',
                 'leave_credits_charged',
                 'leave_unpaid_credit_days',
+                'rest_day_bypass',
             ])
             ->where('user_id', $user->id)
             ->where('status', LeaveRequest::STATUS_APPROVED)
@@ -2455,6 +2278,10 @@ class AttendanceController extends Controller
             $leaveEnd = $leave->end_date->copy()->min($to);
             $cursorLeave = $leaveStart->copy();
             while ($cursorLeave->lessThanOrEqualTo($leaveEnd)) {
+                if (! LeaveScheduleSupport::leaveCoversCalendarDate($user, $leave, $cursorLeave)) {
+                    $cursorLeave->addDay();
+                    continue;
+                }
                 $ds = $cursorLeave->toDateString();
                 $existing = $leaveByDate[$ds] ?? null;
                 if ($existing === null || (int) $leave->id > (int) $existing->id) {
@@ -2722,6 +2549,8 @@ class AttendanceController extends Controller
                             if ($undertimeMinutes > 0) {
                                 $metrics['undertime_count']++;
                                 $status = 'undertime';
+                                // Day title follows pair outcome; keep clock-in Present from overwriting Undertime.
+                                $dayLateLabel = 'Undertime';
                             }
                         }
                     }
@@ -3434,36 +3263,10 @@ class AttendanceController extends Controller
             return [null, null, null];
         }
 
-        $timeIn = null;
-        $timeOut = null;
-        $total = 0;
-        $clockIn = null;
-
-        foreach ($logs as $log) {
-            // IMPORTANT: attendance views must use the punch timestamp (`verified_at`),
-            // not insertion time (`created_at`). Admin Attendance and payroll are based on `verified_at`.
-            $stamp = $log->verified_at ?? $log->created_at;
-            if (! $stamp) {
-                continue;
-            }
-
-            if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
-                if (! $timeIn) {
-                    $timeIn = $stamp;
-                }
-                $clockIn = $stamp;
-            } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
-                $timeOut = $stamp;
-                if ($clockIn) {
-                    $total += $clockIn->diffInMinutes($stamp);
-                    $clockIn = null;
-                }
-            }
-        }
-
-        $workedMinutes = $clockIn === null ? $total : null;
-
-        return [$timeIn, $timeOut, $workedMinutes];
+        // IMPORTANT: attendance views must use the punch timestamp (`verified_at`),
+        // not insertion time (`created_at`). Admin Attendance and payroll are based on `verified_at`.
+        // Orphan outs before today's first clock-in are ignored (see resolveDayPunchPair).
+        return AttendanceStatusService::resolveDayPunchPair($logs, $this->attendanceTimezone());
     }
 
     /**
@@ -3643,22 +3446,154 @@ class AttendanceController extends Controller
     }
 
     /**
-     * Compute display status for a kiosk log (Present / Late / Half-Day per schedule 8:00–5:00 rules).
+     * Display-only clock-out title for kiosk (Half Day / Undertime / Present).
+     * Pair outcome wins over clock-in Present — does not change payroll minutes.
+     *
+     * @return array{status: string, late_minutes: int, late_label: string, undertime_minutes: int}
+     */
+    private function kioskClockOutDisplayStatus(User $user, Carbon $clockOutAt): array
+    {
+        $this->hydrateUserSchedule($user);
+        $tz = $this->attendanceTimezone();
+        $clockOutAt = $clockOutAt->copy()->timezone($tz);
+        $dateKey = $clockOutAt->toDateString();
+        $dayKey = self::DAY_KEYS[(int) $clockOutAt->format('w')];
+
+        $schedule = is_array($user->schedule) ? $user->schedule : [];
+        $daySchedule = is_array($schedule[$dayKey] ?? null) ? $schedule[$dayKey] : null;
+        if (! is_array($daySchedule) || empty(trim((string) ($daySchedule['out'] ?? '')))) {
+            $daySchedule = $this->defaultKioskDayScheduleForStatus();
+        }
+
+        $earlyTimeout = isset($daySchedule['early_timeout_minutes']) ? (int) $daySchedule['early_timeout_minutes'] : null;
+        $dayStartUtc = $clockOutAt->copy()->startOfDay()->setTimezone('UTC');
+        $dayEndUtc = $clockOutAt->copy()->endOfDay()->setTimezone('UTC');
+        $firstIn = AttendanceLog::query()
+            ->where('user_id', $user->id)
+            ->whereRaw('COALESCE(verified_at, created_at) BETWEEN ? AND ?', [$dayStartUtc, $dayEndUtc])
+            ->where('type', AttendanceLog::TYPE_CLOCK_IN)
+            ->orderByRaw('COALESCE(verified_at, created_at)')
+            ->first();
+        $firstInPunchAt = $firstIn ? $this->attendanceLogPunchInstant($firstIn) : null;
+
+        $undertimeMinutes = AttendanceStatusService::getScheduleAwareUndertimeMinutes(
+            $dateKey,
+            $daySchedule,
+            $firstInPunchAt,
+            $clockOutAt,
+            $tz,
+            $earlyTimeout
+        );
+
+        $lateMinutes = 0;
+        $lateLabel = 'Present';
+        $clockInStatus = 'on_time';
+        if ($firstInPunchAt && ! empty($daySchedule['in'])) {
+            $firstInDateKey = $firstInPunchAt->copy()->timezone($tz)->toDateString();
+            $clockInResult = AttendanceStatusService::getClockInStatus(
+                $daySchedule,
+                $firstInDateKey,
+                $firstInPunchAt
+            );
+            $clockInStatus = (string) ($clockInResult['status'] ?? 'on_time');
+            $lateMinutes = (int) ($clockInResult['late_minutes'] ?? 0);
+            $lateLabel = (string) ($clockInResult['late_label'] ?? 'Present');
+        }
+
+        // Same priority as AttendanceStatusResolver day title: half-day pair → undertime → clock-in.
+        if ($firstInPunchAt && app(ScheduleComputationService::class)->isCompletedPairHalfDay(
+            $dateKey,
+            $daySchedule,
+            $firstInPunchAt,
+            $clockOutAt,
+            $tz
+        )) {
+            return [
+                'status' => 'half_day',
+                'late_minutes' => $lateMinutes,
+                'late_label' => 'Half Day',
+                'undertime_minutes' => 0,
+            ];
+        }
+
+        if ($undertimeMinutes > 0) {
+            return [
+                'status' => 'undertime',
+                'late_minutes' => $lateMinutes,
+                'late_label' => 'Undertime',
+                'undertime_minutes' => $undertimeMinutes,
+            ];
+        }
+
+        if ($clockInStatus === 'half_day') {
+            return [
+                'status' => 'half_day',
+                'late_minutes' => $lateMinutes,
+                'late_label' => 'Half Day',
+                'undertime_minutes' => 0,
+            ];
+        }
+
+        if ($clockInStatus === 'late') {
+            return [
+                'status' => 'present',
+                'late_minutes' => $lateMinutes,
+                'late_label' => $lateLabel,
+                'undertime_minutes' => 0,
+            ];
+        }
+
+        return [
+            'status' => 'present',
+            'late_minutes' => 0,
+            'late_label' => 'Present',
+            'undertime_minutes' => 0,
+        ];
+    }
+
+    /**
+     * Attach display-only clock-out status fields onto a kiosk attendance payload.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function applyKioskClockOutDisplayStatus(array &$payload, User $user, Carbon $punchAt): void
+    {
+        $result = $this->kioskClockOutDisplayStatus($user, $punchAt);
+        $payload['attendance']['status'] = $result['status'];
+        $payload['attendance']['late_minutes'] = $result['late_minutes'];
+        $payload['attendance']['late_label'] = $result['late_label'];
+        $payload['attendance']['undertime_minutes'] = $result['undertime_minutes'];
+    }
+
+    /**
+     * Compute display status for a kiosk log (Present / Late / Half-Day / Undertime).
      * Clock-in time is converted to attendance timezone so 9:35 AM local = Late (2 hours).
      *
      * @return array{status: string, late_minutes: int, late_label: string}|null
      */
     private function kioskLogStatus(AttendanceLog $log): ?array
     {
-        if ($log->type !== AttendanceLog::TYPE_CLOCK_IN) {
-            return null;
-        }
         $user = $log->user;
         if (! $user) {
             return null;
         }
 
-        $result = $this->kioskClockInDisplayStatus($user, $this->attendanceLogPunchInstant($log));
+        $punchAt = $this->attendanceLogPunchInstant($log);
+        if ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
+            $result = $this->kioskClockOutDisplayStatus($user, $punchAt);
+
+            return [
+                'status' => $result['status'],
+                'late_minutes' => $result['late_minutes'],
+                'late_label' => $result['late_label'],
+            ];
+        }
+
+        if ($log->type !== AttendanceLog::TYPE_CLOCK_IN) {
+            return null;
+        }
+
+        $result = $this->kioskClockInDisplayStatus($user, $punchAt);
 
         return [
             'status' => $result['status'],

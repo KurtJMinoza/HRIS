@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\LeaveRequest;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -176,26 +177,95 @@ final class LeaveScheduleSupport
     }
 
     /**
+     * Soft notice when a filed range includes rest days that will be skipped.
+     *
+     * @param  array<int, array{date: string, weekday_label: string}>  $restDayHits
+     */
+    public static function formatRestDaysExcludedMessage(array $restDayHits, int $workingDaysInRange): string
+    {
+        $labels = [];
+        foreach ($restDayHits as $hit) {
+            $date = (string) ($hit['date'] ?? '');
+            $weekday = (string) ($hit['weekday_label'] ?? '');
+            if ($date === '') {
+                continue;
+            }
+            $pretty = Carbon::parse($date, self::attendanceTimezone())->format('M j, Y');
+            $labels[] = $weekday !== '' ? "{$pretty} ({$weekday})" : $pretty;
+        }
+        $listed = $labels === [] ? 'scheduled rest day(s)' : implode(', ', $labels);
+        $workLabel = $workingDaysInRange === 1 ? '1 working day' : "{$workingDaysInRange} working days";
+
+        return "Rest day(s) excluded from leave: {$listed}. Leave will cover {$workLabel} only.";
+    }
+
+    /**
+     * True when this leave should mark the calendar/attendance day as leave.
+     * Full-day leave skips scheduled rest days unless HR used rest_day_bypass.
+     */
+    public static function leaveCoversCalendarDate(User $user, LeaveRequest $leave, Carbon|string $date): bool
+    {
+        $tz = self::attendanceTimezone();
+        $d = $date instanceof Carbon
+            ? $date->copy()->timezone($tz)->startOfDay()
+            : Carbon::parse((string) $date, $tz)->startOfDay();
+
+        $start = Carbon::parse($leave->start_date->toDateString(), $tz)->startOfDay();
+        $end = Carbon::parse($leave->end_date->toDateString(), $tz)->startOfDay();
+        if ($d->lessThan($start) || $d->greaterThan($end)) {
+            return false;
+        }
+
+        $type = strtolower(trim((string) ($leave->type ?? '')));
+        if (in_array($type, ['half_day', 'undertime'], true)) {
+            return true;
+        }
+
+        if ((bool) ($leave->rest_day_bypass ?? false)) {
+            return true;
+        }
+
+        return ! self::isRestDayForUser($user, $d);
+    }
+
+    /**
+     * Block only when the entire range is rest days (nothing billable/workable).
+     * Ranges that mix working + rest days are allowed; rest days are excluded from leave.
+     *
      * @throws ValidationException
      */
-    public static function assertRangeHasNoRestDays(User $user, string $startYmd, string $endYmd): void
+    public static function assertRangeHasWorkingDay(User $user, string $startYmd, string $endYmd): void
     {
-        $bad = self::firstRestDayInRange($user, $startYmd, $endYmd);
-        if ($bad === null) {
+        $working = self::countWorkingDaysInclusive($user, $startYmd, $endYmd);
+        if ($working > 0) {
             return;
         }
 
-        Log::info('leave.rest_day_validation_failed', [
+        $bad = self::firstRestDayInRange($user, $startYmd, $endYmd);
+        Log::info('leave.rest_day_only_range_blocked', [
             'user_id' => $user->id,
             'start_date' => $startYmd,
             'end_date' => $endYmd,
-            'blocked_date' => $bad->toDateString(),
+            'blocked_date' => $bad?->toDateString(),
             'using_default_schedule' => self::isUsingDefaultScheduleFallback($user),
         ]);
 
         throw ValidationException::withMessages([
-            'start_date' => [self::formatRestDayViolationMessage($bad)],
+            'start_date' => [
+                $bad
+                    ? self::formatRestDayViolationMessage($bad)
+                    : 'Selected dates have no working days on your schedule. Choose working days only.',
+            ],
         ]);
+    }
+
+    /**
+     * @throws ValidationException
+     * @deprecated Use assertRangeHasWorkingDay — rest days are excluded, not hard-blocked.
+     */
+    public static function assertRangeHasNoRestDays(User $user, string $startYmd, string $endYmd): void
+    {
+        self::assertRangeHasWorkingDay($user, $startYmd, $endYmd);
     }
 
     /**
@@ -280,8 +350,13 @@ final class LeaveScheduleSupport
             $cursor->addDay();
         }
 
+        $includesRestDays = count($hits) > 0;
+
         return [
-            'valid' => count($hits) === 0,
+            // Can file when at least one working day exists; rest days are excluded, not blocking.
+            'valid' => $working > 0,
+            'includes_rest_days' => $includesRestDays,
+            'rest_days_excluded' => $includesRestDays,
             'rest_day_hits' => $hits,
             'working_days_in_range' => $working,
             'has_schedule' => $hasAssigned,

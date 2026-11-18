@@ -440,7 +440,8 @@ export function resolveAdminStatusLabel(row) {
     if (row.leave_pay_label) return row.leave_pay_label
     if (row.leave_pay_status === 'paid') return 'Leave with pay'
     if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
-    return row.late_label || 'Half Day'
+    // Ignore clock-in Present/Late late_label — day title is Half Day.
+    return 'Half Day'
   }
   if (rawStatus === 'incomplete') return 'Present (Incomplete)'
   if (rawStatus === 'leave') {
@@ -475,7 +476,8 @@ export function resolveEmployeeStatusLabel(row) {
     if (row.leave_pay_label) return row.leave_pay_label
     if (row.leave_pay_status === 'paid') return 'Leave with pay'
     if (row.leave_pay_status === 'unpaid') return 'Leave without pay'
-    return row.late_label || 'Half Day'
+    // Ignore clock-in Present/Late late_label — day title is Half Day.
+    return 'Half Day'
   }
   if (row.status === 'absent') return 'Absent'
   if (row.status === 'incomplete') return 'Present (Incomplete)'

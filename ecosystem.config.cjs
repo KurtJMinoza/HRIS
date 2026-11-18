@@ -10,9 +10,10 @@ const php = resolveBinary('PHP_BIN', isWin ? 'C:\\xampp\\php\\php.exe' : 'php', 
 const python = resolveBinary('FACE_SERVICE_PYTHON', isWin ? 'python' : 'python3', ['python', 'python3']);
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const octaneHost = process.env.OCTANE_HOST || '127.0.0.1';
-const octanePort = process.env.OCTANE_PORT || '8200';
+// Local ports stay 8000/5173 (override with OCTANE_PORT / FRONTEND_DEV_PORT if needed).
+const octanePort = process.env.OCTANE_PORT || '8000';
 const frontendVite = path.join(root, 'frontend', 'node_modules', 'vite', 'bin', 'vite.js');
-const frontendDevPort = process.env.FRONTEND_DEV_PORT || '5100';
+const frontendDevPort = process.env.FRONTEND_DEV_PORT || '5173';
 const payrollQueueMemoryLimit = process.env.PAYROLL_QUEUE_MEMORY_LIMIT || '1536M';
 const backendDir = path.join(root, 'backend');
 const faceServiceDir = path.join(root, 'face_service');
@@ -118,6 +119,8 @@ module.exports = {
           interpreter: 'none',
           env: {
             FRONTEND_DEV_PORT: frontendDevPort,
+            OCTANE_PORT: octanePort,
+            VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${octanePort}`,
             // hris.agctek.co → Vite dev: HMR/full-reload through Cloudflare breaks on 2nd reload.
             FRONTEND_DEV_DISABLE_HMR: '1',
           },
@@ -130,6 +133,8 @@ module.exports = {
           interpreter: node,
           env: {
             FRONTEND_DEV_PORT: frontendDevPort,
+            OCTANE_PORT: octanePort,
+            VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${octanePort}`,
             FRONTEND_DEV_DISABLE_HMR: '1',
           },
           ...pm2Defaults,

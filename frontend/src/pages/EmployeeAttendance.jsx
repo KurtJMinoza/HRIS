@@ -490,7 +490,7 @@ export default function EmployeeAttendance() {
       })
       setModalOpen(false)
       let msg = data.message ?? 'Recorded.'
-      if (modalType === 'clock_in' && data.attendance?.late_label) {
+      if (data.attendance?.late_label) {
         msg += ` — ${data.attendance.late_label}`
       }
       toast({ title: 'Attendance recorded', description: msg, variant: 'success' })

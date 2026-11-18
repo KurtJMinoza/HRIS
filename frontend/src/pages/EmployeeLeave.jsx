@@ -577,8 +577,9 @@ function EmployeeLeaveSelfService() {
     }
   }, [addOpen, addForm.start_date])
 
+  // Only block when the whole range is rest days (no working days). Mixed ranges can submit; rest days are excluded.
   const restDayBlocksSubmit =
-    restRangeValidating || Boolean(restRangeCheck && !restRangeCheck.valid)
+    restRangeValidating || Boolean(restRangeCheck && restRangeCheck.valid === false)
 
   const selectedAssignmentContext = useMemo(
     () => assignmentContexts.find((assignment) => String(assignment.id) === String(selectedAssignmentId)) || null,
@@ -732,7 +733,7 @@ function EmployeeLeaveSelfService() {
     if (restDayBlocksSubmit) {
       setAddError(
         restRangeCheck?.message ||
-          'You cannot file leave on your rest day. Please select working days only.'
+          'Selected dates have no working days on your schedule. Choose working days only.'
       )
       return
     }
@@ -775,6 +776,14 @@ function EmployeeLeaveSelfService() {
           ...assignmentPayload,
         }
       })()
+      const excludedRestDays =
+        Boolean(restRangeCheck?.includes_rest_days || restRangeCheck?.rest_days_excluded) &&
+        Array.isArray(restRangeCheck?.rest_day_hits) &&
+        restRangeCheck.rest_day_hits.length > 0
+      const restExcludeMessage =
+        restRangeCheck?.message ||
+        'Scheduled rest day(s) in your range were excluded. Leave covers working days only.'
+
       const res = await createMyLeaveRequest(payload)
       const leave = res.leave_request
 
@@ -782,6 +791,20 @@ function EmployeeLeaveSelfService() {
         for (const file of addForm.supportingFiles) {
           await uploadMyLeaveDocument(leave.id, file)
         }
+      }
+
+      if (excludedRestDays) {
+        toast({
+          title: 'Rest days excluded',
+          description: restExcludeMessage,
+          variant: 'default',
+        })
+      } else {
+        toast({
+          title: 'Leave submitted',
+          description: 'Your leave request was filed successfully.',
+          variant: 'success',
+        })
       }
 
       setAddForm({
@@ -1573,8 +1596,16 @@ function EmployeeLeaveSelfService() {
                     Checking dates against your work schedule...
                   </p>
                 ) : null}
-                {restRangeCheck && !restRangeCheck.valid ? (
+                {restRangeCheck && restRangeCheck.valid === false ? (
                   <p className="mt-1.5 flex items-start gap-2 text-[12px] font-medium text-brand">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>{restRangeCheck.message}</span>
+                  </p>
+                ) : null}
+                {restRangeCheck?.valid &&
+                (restRangeCheck.includes_rest_days || restRangeCheck.rest_days_excluded) &&
+                restRangeCheck.message ? (
+                  <p className="mt-1.5 flex items-start gap-2 text-[12px] font-medium text-amber-800 dark:text-amber-200">
                     <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                     <span>{restRangeCheck.message}</span>
                   </p>
@@ -1960,7 +1991,15 @@ function EmployeeLeaveSelfService() {
                     Checking dates against your work schedule…
                   </p>
                 ) : null}
-                {restRangeCheck && !restRangeCheck.valid ? (
+                {restRangeCheck && restRangeCheck.valid === false ? (
+                  <p className="mt-1.5 flex items-start gap-2 text-[11px] font-medium text-brand">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>{restRangeCheck.message}</span>
+                  </p>
+                ) : null}
+                {restRangeCheck?.valid &&
+                (restRangeCheck.includes_rest_days || restRangeCheck.rest_days_excluded) &&
+                restRangeCheck.message ? (
                   <p className="mt-1.5 flex items-start gap-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
                     <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
                     <span>{restRangeCheck.message}</span>

@@ -878,10 +878,22 @@ function SmartDTRPreview({ className }) {
                             {log.late_label || 'Late'}
                           </span>
                         )}
-                        {log.status === 'half_day' && (
+                        {(log.status === 'half_day' || log.status === 'halfday') && (
                           <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#ff5a14] dark:text-[#fb923c]">
                             <span className="size-1.5 rounded-full bg-[#ff5a14]" aria-hidden />
-                            {log.late_label || 'Half Day'}
+                            Half Day
+                          </span>
+                        )}
+                        {log.status === 'undertime' && (
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#ff5a14] dark:text-[#fb923c]">
+                            <span className="size-1.5 rounded-full bg-[#ff5a14]" aria-hidden />
+                            {log.late_label || 'Undertime'}
+                          </span>
+                        )}
+                        {log.type === 'clock_out' && log.status === 'present' && (
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold text-[#ff5a14] dark:text-[#fb923c]">
+                            <CheckCircle2 className="size-3" aria-hidden />
+                            Present
                           </span>
                         )}
                       </div>

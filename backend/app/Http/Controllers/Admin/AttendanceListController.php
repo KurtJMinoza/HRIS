@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\AttendanceCacheService;
 use App\Services\DataScopeService;
 use App\Services\LeaveCreditService;
+use App\Support\LeaveScheduleSupport;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -415,7 +416,7 @@ class AttendanceListController extends Controller
         $rangeEnd = \Carbon\Carbon::parse($to);
         $employees = User::query()->whereIn('id', $employeeIds)->get()->keyBy('id');
         $leaves = LeaveRequest::query()
-            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days', 'rest_day_bypass'])
             ->whereIn('user_id', $employeeIds)
             ->where('status', LeaveRequest::STATUS_APPROVED)
             ->where('start_date', '<=', $to)
@@ -425,10 +426,18 @@ class AttendanceListController extends Controller
 
         $leaveByUserDate = [];
         foreach ($leaves as $leave) {
+            $employee = $employees->get($leave->user_id);
             $start = $leave->start_date->copy()->max($rangeStart);
             $end = $leave->end_date->copy()->min($rangeEnd);
             $cursor = $start->copy();
             while ($cursor->lessThanOrEqualTo($end)) {
+                if (
+                    $employee instanceof User
+                    && ! LeaveScheduleSupport::leaveCoversCalendarDate($employee, $leave, $cursor)
+                ) {
+                    $cursor->addDay();
+                    continue;
+                }
                 $dateKey = $cursor->toDateString();
                 $existing = $leaveByUserDate[$leave->user_id][$dateKey] ?? null;
                 if ($existing === null || $leave->id > $existing->id) {
@@ -480,7 +489,7 @@ class AttendanceListController extends Controller
         $employee = User::query()->find($summary->employee_id);
         $dateKey = $summary->date->toDateString();
         $leave = LeaveRequest::query()
-            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days', 'rest_day_bypass'])
             ->where('user_id', $summary->employee_id)
             ->where('status', LeaveRequest::STATUS_APPROVED)
             ->where('start_date', '<=', $dateKey)

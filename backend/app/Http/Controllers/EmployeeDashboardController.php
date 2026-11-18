@@ -30,6 +30,7 @@ use App\Services\PayrollComputationService;
 use App\Services\PolicyResolverService;
 use App\Services\ScheduleComputationService;
 use App\Support\EmployeeScheduleResolver;
+use App\Support\LeaveScheduleSupport;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -408,7 +409,7 @@ class EmployeeDashboardController extends Controller
             ->groupBy(fn ($c) => $c->date->toDateString());
 
         $approvedLeaves = LeaveRequest::query()
-            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days'])
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'leave_credits_charged', 'leave_unpaid_credit_days', 'rest_day_bypass'])
             ->where('user_id', $employeeId)
             ->where('status', LeaveRequest::STATUS_APPROVED)
             ->where('start_date', '<=', $toStr)
@@ -416,7 +417,7 @@ class EmployeeDashboardController extends Controller
             ->get();
 
         $pendingLeaves = LeaveRequest::query()
-            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status'])
+            ->select(['id', 'user_id', 'type', 'half_type', 'start_date', 'end_date', 'status', 'rest_day_bypass'])
             ->where('user_id', $employeeId)
             ->where('status', LeaveRequest::STATUS_PENDING)
             ->where('start_date', '<=', $toStr)
@@ -430,6 +431,10 @@ class EmployeeDashboardController extends Controller
             $leaveEnd = $leave->end_date->copy()->min($to);
             $cursor = $leaveStart->copy();
             while ($cursor->lessThanOrEqualTo($leaveEnd)) {
+                if (! LeaveScheduleSupport::leaveCoversCalendarDate($user, $leave, $cursor)) {
+                    $cursor->addDay();
+                    continue;
+                }
                 $ds = $cursor->toDateString();
                 $existing = $leaveByDate[$ds] ?? null;
                 if ($existing === null || $leave->id > $existing->id) {
@@ -445,6 +450,10 @@ class EmployeeDashboardController extends Controller
             $leaveEnd = $leave->end_date->copy()->min($to);
             $cursor = $leaveStart->copy();
             while ($cursor->lessThanOrEqualTo($leaveEnd)) {
+                if (! LeaveScheduleSupport::leaveCoversCalendarDate($user, $leave, $cursor)) {
+                    $cursor->addDay();
+                    continue;
+                }
                 $ds = $cursor->toDateString();
                 $pendingLeaveByDate[$ds] ??= $leave;
                 $cursor->addDay();
@@ -1320,23 +1329,7 @@ class EmployeeDashboardController extends Controller
         $tz = $this->attendanceTimezone();
 
         if ($dayLogs !== null) {
-            foreach ($dayLogs as $log) {
-                if (! $log instanceof AttendanceLog) {
-                    continue;
-                }
-                if (($log->verified_at ?? $log->created_at) === null) {
-                    continue;
-                }
-                $stamp = $this->attendanceLogPunchInstant($log)->timezone($tz);
-
-                if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
-                    if ($timeIn === null) {
-                        $timeIn = $stamp;
-                    }
-                } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
-                    $timeOut = $stamp;
-                }
-            }
+            [$timeIn, $timeOut] = AttendanceStatusService::resolveDayPunchPair($dayLogs, $tz);
         }
 
         if ($correction && $correction->approved && $correction->pending_approval !== true) {

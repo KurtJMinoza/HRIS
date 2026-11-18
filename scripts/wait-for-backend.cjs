@@ -15,7 +15,7 @@ const http = require('http');
  */
 function waitForBackend(options = {}) {
   const host = options.host || process.env.OCTANE_HOST || '127.0.0.1';
-  const port = Number(options.port || process.env.OCTANE_PORT || 8200);
+  const port = Number(options.port || process.env.OCTANE_PORT || 8000);
   const path = options.path || '/api/public-settings';
   const timeoutMs = options.timeoutMs ?? 90_000;
   const intervalMs = options.intervalMs ?? 500;

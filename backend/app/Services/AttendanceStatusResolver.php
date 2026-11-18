@@ -82,26 +82,10 @@ class AttendanceStatusResolver
         $hasTimeOut = false;
 
         if ($dayLogs !== null) {
-            foreach ($dayLogs as $log) {
-                $type = $log instanceof AttendanceLog ? $log->type : ($log['type'] ?? '');
-                $rawStamp = $log instanceof AttendanceLog
-                    ? ($log->verified_at ?? $log->created_at)
-                    : ($log['verified_at'] ?? $log['created_at'] ?? null);
-                if ($rawStamp === null || $rawStamp === '') {
-                    continue;
-                }
-                $stamp = $rawStamp instanceof Carbon
-                    ? $rawStamp->copy()->timezone($nowTz->getTimezone())
-                    : Carbon::parse($rawStamp, $nowTz->getTimezone())->timezone($nowTz->getTimezone());
-
-                if ($type === AttendanceLog::TYPE_CLOCK_IN) {
-                    if ($timeIn === null) {
-                        $timeIn = $stamp;
-                    }
-                } elseif ($type === AttendanceLog::TYPE_CLOCK_OUT) {
-                    $timeOut = $stamp;
-                }
-            }
+            [$timeIn, $timeOut, $workedMinutes] = AttendanceStatusService::resolveDayPunchPair(
+                $dayLogs,
+                $nowTz->getTimezone()->getName()
+            );
             $hasTimeIn = $timeIn !== null;
             $hasTimeOut = $timeOut !== null;
         }
@@ -535,6 +519,15 @@ class AttendanceStatusResolver
         $approvedOtHours = (float) ($overtimeContext['approved_ot_hours'] ?? 0);
         $payableOtHours = (float) ($overtimeContext['payable_ot_hours'] ?? 0);
 
+        // Display title follows resolved day status. Clock-in "Present" must not stick
+        // when the completed pair is Half Day / Undertime (minutes unchanged for payroll).
+        $lateLabel = $metrics['late_label'];
+        if ($statusCode === self::STATUS_HALFDAY) {
+            $lateLabel = 'Half Day';
+        } elseif ($statusCode === self::STATUS_UNDERTIME) {
+            $lateLabel = 'Undertime';
+        }
+
         return [
             'status' => $statusCode,
             'status_code' => $statusCode,
@@ -548,7 +541,7 @@ class AttendanceStatusResolver
             'has_time_in' => $hasTimeIn,
             'has_time_out' => $hasTimeOut,
             'late_minutes' => $metrics['late_minutes'],
-            'late_label' => $metrics['late_label'],
+            'late_label' => $lateLabel,
             'undertime_minutes' => $metrics['undertime_minutes'],
             'overtime_minutes' => $metrics['overtime_minutes'],
             'approved_ot_hours' => $approvedOtHours,

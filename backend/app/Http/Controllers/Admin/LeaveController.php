@@ -455,8 +455,9 @@ class LeaveController extends Controller
         }
 
         try {
+            // Without HR bypass, rest days are excluded (working days only). Bypass still allows covering rest days.
             if (! $bypassRest) {
-                LeaveScheduleSupport::assertRangeHasNoRestDays(
+                LeaveScheduleSupport::assertRangeHasWorkingDay(
                     $employee,
                     $validated['start_date'],
                     $validated['end_date']
@@ -1502,7 +1503,7 @@ class LeaveController extends Controller
                 ? LeaveScheduleSupport::formatRestDayViolationMessage(
                     Carbon::parse($first['date'], LeaveScheduleSupport::attendanceTimezone())->startOfDay()
                 )
-                : 'Range includes scheduled rest days.';
+                : 'Selected dates have no working days on the employee schedule.';
             Log::info('leave.validate_range_blocked', [
                 'user_id' => $employee->id,
                 'actor_id' => $actor->id,
@@ -1510,6 +1511,11 @@ class LeaveController extends Controller
                 'end_date' => $validated['end_date'],
                 'using_default_schedule' => $summary['using_default_schedule'] ?? false,
             ]);
+        } elseif (! empty($summary['includes_rest_days'])) {
+            $message = LeaveScheduleSupport::formatRestDaysExcludedMessage(
+                $summary['rest_day_hits'] ?? [],
+                (int) ($summary['working_days_in_range'] ?? 0)
+            );
         }
 
         return response()->json(array_merge($summary, [

@@ -1,7 +1,7 @@
 /**
  * PM2 frontend-dev launcher for Windows.
  *
- * Orphan node/vite processes (or other apps) can keep port 5100 after restarts.
+ * Orphan node/vite processes (or other apps) can keep the Vite port after restarts.
  * This script frees the preferred port when possible, then picks the first open
  * port in the configured range before starting Vite.
  */
@@ -17,7 +17,7 @@ const frontendDir = path.join(root, 'frontend');
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const viteScript = path.join(frontendDir, 'node_modules', 'vite', 'bin', 'vite.js');
 
-const preferredPort = Number.parseInt(process.env.FRONTEND_DEV_PORT || '5100', 10);
+const preferredPort = Number.parseInt(process.env.FRONTEND_DEV_PORT || '5173', 10);
 const portRangeEnd = Number.parseInt(process.env.FRONTEND_DEV_PORT_END || String(preferredPort + 10), 10);
 
 function resolvePort() {
@@ -92,7 +92,7 @@ function startVite() {
 }
 
 async function main() {
-  const octanePort = process.env.OCTANE_PORT || '8200';
+  const octanePort = process.env.OCTANE_PORT || '8000';
   try {
     await waitForBackend({
       port: octanePort,

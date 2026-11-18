@@ -797,13 +797,18 @@ class EmployeeLeaveController extends Controller
                 ? LeaveScheduleSupport::formatRestDayViolationMessage(
                     Carbon::parse($first['date'], LeaveScheduleSupport::attendanceTimezone())->startOfDay()
                 )
-                : 'Selected dates include scheduled rest days. Choose working days only.';
+                : 'Selected dates have no working days on your schedule. Choose working days only.';
             Log::info('leave.validate_range_blocked', [
                 'user_id' => $user->id,
                 'start_date' => $validated['start_date'],
                 'end_date' => $validated['end_date'],
                 'using_default_schedule' => $summary['using_default_schedule'] ?? false,
             ]);
+        } elseif (! empty($summary['includes_rest_days'])) {
+            $message = LeaveScheduleSupport::formatRestDaysExcludedMessage(
+                $summary['rest_day_hits'] ?? [],
+                (int) ($summary['working_days_in_range'] ?? 0)
+            );
         }
 
         return response()->json(array_merge($summary, [
@@ -945,7 +950,8 @@ class EmployeeLeaveController extends Controller
         }
 
         $userForSchedule = $this->refreshUserForScheduleCheck($user);
-        LeaveScheduleSupport::assertRangeHasNoRestDays(
+        // Rest days inside the range are ignored (credits + attendance use working days only).
+        LeaveScheduleSupport::assertRangeHasWorkingDay(
             $userForSchedule,
             $validated['start_date'],
             $validated['end_date']

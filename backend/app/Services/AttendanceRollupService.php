@@ -272,9 +272,9 @@ class AttendanceRollupService
             if ($pay === 'unpaid') {
                 return 'Leave without pay';
             }
-            $lateLabel = trim((string) ($row['late_label'] ?? ''));
 
-            return $lateLabel !== '' ? $lateLabel : 'Half Day';
+            // Ignore clock-in Present/Late late_label — day title is Half Day.
+            return 'Half Day';
         }
 
         if ($status === 'absent') {
@@ -346,9 +346,9 @@ class AttendanceRollupService
             if ($pay === 'unpaid') {
                 return 'Leave without pay';
             }
-            $lateLabel = trim((string) ($row['late_label'] ?? ''));
 
-            return $lateLabel !== '' ? $lateLabel : 'Half Day';
+            // Ignore clock-in Present/Late late_label — day title is Half Day.
+            return 'Half Day';
         }
 
         if ($status === 'incomplete') {

@@ -364,25 +364,7 @@ class AttendanceDailySummaryService
         $timeOut = null;
 
         if ($dayLogs !== null) {
-            foreach ($dayLogs as $log) {
-                if (! $log instanceof AttendanceLog) {
-                    continue;
-                }
-                $rawStamp = $log->verified_at ?? $log->created_at;
-                if ($rawStamp === null) {
-                    continue;
-                }
-                $stamp = ($rawStamp instanceof Carbon ? $rawStamp->copy() : Carbon::parse($rawStamp))
-                    ->timezone($tz);
-
-                if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
-                    if ($timeIn === null) {
-                        $timeIn = $stamp;
-                    }
-                } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
-                    $timeOut = $stamp;
-                }
-            }
+            [$timeIn, $timeOut] = AttendanceStatusService::resolveDayPunchPair($dayLogs, $tz);
         }
 
         if ($correction && $correction->approved && $correction->pending_approval !== true) {

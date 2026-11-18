@@ -100,6 +100,7 @@ class AttendanceStatusResolverTest extends TestCase
         $this->assertSame(AttendanceStatusResolver::STATUS_UNDERTIME, $result['status']);
         $this->assertGreaterThan(0, $result['undertime_minutes']);
         $this->assertSame(0, $result['overtime_minutes']);
+        $this->assertSame('Undertime', $result['late_label']);
     }
 
     public function test_exact_half_day_clock_pair_is_half_day_not_undertime(): void
@@ -140,6 +141,7 @@ class AttendanceStatusResolverTest extends TestCase
         // The missing half is carried as the half-day unit itself — never overlapping
         // undertime minutes.
         $this->assertSame(0, $result['undertime_minutes']);
+        $this->assertSame('Half Day', $result['late_label']);
     }
 
     public function test_early_arrival_completed_half_day_is_half_day_not_undertime(): void
@@ -375,10 +377,13 @@ class AttendanceStatusResolverTest extends TestCase
             'grace_minutes' => 5,
         ];
 
-        $dayLogs = [
-            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-04 08:43:00'],
-            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-04 08:44:00'],
-        ];
+        // Explicit inverted correction pair (not log order) still flags Invalid Shift.
+        $correction = new \App\Models\AttendanceCorrection([
+            'time_in' => Carbon::parse('2026-08-04 08:44:00', $tz),
+            'time_out' => Carbon::parse('2026-08-04 08:43:00', $tz),
+            'approved' => true,
+            'pending_approval' => false,
+        ]);
 
         $result = $this->resolver->resolve(
             dateKey: $dateKey,
@@ -386,8 +391,8 @@ class AttendanceStatusResolverTest extends TestCase
             nowTz: $nowTz,
             effectiveSchedule: ['tue' => $daySchedule],
             daySchedule: $daySchedule,
-            dayLogs: $dayLogs,
-            correction: null,
+            dayLogs: [],
+            correction: $correction,
             holiday: null,
             leave: null,
             isRestDay: false,
@@ -399,6 +404,46 @@ class AttendanceStatusResolverTest extends TestCase
         $this->assertSame('Invalid Shift', $result['presence_label']);
         $this->assertNull($result['late_label']);
         $this->assertSame(0, $result['late_minutes']);
+    }
+
+    public function test_orphan_next_morning_out_before_today_in_is_not_invalid(): void
+    {
+        $tz = config('attendance.timezone', 'Asia/Manila');
+        $dateKey = '2026-08-05';
+        $nowTz = Carbon::parse('2026-08-05 18:00:00', $tz);
+
+        $daySchedule = [
+            'in' => '08:00',
+            'out' => '17:00',
+            'break_minutes' => 60,
+            'grace_minutes' => 5,
+        ];
+
+        // Previous day closed next morning, then today's shift starts — must not invert into Invalid Shift.
+        $dayLogs = [
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-05 01:10:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_IN, 'verified_at' => '2026-08-05 08:05:00'],
+            ['type' => AttendanceLog::TYPE_CLOCK_OUT, 'verified_at' => '2026-08-05 17:02:00'],
+        ];
+
+        $result = $this->resolver->resolve(
+            dateKey: $dateKey,
+            todayDate: $dateKey,
+            nowTz: $nowTz,
+            effectiveSchedule: ['wed' => $daySchedule],
+            daySchedule: $daySchedule,
+            dayLogs: $dayLogs,
+            correction: null,
+            holiday: null,
+            leave: null,
+            isRestDay: false,
+            isFuture: false,
+        );
+
+        $this->assertNotSame(AttendanceStatusResolver::STATUS_INVALID, $result['status']);
+        $this->assertNotSame('invalid_pair', $result['presence_issue']);
+        $this->assertSame('08:05', $result['effective_time_in']?->format('H:i'));
+        $this->assertSame('17:02', $result['effective_time_out']?->format('H:i'));
     }
 
 }

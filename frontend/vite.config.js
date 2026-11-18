@@ -166,7 +166,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: Number(env.FRONTEND_DEV_PORT || 5100),
+      port: Number(env.FRONTEND_DEV_PORT || 5173),
       host: true,
       strictPort: true,
       // Cloudflare → Apache → Vite: HMR + "optimized deps changed" full reload breaks 2nd refresh.

@@ -99,4 +99,37 @@ class AttendanceRollupServiceTest extends TestCase
         $this->assertTrue($this->rollup->isScheduledRestDay($schedule, null));
         $this->assertFalse($this->rollup->isScheduledRestDay($schedule, ['in' => '08:00', 'out' => '17:00']));
     }
+
+    #[Test]
+    public function halfday_and_undertime_titles_ignore_clock_in_present_late_label(): void
+    {
+        $this->assertSame(
+            'Half Day',
+            $this->rollup->employeeDisplayLabel([
+                'status' => 'halfday',
+                'late_label' => 'Present',
+            ])
+        );
+        $this->assertSame(
+            'Half Day',
+            $this->rollup->adminDisplayLabel([
+                'status' => 'halfday',
+                'late_label' => 'Present',
+            ])
+        );
+        $this->assertSame(
+            'Undertime',
+            $this->rollup->employeeDisplayLabel([
+                'status' => 'undertime',
+                'late_label' => 'Present',
+            ])
+        );
+        $this->assertSame(
+            'Undertime (Unfiled)',
+            $this->rollup->adminDisplayLabel([
+                'status' => 'undertime',
+                'late_label' => 'Present',
+            ])
+        );
+    }
 }

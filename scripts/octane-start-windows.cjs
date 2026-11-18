@@ -1,7 +1,7 @@
 /**
  * PM2 laravel-octane launcher for Windows.
  *
- * Orphan rr.exe/php workers can keep port 8200 after restarts, causing bind failures
+ * Orphan rr.exe/php workers can keep the Octane port after restarts, causing bind failures
  * and brief windows where Vite proxies /api to ECONNREFUSED.
  */
 const { spawn } = require('child_process');
@@ -21,7 +21,7 @@ function parsePort(argv) {
       return String(arg.split('=')[1] || '').trim();
     }
   }
-  return String(process.env.OCTANE_PORT || '8200').trim();
+  return String(process.env.OCTANE_PORT || '8000').trim();
 }
 
 function startOctane() {

@@ -28,6 +28,7 @@ use App\Services\PayrollComputationService;
 use App\Services\PremiumReportService;
 use App\Services\ReportsCacheService;
 use App\Support\EmployeeScheduleResolver;
+use App\Support\LeaveScheduleSupport;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -727,7 +728,7 @@ class ReportsController extends Controller
 
         $leaves = $leavesQuery->get([
             'id', 'user_id', 'type', 'status', 'start_date', 'end_date', 'undertime_time', 'half_type',
-            'leave_credits_charged', 'leave_unpaid_credit_days',
+            'leave_credits_charged', 'leave_unpaid_credit_days', 'rest_day_bypass',
         ]);
 
         /** @var array<int, array<string, array{type: string, status: string, start_date: string, end_date: string, duration_days: int, undertime_time?: string|null, half_type?: string|null}>> $leaveByUserDate */
@@ -756,8 +757,15 @@ class ReportsController extends Controller
 
             $cursorLeave = $leaveStartInRange->copy();
             while ($cursorLeave->lessThanOrEqualTo($leaveEndInRange)) {
-                $dateKey = $cursorLeave->toDateString();
                 $leaveEmployee = $employeesById->get($leave->user_id);
+                if (
+                    $leaveEmployee instanceof User
+                    && ! LeaveScheduleSupport::leaveCoversCalendarDate($leaveEmployee, $leave, $cursorLeave)
+                ) {
+                    $cursorLeave->addDay();
+                    continue;
+                }
+                $dateKey = $cursorLeave->toDateString();
                 $payStatus = $leaveEmployee instanceof User
                     ? $this->leaveCreditService->leavePayStatusForDate($leaveEmployee, $leave, $dateKey)
                     : null;

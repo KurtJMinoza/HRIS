@@ -23,6 +23,7 @@ use App\Services\OvertimePayrollService;
 use App\Services\PremiumReportService;
 use App\Services\ScheduleComputationService;
 use App\Support\EmployeeScheduleResolver;
+use App\Support\LeaveScheduleSupport;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -550,6 +551,7 @@ class AttendanceMonitoringController extends Controller
                 'status',
                 'leave_credits_charged',
                 'leave_unpaid_credit_days',
+                'rest_day_bypass',
             ])
             ->whereIn('user_id', $userIds)
             ->where('status', LeaveRequest::STATUS_APPROVED)
@@ -564,6 +566,13 @@ class AttendanceMonitoringController extends Controller
             $leaveEnd = $leave->end_date->copy()->min($to);
             $cursorLeave = $leaveStart->copy();
             while ($cursorLeave->lessThanOrEqualTo($leaveEnd)) {
+                if (
+                    $leaveEmployee instanceof User
+                    && ! LeaveScheduleSupport::leaveCoversCalendarDate($leaveEmployee, $leave, $cursorLeave)
+                ) {
+                    $cursorLeave->addDay();
+                    continue;
+                }
                 $dateKey = $cursorLeave->toDateString();
                 $payStatus = $leaveEmployee instanceof User
                     ? $this->leaveCreditService->leavePayStatusForDate($leaveEmployee, $leave, $dateKey)
@@ -1230,33 +1239,11 @@ class AttendanceMonitoringController extends Controller
 
     private function extractTimesAndWorkedMinutes($logs): array
     {
-        $timeIn = null;
-        $timeOut = null;
-        $total = 0;
-        $clockIn = null;
-
-        foreach ($logs as $log) {
-            $stamp = $log->verified_at ?? $log->created_at;
-            if (! $stamp) {
-                continue;
-            }
-            if ($log->type === AttendanceLog::TYPE_CLOCK_IN) {
-                if (! $timeIn) {
-                    $timeIn = $stamp;
-                }
-                $clockIn = $stamp;
-            } elseif ($log->type === AttendanceLog::TYPE_CLOCK_OUT) {
-                $timeOut = $stamp;
-                if ($clockIn) {
-                    $total += $clockIn->diffInMinutes($stamp);
-                    $clockIn = null;
-                }
-            }
+        if ($logs === null || (is_countable($logs) && count($logs) === 0)) {
+            return [null, null, null];
         }
 
-        $workedMinutes = $clockIn === null ? $total : null;
-
-        return [$timeIn, $timeOut, $workedMinutes];
+        return AttendanceStatusService::resolveDayPunchPair($logs, $this->attendanceTimezone());
     }
 
     /**
