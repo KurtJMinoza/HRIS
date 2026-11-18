@@ -1424,7 +1424,8 @@ class LeaveController extends Controller
     }
 
     /**
-     * HR admin may approve leave that spans scheduled rest days only with bypass + audited reason.
+     * Mixed ranges (work + rest) approve normally; rest days stay unpaid/excluded.
+     * Rest-only ranges still need HR bypass + audited reason to cover those days.
      *
      * @return array{blocked: bool, response: JsonResponse|null, apply_bypass: bool}
      */
@@ -1440,12 +1441,16 @@ class LeaveController extends Controller
         }
         $employee->loadMissing('workingSchedule');
 
-        $bad = LeaveScheduleSupport::firstRestDayInRange(
-            $employee,
-            $leave->start_date->toDateString(),
-            $leave->end_date->toDateString()
-        );
+        $start = $leave->start_date->toDateString();
+        $end = $leave->end_date->toDateString();
+        $workingDays = LeaveScheduleSupport::countWorkingDaysInclusive($employee, $start, $end);
 
+        // Working days exist → rest days in the span are auto-excluded from leave pay/coverage.
+        if ($workingDays > 0) {
+            return ['blocked' => false, 'response' => null, 'apply_bypass' => false];
+        }
+
+        $bad = LeaveScheduleSupport::firstRestDayInRange($employee, $start, $end);
         if ($bad === null) {
             return ['blocked' => false, 'response' => null, 'apply_bypass' => false];
         }

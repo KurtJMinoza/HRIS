@@ -88,4 +88,28 @@ class LeaveScheduleSupportRestDayExcludeTest extends TestCase
         $leave->rest_day_bypass = true;
         $this->assertTrue(LeaveScheduleSupport::leaveCoversCalendarDate($user, $leave, '2026-11-22'));
     }
+
+    public function test_mixed_range_has_working_days_so_approve_gate_should_not_block(): void
+    {
+        $user = new User;
+        $user->id = 4;
+        $user->schedule = [
+            'sun' => null,
+            'mon' => ['in' => '08:00', 'out' => '17:00'],
+            'tue' => ['in' => '08:00', 'out' => '17:00'],
+            'wed' => ['in' => '08:00', 'out' => '17:00'],
+            'thu' => ['in' => '08:00', 'out' => '17:00'],
+            'fri' => ['in' => '08:00', 'out' => '17:00'],
+            'sat' => ['in' => '08:00', 'out' => '17:00'],
+        ];
+
+        // Fri–Sun with Sunday rest: approve gate uses working-day count > 0.
+        $this->assertSame(
+            2,
+            LeaveScheduleSupport::countWorkingDaysInclusive($user, '2026-11-20', '2026-11-22')
+        );
+        $this->assertNotNull(
+            LeaveScheduleSupport::firstRestDayInRange($user, '2026-11-20', '2026-11-22')
+        );
+    }
 }

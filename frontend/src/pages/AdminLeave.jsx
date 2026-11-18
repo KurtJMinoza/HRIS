@@ -2533,13 +2533,20 @@ export default function AdminLeave() {
                 Checking this request against the employee&apos;s work schedule…
               </p>
             ) : null}
+            {approveRangeSummary?.valid &&
+            (approveRangeSummary.includes_rest_days || approveRangeSummary.rest_days_excluded) ? (
+              <p className="rounded-lg border border-sky-200/80 bg-sky-50/60 px-3 py-2 text-xs text-sky-950 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-100">
+                {approveRangeSummary.message ||
+                  'Scheduled rest day(s) in this range are excluded. Leave covers working days only.'}
+              </p>
+            ) : null}
             {approveRangeSummary && !approveRangeSummary.valid ? (
               <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 text-xs dark:border-amber-900/50 dark:bg-amber-950/25">
                 <p className="flex items-start gap-2 font-medium text-amber-950 dark:text-amber-100">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
                   <span>
                     {approveRangeSummary.message ||
-                      'This range includes a scheduled rest day. Non-HR approvers cannot approve it.'}
+                      'Selected dates are all scheduled rest days. Non-HR approvers cannot approve.'}
                   </span>
                 </p>
                 {isAdminHr ? (
@@ -2786,6 +2793,13 @@ export default function AdminLeave() {
                   <p className="mt-1.5 flex items-center gap-2 text-[12px] text-muted-foreground">
                     <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
                     Checking dates against the employee&apos;s work schedule...
+                  </p>
+                ) : null}
+                {addRangeRestDay?.valid &&
+                (addRangeRestDay.includes_rest_days || addRangeRestDay.rest_days_excluded) ? (
+                  <p className="mt-1.5 rounded-xl border border-sky-200/80 bg-sky-50/60 px-4 py-3 text-sm text-sky-950 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-100">
+                    {addRangeRestDay.message ||
+                      'Scheduled rest day(s) in this range are excluded. Leave covers working days only.'}
                   </p>
                 ) : null}
                 {addRangeRestDay && !addRangeRestDay.valid ? (

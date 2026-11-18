@@ -142,23 +142,28 @@ class LeaveBulkApprovalService
                 continue;
             }
 
-            $restDay = $leave->rest_day_bypass ? null : LeaveScheduleSupport::firstRestDayInRange(
-                $employee,
-                $leave->start_date->toDateString(),
-                $leave->end_date->toDateString(),
-            );
-            if ($restDay !== null) {
-                if (! $bypassRestDays || strlen($bypassReason) < 10) {
-                    $skipped++;
-                    $failedItems[] = [
-                        'request_id' => $id,
-                        'reason' => LeaveScheduleSupport::formatRestDayViolationMessage($restDay)
-                            .' HR administrators may approve with a documented rest-day override.',
-                    ];
+            // Mixed work+rest ranges approve normally (rest days excluded from pay).
+            // Rest-only ranges still need HR bypass to cover those days.
+            if (! $leave->rest_day_bypass) {
+                $start = $leave->start_date->toDateString();
+                $end = $leave->end_date->toDateString();
+                $workingDays = LeaveScheduleSupport::countWorkingDaysInclusive($employee, $start, $end);
+                if ($workingDays === 0) {
+                    $restDay = LeaveScheduleSupport::firstRestDayInRange($employee, $start, $end);
+                    if ($restDay !== null) {
+                        if (! $bypassRestDays || strlen($bypassReason) < 10) {
+                            $skipped++;
+                            $failedItems[] = [
+                                'request_id' => $id,
+                                'reason' => LeaveScheduleSupport::formatRestDayViolationMessage($restDay)
+                                    .' HR administrators may approve with a documented rest-day override.',
+                            ];
 
-                    continue;
+                            continue;
+                        }
+                        $bypassIds[] = $id;
+                    }
                 }
-                $bypassIds[] = $id;
             }
 
             $approvedIds[] = $id;
