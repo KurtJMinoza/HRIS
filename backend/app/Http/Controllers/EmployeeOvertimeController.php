@@ -24,6 +24,7 @@ use App\Support\PhPayrollReference;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -128,6 +129,108 @@ class EmployeeOvertimeController extends Controller
         }
 
         return basename(str_replace('\\', '/', $path));
+    }
+
+    /**
+     * @param  array<int, string>  $paths
+     * @return array{documents: array<int, array{url: string, filename: string}>, attachment_count: int, documents_count: int}
+     */
+    private function overtimeAttachmentPreviewFields(array $paths): array
+    {
+        $paths = array_values(array_filter($paths, static fn ($p) => is_string($p) && trim($p) !== ''));
+        if ($paths === []) {
+            return [
+                'documents' => [],
+                'attachment_count' => 0,
+                'documents_count' => 0,
+            ];
+        }
+
+        $documents = [];
+        foreach ($paths as $path) {
+            $documents[] = [
+                'url' => $this->publicMediaUrl($path),
+                'filename' => $this->attachmentBasename($path) ?? 'Attachment',
+            ];
+        }
+
+        $count = count($documents);
+
+        return [
+            'documents' => $documents,
+            'attachment_count' => $count,
+            'documents_count' => $count,
+        ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function storeUploadedOvertimeDocuments(Request $request, string $inputKey = 'attachments'): array
+    {
+        $paths = [];
+        foreach ($this->collectOvertimeUploadedFiles($request, $inputKey) as $file) {
+            if ($file instanceof UploadedFile && $file->isValid()) {
+                $paths[] = $file->store('overtime_attachments', 'public');
+            }
+        }
+        if ($paths === [] && $request->hasFile('attachment')) {
+            $legacy = $request->file('attachment');
+            if ($legacy instanceof UploadedFile && $legacy->isValid()) {
+                $paths[] = $legacy->store('overtime_attachments', 'public');
+            }
+        }
+        if ($paths === []) {
+            throw ValidationException::withMessages([
+                $inputKey => ['At least one supporting document is required.'],
+            ]);
+        }
+
+        return array_values($paths);
+    }
+
+    /**
+     * @return array<int, UploadedFile>
+     */
+    private function collectOvertimeUploadedFiles(Request $request, string $inputKey = 'attachments'): array
+    {
+        $raw = $request->file($inputKey);
+        if ($raw instanceof UploadedFile) {
+            return [$raw];
+        }
+        if (is_array($raw)) {
+            return array_values(array_filter($raw, static fn ($f) => $f instanceof UploadedFile));
+        }
+
+        $out = [];
+        foreach ($request->allFiles() as $key => $value) {
+            if ($key !== $inputKey && ! str_starts_with((string) $key, $inputKey.'.')) {
+                continue;
+            }
+            if ($value instanceof UploadedFile) {
+                $out[] = $value;
+            } elseif (is_array($value)) {
+                foreach ($value as $file) {
+                    if ($file instanceof UploadedFile) {
+                        $out[] = $file;
+                    }
+                }
+            }
+        }
+
+        return array_values($out);
+    }
+
+    /**
+     * @param  array<int, string>  $paths
+     */
+    private function deleteOvertimeDocumentFiles(array $paths): void
+    {
+        foreach ($paths as $path) {
+            if (is_string($path) && $path !== '' && Storage::disk('public')->exists($path)) {
+                Storage::disk('public')->delete($path);
+            }
+        }
     }
 
     private function ensureSelfOvertimeAccess(User $user): void
@@ -401,6 +504,7 @@ class EmployeeOvertimeController extends Controller
 
         $subject = $o->user;
         $requesterMeta = $subject instanceof User ? $this->requesterMetaForSubject($subject) : [];
+        $documentPaths = $o->resolveDocumentPaths();
 
         return array_merge([
             'id' => $o->id,
@@ -423,9 +527,10 @@ class EmployeeOvertimeController extends Controller
             'status' => $o->status,
             'remarks' => $o->remarks,
             'rejection_note' => $o->rejection_note,
-            'has_attachment' => ! empty($o->attachment_path),
-            'attachment_url' => $this->publicMediaUrl($o->attachment_path),
-            'attachment_filename' => $this->attachmentBasename($o->attachment_path),
+            'has_attachment' => $documentPaths !== [],
+            'attachment_url' => $this->publicMediaUrl($documentPaths[0] ?? null),
+            'attachment_filename' => $this->attachmentBasename($documentPaths[0] ?? null),
+            ...$this->overtimeAttachmentPreviewFields($documentPaths),
             'approved_at' => $o->approved_at?->toIso8601String(),
             'approved_by_name' => $o->approvedBy?->display_name,
             'created_at' => $o->created_at?->toIso8601String(),
@@ -1034,20 +1139,28 @@ class EmployeeOvertimeController extends Controller
             'category' => ['required', 'string', 'max:50'],
             'ph_ot_rule' => ['nullable', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
             'reason' => ['required', 'string', 'min:2'],
+            'attachments' => ['nullable', 'array', 'max:5'],
+            'attachments.*' => ['file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'attachment' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
         ]);
+
+        $existingPaths = $overtime->resolveDocumentPaths();
+        $hasNewFiles = $request->hasFile('attachments') || $request->hasFile('attachment');
+        if (! $hasNewFiles && $existingPaths === []) {
+            throw ValidationException::withMessages([
+                'attachments' => ['A supporting document is required.'],
+            ]);
+        }
 
         $dateYmd = $overtime->date->toDateString();
         $computed = $this->computeOvertimeRequestQuantities($user, $dateYmd, $validated['start_time'], $validated['end_time']);
         $this->validateNoOverlappingOvertime($user, $dateYmd, $validated['start_time'], $validated['end_time'], (int) $overtime->id);
 
-        $attachmentPath = $overtime->attachment_path;
-        if ($request->hasFile('attachment')) {
-            if (is_string($attachmentPath) && $attachmentPath !== '' && Storage::disk('public')->exists($attachmentPath)) {
-                Storage::disk('public')->delete($attachmentPath);
-            }
-            $attachmentPath = $request->file('attachment')->store('overtime_attachments', 'public');
+        $documentPaths = $existingPaths;
+        if ($hasNewFiles) {
+            $this->deleteOvertimeDocumentFiles($existingPaths);
+            $documentPaths = $this->storeUploadedOvertimeDocuments($request);
         }
 
         $overtime->fill([
@@ -1065,7 +1178,8 @@ class EmployeeOvertimeController extends Controller
             'ph_ot_rule' => $validated['ph_ot_rule'] ?? $overtime->ph_ot_rule ?? 'ORD',
             'ot_type' => $validated['category'],
             'reason' => $validated['reason'],
-            'attachment_path' => $attachmentPath,
+            'attachment_path' => $documentPaths[0] ?? null,
+            'document_paths' => $documentPaths,
         ]);
         $overtime->save();
         OvertimeModuleCache::flush();
@@ -1114,10 +1228,7 @@ class EmployeeOvertimeController extends Controller
             ]);
         }
 
-        $path = $overtime->attachment_path;
-        if (is_string($path) && $path !== '' && Storage::disk('public')->exists($path)) {
-            Storage::disk('public')->delete($path);
-        }
+        $this->deleteOvertimeDocumentFiles($overtime->resolveDocumentPaths());
 
         $overtime->delete();
         OvertimeModuleCache::flush();
@@ -1233,6 +1344,9 @@ class EmployeeOvertimeController extends Controller
             'selected_segments.*' => ['string', Rule::in(['pre_shift', 'post_shift'])],
             'ph_ot_rule' => ['nullable', 'string', Rule::in(PhPayrollReference::OT_RULE_CODES)],
             'reason' => ['required', 'string', 'min:2'],
+            // ponytail: do not use required_without:attachments on `attachment` — filled() ignores the files bag
+            'attachments' => ['required', 'array', 'min:1', 'max:5'],
+            'attachments.*' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
             'attachment' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ]);
 
@@ -1319,10 +1433,8 @@ class EmployeeOvertimeController extends Controller
             ]);
         }
 
-        $attachmentPath = null;
-        if ($request->hasFile('attachment')) {
-            $attachmentPath = $request->file('attachment')->store('overtime_attachments', 'public');
-        }
+        $documentPaths = $this->storeUploadedOvertimeDocuments($request);
+        $attachmentPath = $documentPaths[0] ?? null;
 
         $stage = (string) ($routing['initial_stage'] ?? $this->hrApprovalChainResolver->initialApprovalStage(
             $user,
@@ -1336,7 +1448,7 @@ class EmployeeOvertimeController extends Controller
                 'approval' => ['No active Admin (HR) approver is configured.'],
             ]);
         }
-        $overtimes = DB::transaction(function () use ($user, $dateYmd, $computedTargets, $validated, $attachmentPath, $stage, $hrApproverId, $assignmentContext) {
+        $overtimes = DB::transaction(function () use ($user, $dateYmd, $computedTargets, $validated, $attachmentPath, $documentPaths, $stage, $hrApproverId, $assignmentContext) {
             $rows = [];
             foreach ($computedTargets as $target) {
                 $computed = $target['computed'];
@@ -1366,6 +1478,7 @@ class EmployeeOvertimeController extends Controller
                     'ot_type' => $validated['category'],
                     'reason' => $reason,
                     'attachment_path' => $attachmentPath,
+                    'document_paths' => $documentPaths,
                     'status' => Overtime::STATUS_PENDING,
                     'created_by' => $user->id,
                     'approval_stage' => $stage,

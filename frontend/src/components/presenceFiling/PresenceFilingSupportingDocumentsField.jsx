@@ -45,7 +45,12 @@ export default function PresenceFilingSupportingDocumentsField({
   attachments,
   onAttachmentsChange,
   required = false,
+  maxFiles = MAX_PRESENCE_FILING_SUPPORTING_FILES,
+  accept = SUPPORTING_DOC_ACCEPT,
+  hintFileTypes = 'PDF, PNG, JPG, DOC, DOCX up to 10MB each',
 }) {
+  const fileLimit = Math.max(1, Number(maxFiles) || MAX_PRESENCE_FILING_SUPPORTING_FILES)
+  const inputMultiple = fileLimit > 1
   const inputRef = useRef(null)
   const inputId = useId()
   const pickSessionRef = useRef(false)
@@ -93,13 +98,17 @@ export default function PresenceFilingSupportingDocumentsField({
     let continuePickSession = false
     onAttachmentsChange((prev) => {
       const current = Array.isArray(prev) ? prev : []
-      const next = [...current, ...picked].slice(0, MAX_PRESENCE_FILING_SUPPORTING_FILES)
+      const next =
+        fileLimit === 1
+          ? [picked[picked.length - 1]].filter(Boolean)
+          : [...current, ...picked].slice(0, fileLimit)
       // ponytail: Windows legacy dialog needs Ctrl/Shift for multi — reopen after each single pick until Cancel
       continuePickSession =
         fromPicker &&
         pickSessionRef.current &&
         picked.length === 1 &&
-        next.length < MAX_PRESENCE_FILING_SUPPORTING_FILES
+        fileLimit > 1 &&
+        next.length < fileLimit
       return next
     })
     if (continuePickSession) openNativeFileInputAgain()
@@ -125,7 +134,7 @@ export default function PresenceFilingSupportingDocumentsField({
     if (typeof window.showOpenFilePicker === 'function') {
       try {
         const handles = await window.showOpenFilePicker({
-          multiple: true,
+          multiple: inputMultiple,
           types: SUPPORTING_DOC_PICKER_TYPES,
         })
         const files = await Promise.all(handles.map((handle) => handle.getFile()))
@@ -170,8 +179,8 @@ export default function PresenceFilingSupportingDocumentsField({
         type="file"
         tabIndex={-1}
         className="sr-only"
-        multiple
-        accept={SUPPORTING_DOC_ACCEPT}
+        multiple={inputMultiple}
+        accept={accept}
         onChange={addFromInput}
       />,
       document.body,
@@ -205,10 +214,10 @@ export default function PresenceFilingSupportingDocumentsField({
               Drag and drop files here or click to upload
             </span>
             <span className={hintClass}>
-              Choose files one at a time — the picker reopens after each file until you cancel (up to{' '}
-              {MAX_PRESENCE_FILING_SUPPORTING_FILES}). Or drag several at once. PDF, PNG, JPG, DOC, DOCX up to 10MB
-              each
-              {required ? '. At least one file is required.' : ''}
+              {fileLimit === 1
+                ? `Upload one supporting document. ${hintFileTypes}`
+                : `Choose files one at a time — the picker reopens after each file until you cancel (up to ${fileLimit}). Or drag several at once. ${hintFileTypes}`}
+              {required ? ' At least one file is required.' : ''}
             </span>
           </button>
         </div>

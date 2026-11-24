@@ -117,6 +117,8 @@ class LeaveController extends Controller
                 'status',
                 'notes',
                 'rejection_note',
+                'document_path',
+                'document_paths',
                 'leave_credits_charged',
                 'leave_unpaid_credit_days',
                 'approval_stage',
@@ -199,7 +201,7 @@ class LeaveController extends Controller
                 'can_reject' => $canAct,
                 'actor_can_delete' => $this->canDeleteLeaveRequest($actor, $l),
                 'hr_wait_message' => $this->leaveListWaitMessage($l, $currentApproval, $canAct),
-            ], $approverFields, $this->leaveCreditUsageMeta($l));
+            ], $approverFields, $this->leaveCreditUsageMeta($l), $this->documentPayload($l));
         });
 
         RequestPerformanceLogger::finish($perf, $request, $leaves->count(), [
@@ -332,6 +334,8 @@ class LeaveController extends Controller
             'notes' => ['nullable', 'string', 'max:2000'],
             'bypass_rest_days' => ['sometimes', 'boolean'],
             'rest_day_bypass_reason' => ['required_if:bypass_rest_days,true', 'nullable', 'string', 'min:10', 'max:2000'],
+            'attachments' => ['required', 'array', 'min:1', 'max:5'],
+            'attachments.*' => ['file', 'mimes:pdf,jpg,jpeg,png,doc,docx', 'max:10240'],
         ]);
 
         $actor = $request->user();
@@ -493,12 +497,14 @@ class LeaveController extends Controller
         );
 
         $restBypassReason = $bypassRest ? trim((string) $request->input('rest_day_bypass_reason')) : null;
+        $documentPaths = $this->storeUploadedLeaveDocuments($request);
 
         $leave = LeaveRequest::create([
             'user_id' => $validated['user_id'],
             'type' => $validated['type'],
             'start_date' => $validated['start_date'],
             'end_date' => $validated['end_date'],
+            'document_paths' => $documentPaths,
             'half_type' => $validated['type'] === 'half_day' ? ($validated['half_type'] ?? null) : null,
             'half_day_time' => $validated['type'] === 'half_day' && trim((string) ($validated['half_day_time'] ?? '')) !== ''
                 ? substr(trim((string) $validated['half_day_time']), 0, 5)
@@ -669,6 +675,8 @@ class LeaveController extends Controller
                     'status',
                     'notes',
                     'rejection_note',
+                    'document_path',
+                    'document_paths',
                     'approval_stage',
                     'pending_approval',
                     'filed_at',
@@ -712,7 +720,10 @@ class LeaveController extends Controller
             $pending = $approvalRecords->firstWhere('approval_status', OrgApprovalRecord::STATUS_PENDING);
             $auth = $this->leaveReviewLiteActionAuthorization($actor, $leave, $pending);
 
-            return $this->leaveReviewLiteResponse($leave, $approvalRecords, $pending, $auth);
+            return array_merge(
+                $this->leaveReviewLiteResponse($leave, $approvalRecords, $pending, $auth),
+                $this->documentPayload($leave),
+            );
         });
 
         $payload = $cached['payload'];
@@ -2253,13 +2264,46 @@ class LeaveController extends Controller
     {
         $paths = $l->resolveDocumentPaths();
         $urls = array_map(fn (string $p) => $this->publicMediaUrl($p), $paths);
+        $documents = array_map(
+            fn (string $p, int $i) => [
+                'url' => $this->publicMediaUrl($p),
+                'filename' => basename(str_replace('\\', '/', $p)) ?: 'Document '.($i + 1),
+            ],
+            $paths,
+            array_keys($paths),
+        );
+        $count = count($paths);
 
         return [
-            'has_document' => count($paths) > 0,
+            'has_document' => $count > 0,
             'document_url' => $urls[0] ?? null,
             'document_urls' => $urls,
-            'document_count' => count($paths),
+            'document_count' => $count,
+            'documents' => $documents,
+            'attachment_count' => $count,
+            'documents_count' => $count,
         ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function storeUploadedLeaveDocuments(Request $request, string $inputKey = 'attachments'): array
+    {
+        $paths = [];
+        foreach ($request->file($inputKey, []) as $file) {
+            if ($file === null) {
+                continue;
+            }
+            $paths[] = $file->store('leave-documents', 'public');
+        }
+        if ($paths === []) {
+            throw ValidationException::withMessages([
+                $inputKey => ['At least one supporting document is required.'],
+            ]);
+        }
+
+        return array_values($paths);
     }
 
     private function normalizeLeaveDocuments(LeaveRequest $leave): void

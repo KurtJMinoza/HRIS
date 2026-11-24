@@ -192,6 +192,8 @@ class OvertimeController extends Controller
                 'ph_ot_rule',
                 'ot_type',
                 'reason',
+                'attachment_path',
+                'document_paths',
                 'status',
                 'approval_stage',
                 'pending_approval',
@@ -324,7 +326,7 @@ class OvertimeController extends Controller
                 'can_reject' => (bool) ($auth['allowed'] ?? false),
                 'actor_can_delete' => $this->canDeleteOvertimeRequest($actor, $o),
                 'hr_wait_message' => $this->overtimeListWaitMessage($o, $currentApproval, (bool) ($auth['allowed'] ?? false)),
-            ], $approverFields, $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule));
+            ], $approverFields, $this->overtimeRequesterMeta($user), PhPayrollReference::ruleMetaForOvertime($o->ph_ot_rule), $this->overtimeDocumentListPayload($o));
         })->values();
 
         RequestPerformanceLogger::finish($perf, $request, $items->count(), [
@@ -464,7 +466,7 @@ class OvertimeController extends Controller
                 'time_out', 'expected_end_time', 'approved_ot_start', 'approved_ot_end',
                 'approved_ot_hours', 'actual_rendered_ot_hours', 'payable_ot_hours',
                 'unapproved_ot_hours', 'overtime_reduction_reason', 'computed_minutes', 'computed_hours',
-                'ph_ot_rule', 'ot_type', 'reason', 'attachment_path', 'status', 'approved_by',
+                'ph_ot_rule', 'ot_type', 'reason', 'attachment_path', 'document_paths', 'status', 'approved_by',
                 'approved_at', 'remarks', 'locked_at', 'approval_stage', 'pending_approval',
                 'filed_at', 'filed_by', 'first_approver_id', 'first_approved_at',
                 'second_approver_id', 'second_approved_at', 'rejected_at', 'rejected_by',
@@ -541,6 +543,8 @@ class OvertimeController extends Controller
                     'ph_ot_rule',
                     'ot_type',
                     'reason',
+                    'attachment_path',
+                    'document_paths',
                     'status',
                     'approval_stage',
                     'pending_approval',
@@ -664,8 +668,10 @@ class OvertimeController extends Controller
             })
             ->values();
 
-        $attPath = $overtime->attachment_path;
+        $documentPaths = $overtime->resolveDocumentPaths();
+        $attPath = $documentPaths[0] ?? null;
         $disp = $this->overtimeDisplayFields($overtime);
+        $attachmentPreview = $this->overtimeAttachmentPreviewFields($documentPaths);
 
         $payload = [
             'overtime' => array_merge([
@@ -686,11 +692,12 @@ class OvertimeController extends Controller
                 'status' => $overtime->status,
                 'pending_approval' => (bool) $overtime->pending_approval,
                 'reason' => $overtime->reason,
-                'has_attachment' => is_string($attPath) && trim($attPath) !== '',
+                'has_attachment' => $documentPaths !== [],
                 'attachment_url' => $this->publicMediaUrl(is_string($attPath) ? $attPath : null),
                 'attachment_filename' => (is_string($attPath) && trim($attPath) !== '')
                     ? basename(str_replace('\\', '/', $attPath))
                     : null,
+                ...$attachmentPreview,
                 'remarks' => $overtime->remarks,
                 'rejection_note' => $overtime->rejection_note,
                 'approved_by_id' => $overtime->approved_by,
@@ -1424,9 +1431,10 @@ class OvertimeController extends Controller
             ], Response::HTTP_FORBIDDEN);
         }
 
-        $path = $overtime->attachment_path;
-        if (is_string($path) && $path !== '' && Storage::disk('public')->exists($path)) {
-            Storage::disk('public')->delete($path);
+        foreach ($overtime->resolveDocumentPaths() as $path) {
+            if (is_string($path) && $path !== '' && Storage::disk('public')->exists($path)) {
+                Storage::disk('public')->delete($path);
+            }
         }
 
         $overtime->delete();
@@ -1820,7 +1828,7 @@ class OvertimeController extends Controller
             'deny_reason' => $auth['deny_reason'],
             'created_at' => $overtime->created_at?->toIso8601String(),
             'filed_at' => ($overtime->filed_at ?? $overtime->created_at)?->toIso8601String(),
-        ], $this->overtimeRequesterMeta($overtime->user), PhPayrollReference::ruleMetaForOvertime($overtime->ph_ot_rule));
+        ], $this->overtimeRequesterMeta($overtime->user), PhPayrollReference::ruleMetaForOvertime($overtime->ph_ot_rule), $this->overtimeDocumentListPayload($overtime));
     }
 
     private function approvalRecordStageLabel(OrgApprovalRecord $record): string
@@ -2131,8 +2139,6 @@ class OvertimeController extends Controller
             'approvalAudits' => fn ($q) => $q->orderBy('created_at')->with('actor:id,name,first_name,middle_name,last_name,suffix'),
         ]);
         $user = $overtime->user;
-        $path = $overtime->attachment_path;
-        $has = is_string($path) && trim($path) !== '';
         $disp = $this->overtimeDisplayFields($overtime);
 
         $base = [
@@ -2160,9 +2166,7 @@ class OvertimeController extends Controller
             'status' => $overtime->status,
             'pending_approval' => (bool) $overtime->pending_approval,
             'reason' => $overtime->reason,
-            'has_attachment' => $has,
-            'attachment_url' => $this->publicMediaUrl($has ? $path : null),
-            'attachment_filename' => $has ? basename(str_replace('\\', '/', $path)) : null,
+            ...$this->overtimeDocumentListPayload($overtime),
             'remarks' => $overtime->remarks,
             'rejection_note' => $overtime->rejection_note,
             'approved_by_id' => $overtime->approved_by,
@@ -2190,6 +2194,63 @@ class OvertimeController extends Controller
         ];
 
         return array_merge($base, $this->overtimeRequesterMeta($user), $this->overtimeActorFlags($overtime, $actor), PhPayrollReference::ruleMetaForOvertime($overtime->ph_ot_rule));
+    }
+
+    private function attachmentBasename(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+
+        return basename(str_replace('\\', '/', $path));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function overtimeDocumentListPayload(Overtime $overtime): array
+    {
+        $documentPaths = $overtime->resolveDocumentPaths();
+        $path = $documentPaths[0] ?? null;
+        $has = $documentPaths !== [];
+
+        return array_merge([
+            'has_attachment' => $has,
+            'attachment_url' => $this->publicMediaUrl($has ? $path : null),
+            'attachment_filename' => $has ? $this->attachmentBasename($path) : null,
+        ], $this->overtimeAttachmentPreviewFields($documentPaths));
+    }
+
+    /**
+     * @param  array<int, string>  $paths
+     * @return array{documents: array<int, array{url: string, filename: string}>, attachment_count: int, documents_count: int}
+     */
+    private function overtimeAttachmentPreviewFields(array $paths): array
+    {
+        $paths = array_values(array_filter($paths, static fn ($p) => is_string($p) && trim($p) !== ''));
+        if ($paths === []) {
+            return [
+                'documents' => [],
+                'attachment_count' => 0,
+                'documents_count' => 0,
+            ];
+        }
+
+        $documents = [];
+        foreach ($paths as $path) {
+            $documents[] = [
+                'url' => $this->publicMediaUrl($path),
+                'filename' => $this->attachmentBasename($path) ?? 'Attachment',
+            ];
+        }
+
+        $count = count($documents);
+
+        return [
+            'documents' => $documents,
+            'attachment_count' => $count,
+            'documents_count' => $count,
+        ];
     }
 
     private function publicMediaUrl(?string $path): ?string

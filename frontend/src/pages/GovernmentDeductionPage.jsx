@@ -5,7 +5,6 @@ import {
   ChevronRight,
   Clock3,
   Building2,
-  FileClock,
   HeartPulse,
   History,
   Landmark,
@@ -24,14 +23,12 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
   calculateStatutoryContributions,
-  generateStatutoryRemittance,
   getStatutoryDashboardSummary,
   getStatutoryRateHistory,
   getStatutoryRates,
   getStoredUser,
   getTaxTables,
   listGovernmentDeductionExemptions,
-  listStatutoryRemittances,
   previewWithholdingTax,
   updateEmployeeGovernmentDeductionExemption,
   upsertStatutoryRate,
@@ -162,11 +159,6 @@ function formatPeso(value) {
 
 function formatPct(value) {
   return `${(toNumber(value) * 100).toFixed(2).replace(/\.00$/, '')}%`
-}
-
-function monthName(month) {
-  const date = new Date(2026, Math.max(0, toNumber(month, 1) - 1), 1)
-  return date.toLocaleString('en-PH', { month: 'short' })
 }
 
 function normalizeDateLabel(value) {
@@ -836,7 +828,6 @@ export default function GovernmentDeductionPage() {
   const [withholdingPreview, setWithholdingPreview] = useState(null)
   const [summary, setSummary] = useState(null)
   const [taxTables, setTaxTables] = useState([])
-  const [remittances, setRemittances] = useState([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyRows, setHistoryRows] = useState([])
   const [historyCodeFilter, setHistoryCodeFilter] = useState('')
@@ -845,19 +836,9 @@ export default function GovernmentDeductionPage() {
   const [auditLoading, setAuditLoading] = useState(false)
   const [whtLoading, setWhtLoading] = useState(false)
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [remittanceLoading, setRemittanceLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [canManageRates] = useState(() => readStoredCanManageRates())
-  const [remittanceDraft, setRemittanceDraft] = useState(() => {
-    const now = new Date()
-    return {
-      agency: 'SSS',
-      report_kind: 'r3',
-      period_year: now.getFullYear(),
-      period_month: now.getMonth() + 1,
-    }
-  })
   const auditDebounceRef = useRef(null)
   const whtDebounceRef = useRef(null)
 
@@ -868,10 +849,9 @@ export default function GovernmentDeductionPage() {
     setLoading(true)
     setError('')
     try {
-      const [rateData, summaryData, remittanceData, taxData] = await Promise.all([
+      const [rateData, summaryData, taxData] = await Promise.all([
         getStatutoryRates(),
         getStatutoryDashboardSummary().catch(() => null),
-        listStatutoryRemittances({ page: 1, per_page: 8 }).catch(() => null),
         getTaxTables({ year: new Date().getFullYear() }).catch(() => null),
       ])
 
@@ -883,7 +863,6 @@ export default function GovernmentDeductionPage() {
       setRowsByCode(nextRows)
       setSssSchedule(Array.isArray(rateData?.sss_schedule) ? rateData.sss_schedule : [])
       setSummary(summaryData)
-      setRemittances(Array.isArray(remittanceData?.data) ? remittanceData.data : [])
       setTaxTables(Array.isArray(taxData?.tax_tables) ? taxData.tax_tables : [])
     } catch (err) {
       setError(err?.message || 'Failed to load Government Deductions data.')
@@ -1023,26 +1002,6 @@ export default function GovernmentDeductionPage() {
     return () => clearTimeout(whtDebounceRef.current)
   }, [activeTab, runWithholdingPreview])
 
-  async function createRemittance() {
-    setRemittanceLoading(true)
-    setError('')
-    setNotice('')
-    try {
-      const data = await generateStatutoryRemittance({
-        ...remittanceDraft,
-        period_year: toNumber(remittanceDraft.period_year, new Date().getFullYear()),
-        period_month: toNumber(remittanceDraft.period_month, new Date().getMonth() + 1),
-      })
-      setNotice(`Generated ${data?.remittance?.agency || remittanceDraft.agency} remittance with ${data?.row_count ?? 0} rows.`)
-      const next = await listStatutoryRemittances({ page: 1, per_page: 8 })
-      setRemittances(Array.isArray(next?.data) ? next.data : [])
-    } catch (err) {
-      setError(err?.message || 'Failed to generate remittance.')
-    } finally {
-      setRemittanceLoading(false)
-    }
-  }
-
   const sssQueryNormalized = sssQuery.trim().toLowerCase()
   const sssFilteredRows = useMemo(() => {
     if (!sssQueryNormalized) return sssRows
@@ -1168,19 +1127,6 @@ export default function GovernmentDeductionPage() {
     withholdingPreview?.effective_rate_percent_of_monthly_taxable ??
       (nonNegative(whtSalary) > 0 ? (withholdingMonthly / nonNegative(whtSalary)) * 100 : 0)
   )
-
-  const remittanceKindOptions = useMemo(() => {
-    if (remittanceDraft.agency === 'SSS') return ['r3', 'r5', 'monthly_listing']
-    if (remittanceDraft.agency === 'PHILHEALTH') return ['rf1', 'premium_listing']
-    if (remittanceDraft.agency === 'PAGIBIG') return ['mcrf', 'monthly_listing']
-    return ['withholding_summary']
-  }, [remittanceDraft.agency])
-
-  useEffect(() => {
-    if (!remittanceKindOptions.includes(remittanceDraft.report_kind)) {
-      setRemittanceDraft((draft) => ({ ...draft, report_kind: remittanceKindOptions[0] }))
-    }
-  }, [remittanceDraft.report_kind, remittanceKindOptions])
 
   const headerDate = normalizeDateLabel(effectiveFrom)
 
@@ -1635,81 +1581,6 @@ export default function GovernmentDeductionPage() {
                     </div>
                   )
                 })}
-              </div>
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
-              <div className="rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
-                <h2 className="text-lg font-bold text-foreground">Generate Remittance</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Creates a pending batch for agency filing review.</p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <label className="block">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Agency</span>
-                    <select
-                      value={remittanceDraft.agency}
-                      onChange={(event) => setRemittanceDraft((draft) => ({ ...draft, agency: event.target.value }))}
-                      className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground"
-                    >
-                      <option value="SSS">SSS</option>
-                      <option value="PHILHEALTH">PhilHealth</option>
-                      <option value="PAGIBIG">Pag-IBIG</option>
-                      <option value="BIR">BIR</option>
-                    </select>
-                  </label>
-                  <label className="block">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Report Kind</span>
-                    <select
-                      value={remittanceDraft.report_kind}
-                      onChange={(event) => setRemittanceDraft((draft) => ({ ...draft, report_kind: event.target.value }))}
-                      className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm font-semibold text-foreground"
-                    >
-                      {remittanceKindOptions.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-                    </select>
-                  </label>
-                  <Field label="Year" value={remittanceDraft.period_year} onChange={(value) => setRemittanceDraft((draft) => ({ ...draft, period_year: value }))} />
-                  <Field label="Month" value={remittanceDraft.period_month} onChange={(value) => setRemittanceDraft((draft) => ({ ...draft, period_month: value }))} />
-                </div>
-                <Button type="button" onClick={createRemittance} disabled={remittanceLoading} className="mt-4 w-full bg-brand text-brand-foreground hover:bg-brand-strong">
-                  <FileClock className="size-4" />
-                  {remittanceLoading ? 'Generating...' : 'Generate Pending Batch'}
-                </Button>
-              </div>
-
-              <div className="rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
-                <h2 className="text-lg font-bold text-foreground">Recent Remittances</h2>
-                <div className="mt-4 overflow-x-auto rounded-lg border border-border">
-                  <table className="w-full min-w-[42rem] text-sm">
-                    <thead className="bg-background text-[11px] uppercase tracking-wide text-foreground">
-                      <tr>
-                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Period</th>
-                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Agency</th>
-                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Kind</th>
-                        <th className="border-b border-r border-border px-3 py-3 text-left font-bold">Status</th>
-                        <th className="border-b border-r border-border px-3 py-3 text-right font-bold">Employee</th>
-                        <th className="border-b border-border px-3 py-3 text-right font-bold">Employer</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {remittances.map((row) => (
-                        <tr key={row.id} className="border-b border-border last:border-b-0">
-                          <td className="border-r border-border px-3 py-3 text-foreground">{monthName(row.period_month)} {row.period_year}</td>
-                          <td className="border-r border-border px-3 py-3 font-semibold text-foreground">{row.agency}</td>
-                          <td className="border-r border-border px-3 py-3 text-muted-foreground">{row.report_kind}</td>
-                          <td className="border-r border-border px-3 py-3">
-                            <span className="rounded-md bg-amber-500/10 px-2 py-1 text-xs font-bold text-amber-700 dark:text-amber-300">{row.status}</span>
-                          </td>
-                          <td className="border-r border-border px-3 py-3 text-right font-semibold text-foreground">{formatPeso(row.total_employee_amount)}</td>
-                          <td className="px-3 py-3 text-right font-semibold text-foreground">{formatPeso(row.total_employer_amount)}</td>
-                        </tr>
-                      ))}
-                      {remittances.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">No remittance batches yet.</td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
               </div>
             </div>
           </section>

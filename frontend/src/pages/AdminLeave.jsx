@@ -55,6 +55,7 @@ import {
   getLeaveBulkProgress,
   rejectLeaveRequest,
   getEmployees,
+  getAdminLeaveByRequestId,
   updateLeaveNotes,
   uploadAdminLeaveDocument,
   deleteAdminLeaveRequest,
@@ -66,7 +67,9 @@ import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import {
+  requestModuleActionsColClass,
   requestModuleActionsTdClass,
+  requestModuleActionsThClass,
   requestModuleActionsWrapRowClass,
   requestModuleCompactButtonClass,
   requestModuleHeadRowClass,
@@ -77,6 +80,7 @@ import {
   requestModuleTdMutedClass,
   requestModuleThClass,
   requestModuleThRightClass,
+  requestModuleTableScrollWrapClass,
 } from '@/lib/requestModuleTable'
 import {
   FIELD_TEXTAREA_CLASS,
@@ -116,6 +120,7 @@ import LeaveRequestMobileCard from '@/components/leave/LeaveRequestMobileCard'
 import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
 import ApproverAvatarNameCell, { approverFromApprovalProgress, approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
 import { AgcBrandLogo } from '@/components/AgcBrandLogo'
+import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
@@ -123,6 +128,11 @@ import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged, HR_PENDING_APPROVALS_CHANGED } from '@/lib/hrPendingApprovalsEvents'
 import { ApprovalQueueTabBadge } from '@/components/admin/ApprovalQueueTabBadge'
 import { normalizeApprovalHeadTitle } from '@/lib/approvalText'
+import {
+  CorrectionReasonPreviewCell,
+  RemarksPreviewCell,
+} from '@/components/presenceFiling/CorrectionTableCells'
+import PresenceFilingSupportingDocumentsField from '@/components/presenceFiling/PresenceFilingSupportingDocumentsField'
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All' },
@@ -229,6 +239,20 @@ function supportingDocUrls(leave) {
   if (Array.isArray(leave.document_urls) && leave.document_urls.length) return leave.document_urls
   if (leave.document_url) return [leave.document_url]
   return []
+}
+
+function leavePreviewRow(leave) {
+  if (!leave || typeof leave !== 'object') return null
+  const remarks = [leave.notes, leave.rejection_note].filter(Boolean).join('\n\n')
+  return {
+    ...leave,
+    id: leave.id,
+    remarks,
+    notes: leave.notes,
+    documents: leave.documents,
+    document_count: leave.document_count,
+    attachment_count: leave.attachment_count ?? leave.document_count,
+  }
 }
 
 function LeaveModalCalendarArt() {
@@ -421,6 +445,18 @@ export default function AdminLeave() {
 
   const refreshLeaveCounts = useCallback(() => {
     setCountsRefreshToken((value) => value + 1)
+  }, [])
+
+  const loadLeaveDocuments = useCallback(async (id) => {
+    const data = await getAdminLeaveByRequestId(id)
+    const leave = data?.leave_request ?? data?.leave ?? data
+    if (Array.isArray(leave?.documents) && leave.documents.length > 0) {
+      return leave.documents
+    }
+    return supportingDocUrls(leave).map((url, i) => ({
+      url,
+      filename: `Document ${i + 1}`,
+    }))
   }, [])
 
   const loadApprovalQueueBadge = useCallback(async (opts = {}) => {
@@ -844,23 +880,13 @@ export default function AdminLeave() {
     }
   }, [addOpen, showEmployeePicker, user?.id, user?.can_file_leave_for_others, user?.hr_role, refreshUser, fetchMyLeaveCredits])
 
-  function addSupportingFilesFromInput(e) {
-    const picked = Array.from(e.target.files || [])
-    const input = e.target
-    if (input) input.value = ''
-    if (!picked.length) return
+  const syncAddFormSupportingFiles = useCallback((next) => {
     setAddForm((prev) => ({
       ...prev,
-      supportingFiles: [...(prev.supportingFiles ?? []), ...picked].slice(0, MAX_LEAVE_SUPPORTING_FILES),
+      supportingFiles:
+        typeof next === 'function' ? next(prev.supportingFiles ?? []) : (Array.isArray(next) ? next : []),
     }))
-  }
-
-  function removeSupportingFile(index) {
-    setAddForm((prev) => ({
-      ...prev,
-      supportingFiles: (prev.supportingFiles ?? []).filter((_, i) => i !== index),
-    }))
-  }
+  }, [])
 
   const addRestDayBypassOk =
     isAdminHr &&
@@ -943,6 +969,16 @@ export default function AdminLeave() {
       addLeaveSubmitLock.current = false
       return
     }
+    if ((addForm.supportingFiles ?? []).length === 0) {
+      setError('Upload at least one supporting document.')
+      toast({
+        title: 'Supporting document required',
+        description: 'Upload at least one supporting document.',
+        variant: 'error',
+      })
+      addLeaveSubmitLock.current = false
+      return
+    }
     for (const f of addForm.supportingFiles ?? []) {
       if (f.size > MAX_LEAVE_FILE_BYTES) {
         setError(`Each file must be at most 10MB (${f.name}).`)
@@ -954,11 +990,12 @@ export default function AdminLeave() {
     setAddSubmitting(true)
     setError(null)
     try {
-      const created = await createLeaveRequest({
+      await createLeaveRequest({
         user_id: uid,
         type: addForm.type,
         start_date: addForm.start_date,
         end_date: endDate,
+        attachments: addForm.supportingFiles ?? [],
         ...(addForm.type === 'half_day'
           ? { half_type: addForm.half_type, half_day_time: addForm.half_day_time }
           : {}),
@@ -971,13 +1008,6 @@ export default function AdminLeave() {
             }
           : {}),
       })
-      const newId = created?.leave_request?.id
-      const files = addForm.supportingFiles ?? []
-      if (newId && files.length) {
-        for (const file of files) {
-          await uploadAdminLeaveDocument(newId, file)
-        }
-      }
       const empName = showEmployeePicker
         ? employees.find((e) => String(e.id) === String(addForm.user_id))?.name || 'Employee'
         : user?.name || 'You'
@@ -1984,7 +2014,7 @@ export default function AdminLeave() {
             </div>
           ) : isMineTab ? (
             <>
-            <div className="hidden min-w-0 flex-1 overflow-hidden md:block">
+            <div className={cn('hidden min-w-0 flex-1 md:block', requestModuleTableScrollWrapClass)}>
               <table className={leaveEmployeeTableClass}>
                 <colgroup>
                   <col className="w-[9%]" />
@@ -1996,7 +2026,7 @@ export default function AdminLeave() {
                   <col className="w-[11%]" />
                   <col className="w-[12%]" />
                   <col className="w-[7%]" />
-                  <col className="w-[8%]" />
+                  <col className={requestModuleActionsColClass} />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
@@ -2004,12 +2034,12 @@ export default function AdminLeave() {
                     <th className={requestModuleThClass}>Date / range</th>
                     <th className={requestModuleThClass}>Duration</th>
                     <th className={requestModuleThClass}>Uses credits</th>
-                    <th className={requestModuleThClass}>Supporting documents</th>
+                    <th className={requestModuleThClass}>Preview</th>
                     <th className={requestModuleThClass}>Reason / remarks</th>
                     <th className={requestModuleThClass}>Status</th>
                     <th className={requestModuleThClass}>Approver</th>
-                    <th className={requestModuleThRightClass}>Date filed</th>
-                    <th className={requestModuleThRightClass}>Actions</th>
+                    <th className={cn(requestModuleThRightClass, 'min-w-[5.5rem]')}>Date filed</th>
+                    <th className={requestModuleActionsThClass}>Actions</th>
                   </tr>
                 </thead>
                 <tbody className="text-[13px]">
@@ -2036,36 +2066,14 @@ export default function AdminLeave() {
                         <td className={requestModuleTdClass}>
                           <LeaveCreditUsageBadge leave={leave} leaveCreditInfo={leaveCreditInfo} />
                         </td>
-                        <td className={requestModuleTdClass}>
-                          {(() => {
-                            const urls = supportingDocUrls(leave)
-                            if (!urls.length) return <span className="text-muted-foreground">No</span>
-                            return (
-                              <div className="flex flex-col gap-1">
-                                {urls.map((url, i) => (
-                                  <a
-                                    key={`${url}-${i}`}
-                                    href={profileImageUrl(url)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                                  >
-                                    <Paperclip className="size-3.5 shrink-0" aria-hidden />
-                                    View{urls.length > 1 ? ` (${i + 1})` : ''}
-                                  </a>
-                                ))}
-                              </div>
-                            )
-                          })()}
+                        <td className={requestModuleTdClass} onClick={(e) => e.stopPropagation()}>
+                          <CorrectionReasonPreviewCell
+                            item={leavePreviewRow(leave)}
+                            loadDocuments={loadLeaveDocuments}
+                          />
                         </td>
                         <td className={requestModuleTdClass}>
-                          {remarksPreview ? (
-                            <p className="line-clamp-2 text-[13px] leading-snug text-foreground/90" title={remarksPreview}>
-                              {remarksPreview}
-                            </p>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
+                          <RemarksPreviewCell text={remarksPreview} />
                         </td>
                         <td className={requestModuleTdClass}>
                           <LeaveStatusPill
@@ -2081,30 +2089,12 @@ export default function AdminLeave() {
                           {leave.created_at ? formatDate(leave.created_at) : '—'}
                         </td>
                         <td className={requestModuleActionsTdClass}>
-                          <div className={requestModuleActionsWrapRowClass}>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className={cn(requestModuleCompactButtonClass, 'text-foreground hover:bg-brand/10 hover:text-brand')}
-                              onClick={() => openDetailDialog(leave)}
-                            >
-                              <Eye className="size-3.5" />
-                              View details
-                            </Button>
-                            {leave.actor_can_delete ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10')}
-                                onClick={() => setDeleteDialog({ open: true, leave })}
-                              >
-                                <Trash2 className="size-3.5" />
-                                Delete
-                              </Button>
-                            ) : null}
-                          </div>
+                          <AdminDataTableActions
+                            dense
+                            onView={() => openDetailDialog(leave)}
+                            showDelete={Boolean(leave.actor_can_delete)}
+                            onDelete={() => setDeleteDialog({ open: true, leave })}
+                          />
                         </td>
                       </tr>
                     )
@@ -2126,7 +2116,7 @@ export default function AdminLeave() {
             </>
           ) : (
             <>
-            <div className="hidden min-w-0 flex-1 overflow-hidden md:block">
+            <div className={cn('hidden min-w-0 flex-1 md:block', requestModuleTableScrollWrapClass)}>
               <table className={leaveAdminTableClass}>
                 <colgroup>
                   {canApproveLeave ? <col className="w-[3%]" /> : null}
@@ -2140,7 +2130,7 @@ export default function AdminLeave() {
                   <col className={canApproveLeave ? 'w-[10%]' : 'w-[11%]'} />
                   <col className={canApproveLeave ? 'w-[11%]' : 'w-[12%]'} />
                   <col className="w-[7%]" />
-                  <col className="w-[9%]" />
+                  <col className={requestModuleActionsColClass} />
                 </colgroup>
                 <thead>
                   <tr className={requestModuleHeadRowClass}>
@@ -2163,12 +2153,12 @@ export default function AdminLeave() {
                     <th className={requestModuleThClass}>Date / range</th>
                     <th className={requestModuleThClass}>Duration</th>
                     <th className={requestModuleThClass}>Uses credits</th>
-                    <th className={requestModuleThClass}>Supporting documents</th>
+                    <th className={requestModuleThClass}>Preview</th>
                     <th className={requestModuleThClass}>Reason / remarks</th>
                     <th className={requestModuleThClass}>Status</th>
                     <th className={requestModuleThClass}>Approver</th>
-                    <th className={requestModuleThRightClass}>Date filed</th>
-                    <th className={requestModuleThRightClass}>Actions</th>
+                    <th className={cn(requestModuleThRightClass, 'min-w-[5.5rem]')}>Date filed</th>
+                    <th className={requestModuleActionsThClass}>Actions</th>
                   </tr>
                 </thead>
                 <tbody className="text-[13px]">
@@ -2249,38 +2239,14 @@ export default function AdminLeave() {
                       <td className={requestModuleTdClass}>
                         <LeaveCreditUsageBadge leave={leave} />
                       </td>
-                      <td className={requestModuleTdClass}>
-                        {(() => {
-                          const urls = supportingDocUrls(leave)
-                          if (!urls.length) {
-                            return <span className="text-muted-foreground">No</span>
-                          }
-                          return (
-                            <div className="flex flex-col gap-1">
-                              {urls.map((url, i) => (
-                                <a
-                                  key={`${url}-${i}`}
-                                  href={profileImageUrl(url)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                                >
-                                  <Paperclip className="size-3.5 shrink-0" aria-hidden />
-                                  View{urls.length > 1 ? ` (${i + 1})` : ''}
-                                </a>
-                              ))}
-                            </div>
-                          )
-                        })()}
+                      <td className={requestModuleTdClass} onClick={(e) => e.stopPropagation()}>
+                        <CorrectionReasonPreviewCell
+                          item={leavePreviewRow(leave)}
+                          loadDocuments={loadLeaveDocuments}
+                        />
                       </td>
                       <td className={requestModuleTdClass}>
-                        {remarksPreview ? (
-                          <p className="line-clamp-2 text-[13px] leading-snug text-foreground/90" title={remarksPreview}>
-                            {remarksPreview}
-                          </p>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
+                        <RemarksPreviewCell text={remarksPreview} />
                       </td>
                       <td className={requestModuleTdClass}>
                         <LeaveStatusPill
@@ -2303,65 +2269,31 @@ export default function AdminLeave() {
                       </td>
                       <td className={requestModuleActionsTdClass}>
                         <div className={requestModuleActionsWrapRowClass}>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className={cn(requestModuleCompactButtonClass, 'border-border/80 bg-card hover:bg-brand/10 hover:text-brand')}
-                            onClick={() => openDetailDialog(leave)}
-                          >
-                            <Eye className="size-3.5" aria-hidden />
-                            View details
-                          </Button>
-                          {leave.actor_can_delete ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10')}
-                              onClick={() => setDeleteDialog({ open: true, leave })}
-                            >
-                              <Trash2 className="size-3.5" aria-hidden />
-                              Delete
-                            </Button>
-                          ) : null}
-                          {canApproveLeave && leave.status === 'pending' && leave.actor_can_approve ? (
-                            <>
-                              <Button
-                                variant="default"
-                                size="sm"
-                                className={cn(requestModuleCompactButtonClass, 'bg-emerald-600 text-white hover:bg-emerald-700')}
-                                onClick={() => openApproveDialog(leave)}
-                                disabled={actionLoadingId === leave.id}
-                              >
-                                {actionLoadingId === leave.id ? (
-                                  <Loader2 className="size-3.5 animate-spin" />
-                                ) : (
-                                  <CheckCircle2 className="size-3.5" />
-                                )}
-                                Approve
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className={cn(requestModuleCompactButtonClass, 'border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300')}
-                                onClick={() => openRejectDialog(leave)}
-                                disabled={actionLoadingId === leave.id || leave.actor_can_reject === false}
-                              >
-                                <XCircle className="size-3.5" />
-                                Reject
-                              </Button>
-                            </>
-                          ) : null}
+                          <AdminDataTableActions
+                            dense
+                            disabled={actionLoadingId === leave.id}
+                            onView={() => openDetailDialog(leave)}
+                            showApprove={Boolean(
+                              canApproveLeave && leave.status === 'pending' && leave.actor_can_approve,
+                            )}
+                            onApprove={() => openApproveDialog(leave)}
+                            showReject={Boolean(
+                              canApproveLeave && leave.status === 'pending' && leave.actor_can_approve,
+                            )}
+                            onReject={() => openRejectDialog(leave)}
+                            showDelete={Boolean(leave.actor_can_delete)}
+                            onDelete={() => setDeleteDialog({ open: true, leave })}
+                          />
                           {canLeaveNotes ? (
                             <Button
                               variant="ghost"
                               size="sm"
-                              className={requestModuleCompactButtonClass}
+                              className="size-7 shrink-0 rounded-md p-0"
                               onClick={() => openNotesDialog(leave)}
+                              title={leave.notes ? 'Edit note' : 'Add note'}
+                              aria-label={leave.notes ? 'Edit note' : 'Add note'}
                             >
-                              <FileText className="size-3.5" />
-                              {leave.notes ? 'Edit note' : 'Add note'}
+                              <FileText className="size-3.5" aria-hidden />
                             </Button>
                           ) : null}
                         </div>
@@ -2893,46 +2825,12 @@ export default function AdminLeave() {
                   </div>
                 ) : null}
 
-                <div className="space-y-2 sm:space-y-3">
-                  <Label className={adminLeaveModalLabelClass}>Supporting documents (optional)</Label>
-                  <div className="rounded-xl border border-dashed border-border bg-muted/15 px-4 py-5 sm:px-5 sm:py-6 dark:border-white/15 dark:bg-white/[0.03]">
-                    <div className="flex flex-col items-center justify-center gap-3 text-center">
-                      <label className="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg px-3 py-2 text-muted-foreground transition hover:text-foreground sm:px-4">
-                        <UploadCloud className="size-8 text-foreground sm:size-9" strokeWidth={1.7} aria-hidden />
-                        <span className="text-sm font-medium text-muted-foreground sm:text-base">Drag and drop files here or click to upload</span>
-                        <span className={adminLeaveModalHintClass}>
-                          Up to {MAX_LEAVE_SUPPORTING_FILES} files. PDF, PNG, JPG, DOC, DOCX up to 10MB each
-                        </span>
-                        <input
-                          type="file"
-                          className="sr-only"
-                          multiple
-                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                          onChange={addSupportingFilesFromInput}
-                        />
-                      </label>
-                    </div>
-                    {(addForm.supportingFiles ?? []).length > 0 ? (
-                      <ul className="mt-3 space-y-2">
-                        {(addForm.supportingFiles ?? []).map((f, i) => (
-                          <li key={`${f.name}-${i}-${f.size}`} className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm">
-                            <span className="min-w-0 flex-1 truncate font-medium text-foreground">{f.name}</span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                              onClick={() => removeSupportingFile(i)}
-                              aria-label={`Remove ${f.name}`}
-                            >
-                              <X className="size-3.5" />
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-                </div>
+                <PresenceFilingSupportingDocumentsField
+                  attachments={addForm.supportingFiles ?? []}
+                  onAttachmentsChange={syncAddFormSupportingFiles}
+                  required
+                  maxFiles={MAX_LEAVE_SUPPORTING_FILES}
+                />
               </form>
             </div>
           </div>

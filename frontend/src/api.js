@@ -6030,10 +6030,36 @@ export async function validateAdminLeaveDateRange(params) {
 }
 
 export async function createLeaveRequest(payload) {
-  const res = await authenticatedFetch('/admin/leave', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
+  const attachments = Array.isArray(payload?.attachments)
+    ? payload.attachments.filter((f) => f instanceof File)
+    : []
+  const scalar = { ...payload }
+  delete scalar.attachments
+
+  let res
+  if (attachments.length > 0) {
+    const formData = new FormData()
+    Object.entries(scalar).forEach(([key, value]) => {
+      if (value === true || value === false) {
+        formData.append(key, value ? '1' : '0')
+        return
+      }
+      if (value !== undefined && value !== null && value !== '') {
+        formData.append(key, String(value))
+      }
+    })
+    attachments.forEach((file) => formData.append('attachments[]', file))
+    res = await authenticatedFetch('/admin/leave', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: formData,
+    })
+  } else {
+    res = await authenticatedFetch('/admin/leave', {
+      method: 'POST',
+      body: JSON.stringify(scalar),
+    })
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const msg =
@@ -6331,10 +6357,32 @@ export async function updateAdminEmployeeStatus(userId, payload) {
  * @param {{ type: 'vacation'|'sick'|'emergency'|'other'|'undertime'|'half_day', start_date: string, end_date: string, undertime_time?: string, reason?: string }} payload
  */
 export async function createMyLeaveRequest(payload) {
-  const res = await authenticatedFetch('/leave', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
+  const attachments = Array.isArray(payload?.attachments)
+    ? payload.attachments.filter((f) => f instanceof File)
+    : []
+  const scalar = { ...payload }
+  delete scalar.attachments
+
+  let res
+  if (attachments.length > 0) {
+    const formData = new FormData()
+    Object.entries(scalar).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        formData.append(key, String(value))
+      }
+    })
+    attachments.forEach((file) => formData.append('attachments[]', file))
+    res = await authenticatedFetch('/leave', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: formData,
+    })
+  } else {
+    res = await authenticatedFetch('/leave', {
+      method: 'POST',
+      body: JSON.stringify(scalar),
+    })
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const msg = firstValidationMessage(data) || data.message || 'Failed to submit leave request'
@@ -6432,7 +6480,7 @@ export async function getMyOvertimeRequestContext(dateYmd) {
 
 /**
  * Employee: submit an overtime request for the authenticated user.
- * Uses FormData to support optional attachment upload.
+ * Uses FormData; attachment is required at filing time.
  * @param {{ date: string, start_time: string, end_time: string, category: string, selected_segments?: string[], ph_ot_rule?: string, reason: string, attachment?: File|null }} payload
  */
 export async function createMyOvertimeRequest(payload) {
@@ -6453,8 +6501,15 @@ export async function createMyOvertimeRequest(payload) {
     formData.append('assignment_id', String(payload.assignment_id))
   }
   formData.append('reason', String(payload.reason || ''))
-  if (payload.attachment instanceof File) {
-    formData.append('attachment', payload.attachment)
+  const attachments = Array.isArray(payload?.attachments)
+    ? payload.attachments.filter((f) => f instanceof File)
+    : []
+  if (attachments.length < 1 && !(payload.attachment instanceof File)) {
+    throw new Error('A supporting document is required.')
+  }
+  attachments.forEach((file) => formData.append('attachments[]', file, file.name))
+  if (attachments.length === 0 && payload.attachment instanceof File) {
+    formData.append('attachment', payload.attachment, payload.attachment.name)
   }
 
   const res = await wrapNetworkError(
@@ -6475,6 +6530,7 @@ export async function createMyOvertimeRequest(payload) {
       data.errors?.selected_segments?.[0] ||
       data.errors?.ph_ot_rule?.[0] ||
       data.errors?.reason?.[0] ||
+      data.errors?.attachments?.[0] ||
       data.errors?.attachment?.[0] ||
       data.message ||
       'Failed to submit overtime request'
@@ -6583,8 +6639,12 @@ export async function updateMyOvertimeRequest(id, payload) {
     formData.append('ph_ot_rule', String(payload.ph_ot_rule))
   }
   formData.append('reason', String(payload.reason || ''))
-  if (payload.attachment instanceof File) {
-    formData.append('attachment', payload.attachment)
+  const attachments = Array.isArray(payload?.attachments)
+    ? payload.attachments.filter((f) => f instanceof File)
+    : []
+  attachments.forEach((file) => formData.append('attachments[]', file, file.name))
+  if (attachments.length === 0 && payload.attachment instanceof File) {
+    formData.append('attachment', payload.attachment, payload.attachment.name)
   }
   const res = await authenticatedFetch(`/overtime/my/${id}`, { method: 'PATCH', body: formData })
   const data = await res.json().catch(() => ({}))
@@ -6595,6 +6655,7 @@ export async function updateMyOvertimeRequest(id, payload) {
       data.errors?.category?.[0] ||
       data.errors?.ph_ot_rule?.[0] ||
       data.errors?.reason?.[0] ||
+      data.errors?.attachments?.[0] ||
       data.errors?.attachment?.[0] ||
       data.errors?.id?.[0] ||
       data.message ||

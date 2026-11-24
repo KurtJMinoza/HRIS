@@ -40,7 +40,7 @@ export function AdminDataTableActions({
     <div
       className={cn(
         dense
-          ? 'flex max-w-full flex-nowrap items-center justify-end gap-1 overflow-visible'
+          ? 'flex w-full max-w-full flex-nowrap items-center justify-end gap-1 overflow-hidden'
           : 'flex max-w-full flex-nowrap items-center justify-end gap-1.5 overflow-hidden',
         className,
       )}

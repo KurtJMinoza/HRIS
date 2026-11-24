@@ -50,8 +50,9 @@ import {
   halfDayTypeShortLabel,
 } from '@/lib/halfDayLeaveLabels'
 import {
+  requestModuleActionsColClass,
   requestModuleActionsTdClass,
-  requestModuleActionsWrapRowClass,
+  requestModuleActionsThClass,
   requestModuleCompactButtonClass,
   requestModuleHeadRowClass,
   requestModuleRowClass,
@@ -60,7 +61,10 @@ import {
   requestModuleTdMutedClass,
   requestModuleThClass,
   requestModuleThRightClass,
+  requestModuleTableScrollWrapClass,
 } from '@/lib/requestModuleTable'
+import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
+import PresenceFilingSupportingDocumentsField from '@/components/presenceFiling/PresenceFilingSupportingDocumentsField'
 
 const MAX_LEAVE_SUPPORTING_FILES = 5
 const MAX_LEAVE_FILE_BYTES = 10 * 1024 * 1024
@@ -391,23 +395,13 @@ function EmployeeLeaveSelfService() {
     load()
   }, [load])
 
-  function addSupportingFilesFromInput(e) {
-    const picked = Array.from(e.target.files || [])
-    const input = e.target
-    if (input) input.value = ''
-    if (!picked.length) return
-    setAddForm((prev) => {
-      const merged = [...prev.supportingFiles, ...picked].slice(0, MAX_LEAVE_SUPPORTING_FILES)
-      return { ...prev, supportingFiles: merged }
-    })
-  }
-
-  function removeSupportingFile(index) {
+  const syncSupportingFiles = useCallback((next) => {
     setAddForm((prev) => ({
       ...prev,
-      supportingFiles: prev.supportingFiles.filter((_, i) => i !== index),
+      supportingFiles:
+        typeof next === 'function' ? next(prev.supportingFiles ?? []) : (Array.isArray(next) ? next : []),
     }))
-  }
+  }, [])
 
   const isUndertime = addForm.type === 'undertime'
   const isHalfDay = addForm.type === 'half_day'
@@ -724,6 +718,10 @@ function EmployeeLeaveSelfService() {
         return
       }
     }
+    if (addForm.supportingFiles.length === 0) {
+      setAddError('Upload at least one supporting document.')
+      return
+    }
     for (const f of addForm.supportingFiles) {
       if (f.size > MAX_LEAVE_FILE_BYTES) {
         setAddError(`Each file must be at most 10MB (${f.name}).`)
@@ -784,14 +782,11 @@ function EmployeeLeaveSelfService() {
         restRangeCheck?.message ||
         'Scheduled rest day(s) in your range were excluded. Leave covers working days only.'
 
-      const res = await createMyLeaveRequest(payload)
+      const res = await createMyLeaveRequest({
+        ...payload,
+        attachments: addForm.supportingFiles,
+      })
       const leave = res.leave_request
-
-      if (leave?.id && addForm.supportingFiles.length) {
-        for (const file of addForm.supportingFiles) {
-          await uploadMyLeaveDocument(leave.id, file)
-        }
-      }
 
       if (excludedRestDays) {
         toast({
@@ -948,7 +943,7 @@ function EmployeeLeaveSelfService() {
 
   function renderLeaveTable() {
     return (
-      <div className="w-full min-w-0 overflow-hidden">
+      <div className={cn('w-full min-w-0', requestModuleTableScrollWrapClass)}>
         <table className={leaveEmployeeTableClass}>
           <colgroup>
             <col className="w-[9%]" />
@@ -960,7 +955,7 @@ function EmployeeLeaveSelfService() {
             <col className="w-[11%]" />
             <col className="w-[12%]" />
             <col className="w-[7%]" />
-            <col className="w-[8%]" />
+            <col className={requestModuleActionsColClass} />
           </colgroup>
           <thead>
             <tr className={requestModuleHeadRowClass}>
@@ -972,8 +967,8 @@ function EmployeeLeaveSelfService() {
               <th className={requestModuleThClass}>Reason / remarks</th>
               <th className={requestModuleThClass}>Status</th>
               <th className={requestModuleThClass}>Approver</th>
-              <th className={requestModuleThRightClass}>Date filed</th>
-              <th className={requestModuleThRightClass}>Actions</th>
+              <th className={cn(requestModuleThRightClass, 'min-w-[5.5rem]')}>Date filed</th>
+              <th className={requestModuleActionsThClass}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1065,30 +1060,12 @@ function EmployeeLeaveSelfService() {
                       {leave.created_at ? formatDateTime(leave.created_at) : '—'}
                     </td>
                     <td className={requestModuleActionsTdClass}>
-                      <div className={requestModuleActionsWrapRowClass}>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className={cn(requestModuleCompactButtonClass, 'text-foreground hover:bg-brand/10 hover:text-brand dark:hover:bg-brand/12')}
-                          onClick={() => openLeaveDetail(leave)}
-                        >
-                          <Eye className="size-3.5" />
-                          View details
-                        </Button>
-                        {leave.actor_can_delete ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className={cn(requestModuleCompactButtonClass, 'text-destructive hover:bg-destructive/10')}
-                            onClick={() => setDeleteDialog({ open: true, leave })}
-                          >
-                            <Trash2 className="size-3.5" />
-                            Delete
-                          </Button>
-                        ) : null}
-                      </div>
+                      <AdminDataTableActions
+                        dense
+                        onView={() => openLeaveDetail(leave)}
+                        showDelete={Boolean(leave.actor_can_delete)}
+                        onDelete={() => setDeleteDialog({ open: true, leave })}
+                      />
                     </td>
                   </tr>
                 )
@@ -1439,7 +1416,7 @@ function EmployeeLeaveSelfService() {
                 </DialogTitle>
                 <DialogDescription className="max-w-[42rem] text-sm leading-relaxed text-muted-foreground">
                   Choose your leave type and dates. Leave cannot overlap another pending or approved leave for the same
-                  dates. Add optional remarks and supporting documents if needed.
+                  dates. Supporting documents are required; remarks are optional unless undertime.
                 </DialogDescription>
               </div>
               <LeaveModalCalendarArt />
@@ -1831,51 +1808,12 @@ function EmployeeLeaveSelfService() {
                 effAvail={effAvail}
               />
 
-              <div className="space-y-3">
-                <Label className={leaveModalLabelClass}>Supporting documents (optional)</Label>
-                <div className="rounded-xl border border-dashed border-border bg-muted/15 px-5 py-6 dark:border-white/15 dark:bg-white/[0.03]">
-                  <div className="flex flex-col items-center justify-center gap-3 text-center">
-                    <label className="flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg px-4 py-2 text-muted-foreground transition hover:text-foreground">
-                      <UploadCloud className="size-9 text-foreground" strokeWidth={1.7} aria-hidden />
-                      <span className="text-base font-medium text-muted-foreground">
-                        Drag and drop files here or click to upload
-                      </span>
-                      <span className={leaveModalHintClass}>
-                        Up to {MAX_LEAVE_SUPPORTING_FILES} files. PDF, PNG, JPG, DOC, DOCX up to 10MB each
-                      </span>
-                      <input
-                        type="file"
-                        className="sr-only"
-                        multiple
-                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                        onChange={addSupportingFilesFromInput}
-                      />
-                    </label>
-                  </div>
-                  {addForm.supportingFiles.length > 0 ? (
-                    <ul className="mt-3 space-y-2">
-                      {addForm.supportingFiles.map((f, i) => (
-                        <li
-                          key={`${f.name}-${i}-${f.size}`}
-                          className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-sm"
-                        >
-                          <span className="min-w-0 flex-1 truncate font-medium text-foreground">{f.name}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => removeSupportingFile(i)}
-                            aria-label={`Remove ${f.name}`}
-                          >
-                            <X className="size-3.5" />
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              </div>
+              <PresenceFilingSupportingDocumentsField
+                attachments={addForm.supportingFiles ?? []}
+                onAttachmentsChange={syncSupportingFiles}
+                required
+                maxFiles={MAX_LEAVE_SUPPORTING_FILES}
+              />
             </form>
             </div>
           </div>
@@ -2192,48 +2130,13 @@ function EmployeeLeaveSelfService() {
                   ) : null}
                 </div>
               )}
-              <div className="space-y-2 @md:col-span-2">
-                <Label className="text-xs">Supporting documents (optional)</Label>
-                <div className="rounded-xl border border-dashed border-muted-foreground/35 bg-muted/20 px-4 py-5 dark:border-white/10 dark:bg-white/5">
-                  <div className="flex flex-col gap-3 @sm:flex-row @sm:items-center @sm:justify-between">
-                    <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium shadow-sm hover:bg-muted/60">
-                      <Paperclip className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                      Add files
-                      <input
-                        type="file"
-                        className="sr-only"
-                        multiple
-                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                        onChange={addSupportingFilesFromInput}
-                      />
-                    </label>
-                    <p className="text-[11px] leading-snug text-muted-foreground">
-                      Up to {MAX_LEAVE_SUPPORTING_FILES} files · 10MB each · PDF, JPG, PNG, DOC, DOCX
-                    </p>
-                  </div>
-                  {addForm.supportingFiles.length > 0 ? (
-                    <ul className="mt-3 space-y-2">
-                      {addForm.supportingFiles.map((f, i) => (
-                        <li
-                          key={`${f.name}-${i}-${f.size}`}
-                          className="flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs"
-                        >
-                          <span className="min-w-0 flex-1 truncate font-medium text-foreground">{f.name}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => removeSupportingFile(i)}
-                            aria-label={`Remove ${f.name}`}
-                          >
-                            <X className="size-3.5" />
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
+              <div className="@md:col-span-2">
+                <PresenceFilingSupportingDocumentsField
+                  attachments={addForm.supportingFiles ?? []}
+                  onAttachmentsChange={syncSupportingFiles}
+                  required
+                  maxFiles={MAX_LEAVE_SUPPORTING_FILES}
+                />
               </div>
             </form>
           </div>

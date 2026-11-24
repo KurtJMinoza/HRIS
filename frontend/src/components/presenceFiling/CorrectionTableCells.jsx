@@ -343,7 +343,7 @@ export function CorrectionReasonPreviewCell({ item, loadDocuments }) {
   const [activeDocIndex, setActiveDocIndex] = useState(0)
   const [fetchedDocs, setFetchedDocs] = useState(null)
   const [docsLoading, setDocsLoading] = useState(false)
-  const remarks = remarksUserText(item?.remarks || '')
+  const remarks = remarksUserText(item?.remarks || item?.reason || item?.notes || '')
   const listDocLinks = useMemo(() => correctionDocumentLinks(item?.documents), [item?.documents])
   const docLinks = useMemo(() => {
     if (fetchedDocs) return correctionDocumentLinks(fetchedDocs)
@@ -378,7 +378,6 @@ export function CorrectionReasonPreviewCell({ item, loadDocuments }) {
     }
     setActiveDocIndex(0)
     if (listDocLinks.length > 0 || !loadDocuments || !item?.id) return
-    if (declaredCount <= 0) return
 
     let cancelled = false
     setDocsLoading(true)

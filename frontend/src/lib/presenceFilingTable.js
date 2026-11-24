@@ -130,7 +130,9 @@ export function renderedMsForSort(item) {
 }
 
 export function attachmentCount(item) {
-  const n = item?.attachment_count ?? item?.documents_count
+  const n = item?.attachment_count ?? item?.documents_count ?? item?.document_count
   if (typeof n === 'number' && n >= 0) return n
+  if (item?.has_attachment || item?.has_document) return 1
+  if (Array.isArray(item?.documents) && item.documents.length > 0) return item.documents.length
   return 0
 }

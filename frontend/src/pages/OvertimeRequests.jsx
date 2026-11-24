@@ -35,7 +35,25 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import {
+  requestModuleActionsColClass,
   requestModuleActionsTdClass,
+  requestModuleActionsThClass,
+  requestModuleActionsThPlainClass,
+  requestModuleActionsTdPlainClass,
+  requestModuleDateFiledColClass,
+  requestModuleApproverColClass,
+  requestModuleApproverThPlainClass,
+  requestModuleApproverTdPlainClass,
+  requestModuleDateFiledThPlainClass,
+  requestModuleDateFiledTdPlainClass,
+  requestModuleOtStatusCellClass,
+  requestModuleOtStatusColClass,
+  requestModuleOtAdminOptionalColClass,
+  requestModuleOtAdminTableScrollClass,
+  requestModuleOtDateColClass,
+  requestModuleOtTimeRangeColClass,
+  requestModuleOtDateCellClass,
+  requestModuleOtTimeRangeCellClass,
   requestModuleActionsWrapRowClass,
   requestModuleCompactButtonClass,
   requestModuleHeadRowClass,
@@ -46,6 +64,7 @@ import {
   requestModuleTdMutedClass,
   requestModuleThClass,
   requestModuleThRightClass,
+  requestModuleTableScrollWrapClass,
 } from '@/lib/requestModuleTable'
 import { useToast } from '@/components/ui/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
@@ -53,7 +72,10 @@ import { useHrBasePath } from '@/contexts/useHrBasePath'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { hrPanelPath } from '@/lib/hrRoutes'
 import { normalizeApprovalHeadTitle, sanitizeApprovalDisplayText } from '@/lib/approvalText'
-import { RemarksPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
+import {
+  CorrectionReasonPreviewCell,
+  RemarksPreviewCell,
+} from '@/components/presenceFiling/CorrectionTableCells'
 import OvertimeStatusBadge from '@/components/overtime/OvertimeStatusBadge'
 import ApproverAvatarNameCell, {
   approverFromApprovalProgress,
@@ -110,6 +132,8 @@ import {
   adminFormDialogContentClass,
 } from '@/lib/adminFormDialogStyles'
 import { AnimatedSection } from '@/components/ui/AnimatedSection'
+import { AdminDataTableActions } from '@/components/admin/AdminDataTableActions'
+import PresenceFilingSupportingDocumentsField from '@/components/presenceFiling/PresenceFilingSupportingDocumentsField'
 import { BulkApprovalSummaryDialog } from '@/components/admin/BulkApprovalSummaryDialog'
 import { BulkApproveToolbar } from '@/components/admin/BulkApproveToolbar'
 import { BulkApproveConfirmDialog } from '@/components/admin/BulkApproveConfirmDialog'
@@ -117,6 +141,20 @@ import { useBulkApprovalSelection } from '@/hooks/useBulkApprovalSelection'
 import { notifyPendingApprovalsChanged, HR_PENDING_APPROVALS_CHANGED } from '@/lib/hrPendingApprovalsEvents'
 import { ApprovalQueueTabBadge } from '@/components/admin/ApprovalQueueTabBadge'
 import { clearRequestReviewSearchParams, parseReviewRequestId } from '@/lib/leaveReviewDeepLink'
+
+const MAX_OT_SUPPORTING_FILES = 5
+
+function overtimePreviewRow(row) {
+  if (!row || typeof row !== 'object') return null
+  return {
+    ...row,
+    id: row.id,
+    remarks: row.reason,
+    reason: row.reason,
+    documents: row.documents,
+    attachment_count: row.attachment_count ?? (row.has_attachment ? 1 : 0),
+  }
+}
 
 const OT_TYPE_LABEL = {
   regular: 'Regular Day OT',
@@ -423,74 +461,92 @@ function formatOvertimeStatusLine(row) {
   return row.display_status || row.status || '—'
 }
 
-function OvertimeStatusCell({ row, showApprover = true, showApproverLabel = false }) {
-  return <OvertimeStatusBadge row={row} showApprover={showApprover} showApproverLabel={showApproverLabel} />
+function OvertimeStatusCell({ row, showApprover = true, showApproverLabel = false, compact = false }) {
+  return (
+    <OvertimeStatusBadge
+      row={row}
+      showApprover={showApprover}
+      showApproverLabel={showApproverLabel}
+      compact={compact}
+    />
+  )
 }
 
 function OvertimeRowActions({ row, tab, canEdit, canAct, onView, onEdit, onDelete, onApprove, onReject, mobile = false }) {
   const baseActionButtonClass = mobile
     ? 'h-9 flex-1 gap-1.5 rounded-lg px-3 text-xs font-bold shadow-sm'
-    : 'h-7 gap-1 rounded-md px-1.5 text-[10px] font-bold shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-offset-2'
+    : 'size-7 shrink-0 gap-0 rounded-md p-0 text-[10px] font-bold shadow-sm'
+
+  if (mobile) {
+    return (
+      <div className="flex w-full flex-wrap items-stretch gap-2">
+        {canAct ? (
+          <>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              className={cn(baseActionButtonClass, 'bg-emerald-600 text-white hover:bg-emerald-700')}
+              onClick={onApprove}
+            >
+              <CheckCircle2 className="size-3.5 shrink-0" />
+              Approve
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(baseActionButtonClass, 'border-rose-300 text-rose-700 hover:bg-rose-50')}
+              onClick={onReject}
+            >
+              <XCircle className="size-3.5 shrink-0" />
+              Reject
+            </Button>
+          </>
+        ) : null}
+        <Button type="button" variant="outline" size="sm" className={baseActionButtonClass} onClick={onView}>
+          <Eye className="size-3.5 shrink-0" />
+          View
+        </Button>
+        {tab === 'mine' && canEdit ? (
+          <Button type="button" variant="outline" size="sm" className={baseActionButtonClass} onClick={onEdit}>
+            <Pencil className="size-3.5 shrink-0" />
+            Edit
+          </Button>
+        ) : null}
+        {row.actor_can_delete ? (
+          <Button type="button" variant="ghost" size="sm" className={baseActionButtonClass} onClick={onDelete}>
+            <Trash2 className="size-3.5 shrink-0" />
+            Delete
+          </Button>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
-    <div className={mobile ? 'flex w-full flex-wrap items-stretch gap-2' : requestModuleActionsWrapRowClass}>
-      {canAct ? (
-        <>
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            className={cn(baseActionButtonClass, 'bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-500 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400')}
-            onClick={onApprove}
-          >
-            <CheckCircle2 className="size-3.5 shrink-0" />
-            Approve
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={cn(baseActionButtonClass, 'border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 focus-visible:ring-rose-500 dark:border-rose-800/80 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/45')}
-            onClick={onReject}
-          >
-            <XCircle className="size-3.5 shrink-0" />
-            Reject
-          </Button>
-        </>
-      ) : null}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className={cn(baseActionButtonClass, 'border-border/80 bg-card text-foreground hover:bg-brand/10 hover:text-brand focus-visible:ring-brand')}
-        onClick={onView}
-      >
-        <Eye className="size-3.5 shrink-0" />
-        <span className="hidden @sm:inline">View details</span>
-        <span className="@sm:hidden">View</span>
-      </Button>
+    <div className={requestModuleActionsWrapRowClass}>
+      <AdminDataTableActions
+        dense
+        onView={onView}
+        showApprove={canAct}
+        onApprove={onApprove}
+        showReject={canAct}
+        onReject={onReject}
+        showDelete={Boolean(row.actor_can_delete)}
+        onDelete={onDelete}
+      />
       {tab === 'mine' && canEdit ? (
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className={cn(baseActionButtonClass, 'border-border/80 bg-muted/40 text-foreground hover:bg-muted focus-visible:ring-muted-foreground/40')}
+          className="size-7 shrink-0 rounded-md p-0"
           onClick={onEdit}
+          title="Edit request"
+          aria-label="Edit request"
         >
-          <Pencil className="size-3.5 shrink-0" />
-          Edit
-        </Button>
-      ) : null}
-      {row.actor_can_delete ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className={cn(baseActionButtonClass, 'text-rose-700 hover:bg-rose-50 hover:text-rose-800 focus-visible:ring-rose-500 dark:text-rose-300 dark:hover:bg-rose-950/35')}
-          onClick={onDelete}
-        >
-          <Trash2 className="size-3.5 shrink-0" />
-          Delete
+          <Pencil className="size-3.5 shrink-0" aria-hidden />
         </Button>
       ) : null}
     </div>
@@ -594,10 +650,12 @@ function OvertimeRequestMobileCard({
               <p className="font-semibold uppercase tracking-wide text-muted-foreground">OT hours</p>
               <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-foreground">{formatOtHoursDisplay(row)}</p>
             </div>
-            <div className="col-span-2">
-              <p className="font-semibold uppercase tracking-wide text-muted-foreground">PH pay rule</p>
-              <p className="mt-0.5 font-mono text-[13px] leading-snug text-foreground">{formatPhPayRule(row)}</p>
-            </div>
+            {!showRequesterColumn ? (
+              <div className="col-span-2">
+                <p className="font-semibold uppercase tracking-wide text-muted-foreground">PH pay rule</p>
+                <p className="mt-0.5 font-mono text-[13px] leading-snug text-foreground">{formatPhPayRule(row)}</p>
+              </div>
+            ) : null}
             {row.reason ? (
               <div className="col-span-2">
                 <p className="font-semibold uppercase tracking-wide text-muted-foreground">Reason / remarks</p>
@@ -1044,7 +1102,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [phOtRule, setPhOtRule] = useState('ORD')
   const phOtRuleUserSelectedRef = useRef(false)
   const [reason, setReason] = useState('')
-  const [attachment, setAttachment] = useState(null)
+  const [otFileAttachments, setOtFileAttachments] = useState([])
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
   const [assignmentContexts, setAssignmentContexts] = useState([])
@@ -1091,7 +1149,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   const [editReason, setEditReason] = useState('')
   const [editPhOtRule, setEditPhOtRule] = useState('ORD')
   const [editPhRuleOptions, setEditPhRuleOptions] = useState([])
-  const [editAttachment, setEditAttachment] = useState(null)
+  const [editFileAttachments, setEditFileAttachments] = useState([])
   const [editSubmitting, setEditSubmitting] = useState(false)
   const [editError, setEditError] = useState(null)
   const [deleteDialog, setDeleteDialog] = useState({ open: false, row: null })
@@ -1484,10 +1542,28 @@ export default function OvertimeRequests({ variant = 'employee' }) {
       date &&
       (hasSegmentSelection || (startTime && endTime)) &&
       reason.trim().length >= 2 &&
+      otFileAttachments.some((f) => f instanceof File) &&
       !submitting &&
       !contextLoading
     )
-  }, [date, selectedSegments, startTime, endTime, reason, submitting, contextLoading])
+  }, [date, selectedSegments, startTime, endTime, reason, otFileAttachments, submitting, contextLoading])
+
+  const loadOvertimeDocuments = useCallback(
+    async (id) => {
+      const useAdmin = tab === 'all' && canSeeAllTab
+      const loader = useAdmin ? getAdminOvertimeDetail : getMyOvertimeDetail
+      const data = await loader(id)
+      const ot = data?.overtime ?? data
+      if (Array.isArray(ot?.documents) && ot.documents.length > 0) {
+        return ot.documents
+      }
+      if (ot?.attachment_url) {
+        return [{ url: ot.attachment_url, filename: ot.attachment_filename || 'Attachment' }]
+      }
+      return []
+    },
+    [tab, canSeeAllTab],
+  )
 
   const activeItems = tab === 'mine' ? mineItems : allItems
   const loading = tab === 'mine'
@@ -1594,7 +1670,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
 
     setSubmitError(null)
     setReason('')
-    setAttachment(null)
+    setOtFileAttachments([])
     setStartTime(initialStart || '')
     setEndTime(initialEnd || '')
     setSeedSegments(normalizedSegments)
@@ -1608,6 +1684,11 @@ export default function OvertimeRequests({ variant = 'employee' }) {
   async function handleFileSubmit(e) {
     e.preventDefault()
     if (!canSubmitFile) return
+    const newAttachments = otFileAttachments.filter((f) => f instanceof File)
+    if (newAttachments.length < 1) {
+      setSubmitError('Upload at least one supporting document before submitting.')
+      return
+    }
     setSubmitError(null)
     setSubmitting(true)
     try {
@@ -1619,7 +1700,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         selected_segments: selectedSegments,
         ph_ot_rule: phOtRule,
         reason: reason.trim(),
-        attachment: attachment || null,
+        attachments: newAttachments,
         assignment_id: selectedAssignmentId || undefined,
       })
       toast({ title: 'Overtime requested', description: 'Your request was submitted for approval.', variant: 'success' })
@@ -1901,7 +1982,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
     setEditCategory(row.ot_type || 'regular')
     setEditReason(row.reason || '')
     setEditPhOtRule(row.ph_ot_rule || 'ORD')
-    setEditAttachment(null)
+    setEditFileAttachments([])
     setEditError(null)
     setEditOpen(true)
     try {
@@ -1931,7 +2012,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
         category: editCategory,
         ph_ot_rule: editPhOtRule,
         reason: editReason.trim(),
-        attachment: editAttachment || null,
+        attachments: editFileAttachments.filter((f) => f instanceof File),
       })
       setEditOpen(false)
       await loadMine()
@@ -2552,25 +2633,31 @@ export default function OvertimeRequests({ variant = 'employee' }) {
             ) : (
               <AnimatedSection delay={0.05}>
                 <div className="px-4 pb-8 pt-2 @sm:px-5 md:px-6">
-                  <div className="hidden min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm dark:border-white/10 md:block">
+                  <div
+                    className={cn(
+                      'hidden rounded-2xl border border-border/70 bg-card shadow-sm dark:border-white/10 lg:block',
+                      showRequesterColumn ? requestModuleOtAdminTableScrollClass : requestModuleTableScrollWrapClass,
+                    )}
+                  >
                   <Table className={overtimeTableClass}>
                     <colgroup>
-                      {showBulkCheckbox ? <col className="w-[3%]" /> : null}
-                      <col className={showRequesterColumn ? 'w-[5%]' : 'w-[6%]'} />
-                      {showRequesterColumn ? <col className="w-[12%]" /> : null}
-                      <col className={showRequesterColumn ? 'w-[8%]' : 'w-[9%]'} />
-                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[11%]'} />
-                      <col className={showRequesterColumn ? 'w-[6%]' : 'w-[7%]'} />
-                      <col className={showRequesterColumn ? 'w-[7%]' : 'w-[9%]'} />
-                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[10%]'} />
-                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[11%]'} />
-                      <col className={showRequesterColumn ? 'w-[9%]' : 'w-[11%]'} />
-                      <col className={showRequesterColumn ? 'w-[10%]' : 'w-[12%]'} />
-                      <col className={showRequesterColumn ? 'w-[7%]' : 'w-[8%]'} />
-                      <col className="w-[9%]" />
+                      {showBulkCheckbox ? <col className="w-10" /> : null}
+                      <col className="w-[4.5rem]" />
+                      {showRequesterColumn ? <col className="min-w-[9.5rem]" /> : null}
+                      <col className={requestModuleOtDateColClass} />
+                      <col className={requestModuleOtTimeRangeColClass} />
+                      <col className="w-[4.75rem]" />
+                      <col className="w-[6rem]" />
+                      {!showRequesterColumn ? <col className="min-w-[9rem]" /> : null}
+                      <col className="min-w-[5.5rem]" />
+                      <col className="min-w-[10rem]" />
+                      <col className={requestModuleOtStatusColClass} />
+                      <col className={requestModuleApproverColClass} />
+                      <col className={requestModuleDateFiledColClass} />
+                      <col className={requestModuleActionsColClass} />
                     </colgroup>
                     <TableHeader>
-                      <TableRow className={cn(requestModuleHeadRowClass, 'sticky top-0 z-10 backdrop-blur supports-backdrop-filter:bg-muted/80 hover:bg-muted/60 dark:supports-backdrop-filter:bg-card/90 dark:hover:bg-card/80')}>
+                      <TableRow className={cn(requestModuleHeadRowClass, 'sticky top-0 z-10 backdrop-blur supports-backdrop-filter:bg-muted/80 dark:supports-backdrop-filter:bg-card/90')}>
                         {showBulkCheckbox ? (
                           <TableHead className={cn(requestModuleThClass, 'w-10 px-3')}>
                             <Checkbox
@@ -2589,16 +2676,36 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                         {showRequesterColumn ? (
                           <TableHead className={requestModuleThClass}>Requester</TableHead>
                         ) : null}
-                        <TableHead className={requestModuleThClass}>Date</TableHead>
-                        <TableHead className={requestModuleThClass}>Time range</TableHead>
+                        <TableHead className={cn(requestModuleThClass, requestModuleOtDateColClass, 'whitespace-nowrap')}>
+                          Date
+                        </TableHead>
+                        <TableHead className={cn(requestModuleThClass, requestModuleOtTimeRangeColClass, 'whitespace-nowrap')}>
+                          Time range
+                        </TableHead>
                         <TableHead className={requestModuleThClass}>OT hours</TableHead>
-                        <TableHead className={requestModuleThClass}>Category</TableHead>
-                        <TableHead className={requestModuleThClass}>PH pay rule</TableHead>
+                        <TableHead
+                          className={cn(
+                            requestModuleThClass,
+                            showRequesterColumn && requestModuleOtAdminOptionalColClass,
+                          )}
+                        >
+                          Category
+                        </TableHead>
+                        {!showRequesterColumn ? (
+                          <TableHead className={requestModuleThClass}>PH pay rule</TableHead>
+                        ) : null}
+                        <TableHead className={requestModuleThClass}>Preview</TableHead>
                         <TableHead className={requestModuleThClass}>Reason / remarks</TableHead>
-                        <TableHead className={requestModuleThClass}>Status</TableHead>
-                        <TableHead className={requestModuleThClass}>Approver</TableHead>
-                        <TableHead className={requestModuleThRightClass}>Date requested</TableHead>
-                        <TableHead className={requestModuleThRightClass}>Actions</TableHead>
+                        <TableHead className={cn(requestModuleThClass, requestModuleOtStatusColClass, 'whitespace-nowrap')}>
+                          Status
+                        </TableHead>
+                        <TableHead className={requestModuleApproverThPlainClass}>Approver</TableHead>
+                        <TableHead className={requestModuleDateFiledThPlainClass}>Date requested</TableHead>
+                        <TableHead
+                          className={showRequesterColumn ? requestModuleActionsThClass : requestModuleActionsThPlainClass}
+                        >
+                          Actions
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -2611,7 +2718,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                         return (
                           <TableRow
                             key={row.id}
-                            className={requestModuleRowClass(rowIdx, 'group text-sm leading-relaxed')}
+                            className={requestModuleRowClass(rowIdx, 'text-sm leading-relaxed')}
                           >
                             {showBulkCheckbox ? (
                               <TableCell className={cn(requestModuleTdClass, 'w-10 px-3')}>
@@ -2632,37 +2739,54 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                                   item={row}
                                   profileTo={profileTo}
                                   avatarLinkable={Boolean(profileTo)}
+                                  compact
                                 />
                               </TableCell>
                             ) : null}
-                            <TableCell className={requestModuleTdMutedClass}>
+                            <TableCell className={requestModuleOtDateCellClass}>
                               {row.date ? formatTableDate(`${row.date}T12:00:00`) : '—'}
                             </TableCell>
-                            <TableCell className={cn(requestModuleTdMutedClass, 'font-mono text-[13px] leading-snug')}>
+                            <TableCell className={requestModuleOtTimeRangeCellClass}>
                               {formatOvertimeTimeRange(row)}
                             </TableCell>
                             <TableCell className={cn(requestModuleTdMutedClass, 'font-mono text-base font-semibold text-foreground')}>
                               {formatOtHoursDisplay(row)}
                             </TableCell>
-                            <TableCell className={cn(requestModuleTdClass, 'text-muted-foreground')}>
+                            <TableCell
+                              className={cn(
+                                requestModuleTdClass,
+                                'text-muted-foreground',
+                                showRequesterColumn && requestModuleOtAdminOptionalColClass,
+                              )}
+                            >
                               {otTypeLabel(row.ot_type)}
                             </TableCell>
-                            <TableCell className={cn(requestModuleTdMutedClass, 'text-[13px] leading-snug')}>
-                              {formatPhPayRule(row)}
+                            {!showRequesterColumn ? (
+                              <TableCell className={cn(requestModuleTdMutedClass, 'text-[13px] leading-snug')}>
+                                {formatPhPayRule(row)}
+                              </TableCell>
+                            ) : null}
+                            <TableCell className={requestModuleTdClass} onClick={(e) => e.stopPropagation()}>
+                              <CorrectionReasonPreviewCell
+                                item={overtimePreviewRow(row)}
+                                loadDocuments={loadOvertimeDocuments}
+                              />
                             </TableCell>
                             <TableCell className={requestModuleTdClass}>
                               <RemarksPreviewCell text={row.reason} />
                             </TableCell>
-                            <TableCell className={requestModuleTdClass}>
-                              <OvertimeStatusCell row={row} showApprover={false} />
+                            <TableCell className={requestModuleOtStatusCellClass}>
+                              <OvertimeStatusCell row={row} showApprover={false} compact />
                             </TableCell>
-                            <TableCell className={requestModuleTdClass}>
+                            <TableCell className={requestModuleApproverTdPlainClass}>
                               <ApproverAvatarNameCell {...approverFromRequestRow(row)} />
                             </TableCell>
-                            <TableCell className={cn(requestModuleTdMutedClass, 'text-right')}>
-                              {formatTableDate(filed)}
+                            <TableCell className={requestModuleDateFiledTdPlainClass}>
+                              {filed ? formatTableDate(filed) : '—'}
                             </TableCell>
-                            <TableCell className={requestModuleActionsTdClass}>
+                            <TableCell
+                              className={showRequesterColumn ? requestModuleActionsTdClass : requestModuleActionsTdPlainClass}
+                            >
                               <OvertimeRowActions
                                 row={row}
                                 tab={tab}
@@ -2682,7 +2806,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                   </Table>
                   </div>
 
-                  <div className="space-y-3 p-3 md:hidden @sm:p-4">
+                  <div className="space-y-3 p-3 lg:hidden @sm:p-4">
                     {activeItems.map((row) => {
                       const profileTo =
                         canViewEmployeeProfile && (row.requested_by_id || row.employee_id)
@@ -2957,6 +3081,17 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     </span>
                   </div>
                   <p className="text-[13px] leading-relaxed text-muted-foreground">Example: FOR OT</p>
+                </div>
+
+                <div id="otm-supporting-docs">
+                  <PresenceFilingSupportingDocumentsField
+                    attachments={otFileAttachments}
+                    onAttachmentsChange={setOtFileAttachments}
+                    required
+                    maxFiles={MAX_OT_SUPPORTING_FILES}
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    hintFileTypes="PDF, PNG, JPG up to 5MB each (max 5 files)"
+                  />
                 </div>
 
                 <div className="flex items-start gap-3 rounded-xl border border-dashed border-brand/55 bg-brand/5 px-3 py-3 text-sm dark:bg-brand/10 sm:gap-4 sm:px-5 sm:py-4 sm:text-base">
@@ -3355,7 +3490,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
           if (!o) {
             setEditId(null)
             setEditError(null)
-            setEditAttachment(null)
+            setEditFileAttachments([])
           }
         }}
       >
@@ -3428,15 +3563,14 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                     minLength={10}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>New attachment (optional)</Label>
-                  <Input
-                    type="file"
-                    accept=".pdf,.jpg,.jpeg,.png"
-                    onChange={(e) => setEditAttachment(e.target.files?.[0] || null)}
-                    className="cursor-pointer text-sm"
-                  />
-                </div>
+                <PresenceFilingSupportingDocumentsField
+                  attachments={editFileAttachments}
+                  onAttachmentsChange={setEditFileAttachments}
+                  required={false}
+                  maxFiles={MAX_OT_SUPPORTING_FILES}
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  hintFileTypes="PDF, PNG, JPG up to 5MB each. Leave empty to keep existing files; uploading replaces all."
+                />
               </div>
             </div>
             <DialogFooter className={ADMIN_FORM_DIALOG_FOOTER_CLASS}>

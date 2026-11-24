@@ -270,6 +270,12 @@ html.light .react-calendar {
 .dark [data-slot='table'] tbody tr:hover {
   background-color: oklch(0.28 0.02 250 / 0.35);
 }
+[data-slot='table'].request-module-table tbody tr:hover {
+  background-color: inherit !important;
+}
+.dark [data-slot='table'].request-module-table tbody tr:hover {
+  background-color: inherit !important;
+}
 
 /**
  * Module typography hierarchy (primary ink: --foreground / #0A0A0A in light).

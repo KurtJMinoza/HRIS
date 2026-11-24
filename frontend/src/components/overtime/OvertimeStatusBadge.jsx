@@ -73,24 +73,31 @@ function badgeColor(row) {
   return 'orange'
 }
 
-export default function OvertimeStatusBadge({ row, className, showApprover = true, showApproverLabel = false }) {
+export default function OvertimeStatusBadge({
+  row,
+  className,
+  showApprover = true,
+  showApproverLabel = false,
+  compact = false,
+}) {
   const color = badgeColor(row)
   const style = STATUS_STYLES[color] || STATUS_STYLES.gray
   const Icon = style.icon
   const label = statusLabel(row)
-  const caption = showApprover ? captionLine(row, { showApproverLabel }) : null
+  const caption = showApprover && !compact ? captionLine(row, { showApproverLabel }) : null
 
   return (
     <div className={cn('flex min-w-0 flex-col gap-1', className)}>
       <span
         className={cn(
-          'inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-semibold shadow-sm',
+          'inline-flex w-fit max-w-full items-center gap-1.5 rounded-full border font-semibold shadow-sm',
+          compact ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs',
           style.badge,
         )}
         title={label}
       >
-        <Icon className={cn('size-3.5 shrink-0', style.iconColor)} aria-hidden />
-        <span className="line-clamp-2 text-left leading-snug">{label}</span>
+        <Icon className={cn('shrink-0', compact ? 'size-3' : 'size-3.5', style.iconColor)} aria-hidden />
+        <span className={cn('text-left leading-snug', compact ? 'truncate' : 'line-clamp-2')}>{label}</span>
       </span>
       {caption ? (
         <p

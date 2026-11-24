@@ -30,6 +30,21 @@ use Illuminate\Validation\ValidationException;
 
 class EmployeeLeaveController extends Controller
 {
+    private function publicMediaUrl(?string $path): ?string
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+        $normalized = str_replace('\\', '/', trim($path));
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = ltrim(substr($normalized, strlen('storage/')), '/');
+        }
+        $segments = explode('/', $normalized);
+        $encoded = array_map(static fn (string $segment) => rawurlencode($segment), $segments);
+
+        return url('/api/media/public/'.implode('/', $encoded));
+    }
+
     public function __construct(
         private readonly HrApprovalChainResolver $hrApprovalChainResolver,
         private readonly LeaveApprovalService $leaveApprovalService,
@@ -81,14 +96,47 @@ class EmployeeLeaveController extends Controller
     private function documentFieldsForLeave(LeaveRequest $l): array
     {
         $paths = $l->resolveDocumentPaths();
-        $urls = array_map(static fn (string $p) => Storage::url($p), $paths);
+        $urls = array_map(fn (string $p) => $this->publicMediaUrl($p), $paths);
+        $documents = array_map(
+            fn (string $p, int $i) => [
+                'url' => $this->publicMediaUrl($p),
+                'filename' => basename(str_replace('\\', '/', $p)) ?: 'Document '.($i + 1),
+            ],
+            $paths,
+            array_keys($paths),
+        );
+        $count = count($paths);
 
         return [
-            'has_document' => count($paths) > 0,
+            'has_document' => $count > 0,
             'document_url' => $urls[0] ?? null,
             'document_urls' => $urls,
-            'document_count' => count($paths),
+            'document_count' => $count,
+            'documents' => $documents,
+            'attachment_count' => $count,
+            'documents_count' => $count,
         ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function storeUploadedLeaveDocuments(Request $request, string $inputKey = 'attachments'): array
+    {
+        $paths = [];
+        foreach ($request->file($inputKey, []) as $file) {
+            if ($file === null) {
+                continue;
+            }
+            $paths[] = $file->store('leave-documents', 'public');
+        }
+        if ($paths === []) {
+            throw ValidationException::withMessages([
+                $inputKey => ['At least one supporting document is required.'],
+            ]);
+        }
+
+        return array_values($paths);
     }
 
     /**
@@ -860,6 +908,8 @@ class EmployeeLeaveController extends Controller
             'half_day_time' => ['nullable', 'date_format:H:i'],
             'schedule_option_id' => ['nullable', 'integer', 'min:1'],
             'assignment_id' => ['nullable', 'integer', 'exists:employee_organization_assignments,id'],
+            'attachments' => ['required', 'array', 'min:1', 'max:5'],
+            'attachments.*' => ['file', 'mimes:pdf,jpg,jpeg,png,doc,docx', 'max:10240'],
         ]);
 
         $type = $validated['type'];
@@ -1004,16 +1054,18 @@ class EmployeeLeaveController extends Controller
                 'approval' => ['No active Admin (HR) approver is configured.'],
             ]);
         }
+        $documentPaths = $this->storeUploadedLeaveDocuments($request);
         $reasonTrim = trim((string) ($validated['reason'] ?? ''));
         $notes = $reasonTrim !== '' ? $reasonTrim : null;
         $fileDetails = $type === 'undertime' ? $reasonTrim : ($notes ?? 'Leave request submitted.');
-        $leave = DB::transaction(function () use ($user, $type, $validated, $stage, $fileDetails, $notes, $hrApproverId, $assignmentContext) {
+        $leave = DB::transaction(function () use ($user, $type, $validated, $stage, $fileDetails, $notes, $hrApproverId, $assignmentContext, $documentPaths) {
             $leave = LeaveRequest::create([
                 'user_id' => $user->id,
                 ...$assignmentContext,
                 'type' => $type,
                 'start_date' => $validated['start_date'],
                 'end_date' => $validated['end_date'],
+                'document_paths' => $documentPaths,
                 'undertime_time' => $type === 'undertime' ? ($validated['undertime_time'] ?? null) : null,
                 'half_type' => $type === 'half_day' ? ($validated['half_type'] ?? null) : null,
                 'half_day_time' => $type === 'half_day' && trim((string) ($validated['half_day_time'] ?? '')) !== ''

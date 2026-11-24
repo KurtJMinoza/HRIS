@@ -40,6 +40,7 @@ class Overtime extends Model
         'ot_type',
         'reason',
         'attachment_path',
+        'document_paths',
         'status',
         'approved_by',
         'approved_at',
@@ -85,7 +86,30 @@ class Overtime extends Model
             'first_approved_at' => 'datetime',
             'second_approved_at' => 'datetime',
             'rejected_at' => 'datetime',
+            'document_paths' => 'array',
         ];
+    }
+
+    /**
+     * All stored relative paths for supporting documents (legacy attachment_path + JSON list).
+     *
+     * @return array<int, string>
+     */
+    public function resolveDocumentPaths(): array
+    {
+        $paths = $this->document_paths;
+        if (! is_array($paths)) {
+            $paths = [];
+        }
+        $paths = array_values(array_filter($paths, static fn ($p) => is_string($p) && $p !== ''));
+
+        if (! empty($this->attachment_path) && is_string($this->attachment_path)) {
+            if (! in_array($this->attachment_path, $paths, true)) {
+                array_unshift($paths, $this->attachment_path);
+            }
+        }
+
+        return array_values(array_unique($paths));
     }
 
     public function user(): BelongsTo
