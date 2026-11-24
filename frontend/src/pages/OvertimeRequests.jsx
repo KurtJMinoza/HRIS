@@ -569,6 +569,7 @@ function OvertimeRequestMobileCard({
   onDelete,
   onApprove,
   onReject,
+  loadDocuments,
 }) {
   const filed = row.filed_at || row.created_at
   const profileLink =
@@ -603,6 +604,13 @@ function OvertimeRequestMobileCard({
               {otTypeLabel(row.ot_type)}
             </span>
             <OvertimeStatusCell row={row} showApprover={false} />
+          </div>
+
+          <div className="mt-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <CorrectionReasonPreviewCell
+              item={overtimePreviewRow(row)}
+              loadDocuments={loadDocuments}
+            />
           </div>
 
           {showRequesterColumn ? (
@@ -2830,6 +2838,7 @@ export default function OvertimeRequests({ variant = 'employee' }) {
                           onDelete={() => setDeleteDialog({ open: true, row })}
                           onApprove={() => openApprove(row)}
                           onReject={() => openReject(row)}
+                          loadDocuments={loadOvertimeDocuments}
                         />
                       )
                     })}

@@ -2110,6 +2110,7 @@ export default function AdminLeave() {
                   leaveCreditInfo={leaveCreditInfo}
                   onView={openDetailDialog}
                   onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
+                  loadDocuments={loadLeaveDocuments}
                 />
               ))}
             </div>
@@ -2321,6 +2322,7 @@ export default function AdminLeave() {
                   onReject={openRejectDialog}
                   onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
                   onNotes={openNotesDialog}
+                  loadDocuments={loadLeaveDocuments}
                 />
               ))}
             </div>

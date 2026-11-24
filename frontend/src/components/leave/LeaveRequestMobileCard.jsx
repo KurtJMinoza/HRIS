@@ -10,7 +10,6 @@ import {
   HeartPulse,
   Loader2,
   Palmtree,
-  Paperclip,
   Trash2,
   XCircle,
 } from 'lucide-react'
@@ -20,16 +19,30 @@ import { Checkbox } from '@/components/ui/checkbox'
 import LeaveStatusPill from '@/components/leave/LeaveStatusPill'
 import LeaveCreditUsageBadge from '@/components/leave/LeaveCreditUsageBadge'
 import ApproverAvatarNameCell, { approverFromRequestRow } from '@/components/approvals/ApproverAvatarNameCell'
-import { profileImageUrl } from '@/api'
 import { cn } from '@/lib/utils'
 import { halfDayTypeListLabel } from '@/lib/halfDayLeaveLabels'
 import { requestModuleCompactButtonClass } from '@/lib/requestModuleTable'
+import { CorrectionReasonPreviewCell } from '@/components/presenceFiling/CorrectionTableCells'
 
 function supportingDocUrls(leave) {
   if (!leave) return []
   if (Array.isArray(leave.document_urls) && leave.document_urls.length) return leave.document_urls
   if (leave.document_url) return [leave.document_url]
   return []
+}
+
+function leavePreviewItem(leave) {
+  if (!leave || typeof leave !== 'object') return null
+  const remarks = [leave.notes, leave.rejection_note].filter(Boolean).join('\n\n')
+  const urlCount = supportingDocUrls(leave).length
+  return {
+    ...leave,
+    id: leave.id,
+    remarks,
+    notes: leave.notes,
+    documents: leave.documents,
+    attachment_count: leave.attachment_count ?? leave.document_count ?? (urlCount > 0 ? urlCount : 0),
+  }
 }
 
 function formatDateShort(iso) {
@@ -143,10 +156,10 @@ export default function LeaveRequestMobileCard({
   onDelete,
   onNotes,
   leaveCreditInfo = null,
+  loadDocuments = null,
 }) {
   const pending = String(leave?.status || '').toLowerCase() === 'pending'
   const remarksPreview = [leave?.notes, leave?.rejection_note].filter(Boolean).join('\n\n') || ''
-  const docs = supportingDocUrls(leave)
   const employeeName = leave?.employee_name || '—'
   const initials =
     employeeName
@@ -191,6 +204,10 @@ export default function LeaveRequestMobileCard({
             />
           </div>
 
+          <div className="mt-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <CorrectionReasonPreviewCell item={leavePreviewItem(leave)} loadDocuments={loadDocuments} />
+          </div>
+
           {showEmployee ? (
             <div className="mt-3 flex min-w-0 items-center gap-3">
               <Avatar className="size-9 shrink-0 rounded-full">
@@ -222,30 +239,6 @@ export default function LeaveRequestMobileCard({
               <div className="mt-0.5">
                 <LeaveCreditUsageBadge leave={leave} compact leaveCreditInfo={leaveCreditInfo} />
               </div>
-            </div>
-            <div>
-              <p className="font-semibold uppercase tracking-wide text-muted-foreground">Documents</p>
-              <p className="mt-0.5 text-sm text-foreground">
-                {docs.length === 0 ? (
-                  <span className="text-muted-foreground">No</span>
-                ) : (
-                  <span className="inline-flex flex-wrap gap-x-2 gap-y-0.5">
-                    {docs.map((url, i) => (
-                      <a
-                        key={`${url}-${i}`}
-                        href={profileImageUrl(url)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 font-medium text-brand underline-offset-2 hover:underline"
-                      >
-                        <Paperclip className="size-3.5 shrink-0" aria-hidden />
-                        View{docs.length > 1 ? ` ${i + 1}` : ''}
-                      </a>
-                    ))}
-                  </span>
-                )}
-              </p>
             </div>
             {remarksPreview ? (
               <div className="col-span-2">

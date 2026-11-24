@@ -395,6 +395,18 @@ function EmployeeLeaveSelfService() {
     load()
   }, [load])
 
+  const loadLeaveDocuments = useCallback(async (id) => {
+    const data = await fetchLeaveRequestReview(id, { employeeScoped: true })
+    const leave = extractLeaveRequestFromReviewPayload(data)
+    if (Array.isArray(leave?.documents) && leave.documents.length > 0) {
+      return leave.documents
+    }
+    return supportingDocUrls(leave).map((url, i) => ({
+      url,
+      filename: `Document ${i + 1}`,
+    }))
+  }, [])
+
   const syncSupportingFiles = useCallback((next) => {
     setAddForm((prev) => ({
       ...prev,
@@ -1381,6 +1393,7 @@ function EmployeeLeaveSelfService() {
                         leaveCreditInfo={leaveCreditInfo}
                         onView={openLeaveDetail}
                         onDelete={(row) => setDeleteDialog({ open: true, leave: row })}
+                        loadDocuments={loadLeaveDocuments}
                       />
                     ))}
                   </AnimatedSection>
