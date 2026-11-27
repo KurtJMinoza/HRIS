@@ -5,8 +5,8 @@ const path = require('path')
 const root = path.join(__dirname, '..')
 const viteCache = path.join(root, 'frontend', 'node_modules', '.vite')
 const { freeListeningPort } = require('./free-listening-port.cjs')
-const frontendDevPort = process.env.FRONTEND_DEV_PORT || '5173'
-const octanePort = process.env.OCTANE_PORT || '8000'
+const frontendDevPort = process.env.FRONTEND_DEV_PORT || '5100'
+const octanePort = process.env.OCTANE_PORT || '8200'
 
 try {
   fs.rmSync(viteCache, { recursive: true, force: true })

@@ -10,10 +10,10 @@ const php = resolveBinary('PHP_BIN', isWin ? 'C:\\xampp\\php\\php.exe' : 'php', 
 const python = resolveBinary('FACE_SERVICE_PYTHON', isWin ? 'python' : 'python3', ['python', 'python3']);
 const node = resolveBinary('NODE_BIN', 'node', ['node']);
 const octaneHost = process.env.OCTANE_HOST || '127.0.0.1';
-// Local ports stay 8000/5173 (override with OCTANE_PORT / FRONTEND_DEV_PORT if needed).
-const octanePort = process.env.OCTANE_PORT || '8000';
+// Local checkout uses 8200/5100 (override with OCTANE_PORT / FRONTEND_DEV_PORT if needed).
+const octanePort = process.env.OCTANE_PORT || '8200';
 const frontendVite = path.join(root, 'frontend', 'node_modules', 'vite', 'bin', 'vite.js');
-const frontendDevPort = process.env.FRONTEND_DEV_PORT || '5173';
+const frontendDevPort = process.env.FRONTEND_DEV_PORT || '5100';
 const payrollQueueMemoryLimit = process.env.PAYROLL_QUEUE_MEMORY_LIMIT || '1536M';
 const backendDir = path.join(root, 'backend');
 const faceServiceDir = path.join(root, 'face_service');
